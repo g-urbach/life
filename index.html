@@ -197,42 +197,42 @@
     }
 
     function initRecognition() {
-  if (recognition) return;
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    logMessage('Speech recognition not supported in this browser. Try Chrome.');
-    return;
-  }
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-US';
-  recognition.interimResults = true;     // ← Show live partial results
-  recognition.continuous = true;         // ← Keep listening across pauses
-  recognition.maxAlternatives = 1;
-
-  // Improved error & event logging for debugging
-  recognition.onerror = (event) => {
-    logMessage('Recognition error: ' + event.error);  // e.g. 'no-speech', 'not-allowed', 'network'
-    if (event.error === 'no-speech' || event.error === 'aborted') {
-      // Auto-restart on silence timeout
-      if (isConversing) {
-        logMessage('Silence detected — restarting listening...');
-        setTimeout(() => recognition.start(), 500); // short delay to avoid loops
+      if (recognition) return;
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        logMessage('Speech recognition not supported in this browser. Try Chrome.');
+        return;
       }
-    }
-  };
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;     // ← Show live partial results
+      recognition.continuous = true;         // ← Keep listening across pauses
+      recognition.maxAlternatives = 1;
 
-  recognition.onend = () => {
-    logMessage('Voice recognition ended');
-    if (isConversing) {
-      logMessage('Restarting listening...');
-      setTimeout(() => recognition.start(), 800); // natural pause + prevent crash loops
-    }
-  };
+      // Improved error & event logging for debugging
+      recognition.onerror = (event) => {
+        logMessage('Recognition error: ' + event.error);  // e.g. 'no-speech', 'not-allowed', 'network'
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          // Auto-restart on silence timeout
+          if (isConversing) {
+            logMessage('Silence detected — restarting listening...');
+            setTimeout(() => recognition.start(), 500); // short delay to avoid loops
+          }
+        }
+      };
 
-  recognition.onspeechend = () => logMessage('Detected end of speech (pause)');
-  recognition.onaudioend = () => logMessage('Audio input stopped');
-  recognition.onnomatch = () => logMessage('No clear speech match');
-}
+      recognition.onend = () => {
+        logMessage('Voice recognition ended');
+        if (isConversing) {
+          logMessage('Restarting listening...');
+          setTimeout(() => recognition.start(), 800); // natural pause + prevent crash loops
+        }
+      };
+
+      recognition.onspeechend = () => logMessage('Detected end of speech (pause)');
+      recognition.onaudioend = () => logMessage('Audio input stopped');
+      recognition.onnomatch = () => logMessage('No clear speech match');
+    }
 
     function speak(text) {
       if ('speechSynthesis' in window) {
@@ -263,52 +263,55 @@
       await askNextQuestion();
     }
 
-async function askNextQuestion() {
-  if (!isConversing) return;
+    async function askNextQuestion() {
+      if (!isConversing) return;
 
-  // ... (keep your existing Gemini prompt / callGemini code here)
+      const entrySummaries = entries.map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
+      const geminiPrompt = `Based on these life story entries: ${entrySummaries || 'No previous entries'}\nGenerate one thoughtful question to elicit more details about the person's life. If dates are missing for experiences, ask for them. Also explore life philosophies, values, lessons learned. Question only. Be warm and conversational.`;
 
-  try {
-    // ... (get question from Gemini)
+      try {
+        const data = await callGemini(geminiPrompt);
+        const question = data.candidates[0].content.parts[0].text.trim();
+        logMessage(`Question: ${question}`);
+        speak(question);
 
-    logMessage(`Question: ${question}`);
-    speak(question);
+        initRecognition();
+        if (!recognition) return;
 
-    initRecognition();
-    if (!recognition) return;
+        // Attach result handler once per question (or move outside if you prefer global)
+        recognition.onresult = async (event) => {
+          let transcript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            transcript += event.results[i][0].transcript;
+          }
+          if (transcript.trim()) {
+            logMessage(`You said: ${transcript}`);
+            await addEntry('Other', transcript, question);
+            // Optional: Stop after good answer, ask next question after short delay
+            recognition.stop(); // pause to process
+            setTimeout(askNextQuestion, 1500); // give breathing room before next AI question
+          }
+        };
 
-    // Attach result handler once per question (or move outside if you prefer global)
-    recognition.onresult = async (event) => {
-      let transcript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        transcript += event.results[i][0].transcript;
+        recognition.start();
+        logMessage('Listening... (speak now — it stays open longer)');
+      } catch (error) {
+        logMessage('Error generating question: ' + error.message);
+        stopConversation();
       }
-      if (transcript.trim()) {
-        logMessage(`You said: ${transcript}`);
-        await addEntry('Other', transcript, question);
-        // Optional: Stop after good answer, ask next question after short delay
-        recognition.stop(); // pause to process
-        setTimeout(askNextQuestion, 1500); // give breathing room before next AI question
-      }
-    };
+    }
 
-    recognition.start();
-    logMessage('Listening... (speak now — it stays open longer)');
-  } catch (error) {
-    logMessage('Error generating question: ' + error.message);
-    stopConversation();
-  }
-}
-function stopConversation() {
-  isConversing = false;
-  document.getElementById('stopTalk').style.display = 'none';
-  if (recognition) {
-    recognition.stop();
-    recognition.abort(); // force clean stop
-  }
-  speak('Conversation ended. Thank you for sharing!');
-  logMessage('Conversation ended');
-}
+    function stopConversation() {
+      isConversing = false;
+      document.getElementById('stopTalk').style.display = 'none';
+      if (recognition) {
+        recognition.stop();
+        recognition.abort(); // force clean stop
+      }
+      speak('Conversation ended. Thanks for sharing!');
+      logMessage('Conversation ended');
+    }
+
     function newVoiceMemo() {
       if (!currentUser) return logMessage('Must be logged in');
       initRecognition();
