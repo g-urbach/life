@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story • Cloud</title>
+  <title>My Life Story</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
@@ -16,7 +16,7 @@
   </style>
 </head>
 <body>
-  <h1>❤️ My Life Story • Cloud Edition</h1>
+  <h1>❤️ My Life Story</h1>
   <p><strong>Share this page with your family — they only need their email + password.</strong></p>
 
   <!-- Auth -->
@@ -29,31 +29,30 @@
     <span id="userStatus" style="margin-left:15px;font-weight:bold;"></span>
   </div>
 
-  <button onclick="tellMeMore()" class="primary">🎤 Tell Me More (Voice)</button>
+  <button onclick="letsTalk()" class="primary">Lets talk :)</button>
   <button onclick="newVoiceMemo()">🎙️ New Voice Memo</button>
   <button onclick="typeEntry()">⌨️ New Typed Entry</button>
   <button onclick="generateStory()">📖 Generate My Story</button>
   <button onclick="continueStory()">🔄 Continue My Story</button>
-  <button onclick="exportData()">⬇️ Export JSON</button>
-  <button onclick="importData()">⬆️ Import JSON</button>
+  <button onclick="showChronologicalRecord()">📋 Chronological Record</button>
   <button onclick="clearMyData()" style="background:#ef4444;color:white;">Delete My Data</button>
+  <button id="stopTalk" onclick="stopConversation()" style="display:none;background:#ef4444;color:white;">⛔ Stop Talking</button>
 
   <div id="reminder" style="margin:15px 0;font-weight:bold;color:#10b981;"></div>
   <div class="log" id="log"></div>
   <div id="storyArea"></div>
+  <div id="timelineArea" style="display:none;margin-top:30px;"></div>
 
   <script>
     // === REPLACE THESE WITH YOUR REAL VALUES ===
-
-
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';  
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';  
-const GEMINI_KEY = 'YOUR_GEMINI_KEY';
+    const SUPABASE_URL = 'https://zygetlpgjkpyiyjquhfp.supabase.co';      // ← from Supabase Settings → API
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';                     // ← anon public key
 
     let supabaseClient = null;
     let currentUser = null;
     let entries = [];
     let recognition = null;
+    let isConversing = false;
     const categories = ["Childhood","Family","Education","Career","Relationships","Adventures","Challenges","Reflections","Other"];
 
     function initSupabase() {
@@ -93,6 +92,7 @@ const GEMINI_KEY = 'YOUR_GEMINI_KEY';
         entries = [];
         document.getElementById('log').innerHTML = '';
         document.getElementById('storyArea').innerHTML = '';
+        document.getElementById('timelineArea').style.display = 'none';
         logMessage('No user authenticated');
       }
     }
@@ -211,35 +211,69 @@ const GEMINI_KEY = 'YOUR_GEMINI_KEY';
       recognition.onend = () => logMessage('Voice recognition ended');
     }
 
-    async function tellMeMore() {
-      if (!GEMINI_KEY) return logMessage('Gemini API key is missing - set it in the code');
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        speechSynthesis.speak(utterance);
+      } else {
+        logMessage('Speech synthesis not supported');
+      }
+    }
+
+    async function callGemini(prompt) {
+      const { data, error } = await supabaseClient.functions.invoke('gemini-proxy', {
+        body: { prompt }
+      });
+      if (error) {
+        logMessage('Gemini error: ' + error.message);
+        throw error;
+      }
+      return data;
+    }
+
+    async function letsTalk() {
       if (!currentUser) return logMessage('Must be logged in');
-      initRecognition();
-      if (!recognition) return;
-      logMessage('Generating thoughtful question via Gemini');
+      isConversing = true;
+      document.getElementById('stopTalk').style.display = 'inline-block';
+      logMessage('Starting conversation...');
+      await askNextQuestion();
+    }
+
+    async function askNextQuestion() {
+      if (!isConversing) return;
+
       const entrySummaries = entries.map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
-      const prompt = `Based on these life story entries: ${entrySummaries || 'No previous entries'}\nGenerate one thoughtful question to elicit more details about the person's life. Question only.`;
+      const geminiPrompt = `Based on these life story entries: ${entrySummaries || 'No previous entries'}\nGenerate one thoughtful question to elicit more details about the person's life. If dates are missing for experiences, ask for them. Also explore life philosophies, values, lessons learned. Question only. Be warm and conversational.`;
+
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
-        if (!response.ok) throw new Error(`Gemini API failed with status ${response.status}`);
-        const data = await response.json();
+        const data = await callGemini(geminiPrompt);
         const question = data.candidates[0].content.parts[0].text.trim();
         logMessage(`Question: ${question}`);
-        alert(question); // Display question (could use speech synthesis in future)
-        recognition.onresult = event => {
+        speak(question);
+
+        initRecognition();
+        if (!recognition) return;
+        recognition.onresult = async event => {
           const answer = event.results[0][0].transcript;
-          logMessage(`Voice response captured: ${answer}`);
-          addEntry('Other', answer, question);
+          logMessage(`Voice response: ${answer}`);
+          await addEntry('Other', answer, question);
+          setTimeout(askNextQuestion, 1000); // Pause before next question
         };
         recognition.start();
-        logMessage('Listening for voice response...');
+        logMessage('Listening...');
       } catch (error) {
         logMessage('Error generating question: ' + error.message);
+        stopConversation();
       }
+    }
+
+    function stopConversation() {
+      isConversing = false;
+      document.getElementById('stopTalk').style.display = 'none';
+      if (recognition) recognition.abort();
+      speak('Conversation ended. Thanks for sharing!');
+      logMessage('Conversation ended');
     }
 
     function newVoiceMemo() {
@@ -248,129 +282,95 @@ const GEMINI_KEY = 'YOUR_GEMINI_KEY';
       if (!recognition) return;
       recognition.onresult = event => {
         const answer = event.results[0][0].transcript;
-        logMessage(`Voice memo captured: ${answer}`);
-        const category = prompt('Category for this memo: ' + categories.join(', ')) || 'Other';
+        logMessage(`Voice memo: ${answer}`);
+        const category = prompt('Category: ' + categories.join(', ')) || 'Other';
         addEntry(category, answer);
       };
       recognition.start();
-      logMessage('Listening for voice memo...');
+      logMessage('Listening for memo...');
     }
 
     function typeEntry() {
       if (!currentUser) return logMessage('Must be logged in');
       const category = prompt('Category: ' + categories.join(', ')) || 'Other';
-      const answer = prompt('Enter your text:');
+      const answer = prompt('Enter text:');
       if (answer) addEntry(category, answer);
     }
 
     async function generateStory() {
-      if (!GEMINI_KEY) return logMessage('Gemini API key is missing - set it in the code');
       if (!currentUser) return logMessage('Must be logged in');
-      if (entries.length === 0) return logMessage('No entries to generate story from');
-      logMessage('Generating life story via Gemini');
+      if (entries.length === 0) return logMessage('No entries');
+      document.getElementById('timelineArea').style.display = 'none';
+      logMessage('Generating story');
       const categorizedEntries = categories.map(cat => {
         const catTexts = entries.filter(e => e.category === cat).map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
         return catTexts ? `${cat}:\n${catTexts}` : '';
       }).filter(Boolean).join('\n\n');
-      const prompt = `Create a cohesive, engaging narrative life story from these categorized entries. Use first-person perspective:\n${categorizedEntries}`;
+      const geminiPrompt = `Create a cohesive, engaging narrative life story from these categorized entries. Use first-person perspective:\n${categorizedEntries}`;
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
-        if (!response.ok) throw new Error(`Gemini API failed with status ${response.status}`);
-        const data = await response.json();
+        const data = await callGemini(geminiPrompt);
         const story = data.candidates[0].content.parts[0].text;
         document.getElementById('storyArea').innerHTML = `<div class="story"><h2>My Life Story</h2><pre>${story}</pre></div>`;
-        logMessage('Life story generated successfully');
+        logMessage('Story generated');
       } catch (error) {
         logMessage('Error generating story: ' + error.message);
       }
     }
 
     async function continueStory() {
-      if (!GEMINI_KEY) return logMessage('Gemini API key is missing - set it in the code');
       if (!currentUser) return logMessage('Must be logged in');
       const storyDiv = document.getElementById('storyArea');
       const currentStory = storyDiv.textContent.trim();
-      if (!currentStory) return logMessage('Generate a story first to continue');
-      logMessage('Continuing life story via Gemini');
-      const prompt = `Continue this life story in a cohesive, engaging way. Add more details or next chapters based on any available entries: ${currentStory}`;
+      if (!currentStory) return logMessage('Generate story first');
+      document.getElementById('timelineArea').style.display = 'none';
+      logMessage('Continuing story');
+      const geminiPrompt = `Continue this life story cohesively. Add details or chapters based on entries: ${currentStory}`;
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
-        if (!response.ok) throw new Error(`Gemini API failed with status ${response.status}`);
-        const data = await response.json();
+        const data = await callGemini(geminiPrompt);
         const continuation = data.candidates[0].content.parts[0].text;
         storyDiv.innerHTML = `<div class="story"><h2>My Life Story (Continued)</h2><pre>${currentStory}\n\n${continuation}</pre></div>`;
-        logMessage('Life story continued successfully');
+        logMessage('Story continued');
       } catch (error) {
         logMessage('Error continuing story: ' + error.message);
       }
     }
 
-    function exportData() {
-      if (!currentUser) return logMessage('Must be logged in');
-      const data = { entries };
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${currentUser.email.replace(/@/g, '_')}_life_story.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      logMessage('Data exported as JSON');
-    }
-
-    function importData() {
-      if (!currentUser) return logMessage('Must be logged in');
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'application/json';
-      input.onchange = async e => {
-        try {
-          const file = e.target.files[0];
-          const text = await file.text();
-          const data = JSON.parse(text);
-          logMessage(`Importing ${data.entries.length} entries`);
-          for (const entry of data.entries) {
-            await addEntry(entry.category, entry.answer, entry.question, entry.photo, entry.audio);
-          }
-          logMessage('Data imported successfully');
-        } catch (error) {
-          logMessage('Error importing data: ' + error.message);
-        }
-      };
-      input.click();
+    function showChronologicalRecord() {
+      document.getElementById('storyArea').innerHTML = '';
+      const area = document.getElementById('timelineArea');
+      area.style.display = 'block';
+      const sorted = [...entries].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      let html = '<h2>📋 Chronological Record</h2>';
+      sorted.forEach(entry => {
+        const date = new Date(entry.timestamp).toLocaleString();
+        html += `<div class="entry"><strong>${date}</strong> - <strong>${entry.category || 'Other'}</strong><br>`;
+        if (entry.question) html += `<em>Question: ${entry.question}</em><br>`;
+        html += `${entry.answer || ''}</div>`;
+      });
+      area.innerHTML = html;
     }
 
     async function clearMyData() {
       if (!currentUser) return logMessage('Must be logged in');
-      if (!confirm('Are you sure you want to delete all your data? This cannot be undone.')) return;
-      logMessage('Deleting all entries');
+      if (!confirm('Sure? This deletes everything permanently.')) return;
+      logMessage('Deleting data');
       const { error } = await supabaseClient.from('life_entries').delete().eq('user_id', currentUser.id);
       if (error) {
-        logMessage('Error deleting data: ' + error.message);
+        logMessage('Error deleting: ' + error.message);
       } else {
-        logMessage('All data deleted');
+        logMessage('Data deleted');
         await loadEntries();
       }
     }
 
     function dailyReminder() {
-      // Simple reminder; could be enhanced to check last entry date
-      document.getElementById('reminder').textContent = "Don't forget to add something to your life story today!";
+      document.getElementById('reminder').textContent = "Don't forget to add to your life story today!";
     }
 
     // Init
     initSupabase();
     supabaseClient.auth.onAuthStateChange((event, session) => {
-      logMessage(`Auth state changed: ${event}`);
+      logMessage(`Auth changed: ${event}`);
       checkAuth();
     });
   </script>
