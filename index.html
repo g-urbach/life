@@ -275,10 +275,15 @@
       const { data, error } = await supabaseClient.functions.invoke('gemini-proxy', {
         body: { prompt }
       });
-      console.log('DEBUG: Gemini response', data, error);
+      console.log('DEBUG: Gemini response data', data, 'error', error);
       if (error) {
-        logMessage('Gemini error: ' + error.message);
+        logMessage('Gemini invoke error: ' + error.message);
         throw error;
+      }
+      if (data && data.error) {
+        console.log('DEBUG: Gemini API error', data.error);
+        logMessage('Gemini API returned error: ' + JSON.stringify(data.error));
+        throw new Error('Gemini API error');
       }
       return data;
     }
@@ -298,13 +303,14 @@
 
       const entrySummaries = entries.map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
       console.log('DEBUG: Entry summaries', entrySummaries);
-      const geminiPrompt = `Based on these life story entries: ${entrySummaries || 'No previous entries'}\nGenerate one thoughtful, short question (1 sentence max) to elicit more details about the person's life. If dates are missing for experiences, ask for them. Also explore life philosophies, values, lessons learned. Question only. Be warm and conversational.`;
+      const geminiPrompt = `Based on these life story entries: ${entrySummaries || 'No previous entries'}\nGenerate one thoughtful, very short question (1 sentence only, max 15 words) to elicit more details about the person's life. If dates are missing, ask for them. Also explore life philosophies, values, lessons learned. Question only. Be warm and conversational.`;
 
       try {
         const data = await callGemini(geminiPrompt);
         console.log('DEBUG: Raw Gemini data', data);
         if (!data || !data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0] || !data.candidates[0].content.parts[0].text) {
-          throw new Error('Invalid Gemini response structure');
+          console.log('DEBUG: Invalid structure', data);
+          throw new Error('Invalid Gemini response structure: ' + JSON.stringify(data));
         }
         const question = data.candidates[0].content.parts[0].text.trim();
         console.log('DEBUG: Extracted question', question);
