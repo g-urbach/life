@@ -58,12 +58,8 @@
     function initSupabase() {
       const { createClient } = supabase;
       supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-      // Auto-refresh session on page load to fix stale sessions
-      supabaseClient.auth.refreshSession().then(({ data, error }) => {
-        if (error) console.log('Session refresh on load failed:', error);
-        checkAuth();
-      });
+      // Auto-refresh session on load to fix stale sessions
+      supabaseClient.auth.refreshSession().then(() => checkAuth());
     }
 
     function logMessage(message) {
@@ -131,7 +127,7 @@
       }
 
       try {
-        console.log('DEBUG: Attempting signInWithPassword');
+        console.log('DEBUG: Attempting signInWithPassword with', { email });
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
         console.log('DEBUG: signIn response', { data, error });
 
@@ -140,9 +136,11 @@
         currentUser = data.user;
         logMessage('Sign in successful!');
 
+        // Wait for session to settle, then refresh and check
+        await new Promise(r => setTimeout(r, 1000));
         await supabaseClient.auth.refreshSession();
-        await new Promise(r => setTimeout(r, 1500));
-        logMessage('Session synced — checking again...');
+        await new Promise(r => setTimeout(r, 1000));
+        logMessage('Session synced — final check...');
         await checkAuth();
       } catch (error) {
         console.log('Sign in failed:', error);
