@@ -110,7 +110,6 @@
         }
       });
 
-      // Initial check
       setTimeout(async () => {
         const { data: { session } } = await supabaseClient.auth.getSession();
         if (session) {
@@ -154,20 +153,45 @@
     function initRecognition() {
       if (recognition) return;
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return logMessage('Speech not supported');
+      if (!SR) {
+        logMessage('Speech not supported in this browser.');
+        return;
+      }
       recognition = new SR();
       recognition.lang = 'en-US';
       recognition.interimResults = true;
       recognition.continuous = true;
 
-      recognition.onerror = e => logMessage('Voice error: ' + e.error);
+      recognition.onerror = e => {
+        logMessage('Voice error: ' + e.error);
+        if (e.error === 'no-speech' || e.error === 'aborted') {
+          setTimeout(() => {
+            if (recognition && !recognition.active) recognition.start();
+          }, 800);
+        }
+      };
+
       recognition.onend = () => {
-        if (isConversing) setTimeout(() => { if (recognition && !recognition.active) recognition.start(); }, 800);
+        if (isConversing) {
+          setTimeout(() => {
+            if (recognition && !recognition.active) recognition.start();
+          }, 1000);
+        }
       };
     }
 
     function speak(text) {
-      if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+      if (!('speechSynthesis' in window)) {
+        logMessage('Text-to-speech not supported in this browser.');
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      speechSynthesis.speak(utterance);
+      logMessage('Speaking: ' + text);
     }
 
     async function callAI(prompt) {
@@ -208,9 +232,13 @@
         speak(question);
 
         initRecognition();
+        if (!recognition) return;
+
         recognition.onresult = async e => {
           let text = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) text += e.results[i][0].transcript;
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            text += e.results[i][0].transcript;
+          }
           if (text.trim()) {
             logMessage(`You said: ${text}`);
             await addEntry('Other', text, question);
@@ -218,8 +246,13 @@
             setTimeout(askNextQuestion, 10000);
           }
         };
-        if (!recognition.active) recognition.start();
-        logMessage('Listening...');
+
+        if (!recognition.active) {
+          recognition.start();
+          logMessage('Listening...');
+        } else {
+          logMessage('Already listening...');
+        }
       } catch (e) {
         logMessage('AI temporarily unavailable — try again later.');
         stopConversation();
@@ -238,7 +271,13 @@
       document.getElementById('reminder').textContent = "Don't forget to add to your life story today!";
     }
 
-    // Other functions (newVoiceMemo, typeEntry, generateStory, continueStory, showChronologicalRecord, clearMyData) unchanged
+    // Placeholder for other functions (add them back if needed)
+    function newVoiceMemo() { logMessage('Voice memo feature coming soon'); }
+    function typeEntry() { logMessage('Typed entry feature coming soon'); }
+    function generateStory() { logMessage('Story generation coming soon'); }
+    function continueStory() { logMessage('Continue story coming soon'); }
+    function showChronologicalRecord() { logMessage('Chronological record coming soon'); }
+    function clearMyData() { logMessage('Data clear coming soon'); }
 
     initSupabase();
   </script>
