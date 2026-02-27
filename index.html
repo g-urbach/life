@@ -9,6 +9,7 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; }
     button { padding: 12px 20px; margin: 6px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     .primary { background: #10b981; color: white; }
     .secondary { background: #3b82f6; color: white; }
     .entry { border: 1px solid #e2e8f0; padding: 16px; margin-bottom: 16px; border-radius: 8px; background: #f8fafc; }
@@ -23,8 +24,8 @@
   <div style="background:#f0f9ff;padding:15px;border-radius:8px;margin:20px 0;">
     <input id="email" placeholder="Email" style="width:48%;padding:8px;">
     <input id="password" type="password" placeholder="Password" style="width:48%;padding:8px;">
-    <button onclick="signUp()" class="secondary">Sign Up</button>
-    <button onclick="signIn()" class="primary">Sign In</button>
+    <button id="signUpBtn" onclick="signUp()" class="secondary">Sign Up</button>
+    <button id="signInBtn" onclick="signIn()" class="primary">Sign In</button>
     <button onclick="signOut()" class="secondary">Sign Out</button>
     <button id="clearSessionBtn" onclick="clearSession()" style="background:#f59e0b;color:white;display:none;">Clear Session & Retry</button>
     <span id="userStatus" style="margin-left:15px;font-weight:bold;"></span>
@@ -53,13 +54,21 @@
     let entries = [];
     let recognition = null;
     let isConversing = false;
+    let isAuthInProgress = false;
     const categories = ["Childhood","Family","Education","Career","Relationships","Adventures","Challenges","Reflections","Other"];
 
     function initSupabase() {
       const { createClient } = supabase;
-      supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      // Auto-refresh session on load to fix stale sessions
-      supabaseClient.auth.refreshSession().then(() => checkAuth());
+      supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, storage: localStorage }
+      });
+
+      supabaseClient.auth.getSession().then(({ data }) => {
+        if (data.session) {
+          console.log('Restored persisted session');
+        }
+        checkAuth();
+      });
     }
 
     function logMessage(message) {
@@ -73,21 +82,25 @@
     }
 
     async function checkAuth() {
+      if (isAuthInProgress) return;
+      isAuthInProgress = true;
       logMessage('Checking auth');
-      const { data: { user }, error } = await supabaseClient.auth.getUser();
-      currentUser = user;
-      if (user) {
-        document.getElementById('userStatus').textContent = `Logged in as ${user.email}`;
-        document.getElementById('clearSessionBtn').style.display = 'none';
-        await loadEntries();
-        dailyReminder();
-      } else {
-        document.getElementById('userStatus').textContent = 'Not logged in';
-        entries = [];
-        document.getElementById('log').innerHTML = '';
-        document.getElementById('storyArea').innerHTML = '';
-        document.getElementById('timelineArea').style.display = 'none';
-        document.getElementById('clearSessionBtn').style.display = 'inline-block';
+      try {
+        const { data: { user }, error } = await supabaseClient.auth.getUser();
+        currentUser = user;
+        if (user) {
+          document.getElementById('userStatus').textContent = `Logged in as ${user.email}`;
+          document.getElementById('clearSessionBtn').style.display = 'none';
+          await loadEntries();
+          dailyReminder();
+        } else {
+          document.getElementById('userStatus').textContent = 'Not logged in';
+          document.getElementById('clearSessionBtn').style.display = 'inline-block';
+        }
+      } catch (e) {
+        logMessage('Auth check error: ' + e.message);
+      } finally {
+        isAuthInProgress = false;
       }
     }
 
@@ -95,21 +108,18 @@
       logMessage('Starting sign up');
       const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value.trim();
-      if (!email || !password) {
-        logMessage('Please enter email and password');
-        return;
-      }
+      if (!email || !password) return logMessage('Enter email and password');
 
       try {
         const { data, error } = await supabaseClient.auth.signUp({ email, password });
         if (error) throw error;
-        logMessage('Sign up successful! Check your email for confirmation link.');
+        logMessage('Sign up successful! Check email for confirmation link.');
       } catch (error) {
-        let msg = 'Sign up failed. Please try again.';
+        let msg = 'Sign up failed.';
         if (error.message.includes('duplicate') || error.message.includes('already registered')) {
           msg = 'Email already registered. Try signing in.';
         } else if (error.message.includes('password')) {
-          msg = 'Password too weak (min 6 characters).';
+          msg = 'Password too weak (min 6 chars).';
         } else if (error.message.includes('email')) {
           msg = 'Invalid email format.';
         }
@@ -118,50 +128,59 @@
     }
 
     async function signIn() {
-      logMessage('Starting sign in');
+      if (isAuthInProgress) return logMessage('Already signing in — please wait');
+      isAuthInProgress = true;
+      document.getElementById('signInBtn').disabled = true;
+      logMessage('Signing in...');
+
       const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value.trim();
       if (!email || !password) {
-        logMessage('Please enter email and password');
+        logMessage('Enter email and password');
+        resetSignInButton();
         return;
       }
 
       try {
-        console.log('DEBUG: Attempting signInWithPassword with', { email });
+        console.log('DEBUG: signIn attempt', { email });
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-        console.log('DEBUG: signIn response', { data, error });
+        console.log('DEBUG: signIn result', { data, error });
 
         if (error) throw error;
 
         currentUser = data.user;
         logMessage('Sign in successful!');
 
-        // Wait for session to settle, then refresh and check
-        await new Promise(r => setTimeout(r, 1000));
         await supabaseClient.auth.refreshSession();
-        await new Promise(r => setTimeout(r, 1000));
-        logMessage('Session synced — final check...');
+        await new Promise(r => setTimeout(r, 1500));
         await checkAuth();
       } catch (error) {
         console.log('Sign in failed:', error);
         let msg = 'Sign in failed. Try again.';
-        if (error.message.includes('Invalid login credentials') || error.message.includes('not found')) {
+        if (error.message.includes('Invalid login credentials')) {
           msg = 'Email or password not recognized.';
         } else if (error.message.includes('Email not confirmed')) {
           msg = 'Email not confirmed — check inbox/spam.';
         } else if (error.message.includes('AbortError') || error.message.includes('Lock broken')) {
-          msg = 'Session issue. Click "Clear Session & Retry" below.';
+          msg = 'Session glitch. Click "Clear Session & Retry".';
         }
         logMessage(msg);
+      } finally {
+        resetSignInButton();
       }
     }
 
+    function resetSignInButton() {
+      document.getElementById('signInBtn').disabled = false;
+      isAuthInProgress = false;
+    }
+
     function clearSession() {
-      logMessage('Clearing old session...');
+      logMessage('Clearing session...');
       localStorage.clear();
       indexedDB.deleteDatabase('supabase');
       supabaseClient.auth.signOut().then(() => {
-        logMessage('Session cleared. Please sign in again.');
+        logMessage('Session cleared. Sign in again.');
         checkAuth();
       });
     }
@@ -170,18 +189,18 @@
       logMessage('Signing out');
       await supabaseClient.auth.signOut();
       currentUser = null;
-      logMessage('Signed out successfully');
+      logMessage('Signed out');
       await checkAuth();
     }
+
+    // (All other functions remain the same as your last working version)
 
     async function loadEntries() {
       if (!currentUser) return;
       try {
         const { data, error } = await supabaseClient.from('life_entries').select('*').eq('user_id', currentUser.id).order('timestamp', { ascending: false });
         if (!error) entries = data;
-      } catch (e) {
-        logMessage('Load error: ' + e.message);
-      }
+      } catch (e) { logMessage('Load error: ' + e.message); }
     }
 
     async function addEntry(category, answer, question = null) {
@@ -226,9 +245,7 @@
 
     async function callAI(prompt) {
       console.log('Calling AI:', prompt);
-      const { data, error } = await supabaseClient.functions.invoke('ai-proxy', {
-        body: { prompt }
-      });
+      const { data, error } = await supabaseClient.functions.invoke('ai-proxy', { body: { prompt } });
       console.log('AI response:', data, error);
       if (error) throw error;
       if (data.error) throw new Error(data.error.message);
@@ -375,7 +392,10 @@
 
     // Init
     initSupabase();
-    supabaseClient.auth.onAuthStateChange(() => checkAuth());
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event, session ? 'session active' : 'no session');
+      if (!isAuthInProgress) checkAuth();
+    });
   </script>
 </body>
 </html>
