@@ -99,78 +99,64 @@
       try {
         const { data, error } = await supabaseClient.auth.signUp({ email, password });
         if (error) throw error;
-
         logMessage('Sign up successful! Check your email for a confirmation link.');
       } catch (error) {
         console.log('Sign up failed:', error);
         let msg = 'Sign up failed. Please try again.';
-
-        if (error.message.includes('duplicate key value') || error.message.includes('already registered')) {
-          msg = 'This email is already registered. Try signing in instead.';
+        if (error.message.includes('duplicate key') || error.message.includes('already registered')) {
+          msg = 'This email is already registered. Try signing in.';
         } else if (error.message.includes('password')) {
-          msg = 'Password is too weak or invalid. Use at least 6 characters.';
+          msg = 'Password too weak. Use at least 6 characters.';
         } else if (error.message.includes('email')) {
           msg = 'Invalid email format.';
         } else if (error.message.includes('Too many requests')) {
-          msg = 'Too many attempts. Wait a minute and try again.';
-        } else if (error.message.includes('network') || error.message.includes('fetch')) {
-          msg = 'Network issue — check your internet connection.';
+          msg = 'Too many attempts. Wait a minute.';
         }
-
         logMessage(msg);
       }
     }
 
-async function signIn() {
-  logMessage('Starting sign in');
-  const email = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value.trim();
-  if (!email || !password) {
-    logMessage('Please enter email and password');
-    return;
-  }
+    async function signIn() {
+      logMessage('Starting sign in');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+      if (!email || !password) {
+        logMessage('Please enter email and password');
+        return;
+      }
 
-  try {
-    console.log('DEBUG: Attempting signInWithPassword with', { email });
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      try {
+        console.log('DEBUG: Attempting signInWithPassword with', { email });
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
-    console.log('DEBUG: signIn response — data:', data, 'error:', error);
+        console.log('DEBUG: signIn response — data:', data, 'error:', error);
 
-    if (error) {
-      console.log('DEBUG: signIn error details:', error.message, error.code, error.status);
-      throw error;
+        if (error) throw error;
+
+        console.log('DEBUG: signIn success — user:', data.user, 'session:', data.session);
+
+        currentUser = data.user;
+        logMessage('Sign in successful!');
+
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        logMessage('Re-checking session...');
+        await checkAuth();
+      } catch (error) {
+        console.log('Sign in failed:', error);
+        let msg = 'Sign in failed. Please check your details and try again.';
+        if (error.message.includes('Invalid login credentials') || error.message.includes('not found')) {
+          msg = 'Email or password not recognized.';
+        } else if (error.message.includes('Email not confirmed')) {
+          msg = 'Email not confirmed. Check your inbox (and spam).';
+        } else if (error.message.includes('Too many requests')) {
+          msg = 'Too many attempts. Wait a minute.';
+        } else if (error.message.includes('AbortError') || error.message.includes('Lock broken')) {
+          msg = 'Session issue. Close other tabs, refresh, and try again.';
+        }
+        logMessage(msg);
+      }
     }
 
-    console.log('DEBUG: signIn success — user:', data.user, 'session:', data.session);
-
-    currentUser = data.user;
-    logMessage('Sign in successful! User ID: ' + (data.user?.id || 'no ID returned'));
-
-    // Force a small delay then re-check auth to let session sync
-    await new Promise(resolve => setTimeout(resolve, 800));
-    await checkAuth();
-  } catch (error) {
-    console.log('Sign in failed:', error);
-    let msg = 'Sign in failed. Please check your details and try again.';
-
-    if (error.message.includes('Invalid login credentials') ||
-        error.message.includes('not found') ||
-        error.message.includes('invalid')) {
-      msg = 'Email or password not recognized. Please check and try again.';
-    } else if (error.message.includes('Email not confirmed') ||
-               error.message.includes('confirm your email')) {
-      msg = 'Email not confirmed yet. Check your inbox (including spam) for the confirmation link.';
-    } else if (error.message.includes('Too many requests')) {
-      msg = 'Too many attempts. Wait a minute and try again.';
-    } else if (error.message.includes('network') || error.message.includes('fetch')) {
-      msg = 'Network issue — check your internet connection.';
-    } else if (error.message.includes('session') || error.message.includes('JWT')) {
-      msg = 'Session issue — try signing out, refreshing the page, and signing in again.';
-    }
-
-    logMessage(msg);
-  }
-}
     async function signOut() {
       logMessage('Starting sign out');
       try {
