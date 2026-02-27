@@ -7,19 +7,48 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; }
-    button { padding: 12px 20px; margin: 6px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    button {
+      padding: 12px 20px;
+      margin: 6px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
     .primary { background: #10b981; color: white; }
     .secondary { background: #3b82f6; color: white; }
-    .entry { border: 1px solid #e2e8f0; padding: 16px; margin-bottom: 16px; border-radius: 8px; background: #f8fafc; }
-    .story { white-space: pre-wrap; background: #f1f5f9; padding: 20px; border-radius: 8px; margin-top: 30px; }
+    .entry {
+      border: 1px solid #e2e8f0;
+      padding: 16px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .story {
+      white-space: pre-wrap;
+      background: #f1f5f9;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 30px;
+    }
   </style>
 </head>
 <body>
   <h1>❤️ My Life Story</h1>
   <p><strong>Share this page with your family — they only need their email + password.</strong></p>
 
+  <!-- Auth -->
   <div style="background:#f0f9ff;padding:15px;border-radius:8px;margin:20px 0;">
     <input id="email" placeholder="Email" style="width:48%;padding:8px;">
     <input id="password" type="password" placeholder="Password" style="width:48%;padding:8px;">
@@ -59,9 +88,39 @@
     function initSupabase() {
       const { createClient } = supabase;
       supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: true, autoRefreshToken: true, storage: localStorage }
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          storage: localStorage,
+          detectSessionInUrl: true
+        }
       });
-      supabaseClient.auth.getSession().then(() => checkAuth());
+
+      supabaseClient.auth.onAuthStateChange(async (event, session) => {
+        console.log('Auth event:', event, session ? 'session' : 'no session');
+        currentUser = session?.user ?? null;
+        if (currentUser) {
+          document.getElementById('userStatus').textContent = `Logged in as ${currentUser.email}`;
+          document.getElementById('clearSessionBtn').style.display = 'none';
+          await loadEntries();
+          dailyReminder();
+        } else {
+          document.getElementById('userStatus').textContent = 'Not logged in';
+          document.getElementById('clearSessionBtn').style.display = 'inline-block';
+        }
+      });
+
+      // Initial check
+      setTimeout(async () => {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+          currentUser = session.user;
+          document.getElementById('userStatus').textContent = `Logged in as ${currentUser.email}`;
+          await loadEntries();
+        } else {
+          document.getElementById('userStatus').textContent = 'Not logged in';
+        }
+      }, 800);
     }
 
     function logMessage(message) {
@@ -72,67 +131,6 @@
       entryDiv.textContent = `${new Date().toLocaleString()}: ${message}`;
       logDiv.appendChild(entryDiv);
       logDiv.scrollTop = logDiv.scrollHeight;
-    }
-
-    async function checkAuth() {
-      if (isAuthInProgress) return;
-      isAuthInProgress = true;
-      logMessage('Checking auth');
-      const { data: { user } } = await supabaseClient.auth.getUser();
-      currentUser = user;
-      if (user) {
-        document.getElementById('userStatus').textContent = `Logged in as ${user.email}`;
-        document.getElementById('clearSessionBtn').style.display = 'none';
-        await loadEntries();
-        dailyReminder();
-      } else {
-        document.getElementById('userStatus').textContent = 'Not logged in';
-        document.getElementById('clearSessionBtn').style.display = 'inline-block';
-      }
-      isAuthInProgress = false;
-    }
-
-    async function signIn() {
-      if (isAuthInProgress) return logMessage('Already signing in...');
-      isAuthInProgress = true;
-      document.getElementById('signInBtn').disabled = true;
-      logMessage('Signing in...');
-
-      const email = document.getElementById('email').value.trim();
-      const password = document.getElementById('password').value.trim();
-
-      try {
-        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-
-        currentUser = data.user;
-        logMessage('Sign in successful!');
-
-        await supabaseClient.auth.refreshSession();
-        await new Promise(r => setTimeout(r, 1500));
-        await checkAuth();
-      } catch (error) {
-        let msg = 'Sign in failed. Try again.';
-        if (error.message.includes('Invalid login credentials')) msg = 'Email or password not recognized.';
-        if (error.message.includes('Email not confirmed')) msg = 'Email not confirmed — check inbox/spam.';
-        logMessage(msg);
-      } finally {
-        document.getElementById('signInBtn').disabled = false;
-        isAuthInProgress = false;
-      }
-    }
-
-    function clearSession() {
-      logMessage('Clearing session...');
-      localStorage.clear();
-      indexedDB.deleteDatabase('supabase');
-      supabaseClient.auth.signOut().then(() => checkAuth());
-    }
-
-    async function signOut() {
-      await supabaseClient.auth.signOut();
-      currentUser = null;
-      await checkAuth();
     }
 
     async function loadEntries() {
@@ -164,7 +162,7 @@
 
       recognition.onerror = e => logMessage('Voice error: ' + e.error);
       recognition.onend = () => {
-        if (isConversing) setTimeout(() => { if (recognition) recognition.start(); }, 800);
+        if (isConversing) setTimeout(() => { if (recognition && !recognition.active) recognition.start(); }, 800);
       };
     }
 
@@ -181,8 +179,8 @@
           return data.choices[0].message.content.trim();
         } catch (error) {
           if (error.message.includes('429') && attempt < 4) {
-            logMessage(`Rate limit hit — waiting ${attempt * 8} seconds...`);
-            await new Promise(r => setTimeout(r, attempt * 8000));
+            logMessage(`Rate limit — waiting ${attempt * 10} seconds...`);
+            await new Promise(r => setTimeout(r, attempt * 10000));
             continue;
           }
           throw error;
@@ -217,13 +215,13 @@
             logMessage(`You said: ${text}`);
             await addEntry('Other', text, question);
             recognition.stop();
-            setTimeout(askNextQuestion, 8000); // generous pause
+            setTimeout(askNextQuestion, 10000);
           }
         };
         if (!recognition.active) recognition.start();
         logMessage('Listening...');
       } catch (e) {
-        logMessage('AI temporarily unavailable — try again in a minute.');
+        logMessage('AI temporarily unavailable — try again later.');
         stopConversation();
       }
     }
@@ -236,10 +234,13 @@
       logMessage('Conversation ended');
     }
 
-    // Other functions (newVoiceMemo, typeEntry, generateStory, continueStory, etc.) are unchanged from your last working version
+    function dailyReminder() {
+      document.getElementById('reminder').textContent = "Don't forget to add to your life story today!";
+    }
+
+    // Other functions (newVoiceMemo, typeEntry, generateStory, continueStory, showChronologicalRecord, clearMyData) unchanged
 
     initSupabase();
-    supabaseClient.auth.onAuthStateChange(() => checkAuth());
   </script>
 </body>
 </html>
