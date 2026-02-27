@@ -26,6 +26,7 @@
     <button onclick="signUp()" class="secondary">Sign Up</button>
     <button onclick="signIn()" class="primary">Sign In</button>
     <button onclick="signOut()" class="secondary">Sign Out</button>
+    <button id="clearSessionBtn" onclick="clearSession()" style="background:#f59e0b;color:white;display:none;">Clear Session & Retry</button>
     <span id="userStatus" style="margin-left:15px;font-weight:bold;"></span>
   </div>
 
@@ -57,7 +58,12 @@
     function initSupabase() {
       const { createClient } = supabase;
       supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      checkAuth();
+
+      // Auto-refresh session on page load to fix stale sessions
+      supabaseClient.auth.refreshSession().then(({ data, error }) => {
+        if (error) console.log('Session refresh on load failed:', error);
+        checkAuth();
+      });
     }
 
     function logMessage(message) {
@@ -76,6 +82,7 @@
       currentUser = user;
       if (user) {
         document.getElementById('userStatus').textContent = `Logged in as ${user.email}`;
+        document.getElementById('clearSessionBtn').style.display = 'none';
         await loadEntries();
         dailyReminder();
       } else {
@@ -84,6 +91,7 @@
         document.getElementById('log').innerHTML = '';
         document.getElementById('storyArea').innerHTML = '';
         document.getElementById('timelineArea').style.display = 'none';
+        document.getElementById('clearSessionBtn').style.display = 'inline-block';
       }
     }
 
@@ -99,18 +107,15 @@
       try {
         const { data, error } = await supabaseClient.auth.signUp({ email, password });
         if (error) throw error;
-        logMessage('Sign up successful! Check your email for a confirmation link.');
+        logMessage('Sign up successful! Check your email for confirmation link.');
       } catch (error) {
-        console.log('Sign up failed:', error);
         let msg = 'Sign up failed. Please try again.';
-        if (error.message.includes('duplicate key') || error.message.includes('already registered')) {
-          msg = 'This email is already registered. Try signing in.';
+        if (error.message.includes('duplicate') || error.message.includes('already registered')) {
+          msg = 'Email already registered. Try signing in.';
         } else if (error.message.includes('password')) {
-          msg = 'Password too weak. Use at least 6 characters.';
+          msg = 'Password too weak (min 6 characters).';
         } else if (error.message.includes('email')) {
           msg = 'Invalid email format.';
-        } else if (error.message.includes('Too many requests')) {
-          msg = 'Too many attempts. Wait a minute.';
         }
         logMessage(msg);
       }
@@ -126,48 +131,49 @@
       }
 
       try {
-        console.log('DEBUG: Attempting signInWithPassword with', { email });
+        console.log('DEBUG: Attempting signInWithPassword');
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
-        console.log('DEBUG: signIn response — data:', data, 'error:', error);
+        console.log('DEBUG: signIn response', { data, error });
 
         if (error) throw error;
-
-        console.log('DEBUG: signIn success — user:', data.user, 'session:', data.session);
 
         currentUser = data.user;
         logMessage('Sign in successful!');
 
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        logMessage('Re-checking session...');
+        await supabaseClient.auth.refreshSession();
+        await new Promise(r => setTimeout(r, 1500));
+        logMessage('Session synced — checking again...');
         await checkAuth();
       } catch (error) {
         console.log('Sign in failed:', error);
-        let msg = 'Sign in failed. Please check your details and try again.';
+        let msg = 'Sign in failed. Try again.';
         if (error.message.includes('Invalid login credentials') || error.message.includes('not found')) {
           msg = 'Email or password not recognized.';
         } else if (error.message.includes('Email not confirmed')) {
-          msg = 'Email not confirmed. Check your inbox (and spam).';
-        } else if (error.message.includes('Too many requests')) {
-          msg = 'Too many attempts. Wait a minute.';
+          msg = 'Email not confirmed — check inbox/spam.';
         } else if (error.message.includes('AbortError') || error.message.includes('Lock broken')) {
-          msg = 'Session issue. Close other tabs, refresh, and try again.';
+          msg = 'Session issue. Click "Clear Session & Retry" below.';
         }
         logMessage(msg);
       }
     }
 
+    function clearSession() {
+      logMessage('Clearing old session...');
+      localStorage.clear();
+      indexedDB.deleteDatabase('supabase');
+      supabaseClient.auth.signOut().then(() => {
+        logMessage('Session cleared. Please sign in again.');
+        checkAuth();
+      });
+    }
+
     async function signOut() {
-      logMessage('Starting sign out');
-      try {
-        const { error } = await supabaseClient.auth.signOut();
-        if (error) throw error;
-        currentUser = null;
-        logMessage('Signed out successfully');
-        await checkAuth();
-      } catch (error) {
-        logMessage('Sign out error: ' + error.message);
-      }
+      logMessage('Signing out');
+      await supabaseClient.auth.signOut();
+      currentUser = null;
+      logMessage('Signed out successfully');
+      await checkAuth();
     }
 
     async function loadEntries() {
