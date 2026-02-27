@@ -19,6 +19,7 @@
   <h1>❤️ My Life Story</h1>
   <p><strong>Share this page with your family — they only need their email + password.</strong></p>
 
+  <!-- Auth -->
   <div style="background:#f0f9ff;padding:15px;border-radius:8px;margin:20px 0;">
     <input id="email" placeholder="Email" style="width:48%;padding:8px;">
     <input id="password" type="password" placeholder="Password" style="width:48%;padding:8px;">
@@ -86,16 +87,98 @@
       }
     }
 
-    async function signUp() { /* unchanged */ }
-    async function signIn() { /* unchanged */ }
-    async function signOut() { /* unchanged */ }
+    async function signUp() {
+      logMessage('Starting sign up');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+      if (!email || !password) {
+        logMessage('Please enter email and password');
+        return;
+      }
+
+      try {
+        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) throw error;
+
+        logMessage('Sign up successful! Check your email for a confirmation link.');
+      } catch (error) {
+        console.log('Sign up failed:', error);
+        let msg = 'Sign up failed. Please try again.';
+
+        if (error.message.includes('duplicate key value') || error.message.includes('already registered')) {
+          msg = 'This email is already registered. Try signing in instead.';
+        } else if (error.message.includes('password')) {
+          msg = 'Password is too weak or invalid. Use at least 6 characters.';
+        } else if (error.message.includes('email')) {
+          msg = 'Invalid email format.';
+        } else if (error.message.includes('Too many requests')) {
+          msg = 'Too many attempts. Wait a minute and try again.';
+        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+          msg = 'Network issue — check your internet connection.';
+        }
+
+        logMessage(msg);
+      }
+    }
+
+    async function signIn() {
+      logMessage('Starting sign in');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+      if (!email || !password) {
+        logMessage('Please enter email and password');
+        return;
+      }
+
+      try {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+
+        currentUser = data.user;
+        logMessage('Sign in successful!');
+        await checkAuth();
+      } catch (error) {
+        console.log('Sign in failed:', error);
+        let msg = 'Sign in failed. Please check your details and try again.';
+
+        if (error.message.includes('Invalid login credentials') ||
+            error.message.includes('not found') ||
+            error.message.includes('invalid')) {
+          msg = 'Email or password not recognized. Please check and try again.';
+        } else if (error.message.includes('Email not confirmed') ||
+                   error.message.includes('confirm your email')) {
+          msg = 'Email not confirmed yet. Check your inbox (including spam) for the confirmation link.';
+        } else if (error.message.includes('Too many requests')) {
+          msg = 'Too many attempts. Wait a minute and try again.';
+        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+          msg = 'Network issue — check your internet connection.';
+        }
+
+        logMessage(msg);
+      }
+    }
+
+    async function signOut() {
+      logMessage('Starting sign out');
+      try {
+        const { error } = await supabaseClient.auth.signOut();
+        if (error) throw error;
+        currentUser = null;
+        logMessage('Signed out successfully');
+        await checkAuth();
+      } catch (error) {
+        logMessage('Sign out error: ' + error.message);
+      }
+    }
 
     async function loadEntries() {
       if (!currentUser) return;
       try {
         const { data, error } = await supabaseClient.from('life_entries').select('*').eq('user_id', currentUser.id).order('timestamp', { ascending: false });
         if (!error) entries = data;
-      } catch (e) { logMessage('Load error: ' + e.message); }
+      } catch (e) {
+        logMessage('Load error: ' + e.message);
+      }
     }
 
     async function addEntry(category, answer, question = null) {
@@ -198,8 +281,96 @@
       logMessage('Conversation ended');
     }
 
-    // (keep newVoiceMemo, typeEntry, generateStory, continueStory, showChronologicalRecord, clearMyData, dailyReminder as before)
+    function newVoiceMemo() {
+      if (!currentUser) return logMessage('Must be logged in');
+      initRecognition();
+      if (!recognition) return;
+      recognition.onresult = event => {
+        const answer = event.results[0][0].transcript;
+        logMessage(`Voice memo: ${answer}`);
+        const category = prompt('Category: ' + categories.join(', ')) || 'Other';
+        addEntry(category, answer);
+      };
+      recognition.start();
+      logMessage('Listening for memo...');
+    }
 
+    function typeEntry() {
+      if (!currentUser) return logMessage('Must be logged in');
+      const category = prompt('Category: ' + categories.join(', ')) || 'Other';
+      const answer = prompt('Enter text:');
+      if (answer) addEntry(category, answer);
+    }
+
+    async function generateStory() {
+      if (!currentUser) return logMessage('Must be logged in');
+      if (entries.length === 0) return logMessage('No entries');
+      document.getElementById('timelineArea').style.display = 'none';
+      logMessage('Generating story');
+      const categorizedEntries = categories.map(cat => {
+        const catTexts = entries.filter(e => e.category === cat).map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
+        return catTexts ? `${cat}:\n${catTexts}` : '';
+      }).filter(Boolean).join('\n\n');
+      const aiPrompt = `Create a cohesive, engaging narrative life story from these categorized entries. Use first-person perspective:\n${categorizedEntries}`;
+      try {
+        const story = await callAI(aiPrompt);
+        document.getElementById('storyArea').innerHTML = `<div class="story"><h2>My Life Story</h2><pre>${story}</pre></div>`;
+        logMessage('Story generated');
+      } catch (error) {
+        logMessage('Error generating story: ' + error.message);
+      }
+    }
+
+    async function continueStory() {
+      if (!currentUser) return logMessage('Must be logged in');
+      const storyDiv = document.getElementById('storyArea');
+      const currentStory = storyDiv.textContent.trim();
+      if (!currentStory) return logMessage('Generate story first');
+      document.getElementById('timelineArea').style.display = 'none';
+      logMessage('Continuing story');
+      const aiPrompt = `Continue this life story cohesively. Add details or chapters based on entries: ${currentStory}`;
+      try {
+        const continuation = await callAI(aiPrompt);
+        storyDiv.innerHTML = `<div class="story"><h2>My Life Story (Continued)</h2><pre>${currentStory}\n\n${continuation}</pre></div>`;
+        logMessage('Story continued');
+      } catch (error) {
+        logMessage('Error continuing story: ' + error.message);
+      }
+    }
+
+    function showChronologicalRecord() {
+      document.getElementById('storyArea').innerHTML = '';
+      const area = document.getElementById('timelineArea');
+      area.style.display = 'block';
+      const sorted = [...entries].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      let html = '<h2>📋 Chronological Record</h2>';
+      sorted.forEach(entry => {
+        const date = new Date(entry.timestamp).toLocaleString();
+        html += `<div class="entry"><strong>${date}</strong> - <strong>${entry.category || 'Other'}</strong><br>`;
+        if (entry.question) html += `<em>Question: ${entry.question}</em><br>`;
+        html += `${entry.answer || ''}</div>`;
+      });
+      area.innerHTML = html;
+    }
+
+    async function clearMyData() {
+      if (!currentUser) return logMessage('Must be logged in');
+      if (!confirm('Sure? This deletes everything permanently.')) return;
+      logMessage('Deleting data');
+      const { error } = await supabaseClient.from('life_entries').delete().eq('user_id', currentUser.id);
+      if (error) {
+        logMessage('Error deleting: ' + error.message);
+      } else {
+        logMessage('Data deleted');
+        await loadEntries();
+      }
+    }
+
+    function dailyReminder() {
+      document.getElementById('reminder').textContent = "Don't forget to add to your life story today!";
+    }
+
+    // Init
     initSupabase();
     supabaseClient.auth.onAuthStateChange(() => checkAuth());
   </script>
