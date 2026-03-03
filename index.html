@@ -273,6 +273,7 @@
   // ── State ────────────────────────────────────────────────────────
   let sb           = null;
   let currentUser  = null;
+  let sessionToken = null;   // cached JWT from auth events
   let entries      = [];
   let isConversing = false;
   let recognition  = null;
@@ -297,7 +298,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.10 starting...');
+    dbg('INIT', 'v0.11 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -309,7 +310,9 @@
 
     sb.auth.onAuthStateChange(async (event, session) => {
       dbg('AUTH', 'Event:', event, session ? session.user.email : 'no session');
-      currentUser = session?.user ?? null;
+      currentUser  = session?.user ?? null;
+      sessionToken = session?.access_token ?? null;
+      dbg('AUTH', 'Token cached:', sessionToken ? 'YES (JWT)' : 'NO');
       updateAuthUI();
       if (currentUser) { await loadEntries(); showReminder(); }
     });
@@ -367,14 +370,9 @@
     'Prefer':        'return=minimal'
   };
 
-  async function getAuthHeaders() {
-    // Fetch the live session JWT for RLS, fall back to anon key
-    let token = SUPABASE_ANON;
-    try {
-      const { data } = await sb.auth.getSession();
-      if (data?.session?.access_token) token = data.session.access_token;
-    } catch(e) { dbgWarn('AUTH', 'Could not get session token:', e.message); }
-    dbg('AUTH', 'Token type:', token === SUPABASE_ANON ? 'ANON (fallback)' : 'SESSION JWT');
+  function getAuthHeaders() {
+    const token = sessionToken ?? SUPABASE_ANON;
+    dbg('AUTH', 'Token type:', sessionToken ? 'SESSION JWT' : 'ANON (fallback)');
     return {
       'Content-Type':  'application/json',
       'apikey':        SUPABASE_ANON,
@@ -388,7 +386,7 @@
     try {
       const res = await fetch(
         DB_URL + '?user_id=eq.' + currentUser.id + '&order=timestamp.asc',
-        { headers: await getAuthHeaders() }
+        { headers: getAuthHeaders() }
       );
       dbg('DB', 'Load HTTP status:', res.status);
       if (!res.ok) { dbgErr('DB', 'Load failed HTTP:', res.status, await res.text()); return; }
@@ -417,7 +415,7 @@
     try {
       const res = await fetch(DB_URL, {
         method: 'POST',
-        headers: { ...await getAuthHeaders(), 'Prefer': 'return=minimal' },
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
         body: JSON.stringify(newEntry)
       });
       dbg('DB', 'Insert HTTP status:', res.status);
@@ -777,7 +775,7 @@
     if (!confirm('Delete ALL ' + entries.length + ' entries? This cannot be undone.')) return;
     try {
       const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id, {
-        method: 'DELETE', headers: await getAuthHeaders()
+        method: 'DELETE', headers: getAuthHeaders()
       });
       dbg('DB', 'Delete HTTP status:', res.status);
       if (!res.ok) { dbgErr('DB', 'Delete failed:', res.status); toast('Error deleting entries'); }
