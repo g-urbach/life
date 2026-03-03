@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.5</title>
+  <title>My Life Story v0.6</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -382,7 +382,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small style="font-size:0.45em;opacity:0.5;font-family:'Lato',sans-serif;font-style:normal;vertical-align:middle;">v0.5</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small style="font-size:0.45em;opacity:0.5;font-family:'Lato',sans-serif;font-style:normal;vertical-align:middle;">v0.6</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -898,31 +898,33 @@ Ask about something not yet covered. Be warm and personal. Return ONLY the quest
       try {
         dbg('AI', 'Attempt ' + attempt + ': invoking supabase function AI_PROXY (Groq/llama)...');
 
-        // Get token first (fast, local operation)
-        const { data: { session } } = await sb.auth.getSession();
-        const token = session?.access_token ?? SUPABASE_ANON_KEY;
-        dbg('AI', 'Using token type:', session ? 'user session' : 'anon key');
-
-        // Now set up timeout and fetch together
+        // Fire fetch directly with anon key — no session lookup needed
+        dbg('AI', 'Firing fetch to AI_PROXY...');
         let timeoutId;
         const timeoutPromise = new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('AI call timed out after 20s')), 20000);
         });
 
         const fetchPromise = fetch(
-          `${SUPABASE_URL}/functions/v1/AI_PROXY`,
+          SUPABASE_URL + '/functions/v1/AI_PROXY',
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
+              'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
               'apikey': SUPABASE_ANON_KEY
             },
-            body: JSON.stringify({ prompt })
+            body: JSON.stringify({ prompt: prompt })
           }
-        ).then(r => {
+        ).then(function(r) {
           dbg('AI', 'HTTP response status:', r.status);
           return r.json();
+        }).then(function(json) {
+          dbg('AI', 'JSON parsed OK:', JSON.stringify(json).substring(0, 150));
+          return json;
+        }).catch(function(e) {
+          dbgErr('AI', 'Fetch/parse error', e);
+          throw e;
         });
 
         dbg('AI', 'Fetch fired — racing against 20s timeout...');
