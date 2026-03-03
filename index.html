@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.8</title>
+  <title>My Life Story v0.10</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -144,7 +144,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.8</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.10</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -297,7 +297,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.8 starting...');
+    dbg('INIT', 'v0.10 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -358,30 +358,75 @@
     toast('Signed out');
   }
 
-  // ── Database ─────────────────────────────────────────────────────
+  // ── Database (direct REST — bypasses Supabase JS client) ───────
+  const DB_URL = SUPABASE_URL + '/rest/v1/life_entries';
+  const DB_HEADERS = {
+    'Content-Type':  'application/json',
+    'apikey':        SUPABASE_ANON,
+    'Authorization': 'Bearer ' + SUPABASE_ANON,
+    'Prefer':        'return=minimal'
+  };
+
+  function getAuthHeaders() {
+    // Use session token if available for RLS, fall back to anon
+    return {
+      'Content-Type':  'application/json',
+      'apikey':        SUPABASE_ANON,
+      'Authorization': 'Bearer ' + (currentUser?._accessToken ?? SUPABASE_ANON)
+    };
+  }
+
   async function loadEntries() {
     if (!currentUser) return;
-    dbg('DB', 'Loading entries...');
-    const { data, error } = await sb
-      .from('life_entries').select('*')
-      .eq('user_id', currentUser.id)
-      .order('timestamp', { ascending: true });
-    if (error) { dbgErr('DB', 'Load failed:', error); return; }
-    entries = data || [];
-    dbg('DB', 'Loaded', entries.length, 'entries');
+    dbg('DB', 'Loading entries via REST...');
+    try {
+      const res = await fetch(
+        DB_URL + '?user_id=eq.' + currentUser.id + '&order=timestamp.asc',
+        { headers: getAuthHeaders() }
+      );
+      dbg('DB', 'Load HTTP status:', res.status);
+      if (!res.ok) { dbgErr('DB', 'Load failed HTTP:', res.status, await res.text()); return; }
+      const data = await res.json();
+      entries = data || [];
+      dbg('DB', 'Loaded', entries.length, 'entries');
+    } catch(err) {
+      dbgErr('DB', 'Load error:', err.message);
+    }
   }
 
   async function addEntry(category, answer, question = null) {
     if (!currentUser) return false;
-    dbg('DB', 'Adding entry, category:', category, 'length:', answer.length);
-    const { error } = await sb.from('life_entries').insert({
+    dbg('DB', 'Adding entry, category:', category, 'answer length:', answer.length);
+
+    // Add to local memory immediately so conversation keeps flowing
+    const newEntry = {
       user_id: currentUser.id, category: category || 'Other',
       answer: answer.trim(), question: question || null,
       timestamp: new Date().toISOString()
-    });
-    if (error) { dbgErr('DB', 'Insert failed:', error); toast('Error saving: ' + error.message); return false; }
-    dbg('DB', 'Entry saved');
-    await loadEntries();
+    };
+    entries.push(newEntry);
+    dbg('DB', 'Added to local entries, total:', entries.length);
+
+    // Save to DB in background
+    try {
+      const res = await fetch(DB_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify(newEntry)
+      });
+      dbg('DB', 'Insert HTTP status:', res.status);
+      if (!res.ok) {
+        const text = await res.text();
+        dbgErr('DB', 'Insert failed:', res.status, text);
+        toast('Warning: entry may not have saved — ' + res.status);
+        return false;
+      }
+      dbg('DB', 'Entry saved to DB successfully');
+    } catch(err) {
+      dbgErr('DB', 'Insert error:', err.message);
+      toast('Warning: could not save entry');
+      return false;
+    }
     return true;
   }
 
@@ -724,9 +769,14 @@
   async function confirmDelete() {
     if (!currentUser) return toast('Please sign in first');
     if (!confirm('Delete ALL ' + entries.length + ' entries? This cannot be undone.')) return;
-    const { error } = await sb.from('life_entries').delete().eq('user_id', currentUser.id);
-    if (error) { dbgErr('DB', 'Delete failed:', error); toast('Error: ' + error.message); }
-    else { entries = []; toast('All entries deleted'); }
+    try {
+      const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id, {
+        method: 'DELETE', headers: getAuthHeaders()
+      });
+      dbg('DB', 'Delete HTTP status:', res.status);
+      if (!res.ok) { dbgErr('DB', 'Delete failed:', res.status); toast('Error deleting entries'); }
+      else { entries = []; toast('All entries deleted'); }
+    } catch(err) { dbgErr('DB', 'Delete error:', err); toast('Error: ' + err.message); }
   }
 
   // ── Reminder ─────────────────────────────────────────────────────
