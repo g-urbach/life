@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.11</title>
+  <title>My Life Story v0.13</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -144,7 +144,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.11</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.13</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -229,8 +229,7 @@
     <h2 class="section-title">My Story</h2>
     <p class="section-sub">AI will weave your entries into a beautifully written life narrative.</p>
     <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;">
-      <button class="btn btn-primary" onclick="generateStory(false)">✨ Generate Story</button>
-      <button class="btn btn-secondary" onclick="generateStory(true)">🔄 Continue / Regenerate</button>
+      <button class="btn btn-primary" onclick="generateStory()">✨ Generate My Story</button>
     </div>
     <div id="storyOutput" style="display:none"></div>
   </div>
@@ -298,7 +297,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.11 starting...');
+    dbg('INIT', 'v0.13 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -715,23 +714,31 @@
   }
 
   // ── Story ────────────────────────────────────────────────────────
-  async function generateStory(isContinue) {
+  async function generateStory() {
     if (!currentUser)    return toast('Please sign in first');
     if (!entries.length) return toast('Add some entries first!');
     const out         = document.getElementById('storyOutput');
     out.style.display = 'block';
     out.className     = 'loading';
-    out.textContent   = isContinue && currentStory ? 'Continuing your story...' : 'Writing your life story...';
+    out.textContent   = 'Writing your life story…';
+    dbg('STORY', 'Generating from', entries.length, 'entries');
     try {
-      const entriesText = entries.map(e =>
-        '[' + e.category + ']' + (e.question ? ' ' + e.question + ' —' : '') + ' ' + e.answer
-      ).join('\n\n');
-      const prompt = isContinue && currentStory
-        ? 'Here is a life story:\n\n' + currentStory + '\n\nNew entries to weave in:\n\n' + entriesText + '\n\nExtend the story with the same warm narrative voice. Third person. Return only the story.'
-        : 'You are a skilled biographer. Write a warm, engaging narrative in third person using these life entries. Make it feel like a real life story someone would treasure.\n\nEntries:\n\n' + entriesText + '\n\nReturn only the story.';
-      const story   = await callAI(prompt);
-      currentStory  = story;
+      const entriesText = entries.map((e, i) =>
+        (i + 1) + '. [' + e.category + ']' + (e.question ? ' Q: ' + e.question + ' —' : '') + ' ' + e.answer
+      ).join('\n');
+
+      const prompt =
+        'You are a warm, gifted biographer. Using the life entries below, write ONE single flowing narrative ' +
+        'about this person\'s life. It should read like a beautifully written memoir — continuous prose, no ' +
+        'bullet points, no headings, no episode-by-episode structure. Weave the entries together naturally ' +
+        'into a cohesive story with a beginning, middle and end. Write in third person. Be warm, vivid and ' +
+        'personal. Aim for 4–6 paragraphs. Return only the story text, nothing else.\n\n' +
+        'LIFE ENTRIES:\n' + entriesText;
+
+      const story  = await callAI(prompt);
+      currentStory = story;
       renderStory(story);
+      dbg('STORY', 'Generated, chars:', story.length);
     } catch (err) {
       dbgErr('STORY', err);
       out.textContent = 'Could not generate story — please try again.';
