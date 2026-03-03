@@ -4,282 +4,989 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My Life Story</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      max-width: 900px;
-      margin: 40px auto;
-      padding: 20px;
-      line-height: 1.6;
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --cream: #faf7f2;
+      --warm: #f5ede0;
+      --gold: #c9a96e;
+      --gold-dark: #a07840;
+      --ink: #2c2416;
+      --ink-light: #6b5a3e;
+      --sage: #7a9e7e;
+      --rose: #c97b6e;
+      --border: #e8dcc8;
+      --shadow: 0 4px 24px rgba(44,36,22,0.10);
     }
-    button {
-      padding: 12px 20px;
-      margin: 6px;
-      font-size: 16px;
+
+    body {
+      font-family: 'Lato', sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--ink);
+      color: var(--cream);
+      padding: 28px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 2rem;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+    }
+    header h1 span { color: var(--gold); font-style: italic; }
+    #userStatus {
+      font-size: 0.85rem;
+      color: var(--gold);
+      font-weight: 300;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Auth Panel ── */
+    #authPanel {
+      background: var(--warm);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    #authPanel input {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.9rem;
+      background: white;
+      color: var(--ink);
+      width: 200px;
+    }
+    #authPanel input:focus { outline: 2px solid var(--gold); }
+
+    /* ── Nav Buttons ── */
+    #navBar {
+      background: white;
+      border-bottom: 1px solid var(--border);
+      padding: 0 40px;
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+    }
+    .nav-btn {
+      padding: 16px 20px;
+      border: none;
+      border-bottom: 3px solid transparent;
+      background: none;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-light);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .nav-btn:hover { color: var(--gold-dark); border-bottom-color: var(--gold); }
+    .nav-btn.active { color: var(--ink); border-bottom-color: var(--gold); }
+    .nav-btn.danger { color: var(--rose); }
+    .nav-btn.danger:hover { border-bottom-color: var(--rose); }
+
+    /* ── Main ── */
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+
+    /* ── Panels ── */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Section Heading ── */
+    .section-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.6rem;
+      font-weight: 400;
+      margin-bottom: 8px;
+      color: var(--ink);
+    }
+    .section-sub {
+      color: var(--ink-light);
+      font-size: 0.9rem;
+      margin-bottom: 28px;
+    }
+
+    /* ── Talk Panel ── */
+    #talkStatus {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: var(--warm);
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--ink-light);
+    }
+    .pulse {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--sage);
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+    .pulse.red { background: var(--rose); }
+    .pulse.idle { background: #ccc; animation: none; }
+
+    #conversationLog {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 420px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .msg {
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      max-width: 82%;
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    .msg.ai {
+      background: white;
+      border: 1px solid var(--border);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+    .msg.user {
+      background: var(--ink);
+      color: var(--cream);
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.system {
+      background: var(--warm);
+      color: var(--ink-light);
+      align-self: center;
+      font-size: 0.82rem;
+      font-style: italic;
+      max-width: 100%;
+      text-align: center;
+    }
+
+    .talk-controls { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+
+    /* ── Typed Entry Panel ── */
+    #typePanel select, #typePanel textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.95rem;
+      background: white;
+      color: var(--ink);
+      margin-bottom: 14px;
+    }
+    #typePanel textarea {
+      min-height: 140px;
+      resize: vertical;
+      line-height: 1.7;
+    }
+    #typePanel select:focus, #typePanel textarea:focus { outline: 2px solid var(--gold); }
+
+    /* ── Entries / Timeline ── */
+    .entry-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin-bottom: 14px;
+      transition: box-shadow 0.2s;
+    }
+    .entry-card:hover { box-shadow: var(--shadow); }
+    .entry-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .entry-cat {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: var(--warm);
+      color: var(--gold-dark);
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+    .entry-date {
+      font-size: 0.78rem;
+      color: var(--ink-light);
+    }
+    .entry-q {
+      font-style: italic;
+      color: var(--ink-light);
+      font-size: 0.88rem;
+      margin-bottom: 6px;
+    }
+    .entry-text { font-size: 0.95rem; line-height: 1.7; }
+
+    /* ── Story ── */
+    #storyOutput {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px 36px;
+      line-height: 1.9;
+      font-size: 1rem;
+      white-space: pre-wrap;
+      font-family: 'Playfair Display', serif;
+      color: var(--ink);
+    }
+    #storyOutput.loading {
+      color: var(--ink-light);
+      font-style: italic;
+      font-family: 'Lato', sans-serif;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 11px 22px;
       border: none;
       border-radius: 8px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
       cursor: pointer;
+      transition: all 0.18s;
     }
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .primary { background: #10b981; color: white; }
-    .secondary { background: #3b82f6; color: white; }
-    .entry {
-      border: 1px solid #e2e8f0;
-      padding: 16px;
-      margin-bottom: 16px;
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--gold); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--gold-dark); }
+    .btn-secondary { background: var(--ink); color: var(--cream); }
+    .btn-secondary:hover:not(:disabled) { background: #1a140c; }
+    .btn-ghost { background: var(--warm); color: var(--ink); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-danger { background: var(--rose); color: white; }
+    .btn-danger:hover:not(:disabled) { background: #a85e52; }
+    .btn-sage { background: var(--sage); color: white; }
+    .btn-sage:hover:not(:disabled) { background: #5e8062; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 30px; right: 30px;
+      background: var(--ink);
+      color: var(--cream);
+      padding: 14px 22px;
       border-radius: 8px;
-      background: #f8fafc;
+      font-size: 0.88rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 999;
+      max-width: 320px;
     }
-    .story {
-      white-space: pre-wrap;
-      background: #f1f5f9;
+    #toast.show { opacity: 1; }
+
+    /* ── Voice memo ── */
+    #voiceStatus {
       padding: 20px;
-      border-radius: 8px;
-      margin-top: 30px;
+      background: var(--warm);
+      border-radius: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+      color: var(--ink-light);
+    }
+    .big-mic {
+      font-size: 3rem;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--ink-light);
+    }
+    .empty-icon { font-size: 3rem; margin-bottom: 12px; }
+
+    /* ── Reminder ── */
+    #reminder {
+      background: linear-gradient(135deg, var(--warm), #f0e8d5);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--gold);
+      padding: 14px 20px;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 28px;
+      font-size: 0.88rem;
+      color: var(--ink-light);
+      display: none;
+    }
+
+    /* ── Delete confirm ── */
+    #deletePanel .warning-box {
+      background: #fff5f5;
+      border: 2px solid var(--rose);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 600px) {
+      header { padding: 20px; }
+      #authPanel { padding: 16px 20px; }
+      #navBar { padding: 0 10px; }
+      main { padding: 24px 16px; }
+      #storyOutput { padding: 20px; }
     }
   </style>
 </head>
 <body>
-  <h1>❤️ My Life Story</h1>
-  <p><strong>Share this page with your family — they only need their email + password.</strong></p>
 
-  <!-- Auth -->
-  <div style="background:#f0f9ff;padding:15px;border-radius:8px;margin:20px 0;">
-    <input id="email" placeholder="Email" style="width:48%;padding:8px;">
-    <input id="password" type="password" placeholder="Password" style="width:48%;padding:8px;">
-    <button id="signUpBtn" onclick="signUp()" class="secondary">Sign Up</button>
-    <button id="signInBtn" onclick="signIn()" class="primary">Sign In</button>
-    <button onclick="signOut()" class="secondary">Sign Out</button>
-    <button id="clearSessionBtn" onclick="clearSession()" style="background:#f59e0b;color:white;display:none;">Clear Session & Retry</button>
-    <span id="userStatus" style="margin-left:15px;font-weight:bold;"></span>
+<header>
+  <h1>My <span>Life Story</span> ❤️</h1>
+  <div id="userStatus">Not signed in</div>
+</header>
+
+<!-- Auth -->
+<div id="authPanel">
+  <input id="emailInput" placeholder="Email address" type="email">
+  <input id="passwordInput" placeholder="Password" type="password">
+  <button class="btn btn-primary" onclick="signIn()">Sign In</button>
+  <button class="btn btn-ghost" onclick="signUp()">Sign Up</button>
+  <button class="btn btn-ghost" onclick="signOut()" id="signOutBtn" style="display:none">Sign Out</button>
+</div>
+
+<!-- Nav -->
+<div id="navBar">
+  <button class="nav-btn active" onclick="showPanel('talk', this)">💬 Let's Talk</button>
+  <button class="nav-btn" onclick="showPanel('type', this)">⌨️ Typed Entry</button>
+  <button class="nav-btn" onclick="showPanel('voice', this)">🎙️ Voice Memo</button>
+  <button class="nav-btn" onclick="showPanel('story', this)">📖 My Story</button>
+  <button class="nav-btn" onclick="showPanel('timeline', this)">📋 Timeline</button>
+  <button class="nav-btn danger" onclick="showPanel('delete', this)">🗑️ Delete Data</button>
+</div>
+
+<main>
+  <div id="reminder"></div>
+
+  <!-- ── TALK PANEL ── -->
+  <div class="panel active" id="panel-talk">
+    <h2 class="section-title">Let's Talk</h2>
+    <p class="section-sub">I'll ask you questions about your life and listen to your answers.</p>
+
+    <div id="talkStatus">
+      <div class="pulse idle" id="statusDot"></div>
+      <span id="statusText">Sign in to start a conversation</span>
+    </div>
+
+    <div id="conversationLog"></div>
+
+    <div class="talk-controls">
+      <button class="btn btn-primary" id="startTalkBtn" onclick="startConversation()" disabled>▶ Start Talking</button>
+      <button class="btn btn-danger" id="stopTalkBtn" onclick="stopConversation()" style="display:none">⛔ Stop</button>
+    </div>
   </div>
 
-  <button onclick="letsTalk()" class="primary">Lets talk :)</button>
-  <button onclick="newVoiceMemo()">🎙️ New Voice Memo</button>
-  <button onclick="typeEntry()">⌨️ New Typed Entry</button>
-  <button onclick="generateStory()">📖 Generate My Story</button>
-  <button onclick="continueStory()">🔄 Continue My Story</button>
-  <button onclick="showChronologicalRecord()">📋 Chronological Record</button>
-  <button onclick="clearMyData()" style="background:#ef4444;color:white;">Delete My Data</button>
-  <button id="stopTalk" onclick="stopConversation()" style="display:none;background:#ef4444;color:white;">⛔ Stop Talking</button>
+  <!-- ── TYPED ENTRY PANEL ── -->
+  <div class="panel" id="panel-type">
+    <h2 class="section-title">Add a Typed Entry</h2>
+    <p class="section-sub">Write about a memory, moment, or reflection.</p>
 
-  <div id="reminder" style="margin:15px 0;font-weight:bold;color:#10b981;"></div>
-  <div class="log" id="log"></div>
-  <div id="storyArea"></div>
-  <div id="timelineArea" style="display:none;margin-top:30px;"></div>
+    <select id="typeCat">
+      <option value="">Select a category...</option>
+      <option>Childhood</option>
+      <option>Family</option>
+      <option>Education</option>
+      <option>Career</option>
+      <option>Relationships</option>
+      <option>Adventures</option>
+      <option>Challenges</option>
+      <option>Reflections</option>
+      <option>Other</option>
+    </select>
+    <textarea id="typeQuestion" placeholder="Optional: What question or prompt is this answering? (e.g. 'What is your earliest memory?')"></textarea>
+    <textarea id="typeAnswer" placeholder="Write your memory or story here..." style="min-height:180px"></textarea>
+    <button class="btn btn-primary" onclick="saveTypedEntry()">Save Entry</button>
+  </div>
 
-  <script>
-    const SUPABASE_URL = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
+  <!-- ── VOICE MEMO PANEL ── -->
+  <div class="panel" id="panel-voice">
+    <h2 class="section-title">Voice Memo</h2>
+    <p class="section-sub">Record a standalone memory or thought — no back-and-forth, just you talking.</p>
 
-    let supabaseClient = null;
-    let currentUser = null;
-    let entries = [];
-    let recognition = null;
-    let isConversing = false;
-    let isAuthInProgress = false;
-    const categories = ["Childhood","Family","Education","Career","Relationships","Adventures","Challenges","Reflections","Other"];
+    <div id="voiceStatus">
+      <span class="big-mic">🎙️</span>
+      <span id="voiceStatusText">Press record and speak your memory</span>
+    </div>
 
-    function initSupabase() {
-      const { createClient } = supabase;
-      supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          storage: localStorage,
-          detectSessionInUrl: true
-        }
-      });
+    <div id="voiceTranscript" style="display:none;margin-bottom:16px;">
+      <select id="voiceCat" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;font-family:'Lato',sans-serif;font-size:0.95rem;">
+        <option value="">Select a category...</option>
+        <option>Childhood</option><option>Family</option><option>Education</option>
+        <option>Career</option><option>Relationships</option><option>Adventures</option>
+        <option>Challenges</option><option>Reflections</option><option>Other</option>
+      </select>
+      <div class="entry-card">
+        <p class="entry-text" id="voiceTranscriptText" style="font-style:italic;color:var(--ink-light)"></p>
+      </div>
+    </div>
 
-      supabaseClient.auth.onAuthStateChange(async (event, session) => {
-        console.log('Auth event:', event, session ? 'session' : 'no session');
-        currentUser = session?.user ?? null;
-        if (currentUser) {
-          document.getElementById('userStatus').textContent = `Logged in as ${currentUser.email}`;
-          document.getElementById('clearSessionBtn').style.display = 'none';
-          await loadEntries();
-          dailyReminder();
-        } else {
-          document.getElementById('userStatus').textContent = 'Not logged in';
-          document.getElementById('clearSessionBtn').style.display = 'inline-block';
-        }
-      });
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-danger" id="voiceRecordBtn" onclick="toggleVoiceRecord()">⏺ Start Recording</button>
+      <button class="btn btn-primary" id="voiceSaveBtn" onclick="saveVoiceMemo()" style="display:none">Save Memo</button>
+      <button class="btn btn-ghost" id="voiceDiscardBtn" onclick="discardVoiceMemo()" style="display:none">Discard</button>
+    </div>
+  </div>
 
-      setTimeout(async () => {
-        const { data: { session } } = await supabaseClient.auth.getSession();
-        if (session) {
-          currentUser = session.user;
-          document.getElementById('userStatus').textContent = `Logged in as ${currentUser.email}`;
-          await loadEntries();
-        } else {
-          document.getElementById('userStatus').textContent = 'Not logged in';
-        }
-      }, 800);
-    }
+  <!-- ── STORY PANEL ── -->
+  <div class="panel" id="panel-story">
+    <h2 class="section-title">My Story</h2>
+    <p class="section-sub">AI will weave your entries into a beautifully written life narrative.</p>
 
-    function logMessage(message) {
-      console.log('LOG: ' + message);
-      const logDiv = document.getElementById('log');
-      const entryDiv = document.createElement('div');
-      entryDiv.className = 'entry';
-      entryDiv.textContent = `${new Date().toLocaleString()}: ${message}`;
-      logDiv.appendChild(entryDiv);
-      logDiv.scrollTop = logDiv.scrollHeight;
-    }
+    <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="generateStory(false)">✨ Generate Story</button>
+      <button class="btn btn-secondary" onclick="generateStory(true)">🔄 Continue / Regenerate</button>
+    </div>
 
-    async function loadEntries() {
-      if (!currentUser) return;
-      const { data } = await supabaseClient.from('life_entries').select('*').eq('user_id', currentUser.id).order('timestamp', { ascending: false });
-      entries = data || [];
-    }
+    <div id="storyOutput" style="display:none"></div>
+  </div>
 
-    async function addEntry(category, answer, question = null) {
-      if (!currentUser) return;
-      await supabaseClient.from('life_entries').insert({
-        user_id: currentUser.id,
-        category: category || 'Other',
-        answer,
-        question,
-        timestamp: new Date().toISOString()
-      });
-      await loadEntries();
-    }
+  <!-- ── TIMELINE PANEL ── -->
+  <div class="panel" id="panel-timeline">
+    <h2 class="section-title">Chronological Record</h2>
+    <p class="section-sub">All your entries, oldest first.</p>
 
-    function initRecognition() {
-      if (recognition) return;
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) {
-        logMessage('Speech not supported in this browser.');
-        return;
+    <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <select id="filterCat" onchange="renderTimeline()" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;">
+        <option value="">All categories</option>
+        <option>Childhood</option><option>Family</option><option>Education</option>
+        <option>Career</option><option>Relationships</option><option>Adventures</option>
+        <option>Challenges</option><option>Reflections</option><option>Other</option>
+      </select>
+      <span id="entryCount" style="font-size:0.85rem;color:var(--ink-light)"></span>
+    </div>
+
+    <div id="timelineList"></div>
+  </div>
+
+  <!-- ── DELETE PANEL ── -->
+  <div class="panel" id="panel-delete">
+    <h2 class="section-title">Delete My Data</h2>
+
+    <div class="warning-box">
+      <p style="font-weight:700;margin-bottom:8px;color:var(--rose)">⚠️ This cannot be undone</p>
+      <p style="font-size:0.9rem;color:var(--ink-light);line-height:1.6">This will permanently delete all your life story entries from the database. Your account will remain active.</p>
+    </div>
+
+    <button class="btn btn-danger" onclick="confirmDelete()">Delete All My Entries</button>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+  // ── Config ──
+  const SUPABASE_URL = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
+
+  // ── State ──
+  let sb = null;
+  let currentUser = null;
+  let entries = [];
+  let isConversing = false;
+  let recognition = null;
+  let isSpeaking = false;
+  let voiceRecording = false;
+  let voiceRecognition = null;
+  let voiceText = '';
+  let currentStory = '';
+
+  // ── Init ──
+  function init() {
+    const { createClient } = supabase;
+    sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+
+    sb.auth.onAuthStateChange(async (event, session) => {
+      currentUser = session?.user ?? null;
+      updateAuthUI();
+      if (currentUser) {
+        await loadEntries();
+        showReminder();
       }
-      recognition = new SR();
-      recognition.lang = 'en-US';
-      recognition.interimResults = true;
-      recognition.continuous = true;
+    });
+  }
 
-      recognition.onerror = e => {
-        logMessage('Voice error: ' + e.error);
-        if (e.error === 'no-speech' || e.error === 'aborted') {
-          setTimeout(() => {
-            if (recognition && !recognition.active) recognition.start();
-          }, 800);
-        }
-      };
+  function updateAuthUI() {
+    const status = document.getElementById('userStatus');
+    const signOutBtn = document.getElementById('signOutBtn');
+    const startBtn = document.getElementById('startTalkBtn');
 
-      recognition.onend = () => {
-        if (isConversing) {
-          setTimeout(() => {
-            if (recognition && !recognition.active) recognition.start();
-          }, 1000);
-        }
-      };
+    if (currentUser) {
+      status.textContent = currentUser.email;
+      signOutBtn.style.display = 'inline-block';
+      startBtn.disabled = false;
+      setTalkStatus('idle', 'Ready — press Start Talking');
+    } else {
+      status.textContent = 'Not signed in';
+      signOutBtn.style.display = 'none';
+      startBtn.disabled = true;
+      setTalkStatus('idle', 'Sign in to start a conversation');
     }
+  }
 
-    function speak(text) {
-      if (!('speechSynthesis' in window)) {
-        logMessage('Text-to-speech not supported in this browser.');
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-      speechSynthesis.speak(utterance);
-      logMessage('Speaking: ' + text);
-    }
+  // ── Auth ──
+  async function signIn() {
+    const email = document.getElementById('emailInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+    if (!email || !password) return toast('Please enter email and password');
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) toast('Sign in failed: ' + error.message);
+    else toast('Welcome back!');
+  }
 
-    async function callAI(prompt) {
-      for (let attempt = 1; attempt <= 4; attempt++) {
-        try {
-          const { data, error } = await supabaseClient.functions.invoke('gemini-proxy', { body: { prompt } });
-          if (error) throw error;
-          if (data.error) throw new Error(data.error.message);
-          return data.choices[0].message.content.trim();
-        } catch (error) {
-          if (error.message.includes('429') && attempt < 4) {
-            logMessage(`Rate limit — waiting ${attempt * 10} seconds...`);
-            await new Promise(r => setTimeout(r, attempt * 10000));
-            continue;
-          }
-          throw error;
-        }
-      }
-      throw new Error('Rate limit persistent');
-    }
+  async function signUp() {
+    const email = document.getElementById('emailInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+    if (!email || !password) return toast('Please enter email and password');
+    const { error } = await sb.auth.signUp({ email, password });
+    if (error) toast('Sign up failed: ' + error.message);
+    else toast('Account created! Check your email to confirm.');
+  }
 
-    async function letsTalk() {
-      if (!currentUser) return logMessage('Must log in');
-      isConversing = true;
-      document.getElementById('stopTalk').style.display = 'inline-block';
-      logMessage('Starting conversation...');
-      await askNextQuestion();
-    }
+  async function signOut() {
+    stopConversation();
+    await sb.auth.signOut();
+    entries = [];
+    toast('Signed out');
+  }
 
-    async function askNextQuestion() {
+  // ── Entries ──
+  async function loadEntries() {
+    if (!currentUser) return;
+    const { data } = await sb.from('life_entries')
+      .select('*')
+      .eq('user_id', currentUser.id)
+      .order('timestamp', { ascending: true });
+    entries = data || [];
+  }
+
+  async function addEntry(category, answer, question = null) {
+    if (!currentUser) return;
+    const { error } = await sb.from('life_entries').insert({
+      user_id: currentUser.id,
+      category: category || 'Other',
+      answer: answer.trim(),
+      question: question || null,
+      timestamp: new Date().toISOString()
+    });
+    if (!error) await loadEntries();
+    return !error;
+  }
+
+  // ── Panels ──
+  function showPanel(name, btn) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (name === 'timeline') renderTimeline();
+    if (name === 'story' && currentStory) showStory(currentStory);
+  }
+
+  // ── Talk / Conversation ──
+  function setTalkStatus(state, text) {
+    const dot = document.getElementById('statusDot');
+    const label = document.getElementById('statusText');
+    dot.className = 'pulse ' + (state === 'listening' ? '' : state === 'speaking' ? 'red' : 'idle');
+    label.textContent = text;
+  }
+
+  function addMessage(type, text) {
+    const log = document.getElementById('conversationLog');
+    const div = document.createElement('div');
+    div.className = 'msg ' + type;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function initRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { toast('Speech recognition not supported in this browser. Try Chrome.'); return false; }
+    recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false; // final results only — avoids duplicate saves
+    recognition.continuous = false;     // one utterance at a time — cleaner flow
+    return true;
+  }
+
+  async function startConversation() {
+    if (!currentUser) return toast('Please sign in first');
+    isConversing = true;
+    document.getElementById('startTalkBtn').style.display = 'none';
+    document.getElementById('stopTalkBtn').style.display = 'inline-block';
+    document.getElementById('conversationLog').innerHTML = '';
+    addMessage('system', 'Conversation started — I\'ll ask you questions, you answer out loud.');
+    await askQuestion();
+  }
+
+  function stopConversation() {
+    isConversing = false;
+    isSpeaking = false;
+    speechSynthesis.cancel();
+    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
+    document.getElementById('startTalkBtn').style.display = 'inline-block';
+    document.getElementById('stopTalkBtn').style.display = 'none';
+    setTalkStatus('idle', 'Conversation ended');
+    addMessage('system', 'Conversation ended. Your answers have been saved.');
+  }
+
+  async function askQuestion() {
+    if (!isConversing) return;
+    setTalkStatus('speaking', 'Thinking of a question...');
+
+    try {
+      const summaries = entries.slice(-20).map(e =>
+        (e.question ? `Q: ${e.question} ` : '') + `A: ${e.answer}`
+      ).join('\n');
+
+      const prompt = `You are a warm, gentle interviewer helping someone record their life story.
+Based on these previous entries:\n${summaries || 'No entries yet — this is the first question.'}
+Ask ONE short, open-ended question (max 12 words) to draw out a new memory or story.
+Ask about something not yet covered. Be warm and personal. Return ONLY the question, nothing else.`;
+
+      const question = await callAI(prompt);
       if (!isConversing) return;
-      const summaries = entries.map(e => (e.question ? e.question + ': ' : '') + (e.answer || '')).join('\n');
-      const prompt = `From these entries: ${summaries || 'None yet'}\nAsk one very short question (max 12 words). Be warm. Question only.`;
 
-      try {
-        const question = await callAI(prompt);
-        logMessage(`Question: ${question}`);
-        speak(question);
+      addMessage('ai', question);
+      await speakAndWait(question);
+      if (!isConversing) return;
 
-        initRecognition();
-        if (!recognition) return;
+      listenForAnswer(question);
+    } catch (e) {
+      addMessage('system', 'Could not reach AI — please try again later.');
+      stopConversation();
+    }
+  }
 
-        recognition.onresult = async e => {
-          let text = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            text += e.results[i][0].transcript;
-          }
-          if (text.trim()) {
-            logMessage(`You said: ${text}`);
-            await addEntry('Other', text, question);
-            recognition.stop();
-            setTimeout(askNextQuestion, 10000);
-          }
-        };
+  function speakAndWait(text) {
+    return new Promise(resolve => {
+      if (!('speechSynthesis' in window)) { resolve(); return; }
+      speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.lang = 'en-US';
+      utt.rate = 0.95;
+      utt.onend = () => { isSpeaking = false; resolve(); };
+      utt.onerror = () => { isSpeaking = false; resolve(); };
+      isSpeaking = true;
+      setTalkStatus('speaking', 'Speaking...');
+      speechSynthesis.speak(utt);
+    });
+  }
 
-        if (!recognition.active) {
-          recognition.start();
-          logMessage('Listening...');
-        } else {
-          logMessage('Already listening...');
-        }
-      } catch (e) {
-        logMessage('AI temporarily unavailable — try again later.');
+  function listenForAnswer(question) {
+    if (!isConversing) return;
+    if (!initRecognition()) return;
+
+    setTalkStatus('listening', 'Listening... speak your answer');
+
+    // Silence timeout — if no speech after 15s, prompt again
+    let silenceTimer = setTimeout(() => {
+      if (isConversing && recognition) {
+        try { recognition.stop(); } catch(e){}
+        addMessage('system', 'No answer heard — asking another question.');
+        setTimeout(() => askQuestion(), 1000);
+      }
+    }, 15000);
+
+    recognition.onresult = async (e) => {
+      clearTimeout(silenceTimer);
+      const answer = e.results[0][0].transcript.trim();
+      if (!answer) return;
+
+      try { recognition.stop(); } catch(e) {}
+      recognition = null;
+
+      addMessage('user', answer);
+      setTalkStatus('idle', 'Saving...');
+      await addEntry('Other', answer, question);
+      toast('Answer saved ✓');
+
+      // Wait a moment then ask the next question
+      if (isConversing) {
+        setTimeout(() => askQuestion(), 1500);
+      }
+    };
+
+    recognition.onerror = (e) => {
+      clearTimeout(silenceTimer);
+      if (!isConversing) return;
+      if (e.error === 'no-speech') {
+        addMessage('system', 'Didn\'t catch that — asking another question.');
+        setTimeout(() => askQuestion(), 1000);
+      } else if (e.error !== 'aborted') {
+        addMessage('system', 'Mic error: ' + e.error);
         stopConversation();
       }
+    };
+
+    recognition.onend = () => {
+      clearTimeout(silenceTimer);
+    };
+
+    try { recognition.start(); } catch(e) {
+      addMessage('system', 'Could not start microphone. Check browser permissions.');
+      stopConversation();
+    }
+  }
+
+  // ── AI Call ──
+  async function callAI(prompt) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { data, error } = await sb.functions.invoke('gemini-proxy', { body: { prompt } });
+        if (error) throw new Error(error.message);
+        if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
+        const content = data?.choices?.[0]?.message?.content;
+        if (!content) throw new Error('Empty response from AI');
+        return content.trim();
+      } catch (err) {
+        if (err.message.includes('429') && attempt < 3) {
+          await new Promise(r => setTimeout(r, attempt * 8000));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  // ── Typed Entry ──
+  async function saveTypedEntry() {
+    const cat = document.getElementById('typeCat').value;
+    const q = document.getElementById('typeQuestion').value.trim();
+    const a = document.getElementById('typeAnswer').value.trim();
+    if (!currentUser) return toast('Please sign in first');
+    if (!a) return toast('Please write something before saving');
+    const ok = await addEntry(cat || 'Other', a, q || null);
+    if (ok) {
+      toast('Entry saved ✓');
+      document.getElementById('typeAnswer').value = '';
+      document.getElementById('typeQuestion').value = '';
+      document.getElementById('typeCat').value = '';
+    }
+  }
+
+  // ── Voice Memo ──
+  function toggleVoiceRecord() {
+    if (!voiceRecording) startVoiceRecord();
+    else stopVoiceRecord();
+  }
+
+  function startVoiceRecord() {
+    if (!currentUser) return toast('Please sign in first');
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return toast('Speech recognition not supported. Try Chrome.');
+
+    voiceRecognition = new SR();
+    voiceRecognition.lang = 'en-US';
+    voiceRecognition.interimResults = true;
+    voiceRecognition.continuous = true;
+    voiceText = '';
+
+    voiceRecognition.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      voiceText = t;
+      document.getElementById('voiceTranscriptText').textContent = t;
+      document.getElementById('voiceTranscript').style.display = 'block';
+    };
+
+    voiceRecognition.onerror = (e) => {
+      if (e.error !== 'aborted') toast('Mic error: ' + e.error);
+    };
+
+    voiceRecognition.start();
+    voiceRecording = true;
+    document.getElementById('voiceRecordBtn').textContent = '⏹ Stop Recording';
+    document.getElementById('voiceRecordBtn').className = 'btn btn-ghost';
+    document.getElementById('voiceStatusText').textContent = '🔴 Recording... speak your memory';
+  }
+
+  function stopVoiceRecord() {
+    if (voiceRecognition) { try { voiceRecognition.stop(); } catch(e){} }
+    voiceRecording = false;
+    document.getElementById('voiceRecordBtn').textContent = '⏺ Record Again';
+    document.getElementById('voiceRecordBtn').className = 'btn btn-danger';
+    document.getElementById('voiceStatusText').textContent = 'Recording stopped';
+    if (voiceText.trim()) {
+      document.getElementById('voiceSaveBtn').style.display = 'inline-block';
+      document.getElementById('voiceDiscardBtn').style.display = 'inline-block';
+    }
+  }
+
+  async function saveVoiceMemo() {
+    if (!voiceText.trim()) return toast('Nothing to save');
+    const cat = document.getElementById('voiceCat').value;
+    const ok = await addEntry(cat || 'Other', voiceText);
+    if (ok) {
+      toast('Voice memo saved ✓');
+      discardVoiceMemo();
+    }
+  }
+
+  function discardVoiceMemo() {
+    voiceText = '';
+    document.getElementById('voiceTranscript').style.display = 'none';
+    document.getElementById('voiceTranscriptText').textContent = '';
+    document.getElementById('voiceSaveBtn').style.display = 'none';
+    document.getElementById('voiceDiscardBtn').style.display = 'none';
+    document.getElementById('voiceRecordBtn').textContent = '⏺ Start Recording';
+    document.getElementById('voiceRecordBtn').className = 'btn btn-danger';
+    document.getElementById('voiceStatusText').textContent = 'Press record and speak your memory';
+  }
+
+  // ── Generate Story ──
+  async function generateStory(isContinue) {
+    if (!currentUser) return toast('Please sign in first');
+    if (entries.length === 0) return toast('Add some entries first!');
+
+    const out = document.getElementById('storyOutput');
+    out.style.display = 'block';
+    out.className = 'loading';
+    out.textContent = isContinue && currentStory
+      ? 'Continuing your story...'
+      : 'Writing your life story...';
+
+    try {
+      const entriesText = entries.map(e =>
+        `[${e.category}] ${e.question ? e.question + ' — ' : ''}${e.answer}`
+      ).join('\n\n');
+
+      const prompt = isContinue && currentStory
+        ? `Here is a life story already written:\n\n${currentStory}\n\nHere are additional entries to weave in:\n\n${entriesText}\n\nExtend or enrich the story, maintaining the same warm narrative voice. Write in third person. Return only the story.`
+        : `You are a skilled biographer. Using these life story entries, write a warm, engaging, beautifully written narrative in third person. Organise it naturally. Make it feel like a real life story someone would treasure. Entries:\n\n${entriesText}\n\nReturn only the story text.`;
+
+      const story = await callAI(prompt);
+      currentStory = story;
+      showStory(story);
+    } catch (e) {
+      out.textContent = 'Could not generate story — please try again.';
+      out.className = '';
+    }
+  }
+
+  function showStory(story) {
+    const out = document.getElementById('storyOutput');
+    out.style.display = 'block';
+    out.className = '';
+    out.textContent = story;
+  }
+
+  // ── Timeline ──
+  function renderTimeline() {
+    if (!currentUser) return;
+    const filter = document.getElementById('filterCat').value;
+    const list = document.getElementById('timelineList');
+    const filtered = filter ? entries.filter(e => e.category === filter) : entries;
+
+    document.getElementById('entryCount').textContent =
+      filtered.length + ' entr' + (filtered.length === 1 ? 'y' : 'ies');
+
+    if (filtered.length === 0) {
+      list.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><p>No entries yet${filter ? ' in this category' : ''}</p></div>`;
+      return;
     }
 
-    function stopConversation() {
-      isConversing = false;
-      document.getElementById('stopTalk').style.display = 'none';
-      if (recognition) recognition.abort();
-      speak('Conversation ended. Thanks!');
-      logMessage('Conversation ended');
+    list.innerHTML = filtered.map(e => `
+      <div class="entry-card">
+        <div class="entry-meta">
+          <span class="entry-cat">${e.category || 'Other'}</span>
+          <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU', {day:'numeric',month:'short',year:'numeric'})}</span>
+        </div>
+        ${e.question ? `<p class="entry-q">${e.question}</p>` : ''}
+        <p class="entry-text">${e.answer}</p>
+      </div>
+    `).join('');
+  }
+
+  // ── Delete ──
+  async function confirmDelete() {
+    if (!currentUser) return toast('Please sign in first');
+    const confirmed = confirm(`Delete ALL ${entries.length} entries? This cannot be undone.`);
+    if (!confirmed) return;
+    const { error } = await sb.from('life_entries').delete().eq('user_id', currentUser.id);
+    if (error) toast('Error: ' + error.message);
+    else {
+      entries = [];
+      toast('All entries deleted');
     }
+  }
 
-    function dailyReminder() {
-      document.getElementById('reminder').textContent = "Don't forget to add to your life story today!";
-    }
+  // ── Reminder ──
+  function showReminder() {
+    const r = document.getElementById('reminder');
+    const messages = [
+      "✨ What's one memory you'd love your grandchildren to know?",
+      "💭 Today's prompt: What was a turning point in your life?",
+      "📝 Don't forget to add to your life story today!",
+      "🌟 What's a lesson life has taught you that you'd want to pass on?"
+    ];
+    r.textContent = messages[Math.floor(Math.random() * messages.length)];
+    r.style.display = 'block';
+  }
 
-    // Placeholder for other functions (add them back if needed)
-    function newVoiceMemo() { logMessage('Voice memo feature coming soon'); }
-    function typeEntry() { logMessage('Typed entry feature coming soon'); }
-    function generateStory() { logMessage('Story generation coming soon'); }
-    function continueStory() { logMessage('Continue story coming soon'); }
-    function showChronologicalRecord() { logMessage('Chronological record coming soon'); }
-    function clearMyData() { logMessage('Data clear coming soon'); }
+  // ── Toast ──
+  function toast(msg, duration = 3000) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), duration);
+  }
 
-    initSupabase();
-  </script>
+  // ── Start ──
+  init();
+</script>
 </body>
 </html>
