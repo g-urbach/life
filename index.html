@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.3</title>
+  <title>My Life Story v0.4</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -382,7 +382,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small style="font-size:0.45em;opacity:0.5;font-family:'Lato',sans-serif;font-style:normal;vertical-align:middle;">v0.3</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small style="font-size:0.45em;opacity:0.5;font-family:'Lato',sans-serif;font-style:normal;vertical-align:middle;">v0.4</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -903,11 +903,31 @@ Ask about something not yet covered. Be warm and personal. Return ONLY the quest
         const timeoutPromise = new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('AI call timed out after 20s')), 20000);
         });
-        const invokePromise = sb.functions.invoke('AI_PROXY', { body: { prompt } });
-        const result = await Promise.race([invokePromise, timeoutPromise]);
-        clearTimeout(timeoutId);
+        // Call function directly via fetch instead of supabase client
+        const { data: { session } } = await sb.auth.getSession();
+        const token = session?.access_token ?? SUPABASE_ANON_KEY;
+        dbg('AI', 'Using token type:', session ? 'user session' : 'anon key');
 
-        const { data, error } = result;
+        const fetchPromise = fetch(
+          `${SUPABASE_URL}/functions/v1/AI_PROXY`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'apikey': SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({ prompt })
+          }
+        ).then(r => {
+          dbg('AI', 'HTTP response status:', r.status);
+          return r.json();
+        });
+
+        const data = await Promise.race([fetchPromise, timeoutPromise]);
+        clearTimeout(timeoutId);
+        const error = null;
+        dbg('AI', 'Fetch response received:', JSON.stringify(data).substring(0, 200));
         dbg('AI', 'Attempt ' + attempt + ': response received');
         dbg('AI', '  error field:', error);
         dbg('AI', '  data type:', typeof data);
