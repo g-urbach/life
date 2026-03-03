@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.14</title>
+  <title>My Life Story v0.15</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -130,6 +130,24 @@
 
     .warning-box { background: #fff5f5; border: 2px solid var(--rose); border-radius: 10px; padding: 24px; margin-bottom: 20px; }
 
+    #onboardingOverlay {
+      position: fixed; inset: 0; background: rgba(44,36,22,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; padding: 20px;
+    }
+    #onboardingBox {
+      background: var(--cream); border-radius: 16px; padding: 40px;
+      max-width: 480px; width: 100%; box-shadow: 0 8px 48px rgba(44,36,22,0.3);
+    }
+    #onboardingBox h2 { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 400; margin-bottom: 8px; }
+    #onboardingBox p  { color: var(--ink-light); font-size: 0.9rem; margin-bottom: 28px; line-height: 1.6; }
+    #onboardingBox label { display: block; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-light); margin-bottom: 6px; margin-top: 16px; }
+    #onboardingBox input, #onboardingBox select {
+      width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
+      font-family: 'Lato', sans-serif; font-size: 0.95rem; background: white; color: var(--ink);
+    }
+    #onboardingBox input:focus, #onboardingBox select:focus { outline: 2px solid var(--gold); }
+
     #toast { position: fixed; bottom: 30px; right: 30px; background: var(--ink); color: var(--cream); padding: 14px 22px; border-radius: 8px; font-size: 0.88rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 999; max-width: 320px; }
     #toast.show { opacity: 1; }
 
@@ -144,7 +162,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.14</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.15</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -229,7 +247,8 @@
     <h2 class="section-title">My Story</h2>
     <p class="section-sub">AI will weave your entries into a beautifully written life narrative.</p>
     <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;">
-      <button class="btn btn-primary" onclick="generateStory()">✨ Generate My Story</button>
+      <button class="btn btn-primary" onclick="generateStory('memoir')">✨ My Life Story</button>
+      <button class="btn btn-secondary" onclick="generateStory('funny')">😄 Funny Version</button>
     </div>
     <div id="storyOutput" style="display:none"></div>
   </div>
@@ -261,6 +280,27 @@
   </div>
 </main>
 
+<div id="onboardingOverlay" style="display:none">
+  <div id="onboardingBox">
+    <h2>Welcome! Let's get started 👋</h2>
+    <p>Just three quick things before we begin recording your life story.</p>
+    <label for="onboardName">Your first name</label>
+    <input id="onboardName" type="text" placeholder="e.g. Geoff" autocomplete="given-name">
+    <label for="onboardDob">Date of birth</label>
+    <input id="onboardDob" type="date">
+    <label for="onboardSex">Sex</label>
+    <select id="onboardSex">
+      <option value="">Select...</option>
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+      <option value="other">Other</option>
+    </select>
+    <div style="margin-top:28px">
+      <button class="btn btn-primary" style="width:100%" onclick="saveOnboarding()">Let's begin →</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -274,6 +314,7 @@
   let currentUser  = null;
   let sessionToken = null;
   let entries      = [];
+  let userProfile  = { name: null, dob: null, sex: null };
   let isConversing = false;
   let recognition  = null;
   let voiceRec     = null;
@@ -297,7 +338,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.14 starting...');
+    dbg('INIT', 'v0.15 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -392,6 +433,20 @@
       const data = await res.json();
       entries = data || [];
       dbg('DB', 'Loaded', entries.length, 'entries');
+
+      // Extract profile from special entries
+      const nameEntry = entries.find(e => e.category === '_profile_name');
+      const dobEntry  = entries.find(e => e.category === '_profile_dob');
+      const sexEntry  = entries.find(e => e.category === '_profile_sex');
+      userProfile.name = nameEntry?.answer ?? null;
+      userProfile.dob  = dobEntry?.answer  ?? null;
+      userProfile.sex  = sexEntry?.answer  ?? null;
+      dbg('PROFILE', 'name:', userProfile.name, 'dob:', userProfile.dob, 'sex:', userProfile.sex);
+
+      // Show onboarding if profile incomplete
+      if (!userProfile.name || !userProfile.dob || !userProfile.sex) {
+        document.getElementById('onboardingOverlay').style.display = 'flex';
+      }
     } catch(err) {
       dbgErr('DB', 'Load error:', err.message);
     }
@@ -483,6 +538,31 @@
         throw err;
       }
     }
+  }
+
+  // ── Onboarding ───────────────────────────────────────────────────
+  async function saveOnboarding() {
+    const name = document.getElementById('onboardName').value.trim();
+    const dob  = document.getElementById('onboardDob').value;
+    const sex  = document.getElementById('onboardSex').value;
+    if (!name) return toast('Please enter your name');
+    if (!dob)  return toast('Please enter your date of birth');
+    if (!sex)  return toast('Please select your sex');
+
+    dbg('PROFILE', 'Saving profile...');
+    const saves = [
+      fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ user_id: currentUser.id, category: '_profile_name', answer: name, question: 'What is your name?', timestamp: new Date().toISOString() }) }),
+      fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ user_id: currentUser.id, category: '_profile_dob',  answer: dob,  question: 'What is your date of birth?', timestamp: new Date().toISOString() }) }),
+      fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ user_id: currentUser.id, category: '_profile_sex',  answer: sex,  question: 'What is your sex?', timestamp: new Date().toISOString() }) }),
+    ];
+    await Promise.all(saves);
+    userProfile = { name, dob, sex };
+    document.getElementById('onboardingOverlay').style.display = 'none';
+    toast('Welcome, ' + name + '! 🎉');
+    dbg('PROFILE', 'Saved:', userProfile);
   }
 
   // ── Panels ───────────────────────────────────────────────────────
@@ -714,26 +794,55 @@
   }
 
   // ── Story ────────────────────────────────────────────────────────
-  async function generateStory() {
+  async function generateStory(mode) {
     if (!currentUser)    return toast('Please sign in first');
-    if (!entries.length) return toast('Add some entries first!');
+    const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
+    if (!realEntries.length) return toast('Add some entries first!');
     const out         = document.getElementById('storyOutput');
     out.style.display = 'block';
     out.className     = 'loading';
-    out.textContent   = 'Writing your life story…';
-    dbg('STORY', 'Generating from', entries.length, 'entries');
+    out.textContent   = mode === 'funny' ? 'Writing your comedy special...' : 'Writing your life story…';
+    dbg('STORY', 'Generating', mode, 'from', realEntries.length, 'entries');
+
     try {
-      const entriesText = entries.map((e, i) =>
+      // Build profile context
+      let profileContext = '';
+      if (userProfile.name || userProfile.dob || userProfile.sex) {
+        profileContext = 'ABOUT THIS PERSON:\n';
+        if (userProfile.name) profileContext += '- Name: ' + userProfile.name + '\n';
+        if (userProfile.sex)  profileContext += '- Sex: ' + userProfile.sex + '\n';
+        if (userProfile.dob) {
+          const dob     = new Date(userProfile.dob);
+          const year    = dob.getFullYear();
+          const age     = new Date().getFullYear() - year;
+          const dobFmt  = dob.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+          profileContext += '- Date of birth: ' + dobFmt + ' (age ' + age + ')\n';
+          profileContext += '- Birth year era: ' + year + ' — weave in what the world was like that year: major world events, popular music, fashion, the biggest movie, what a typical ' + year + ' childhood looked like.\n';
+        }
+        profileContext += '\n';
+      }
+
+      const entriesText = realEntries.map((e, i) =>
         (i + 1) + '. [' + e.category + ']' + (e.question ? ' Q: ' + e.question + ' —' : '') + ' ' + e.answer
       ).join('\n');
 
-      const prompt =
-        'You are a warm, gifted biographer. Using the life entries below, write ONE single flowing narrative ' +
-        'about this person\'s life. It should read like a beautifully written memoir — continuous prose, no ' +
-        'bullet points, no headings, no episode-by-episode structure. Weave the entries together naturally ' +
-        'into a cohesive story with a beginning, middle and end. Write in third person. Be warm, vivid and ' +
-        'personal. Aim for 6–10 paragraphs. Return only the story text, nothing else.\n\n' +
-        'LIFE ENTRIES:\n' + entriesText;
+      const prompt = mode === 'funny'
+        ? profileContext +
+          'You are a brilliant comedy writer. Using the life entries below, write a hilariously funny ' +
+          'roast-style memoir about this person\'s life. Make it warm and affectionate, not mean. ' +
+          'Poke gentle fun at their answers, exaggerate for comic effect, use irony and wit. ' +
+          'Include funny observations about the era they grew up in — what was embarrassingly fashionable, ' +
+          'the cringe-worthy music, the ridiculous trends. ' +
+          'Write in third person. Continuous prose, no bullet points. Aim for 6–8 paragraphs. ' +
+          'Return only the story text, nothing else.\n\nLIFE ENTRIES:\n' + entriesText
+        : profileContext +
+          'You are a warm, gifted biographer. Using the life entries below, write ONE single flowing narrative ' +
+          'about this person\'s life. It should read like a beautifully written memoir — continuous prose, no ' +
+          'bullet points, no headings. Weave the entries together naturally into a cohesive story. ' +
+          'Include rich era details from their birth year — what was happening in the world, what music was playing, ' +
+          'what movies were showing, what fashions were popular — to paint a vivid picture of the times they grew up in. ' +
+          'Write in third person. Be warm, vivid and personal. Aim for 6–10 paragraphs. ' +
+          'Return only the story text, nothing else.\n\nLIFE ENTRIES:\n' + entriesText;
 
       const story  = await callAI(prompt, { max_tokens: 4000 });
       currentStory = story;
