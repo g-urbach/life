@@ -893,35 +893,59 @@ Ask about something not yet covered. Be warm and personal. Return ONLY the quest
   // ── AI Call ──
   async function callAI(prompt) {
     dbg('AI', 'callAI() invoked, prompt length:', prompt.length);
+
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        dbg('AI', `Attempt ${attempt}: invoking supabase function "gemini-proxy"...`);
-        const { data, error } = await sb.functions.invoke('gemini-proxy', { body: { prompt } });
-        dbg('AI', `Attempt ${attempt}: raw response →`, { data, error });
+        dbg('AI', 'Attempt ' + attempt + ': invoking supabase function gemini-proxy...');
+
+        // Hard 20s timeout so it never hangs silently
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('AI call timed out after 20s')), 20000);
+        });
+        const invokePromise = sb.functions.invoke('gemini-proxy', { body: { prompt } });
+        const result = await Promise.race([invokePromise, timeoutPromise]);
+        clearTimeout(timeoutId);
+
+        const { data, error } = result;
+        dbg('AI', 'Attempt ' + attempt + ': response received');
+        dbg('AI', '  error field:', error);
+        dbg('AI', '  data type:', typeof data);
+        dbg('AI', '  data keys:', data ? Object.keys(data) : 'null/undefined');
+        dbg('AI', '  full data:', JSON.stringify(data));
 
         if (error) {
-          dbgErr('AI', `Supabase function error on attempt ${attempt}`, error);
+          dbgErr('AI', 'Supabase function error on attempt ' + attempt, error);
           throw new Error(error.message || JSON.stringify(error));
         }
-        if (data?.error) {
-          dbgErr('AI', `API error in response data on attempt ${attempt}`, data.error);
-          throw new Error(data.error.message || JSON.stringify(data.error));
+        if (data && data.error) {
+          dbgErr('AI', 'API error in response data on attempt ' + attempt, data.error);
+          throw new Error((data.error.message) || JSON.stringify(data.error));
         }
 
-        const content = data?.choices?.[0]?.message?.content;
+        // Handle multiple possible response shapes
+        let content =
+          (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ||
+          (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) ||
+          (data && data.text) ||
+          (data && data.content) ||
+          (data && data.response) ||
+          (typeof data === 'string' ? data : null);
+
         dbg('AI', 'Extracted content:', content);
 
         if (!content) {
-          dbgErr('AI', 'Unexpected response shape — no content found', data);
-          throw new Error('Empty response from AI — unexpected shape: ' + JSON.stringify(data));
+          dbgErr('AI', 'Could not extract content - unexpected response shape. Full data logged above.');
+          throw new Error('Unexpected AI response shape - check console AI logs');
         }
-        dbg('AI', 'callAI() success ✓');
+        dbg('AI', 'callAI() success!');
         return content.trim();
+
       } catch (err) {
-        dbgErr('AI', `Attempt ${attempt} failed`, err);
-        if (err.message.includes('429') && attempt < 3) {
+        dbgErr('AI', 'Attempt ' + attempt + ' failed: ' + err.message, err);
+        if ((err.message.includes('429') || err.message.includes('rate')) && attempt < 3) {
           const wait = attempt * 8000;
-          dbgWarn('AI', `Rate limited — waiting ${wait}ms before retry`);
+          dbgWarn('AI', 'Rate limited - waiting ' + wait + 'ms before retry');
           await new Promise(r => setTimeout(r, wait));
           continue;
         }
