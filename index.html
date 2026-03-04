@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.26</title>
+  <title>My Life Story v0.27</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -199,6 +199,7 @@
     .story-photo { float: right; margin: 0 0 16px 24px; max-width: 280px; border-radius: 8px; border: 1px solid var(--border); box-shadow: var(--shadow); }
     .story-photo img { width: 100%; border-radius: 8px 8px 0 0; display: block; }
     .story-photo .story-photo-caption { padding: 8px 12px; font-size: 0.78rem; color: var(--ink-light); font-style: italic; background: white; border-radius: 0 0 8px 8px; }
+    .story-photo .story-photo-funny-caption { padding: 10px 12px; font-size: 0.82rem; color: var(--ink); background: #fffbf0; border-top: 2px solid var(--gold); border-radius: 0 0 8px 8px; line-height: 1.5; font-style: italic; }
     .story-paragraph { margin-bottom: 1.4em; overflow: hidden; }
     @media (max-width: 600px) { .story-photo { float: none; max-width: 100%; margin: 0 0 16px 0; } }
 
@@ -216,7 +217,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.26</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.27</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -460,7 +461,7 @@
   let voiceRec     = null;
   let voiceText    = '';
   let voiceActive  = false;
-  let currentStory = '';
+  let currentStory = null;
   let currentQuestion = '';
   let iosRecording    = false;
   let iosTranscript   = '';
@@ -486,7 +487,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.26 starting...');
+    dbg('INIT', 'v0.27 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -754,7 +755,7 @@
     if (btn) btn.classList.add('active');
     if (name === 'timeline') renderTimeline();
     if (name === 'photos')   renderPhotoGrid();
-    if (name === 'story' && currentStory) renderStory(currentStory, entries.filter(e => e.photo_url));
+    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions);
   }
 
   // ── Talk ─────────────────────────────────────────────────────────
@@ -1347,8 +1348,32 @@
           'Return only the story text, nothing else.' + photoNote + '\n\nLIFE ENTRIES:\n' + entriesText;
 
       const story  = await callAI(prompt, { max_tokens: 4000 });
-      currentStory = story;
-      renderStory(story, photoEntries);
+
+      // For funny mode — generate snarky captions for each photo in parallel
+      let funnyCaptions = {};
+      if (mode === 'funny' && photoEntries.length) {
+        out.textContent = 'Adding comedic commentary to your photos...';
+        dbg('STORY', 'Generating funny captions for', photoEntries.length, 'photos');
+        await Promise.all(photoEntries.map(async (e) => {
+          const captionPrompt =
+            'You are a witty comedian writing a one-liner caption for a photo in a funny roast-style memoir. ' +
+            'Keep it warm and affectionate, not mean. Be specific to what you see. Maximum 2 sentences. ' +
+            (e.photo_ai_description ? 'The photo shows: ' + e.photo_ai_description + '\n' : '') +
+            'The person says about this photo: "' + e.answer + '"\n' +
+            (userProfile.dob ? 'They were born in ' + new Date(userProfile.dob).getFullYear() + ' — lean into era humour if relevant.\n' : '') +
+            'Write only the caption, nothing else.';
+          try {
+            const caption = await callAI(captionPrompt, { max_tokens: 100 });
+            funnyCaptions[e.timestamp] = caption;
+            dbg('STORY', 'Caption for', e.timestamp, ':', caption);
+          } catch(err) {
+            dbgWarn('STORY', 'Caption failed for', e.timestamp, err.message);
+          }
+        }));
+      }
+
+      currentStory = { text: story, mode, funnyCaptions };
+      renderStory(story, photoEntries, mode, funnyCaptions);
       dbg('STORY', 'Generated, chars:', story.length);
     } catch (err) {
       dbgErr('STORY', err);
@@ -1357,13 +1382,15 @@
     }
   }
 
-  async function renderStory(story, photoEntries) {
+  async function renderStory(story, photoEntries, mode, funnyCaptions) {
     const out         = document.getElementById('storyOutput');
     out.style.display = 'block';
     out.className     = '';
     out.style.whiteSpace = 'normal';
 
     const photos = photoEntries || entries.filter(e => e.photo_url);
+    const caps   = funnyCaptions || {};
+    const funny  = mode === 'funny';
 
     // Fetch signed URLs for all photos
     const photosWithUrls = await Promise.all(photos.map(async e => ({
@@ -1377,32 +1404,40 @@
       return;
     }
 
+    const buildPhotoBlock = (photo) => {
+      if (!photo.signedUrl) return '';
+      const caption   = caps[photo.timestamp];
+      const userCapt  = photo.answer.substring(0, 80) + (photo.answer.length > 80 ? '...' : '');
+      return '<div class="story-photo">' +
+        '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' +
+        (funny && caption
+          ? '<div class="story-photo-funny-caption">😄 ' + caption + '</div>'
+          : '<div class="story-photo-caption">' + userCapt + '</div>'
+        ) +
+        '</div>';
+    };
+
     let photoIndex = 0;
     const spacing  = Math.max(1, Math.floor(paragraphs.length / photosWithUrls.length));
     let html       = '';
 
     paragraphs.forEach((para, i) => {
       if (photoIndex < photosWithUrls.length && i > 0 && i % spacing === 0) {
-        const photo = photosWithUrls[photoIndex++];
-        if (photo.signedUrl) {
-          html += '<div class="story-photo">' +
-            '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' +
-            '<div class="story-photo-caption">' + photo.answer.substring(0, 80) + (photo.answer.length > 80 ? '...' : '') + '</div>' +
-            '</div>';
-        }
+        html += buildPhotoBlock(photosWithUrls[photoIndex++]);
       }
       html += '<p class="story-paragraph">' + para + '</p>';
     });
 
     while (photoIndex < photosWithUrls.length) {
       const photo = photosWithUrls[photoIndex++];
-      if (photo.signedUrl) {
-        html += '<div style="clear:both;margin-top:20px">' +
-          '<div class="story-photo" style="float:none;max-width:100%">' +
-            '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' +
-            '<div class="story-photo-caption">' + photo.answer.substring(0, 80) + (photo.answer.length > 80 ? '...' : '') + '</div>' +
-          '</div></div>';
-      }
+      html += '<div style="clear:both;margin-top:20px">' +
+        '<div class="story-photo" style="float:none;max-width:100%">' +
+          (photo.signedUrl ? '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' : '') +
+          (funny && caps[photo.timestamp]
+            ? '<div class="story-photo-funny-caption">😄 ' + caps[photo.timestamp] + '</div>'
+            : '<div class="story-photo-caption">' + photo.answer.substring(0, 80) + '</div>'
+          ) +
+        '</div></div>';
     }
 
     out.innerHTML = html + '<div style="clear:both"></div>';
