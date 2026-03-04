@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.25</title>
+  <title>My Life Story v0.26</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -216,7 +216,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.25</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.26</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -486,7 +486,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.25 starting...');
+    dbg('INIT', 'v0.26 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -630,17 +630,18 @@
     }
   }
 
-  async function addEntry(category, answer, question = null, photoUrl = null) {
+  async function addEntry(category, answer, question = null, photoUrl = null, photoDesc = null) {
     if (!currentUser) return false;
     dbg('DB', 'Adding entry, category:', category, 'answer length:', answer.length);
 
     const newEntry = {
-      user_id:   currentUser.id,
-      category:  category || 'Other',
-      answer:    answer.trim(),
-      question:  question || null,
-      timestamp: new Date().toISOString(),
-      photo_url: photoUrl || null
+      user_id:              currentUser.id,
+      category:             category || 'Other',
+      answer:               answer.trim(),
+      question:             question || null,
+      timestamp:            new Date().toISOString(),
+      photo_url:            photoUrl || null,
+      photo_ai_description: photoDesc || null
     };
     entries.push(newEntry);
     dbg('DB', 'Added to local entries, total:', entries.length);
@@ -1152,6 +1153,39 @@
     document.getElementById('photoRecordStatus').textContent = 'Recording stopped';
   }
 
+  async function describePhoto(file) {
+    dbg('PHOTO-AI', 'Describing photo via vision model...');
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64    = e.target.result.split(',')[1];
+        const mediaType = file.type || 'image/jpeg';
+        try {
+          const res = await fetch(AI_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON },
+            body: JSON.stringify({
+              vision: true,
+              imageBase64: base64,
+              imageMediaType: mediaType,
+              prompt: 'Describe this photo in rich, vivid detail for use in a personal memoir. ' +
+                'Note the people, setting, mood, era, clothing, expressions, and any details that tell a story. ' +
+                'Be warm and observational. 3-5 sentences. Do not speculate about names.'
+            })
+          });
+          const data = await res.json();
+          const desc = data?.choices?.[0]?.message?.content?.trim() ?? null;
+          dbg('PHOTO-AI', 'Description:', desc?.substring(0, 80));
+          resolve(desc);
+        } catch(err) {
+          dbgWarn('PHOTO-AI', 'Vision call failed:', err.message);
+          resolve(null);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function savePhotoEntry() {
     if (!photoFile)    return toast('No photo selected');
     if (!currentUser)  return toast('Please sign in first');
@@ -1164,7 +1198,7 @@
 
     try {
       // Upload to Supabase Storage
-      const ext      = photoFile.name.split('.').pop() || 'jpg';
+      const ext       = photoFile.name.split('.').pop() || 'jpg';
       const photoPath = currentUser.id + '/' + Date.now() + '.' + ext;
       const uploadRes = await fetch(
         STORAGE_URL + '/' + photoPath,
@@ -1185,11 +1219,14 @@
         dbgErr('PHOTO', 'Upload failed:', err);
         return toast('Photo upload failed — check Storage bucket exists');
       }
-
       dbg('PHOTO', 'Uploaded path:', photoPath);
 
-      // Save entry with photo path (not public URL — we use signed URLs at display time)
-      const ok = await addEntry(cat, story, 'Tell me about this photo', photoPath);
+      // Get AI visual description while file is still in memory
+      toast('Analysing photo...');
+      const photoDesc = await describePhoto(photoFile);
+      if (photoDesc) dbg('PHOTO-AI', 'Got description ✓');
+
+      const ok = await addEntry(cat, story, 'Tell me about this photo', photoPath, photoDesc);
       if (ok) {
         toast('Photo & story saved ✓');
         cancelPhotoEntry();
@@ -1239,6 +1276,7 @@
       '<div class="photo-card">' +
         (e.signedUrl ? '<img src="' + e.signedUrl + '" alt="Life photo" loading="lazy">' : '<div style="width:100%;height:180px;background:var(--warm);display:flex;align-items:center;justify-content:center">📷</div>') +
         '<div class="photo-caption">' + e.answer + '</div>' +
+        (e.photo_ai_description ? '<div class="photo-caption" style="color:var(--gold-dark);font-style:italic;font-size:0.8rem;border-top:1px solid var(--border);margin-top:6px;padding-top:6px">✨ ' + e.photo_ai_description.substring(0, 120) + (e.photo_ai_description.length > 120 ? '...' : '') + '</div>' : '') +
         '<div class="photo-date">' + new Date(e.timestamp).toLocaleDateString('en-AU', { day:'numeric', month:'short', year:'numeric' }) + '</div>' +
       '</div>'
     ).join('');
@@ -1274,12 +1312,17 @@
       }
 
       const photoEntries  = realEntries.filter(e => e.photo_url);
-      const entriesText   = realEntries.map((e, i) =>
-        (i + 1) + '. [' + e.category + ']' +
-        (e.photo_url ? ' [HAS PHOTO: ' + e.answer.substring(0, 60) + ']' : '') +
-        (e.question && e.question !== 'Tell me about this photo' ? ' Q: ' + e.question + ' —' : '') +
-        ' ' + e.answer
-      ).join('\n');
+      const entriesText   = realEntries.map((e, i) => {
+        let line = (i + 1) + '. [' + e.category + ']';
+        if (e.photo_url) {
+          line += ' [PHOTO';
+          if (e.photo_ai_description) line += ' — AI sees: ' + e.photo_ai_description;
+          line += ']';
+        }
+        if (e.question && e.question !== 'Tell me about this photo') line += ' Q: ' + e.question + ' —';
+        line += ' ' + e.answer;
+        return line;
+      }).join('\n');
 
       const photoNote = photoEntries.length
         ? '\n\nPHOTO ENTRIES: Some entries have photos attached (marked [HAS PHOTO]). When you reach content related to these entries, insert a placeholder exactly like this: {{PHOTO:entry_answer_first_5_words}} — I will replace these with actual images.\n'
