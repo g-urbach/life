@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.15</title>
+  <title>My Life Story v0.16</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -148,6 +148,15 @@
     }
     #onboardingBox input:focus, #onboardingBox select:focus { outline: 2px solid var(--gold); }
 
+    #textAnswerBar {
+      display: none; gap: 8px; margin-top: 12px; align-items: center;
+    }
+    #textAnswerBar input {
+      flex: 1; padding: 12px 16px; border: 2px solid var(--gold); border-radius: 8px;
+      font-family: 'Lato', sans-serif; font-size: 0.95rem; background: white; color: var(--ink);
+    }
+    #textAnswerBar input:focus { outline: none; border-color: var(--gold-dark); }
+
     #toast { position: fixed; bottom: 30px; right: 30px; background: var(--ink); color: var(--cream); padding: 14px 22px; border-radius: 8px; font-size: 0.88rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 999; max-width: 320px; }
     #toast.show { opacity: 1; }
 
@@ -162,7 +171,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.15</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.16</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -189,12 +198,17 @@
   <!-- TALK -->
   <div class="panel active" id="panel-talk">
     <h2 class="section-title">Let's Talk</h2>
-    <p class="section-sub">I'll ask you questions about your life and listen to your answers.</p>
+    <p class="section-sub" id="talkSubtitle">I'll ask you questions about your life and listen to your answers.</p>
     <div id="talkStatus">
       <div class="pulse idle" id="statusDot"></div>
       <span id="statusText">Sign in to start a conversation</span>
     </div>
     <div id="conversationLog"></div>
+    <div id="textAnswerBar">
+      <input id="textAnswerInput" type="text" placeholder="Type your answer here..." autocomplete="off"
+        onkeydown="if(event.key==='Enter') submitTextAnswer()">
+      <button class="btn btn-primary" onclick="submitTextAnswer()">Send</button>
+    </div>
     <div class="talk-controls">
       <button class="btn btn-primary" id="startTalkBtn" onclick="startConversation()" disabled>▶ Start Talking</button>
       <button class="btn btn-danger" id="stopTalkBtn" onclick="stopConversation()" style="display:none">⛔ Stop</button>
@@ -321,6 +335,8 @@
   let voiceText    = '';
   let voiceActive  = false;
   let currentStory = '';
+  let currentQuestion = '';
+  const isIOS      = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   // ── Debug ────────────────────────────────────────────────────────
   function dbg(area, ...args) {
@@ -338,7 +354,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.15 starting...');
+    dbg('INIT', 'v0.16 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -368,7 +384,11 @@
     document.getElementById('signUpBtn').style.display         = on ? 'none' : '';
     document.getElementById('signOutBtn').style.display        = on ? 'inline-block' : 'none';
     document.getElementById('startTalkBtn').disabled           = !on;
-    setTalkStatus('idle', on ? 'Ready — press Start Talking' : 'Sign in to start a conversation');
+    if (isIOS) {
+      document.getElementById('talkSubtitle').textContent  = 'I\'ll ask you questions about your life — type your answers.';
+      document.getElementById('startTalkBtn').textContent  = '▶ Start Chat';
+    }
+    setTalkStatus('idle', on ? 'Ready — press Start' : 'Sign in to start a conversation');
     dbg('AUTH-UI', on ? 'Logged in: ' + currentUser.email : 'Logged out');
   }
 
@@ -594,22 +614,30 @@
 
   async function startConversation() {
     if (!currentUser) return toast('Please sign in first');
-    dbg('TALK', 'Starting, entries:', entries.length);
+    dbg('TALK', 'Starting, entries:', entries.length, 'iOS:', isIOS);
     isConversing = true;
     document.getElementById('startTalkBtn').style.display = 'none';
     document.getElementById('stopTalkBtn').style.display  = 'inline-block';
     document.getElementById('conversationLog').innerHTML  = '';
-    addMessage('system', "Conversation started — I'll ask you questions, answer out loud.");
+    if (isIOS) {
+      document.getElementById('textAnswerBar').style.display = 'flex';
+      addMessage('system', "I'll ask you questions — type your answers below.");
+    } else {
+      addMessage('system', "Conversation started — I'll ask you questions, answer out loud.");
+    }
     await askQuestion();
   }
 
   function stopConversation() {
     dbg('TALK', 'Stopping');
     isConversing = false;
-    speechSynthesis.cancel();
+    if (window.speechSynthesis) speechSynthesis.cancel();
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    document.getElementById('startTalkBtn').style.display = 'inline-block';
-    document.getElementById('stopTalkBtn').style.display  = 'none';
+    document.getElementById('startTalkBtn').style.display  = 'inline-block';
+    document.getElementById('stopTalkBtn').style.display   = 'none';
+    document.getElementById('textAnswerBar').style.display = 'none';
+    document.getElementById('textAnswerInput').value       = '';
+    currentQuestion = '';
     setTalkStatus('idle', 'Conversation ended');
     addMessage('system', 'Conversation ended. Your answers have been saved.');
   }
@@ -618,13 +646,10 @@
     if (!isConversing) return;
     setTalkStatus('speaking', 'Thinking of a question...');
     try {
-      const history = entries.slice(-20).map(e =>
+      const history = entries.filter(e => !e.category.startsWith('_profile')).slice(-20).map(e =>
         (e.question ? 'Q: ' + e.question + ' ' : '') + 'A: ' + e.answer
       ).join('\n');
-
-      // Build list of questions already asked so AI avoids repeating
       const askedTopics = entries.slice(-30).map(e => e.question).filter(Boolean).join(' | ');
-
       const prompt =
         'You are a warm, gentle interviewer helping someone record their life story.\n\n' +
         'ENTRIES SO FAR:\n' + (history || 'None yet.') + '\n\n' +
@@ -639,12 +664,18 @@
 
       const question = await callAI(prompt);
       if (!isConversing) return;
-
+      currentQuestion = question;
       addMessage('ai', question);
-      await speakAndWait(question);
-      if (!isConversing) return;
 
-      listenForAnswer(question);
+      if (isIOS) {
+        // Text mode — just wait for user to type
+        setTalkStatus('listening', 'Type your answer below...');
+        document.getElementById('textAnswerInput').focus();
+      } else {
+        await speakAndWait(question);
+        if (!isConversing) return;
+        listenForAnswer(question);
+      }
     } catch (err) {
       dbgErr('TALK', 'askQuestion failed:', err.message);
       addMessage('system', 'Could not reach AI — check console for details.');
@@ -718,6 +749,20 @@
     setTalkStatus('listening', 'Listening... speak your answer');
     try { recognition.start(); dbg('SPEECH', 'Recognition started'); }
     catch(e) { dbgErr('SPEECH', 'Could not start mic:', e); addMessage('system', 'Could not start microphone — check permissions.'); stopConversation(); }
+  }
+
+  // ── Text Answer (iOS fallback) ────────────────────────────────────
+  async function submitTextAnswer() {
+    if (!isConversing) return;
+    const input  = document.getElementById('textAnswerInput');
+    const answer = input.value.trim();
+    if (!answer) return;
+    input.value = '';
+    addMessage('user', answer);
+    setTalkStatus('idle', 'Saving...');
+    await addEntry('Other', answer, currentQuestion);
+    toast('Saved ✓');
+    if (isConversing) setTimeout(() => askQuestion(), 800);
   }
 
   // ── Typed Entry ──────────────────────────────────────────────────
