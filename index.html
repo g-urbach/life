@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.22</title>
+  <title>My Life Story v0.25</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -183,6 +183,25 @@
     }
     #textAnswerBar input:focus { outline: none; border-color: var(--gold-dark); }
 
+    .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-top: 20px; }
+    .photo-card { background: white; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; transition: box-shadow 0.2s; }
+    .photo-card:hover { box-shadow: var(--shadow); }
+    .photo-card img { width: 100%; height: 180px; object-fit: cover; display: block; }
+    .photo-card .photo-caption { padding: 12px 14px; font-size: 0.88rem; color: var(--ink-light); line-height: 1.5; }
+    .photo-card .photo-date { font-size: 0.75rem; color: var(--gold-dark); margin-top: 4px; }
+    .photo-upload-area { border: 2px dashed var(--border); border-radius: 12px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: white; }
+    .photo-upload-area:hover { border-color: var(--gold); background: var(--warm); }
+    .photo-upload-area .upload-icon { font-size: 2.5rem; margin-bottom: 12px; display: block; }
+    .photo-recording { background: var(--warm); border-radius: 10px; padding: 20px; margin-top: 16px; }
+    .photo-preview { width: 100%; max-height: 300px; object-fit: contain; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border); }
+
+    /* Story photo styles */
+    .story-photo { float: right; margin: 0 0 16px 24px; max-width: 280px; border-radius: 8px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .story-photo img { width: 100%; border-radius: 8px 8px 0 0; display: block; }
+    .story-photo .story-photo-caption { padding: 8px 12px; font-size: 0.78rem; color: var(--ink-light); font-style: italic; background: white; border-radius: 0 0 8px 8px; }
+    .story-paragraph { margin-bottom: 1.4em; overflow: hidden; }
+    @media (max-width: 600px) { .story-photo { float: none; max-width: 100%; margin: 0 0 16px 0; } }
+
     #toast { position: fixed; bottom: 30px; right: 30px; background: var(--ink); color: var(--cream); padding: 14px 22px; border-radius: 8px; font-size: 0.88rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 999; max-width: 320px; }
     #toast.show { opacity: 1; }
 
@@ -197,7 +216,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.22</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.25</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -213,6 +232,7 @@
   <button class="nav-btn active" onclick="showPanel('talk', this)">💬 Let's Talk</button>
   <button class="nav-btn" onclick="showPanel('type', this)">⌨️ Typed Entry</button>
   <button class="nav-btn" onclick="showPanel('voice', this)">🎙️ Voice Memo</button>
+  <button class="nav-btn" onclick="showPanel('photos', this)">📷 Photos</button>
   <button class="nav-btn" onclick="showPanel('story', this)">📖 My Story</button>
   <button class="nav-btn" onclick="showPanel('timeline', this)">📋 Timeline</button>
   <button class="nav-btn danger" onclick="showPanel('delete', this)">🗑️ Delete Data</button>
@@ -290,6 +310,46 @@
       <button class="btn btn-primary" id="voiceSaveBtn" onclick="saveVoiceMemo()" style="display:none">Save Memo</button>
       <button class="btn btn-ghost" id="voiceDiscardBtn" onclick="discardVoiceMemo()" style="display:none">Discard</button>
     </div>
+  </div>
+
+  <!-- PHOTOS -->
+  <div class="panel" id="panel-photos">
+    <h2 class="section-title">Photos</h2>
+    <p class="section-sub">Upload a photo and tell the story behind it — it'll appear in your life story.</p>
+
+    <!-- Upload area -->
+    <div class="photo-upload-area" onclick="document.getElementById('photoFileInput').click()">
+      <span class="upload-icon">📷</span>
+      <p style="font-weight:700;margin-bottom:4px">Tap to choose a photo</p>
+      <p style="font-size:0.82rem;color:var(--ink-light)">From your camera roll or files</p>
+    </div>
+    <input type="file" id="photoFileInput" accept="image/*" style="display:none" onchange="handlePhotoSelected(this)">
+
+    <!-- Recording section (shown after photo selected) -->
+    <div id="photoRecordingSection" style="display:none">
+      <img id="photoPreview" class="photo-preview" src="" alt="Preview">
+      <select id="photoCat" class="cat-select">
+        <option value="">Select a category...</option>
+        <option>Childhood</option><option>Family</option><option>Education</option>
+        <option>Career</option><option>Relationships</option><option>Adventures</option>
+        <option>Challenges</option><option>Reflections</option><option>Other</option>
+      </select>
+      <div class="photo-recording">
+        <p style="font-weight:700;margin-bottom:12px;font-size:0.92rem">📖 Tell the story behind this photo</p>
+        <textarea id="photoStoryText" placeholder="Write about this photo..." style="width:100%;min-height:100px;padding:12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;resize:vertical;margin-bottom:10px"></textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-danger" id="photoRecordBtn" onclick="togglePhotoRecord()">🎙 Record Instead</button>
+          <span id="photoRecordStatus" style="font-size:0.85rem;color:var(--ink-light);align-self:center"></span>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-primary" onclick="savePhotoEntry()">Save Photo & Story</button>
+        <button class="btn btn-ghost" onclick="cancelPhotoEntry()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Photo grid -->
+    <div id="photoGrid" class="photo-grid"></div>
   </div>
 
   <!-- STORY -->
@@ -386,6 +446,8 @@
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
   const AI_ENDPOINT   = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const NOTIFY_URL    = SUPABASE_URL + '/functions/v1/APPROVE_USER';
+  const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
+  const STORAGE_SIGN  = SUPABASE_URL + '/storage/v1/object/sign/life-photos';
 
   // ── State ────────────────────────────────────────────────────────
   let sb           = null;
@@ -402,6 +464,10 @@
   let currentQuestion = '';
   let iosRecording    = false;
   let iosTranscript   = '';
+  let photoFile       = null;
+  let photoRecActive  = false;
+  let photoRecRec     = null;
+  let photoRecText    = '';
   const isIOS         = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   // ── Debug ────────────────────────────────────────────────────────
@@ -420,7 +486,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.22 starting...');
+    dbg('INIT', 'v0.25 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -564,15 +630,17 @@
     }
   }
 
-  async function addEntry(category, answer, question = null) {
+  async function addEntry(category, answer, question = null, photoUrl = null) {
     if (!currentUser) return false;
     dbg('DB', 'Adding entry, category:', category, 'answer length:', answer.length);
 
-    // Add to local memory immediately so conversation keeps flowing
     const newEntry = {
-      user_id: currentUser.id, category: category || 'Other',
-      answer: answer.trim(), question: question || null,
-      timestamp: new Date().toISOString()
+      user_id:   currentUser.id,
+      category:  category || 'Other',
+      answer:    answer.trim(),
+      question:  question || null,
+      timestamp: new Date().toISOString(),
+      photo_url: photoUrl || null
     };
     entries.push(newEntry);
     dbg('DB', 'Added to local entries, total:', entries.length);
@@ -684,7 +752,8 @@
     document.getElementById('panel-' + name).classList.add('active');
     if (btn) btn.classList.add('active');
     if (name === 'timeline') renderTimeline();
-    if (name === 'story' && currentStory) renderStory(currentStory);
+    if (name === 'photos')   renderPhotoGrid();
+    if (name === 'story' && currentStory) renderStory(currentStory, entries.filter(e => e.photo_url));
   }
 
   // ── Talk ─────────────────────────────────────────────────────────
@@ -1018,6 +1087,163 @@
     document.getElementById('voiceStatusText').textContent         = 'Press record and speak your memory';
   }
 
+  // ── Photos ───────────────────────────────────────────────────────
+  function handlePhotoSelected(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (!currentUser) return toast('Please sign in first');
+    if (file.size > 5 * 1024 * 1024) {
+      toast('Photo is too large — please choose one under 5MB');
+      input.value = '';
+      return;
+    }
+    photoFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      document.getElementById('photoPreview').src            = e.target.result;
+      document.getElementById('photoRecordingSection').style.display = 'block';
+      document.getElementById('photoStoryText').value        = '';
+      document.getElementById('photoRecordStatus').textContent = '';
+      photoRecText = '';
+    };
+    reader.readAsDataURL(file);
+    dbg('PHOTO', 'File selected:', file.name, file.size);
+  }
+
+  function cancelPhotoEntry() {
+    photoFile = null; photoRecText = '';
+    document.getElementById('photoRecordingSection').style.display = 'none';
+    document.getElementById('photoFileInput').value = '';
+    if (photoRecRec) { try { photoRecRec.stop(); } catch(e){} photoRecRec = null; }
+    photoRecActive = false;
+    document.getElementById('photoRecordBtn').textContent = '🎙 Record Instead';
+    document.getElementById('photoRecordBtn').className   = 'btn btn-danger';
+  }
+
+  function togglePhotoRecord() {
+    photoRecActive ? stopPhotoRecord() : startPhotoRecord();
+  }
+
+  function startPhotoRecord() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return toast('Speech not supported — type your story instead');
+    photoRecRec = new SR();
+    photoRecRec.lang = 'en-AU'; photoRecRec.interimResults = true; photoRecRec.continuous = true;
+    photoRecText = '';
+    photoRecRec.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      photoRecText = t;
+      document.getElementById('photoStoryText').value = t;
+    };
+    photoRecRec.onerror = (e) => { if (e.error !== 'aborted') toast('Mic error: ' + e.error); };
+    photoRecRec.start();
+    photoRecActive = true;
+    document.getElementById('photoRecordBtn').textContent        = '⏹ Stop Recording';
+    document.getElementById('photoRecordBtn').className          = 'btn btn-ghost';
+    document.getElementById('photoRecordStatus').textContent     = '🔴 Recording...';
+  }
+
+  function stopPhotoRecord() {
+    if (photoRecRec) { try { photoRecRec.stop(); } catch(e){} photoRecRec = null; }
+    photoRecActive = false;
+    document.getElementById('photoRecordBtn').textContent    = '🎙 Record Again';
+    document.getElementById('photoRecordBtn').className      = 'btn btn-danger';
+    document.getElementById('photoRecordStatus').textContent = 'Recording stopped';
+  }
+
+  async function savePhotoEntry() {
+    if (!photoFile)    return toast('No photo selected');
+    if (!currentUser)  return toast('Please sign in first');
+    const story = document.getElementById('photoStoryText').value.trim() || photoRecText.trim();
+    if (!story)        return toast('Please tell the story behind this photo');
+    const cat   = document.getElementById('photoCat').value || 'Other';
+
+    toast('Uploading photo...');
+    dbg('PHOTO', 'Uploading...');
+
+    try {
+      // Upload to Supabase Storage
+      const ext      = photoFile.name.split('.').pop() || 'jpg';
+      const photoPath = currentUser.id + '/' + Date.now() + '.' + ext;
+      const uploadRes = await fetch(
+        STORAGE_URL + '/' + photoPath,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + sessionToken,
+            'apikey':        SUPABASE_ANON,
+            'Content-Type':  photoFile.type,
+            'x-upsert':      'true'
+          },
+          body: photoFile
+        }
+      );
+      dbg('PHOTO', 'Upload status:', uploadRes.status);
+      if (!uploadRes.ok) {
+        const err = await uploadRes.text();
+        dbgErr('PHOTO', 'Upload failed:', err);
+        return toast('Photo upload failed — check Storage bucket exists');
+      }
+
+      dbg('PHOTO', 'Uploaded path:', photoPath);
+
+      // Save entry with photo path (not public URL — we use signed URLs at display time)
+      const ok = await addEntry(cat, story, 'Tell me about this photo', photoPath);
+      if (ok) {
+        toast('Photo & story saved ✓');
+        cancelPhotoEntry();
+        renderPhotoGrid();
+      }
+    } catch(err) {
+      dbgErr('PHOTO', 'Save error:', err.message);
+      toast('Error saving photo: ' + err.message);
+    }
+  }
+
+  async function getSignedUrl(path) {
+    try {
+      const res  = await fetch(STORAGE_SIGN + '/' + path, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresIn: 3600 }) // 1 hour
+      });
+      const data = await res.json();
+      if (data.signedURL) return SUPABASE_URL + '/storage/v1' + data.signedURL;
+      dbgWarn('PHOTO', 'No signedURL in response:', JSON.stringify(data));
+      return null;
+    } catch(err) {
+      dbgErr('PHOTO', 'getSignedUrl failed:', err.message);
+      return null;
+    }
+  }
+
+  async function renderPhotoGrid() {
+    const photoEntries = entries.filter(e => e.photo_url);
+    const grid = document.getElementById('photoGrid');
+    if (!photoEntries.length) {
+      grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📷</div><p>No photos yet — add one above!</p></div>';
+      return;
+    }
+    // Show placeholders while loading
+    grid.innerHTML = photoEntries.map(() =>
+      '<div class="photo-card"><div style="width:100%;height:180px;background:var(--warm);display:flex;align-items:center;justify-content:center;font-size:2rem">⏳</div></div>'
+    ).join('');
+
+    // Fetch signed URLs and render
+    const withUrls = await Promise.all(photoEntries.map(async e => ({
+      ...e, signedUrl: await getSignedUrl(e.photo_url)
+    })));
+
+    grid.innerHTML = withUrls.map(e =>
+      '<div class="photo-card">' +
+        (e.signedUrl ? '<img src="' + e.signedUrl + '" alt="Life photo" loading="lazy">' : '<div style="width:100%;height:180px;background:var(--warm);display:flex;align-items:center;justify-content:center">📷</div>') +
+        '<div class="photo-caption">' + e.answer + '</div>' +
+        '<div class="photo-date">' + new Date(e.timestamp).toLocaleDateString('en-AU', { day:'numeric', month:'short', year:'numeric' }) + '</div>' +
+      '</div>'
+    ).join('');
+  }
+
   // ── Story ────────────────────────────────────────────────────────
   async function generateStory(mode) {
     if (!currentUser)    return toast('Please sign in first');
@@ -1047,9 +1273,17 @@
         profileContext += '\n';
       }
 
-      const entriesText = realEntries.map((e, i) =>
-        (i + 1) + '. [' + e.category + ']' + (e.question ? ' Q: ' + e.question + ' —' : '') + ' ' + e.answer
+      const photoEntries  = realEntries.filter(e => e.photo_url);
+      const entriesText   = realEntries.map((e, i) =>
+        (i + 1) + '. [' + e.category + ']' +
+        (e.photo_url ? ' [HAS PHOTO: ' + e.answer.substring(0, 60) + ']' : '') +
+        (e.question && e.question !== 'Tell me about this photo' ? ' Q: ' + e.question + ' —' : '') +
+        ' ' + e.answer
       ).join('\n');
+
+      const photoNote = photoEntries.length
+        ? '\n\nPHOTO ENTRIES: Some entries have photos attached (marked [HAS PHOTO]). When you reach content related to these entries, insert a placeholder exactly like this: {{PHOTO:entry_answer_first_5_words}} — I will replace these with actual images.\n'
+        : '';
 
       const prompt = mode === 'funny'
         ? profileContext +
@@ -1059,7 +1293,7 @@
           'Include funny observations about the era they grew up in — what was embarrassingly fashionable, ' +
           'the cringe-worthy music, the ridiculous trends. ' +
           'Write in third person. Continuous prose, no bullet points. Aim for 6–8 paragraphs. ' +
-          'Return only the story text, nothing else.\n\nLIFE ENTRIES:\n' + entriesText
+          'Return only the story text, nothing else.' + photoNote + '\n\nLIFE ENTRIES:\n' + entriesText
         : profileContext +
           'You are a warm, gifted biographer. Using the life entries below, write ONE single flowing narrative ' +
           'about this person\'s life. It should read like a beautifully written memoir — continuous prose, no ' +
@@ -1067,11 +1301,11 @@
           'Include rich era details from their birth year — what was happening in the world, what music was playing, ' +
           'what movies were showing, what fashions were popular — to paint a vivid picture of the times they grew up in. ' +
           'Write in third person. Be warm, vivid and personal. Aim for 6–10 paragraphs. ' +
-          'Return only the story text, nothing else.\n\nLIFE ENTRIES:\n' + entriesText;
+          'Return only the story text, nothing else.' + photoNote + '\n\nLIFE ENTRIES:\n' + entriesText;
 
       const story  = await callAI(prompt, { max_tokens: 4000 });
       currentStory = story;
-      renderStory(story);
+      renderStory(story, photoEntries);
       dbg('STORY', 'Generated, chars:', story.length);
     } catch (err) {
       dbgErr('STORY', err);
@@ -1080,15 +1314,59 @@
     }
   }
 
-  function renderStory(story) {
+  async function renderStory(story, photoEntries) {
     const out         = document.getElementById('storyOutput');
     out.style.display = 'block';
     out.className     = '';
-    out.textContent   = story;
+    out.style.whiteSpace = 'normal';
+
+    const photos = photoEntries || entries.filter(e => e.photo_url);
+
+    // Fetch signed URLs for all photos
+    const photosWithUrls = await Promise.all(photos.map(async e => ({
+      ...e, signedUrl: await getSignedUrl(e.photo_url)
+    })));
+
+    const paragraphs = story.split('\n').filter(p => p.trim());
+
+    if (!photosWithUrls.length) {
+      out.innerHTML = paragraphs.map(p => '<p class="story-paragraph">' + p + '</p>').join('');
+      return;
+    }
+
+    let photoIndex = 0;
+    const spacing  = Math.max(1, Math.floor(paragraphs.length / photosWithUrls.length));
+    let html       = '';
+
+    paragraphs.forEach((para, i) => {
+      if (photoIndex < photosWithUrls.length && i > 0 && i % spacing === 0) {
+        const photo = photosWithUrls[photoIndex++];
+        if (photo.signedUrl) {
+          html += '<div class="story-photo">' +
+            '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' +
+            '<div class="story-photo-caption">' + photo.answer.substring(0, 80) + (photo.answer.length > 80 ? '...' : '') + '</div>' +
+            '</div>';
+        }
+      }
+      html += '<p class="story-paragraph">' + para + '</p>';
+    });
+
+    while (photoIndex < photosWithUrls.length) {
+      const photo = photosWithUrls[photoIndex++];
+      if (photo.signedUrl) {
+        html += '<div style="clear:both;margin-top:20px">' +
+          '<div class="story-photo" style="float:none;max-width:100%">' +
+            '<img src="' + photo.signedUrl + '" alt="' + photo.answer.substring(0, 40) + '" loading="lazy">' +
+            '<div class="story-photo-caption">' + photo.answer.substring(0, 80) + (photo.answer.length > 80 ? '...' : '') + '</div>' +
+          '</div></div>';
+      }
+    }
+
+    out.innerHTML = html + '<div style="clear:both"></div>';
   }
 
   // ── Timeline ─────────────────────────────────────────────────────
-  function renderTimeline() {
+  async function renderTimeline() {
     if (!currentUser) return;
     const filter   = document.getElementById('filterCat').value;
     const list     = document.getElementById('timelineList');
@@ -1098,16 +1376,26 @@
       list.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>No entries yet' + (filter ? ' in this category' : '') + '</p></div>';
       return;
     }
+    // Render without photos first
     list.innerHTML = filtered.map(e =>
-      '<div class="entry-card">' +
+      '<div class="entry-card" id="tcard-' + e.timestamp + '">' +
+        (e.photo_url ? '<div style="width:100%;height:160px;background:var(--warm);border-radius:6px;margin-bottom:12px;display:flex;align-items:center;justify-content:center;font-size:2rem" id="timg-' + e.timestamp + '">⏳</div>' : '') +
         '<div class="entry-meta">' +
           '<span class="entry-cat">' + (e.category || 'Other') + '</span>' +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU', { day:'numeric', month:'short', year:'numeric' }) + '</span>' +
         '</div>' +
-        (e.question ? '<p class="entry-q">' + e.question + '</p>' : '') +
+        (e.question && e.question !== 'Tell me about this photo' ? '<p class="entry-q">' + e.question + '</p>' : '') +
         '<p class="entry-text">' + e.answer + '</p>' +
       '</div>'
     ).join('');
+
+    // Load signed URLs for photo entries
+    const photoEntries = filtered.filter(e => e.photo_url);
+    for (const e of photoEntries) {
+      const url = await getSignedUrl(e.photo_url);
+      const el  = document.getElementById('timg-' + e.timestamp);
+      if (el && url) el.outerHTML = '<img src="' + url + '" style="width:100%;height:160px;object-fit:cover;border-radius:6px;margin-bottom:12px" loading="lazy">';
+    }
   }
 
   // ── Delete ───────────────────────────────────────────────────────
