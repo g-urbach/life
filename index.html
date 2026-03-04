@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.16</title>
+  <title>My Life Story v0.19</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -130,6 +130,22 @@
 
     .warning-box { background: #fff5f5; border: 2px solid var(--rose); border-radius: 10px; padding: 24px; margin-bottom: 20px; }
 
+    #disclaimerOverlay, #pendingOverlay {
+      position: fixed; inset: 0; background: rgba(44,36,22,0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1100; padding: 20px;
+    }
+    #disclaimerBox, #pendingBox {
+      background: var(--cream); border-radius: 16px; padding: 36px;
+      max-width: 520px; width: 100%; box-shadow: 0 8px 48px rgba(44,36,22,0.3);
+    }
+    #disclaimerBox h2, #pendingBox h2 { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 400; margin-bottom: 12px; }
+    #disclaimerBox .disclaimer-body { font-size: 0.85rem; color: var(--ink-light); line-height: 1.7; max-height: 260px; overflow-y: auto; background: white; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    #disclaimerBox label { display: flex; align-items: flex-start; gap: 10px; font-size: 0.88rem; color: var(--ink); line-height: 1.5; margin-bottom: 20px; cursor: pointer; }
+    #disclaimerBox label input[type=checkbox] { margin-top: 3px; flex-shrink: 0; width: 16px; height: 16px; }
+    #pendingBox p { color: var(--ink-light); font-size: 0.92rem; line-height: 1.7; margin-bottom: 12px; }
+    #pendingBox .pending-icon { font-size: 3rem; text-align: center; display: block; margin-bottom: 16px; }
+
     #onboardingOverlay {
       position: fixed; inset: 0; background: rgba(44,36,22,0.7);
       display: flex; align-items: center; justify-content: center;
@@ -147,6 +163,16 @@
       font-family: 'Lato', sans-serif; font-size: 0.95rem; background: white; color: var(--ink);
     }
     #onboardingBox input:focus, #onboardingBox select:focus { outline: 2px solid var(--gold); }
+
+    #iosAnswerBar {
+      display: none; flex-direction: column; gap: 10px; margin-top: 12px;
+    }
+    #iosAnswerBar .ios-transcript {
+      min-height: 60px; background: white; border: 2px solid var(--gold);
+      border-radius: 8px; padding: 12px 16px; font-size: 0.95rem;
+      color: var(--ink); line-height: 1.6; font-style: italic; color: var(--ink-light);
+    }
+    #iosAnswerBar .ios-btns { display: flex; gap: 8px; }
 
     #textAnswerBar {
       display: none; gap: 8px; margin-top: 12px; align-items: center;
@@ -171,7 +197,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.16</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.19</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -179,7 +205,7 @@
   <input id="emailInput" placeholder="Email address" type="email">
   <input id="passwordInput" placeholder="Password" type="password">
   <button class="btn btn-primary" id="signInBtn" onclick="signIn()">Sign In</button>
-  <button class="btn btn-ghost" id="signUpBtn" onclick="signUp()">Sign Up</button>
+  <button class="btn btn-ghost" id="signUpBtn" onclick="showDisclaimer()">Sign Up</button>
   <button class="btn btn-ghost" id="signOutBtn" style="display:none" onclick="signOut()">Sign Out</button>
 </div>
 
@@ -204,6 +230,15 @@
       <span id="statusText">Sign in to start a conversation</span>
     </div>
     <div id="conversationLog"></div>
+    <!-- iOS voice answer bar -->
+    <div id="iosAnswerBar">
+      <div class="ios-transcript" id="iosTranscriptText">Speak your answer, then tap Done...</div>
+      <div class="ios-btns">
+        <button class="btn btn-danger" id="iosRecordBtn" onclick="toggleIOSAnswer()">🎙 Start Speaking</button>
+        <button class="btn btn-primary" id="iosDoneBtn" onclick="submitIOSAnswer()" style="display:none">Done ✓</button>
+      </div>
+    </div>
+    <!-- desktop text fallback (kept for non-speech browsers) -->
     <div id="textAnswerBar">
       <input id="textAnswerInput" type="text" placeholder="Type your answer here..." autocomplete="off"
         onkeydown="if(event.key==='Enter') submitTextAnswer()">
@@ -294,6 +329,44 @@
   </div>
 </main>
 
+<!-- DISCLAIMER -->
+<div id="disclaimerOverlay" style="display:none">
+  <div id="disclaimerBox">
+    <h2>⚠️ Before You Continue</h2>
+    <div class="disclaimer-body">
+      <strong>PROTOTYPE SOFTWARE — READ CAREFULLY</strong><br><br>
+      This application ("My Life Story") is an experimental prototype created for personal use and testing purposes only. By proceeding, you acknowledge and agree to the following:<br><br>
+      <strong>1. No Warranty.</strong> This software is provided "as is", without warranty of any kind, express or implied. The developer makes no representations regarding the reliability, availability, or fitness of this application for any purpose.<br><br>
+      <strong>2. Data Security.</strong> While reasonable precautions have been taken, this prototype has not undergone professional security auditing. You should not enter sensitive personal information, financial data, passwords, or any data you would not be comfortable losing or having exposed.<br><br>
+      <strong>3. Prototype Status.</strong> This is an early-stage prototype. Data may be lost, reset, or deleted at any time without notice. Do not rely on this application for permanent storage of important information.<br><br>
+      <strong>4. Limitation of Liability.</strong> To the fullest extent permitted by law, the developer shall not be liable for any loss, damage, or harm arising from your use of this application, including but not limited to data loss, unauthorised access, or privacy breaches.<br><br>
+      <strong>5. Personal Data.</strong> Any information you enter is stored in a third-party database (Supabase). By using this app you accept Supabase's terms of service and privacy policy. The developer does not sell or intentionally share your data with third parties.<br><br>
+      <strong>6. No Guarantees.</strong> Access to this prototype may be revoked at any time. Features may change or be removed without notice.<br><br>
+      By ticking the box below, you confirm you have read and understood this disclaimer and agree to use this prototype at your own risk.
+    </div>
+    <label>
+      <input type="checkbox" id="disclaimerCheck">
+      I have read and agree to the above disclaimer. I understand this is a prototype and will not enter sensitive personal data.
+    </label>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="acceptDisclaimer()">I Agree — Sign Up</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('disclaimerOverlay').style.display='none'">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- PENDING APPROVAL -->
+<div id="pendingOverlay" style="display:none">
+  <div id="pendingBox">
+    <span class="pending-icon">⏳</span>
+    <h2>Awaiting Approval</h2>
+    <p>Thanks for signing up! Your account is pending approval by the administrator.</p>
+    <p>You'll receive an email once you've been approved. This usually happens within 24 hours.</p>
+    <p style="font-size:0.82rem;color:var(--ink-light);font-style:italic">If you've been waiting a while, try signing out and back in.</p>
+    <button class="btn btn-ghost" style="width:100%;margin-top:8px" onclick="signOut()">Sign Out</button>
+  </div>
+</div>
+
 <div id="onboardingOverlay" style="display:none">
   <div id="onboardingBox">
     <h2>Welcome! Let's get started 👋</h2>
@@ -322,6 +395,9 @@
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
   const AI_ENDPOINT   = SUPABASE_URL + '/functions/v1/AI_PROXY';
+  const APPROVE_URL   = SUPABASE_URL + '/functions/v1/APPROVE_USER';
+  const ADMIN_EMAIL   = 'geoff.urbach@gmail.com';
+  const APPROVALS_URL = SUPABASE_URL + '/rest/v1/user_approvals';
 
   // ── State ────────────────────────────────────────────────────────
   let sb           = null;
@@ -336,7 +412,9 @@
   let voiceActive  = false;
   let currentStory = '';
   let currentQuestion = '';
-  const isIOS      = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  let iosRecording    = false;
+  let iosTranscript   = '';
+  const isIOS         = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   // ── Debug ────────────────────────────────────────────────────────
   function dbg(area, ...args) {
@@ -354,10 +432,18 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.16 starting...');
+    dbg('INIT', 'v0.19 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
+
+    // ── Handle approval link (?approve=USER_ID) ───────────────────
+    const params  = new URLSearchParams(window.location.search);
+    const toApprove = params.get('approve');
+    if (toApprove) {
+      handleApprovalLink(toApprove);
+      return; // don't init the rest of the app
+    }
 
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
       auth: { persistSession: true, autoRefreshToken: true }
@@ -370,7 +456,10 @@
       sessionToken = session?.access_token ?? null;
       dbg('AUTH', 'Token cached:', sessionToken ? 'YES (JWT)' : 'NO');
       updateAuthUI();
-      if (currentUser) { await loadEntries(); showReminder(); }
+      if (currentUser) {
+        const approved = await checkApproval();
+        if (approved) { await loadEntries(); showReminder(); }
+      }
     });
   }
 
@@ -385,8 +474,8 @@
     document.getElementById('signOutBtn').style.display        = on ? 'inline-block' : 'none';
     document.getElementById('startTalkBtn').disabled           = !on;
     if (isIOS) {
-      document.getElementById('talkSubtitle').textContent  = 'I\'ll ask you questions about your life — type your answers.';
-      document.getElementById('startTalkBtn').textContent  = '▶ Start Chat';
+      document.getElementById('talkSubtitle').textContent  = 'I\'ll ask you questions — tap the mic to speak each answer.';
+      document.getElementById('startTalkBtn').textContent  = '▶ Start Talking';
     }
     setTalkStatus('idle', on ? 'Ready — press Start' : 'Sign in to start a conversation');
     dbg('AUTH-UI', on ? 'Logged in: ' + currentUser.email : 'Logged out');
@@ -403,6 +492,20 @@
     else toast('Welcome back!');
   }
 
+  function showDisclaimer() {
+    const email = document.getElementById('emailInput').value.trim();
+    const pass  = document.getElementById('passwordInput').value;
+    if (!email || !pass) return toast('Please enter email and password first');
+    document.getElementById('disclaimerOverlay').style.display = 'flex';
+  }
+
+  async function acceptDisclaimer() {
+    if (!document.getElementById('disclaimerCheck').checked)
+      return toast('Please tick the checkbox to agree');
+    document.getElementById('disclaimerOverlay').style.display = 'none';
+    await signUp();
+  }
+
   async function signUp() {
     const email = document.getElementById('emailInput').value.trim();
     const pass  = document.getElementById('passwordInput').value;
@@ -410,7 +513,86 @@
     dbg('AUTH', 'Signing up:', email);
     const { error } = await sb.auth.signUp({ email, password: pass });
     if (error) { dbgErr('AUTH', error); toast('Sign up failed: ' + error.message); }
-    else toast('Account created! Check your email to confirm.');
+    else toast('Account created! Check your email to confirm, then await approval.');
+  }
+
+  async function handleApprovalLink(user_id) {
+    dbg('APPROVAL', 'Approval link detected for user_id:', user_id);
+    // Show a simple approval UI over a blank page
+    document.body.innerHTML = `
+      <div style="font-family:'Lato',sans-serif;text-align:center;padding:80px 20px;background:#faf7f2;min-height:100vh">
+        <div style="font-family:'Playfair Display',serif;font-size:2rem;margin-bottom:24px">My <span style="color:#c9a96e;font-style:italic">Life Story</span></div>
+        <div id="approvalMsg" style="font-size:1.1rem;color:#6b5a3e">Approving user...</div>
+      </div>`;
+    const msg = document.getElementById('approvalMsg');
+    try {
+      const res  = await fetch(APPROVE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
+        body: JSON.stringify({ action: 'approve', user_id })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        msg.innerHTML = '✅ <strong>User approved!</strong><br><br>They can now sign in and use My Life Story.<br><br><a href="' + window.location.pathname + '" style="color:#c9a96e">← Back to app</a>';
+      } else {
+        msg.innerHTML = '❌ Something went wrong. Check Supabase logs.<br><br><a href="' + window.location.pathname + '" style="color:#c9a96e">← Back to app</a>';
+      }
+    } catch(err) {
+      dbgErr('APPROVAL', 'Link handler failed:', err.message);
+      msg.innerHTML = '❌ Error: ' + err.message + '<br><br><a href="' + window.location.pathname + '" style="color:#c9a96e">← Back to app</a>';
+    }
+  }
+
+  async function checkApproval() {
+    // Admin email always approved
+    if (currentUser.email === ADMIN_EMAIL) {
+      dbg('APPROVAL', 'Admin user — auto approved');
+      document.getElementById('pendingOverlay').style.display = 'none';
+      return true;
+    }
+    try {
+      const res  = await fetch(APPROVALS_URL + '?user_id=eq.' + currentUser.id, {
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      const approved = data?.[0]?.approved === true;
+      dbg('APPROVAL', 'Status:', approved ? 'APPROVED' : 'PENDING');
+      if (!approved) {
+        document.getElementById('pendingOverlay').style.display = 'flex';
+        // Notify admin of new signup
+        await notifyAdmin();
+        return false;
+      }
+      document.getElementById('pendingOverlay').style.display = 'none';
+      return true;
+    } catch(err) {
+      dbgErr('APPROVAL', 'Check failed:', err.message);
+      return false;
+    }
+  }
+
+  async function notifyAdmin() {
+    // Only notify once — if no approval record exists yet
+    try {
+      const check = await fetch(APPROVALS_URL + '?user_id=eq.' + currentUser.id, { headers: getAuthHeaders() });
+      const existing = await check.json();
+      if (existing?.length > 0) return; // already notified
+      // Insert pending record
+      await fetch(APPROVALS_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ user_id: currentUser.id, email: currentUser.email, approved: false })
+      });
+      // Trigger approval email via edge function
+      await fetch(APPROVE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
+        body: JSON.stringify({ action: 'notify', user_id: currentUser.id, email: currentUser.email })
+      });
+      dbg('APPROVAL', 'Admin notified of new signup:', currentUser.email);
+    } catch(err) {
+      dbgErr('APPROVAL', 'Notify failed:', err.message);
+    }
   }
 
   async function signOut() {
@@ -620,8 +802,7 @@
     document.getElementById('stopTalkBtn').style.display  = 'inline-block';
     document.getElementById('conversationLog').innerHTML  = '';
     if (isIOS) {
-      document.getElementById('textAnswerBar').style.display = 'flex';
-      addMessage('system', "I'll ask you questions — type your answers below.");
+      addMessage('system', "I'll ask you questions — tap 🎙 to speak each answer.");
     } else {
       addMessage('system', "Conversation started — I'll ask you questions, answer out loud.");
     }
@@ -633,10 +814,16 @@
     isConversing = false;
     if (window.speechSynthesis) speechSynthesis.cancel();
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    document.getElementById('startTalkBtn').style.display  = 'inline-block';
-    document.getElementById('stopTalkBtn').style.display   = 'none';
-    document.getElementById('textAnswerBar').style.display = 'none';
-    document.getElementById('textAnswerInput').value       = '';
+    iosRecording = false;
+    iosTranscript = '';
+    document.getElementById('startTalkBtn').style.display   = 'inline-block';
+    document.getElementById('stopTalkBtn').style.display    = 'none';
+    document.getElementById('iosAnswerBar').style.display   = 'none';
+    document.getElementById('textAnswerBar').style.display  = 'none';
+    document.getElementById('textAnswerInput').value        = '';
+    document.getElementById('iosTranscriptText').textContent = 'Speak your answer, then tap Done...';
+    document.getElementById('iosRecordBtn').textContent     = '🎙 Start Speaking';
+    document.getElementById('iosDoneBtn').style.display     = 'none';
     currentQuestion = '';
     setTalkStatus('idle', 'Conversation ended');
     addMessage('system', 'Conversation ended. Your answers have been saved.');
@@ -668,9 +855,14 @@
       addMessage('ai', question);
 
       if (isIOS) {
-        // Text mode — just wait for user to type
-        setTalkStatus('listening', 'Type your answer below...');
-        document.getElementById('textAnswerInput').focus();
+        // iOS voice mode — show mic button, wait for user to tap
+        setTalkStatus('listening', 'Tap 🎙 to speak your answer');
+        iosTranscript = '';
+        document.getElementById('iosTranscriptText').textContent = 'Tap 🎙 Start Speaking below...';
+        document.getElementById('iosRecordBtn').textContent      = '🎙 Start Speaking';
+        document.getElementById('iosRecordBtn').className        = 'btn btn-danger';
+        document.getElementById('iosDoneBtn').style.display      = 'none';
+        document.getElementById('iosAnswerBar').style.display    = 'flex';
       } else {
         await speakAndWait(question);
         if (!isConversing) return;
@@ -751,7 +943,67 @@
     catch(e) { dbgErr('SPEECH', 'Could not start mic:', e); addMessage('system', 'Could not start microphone — check permissions.'); stopConversation(); }
   }
 
-  // ── Text Answer (iOS fallback) ────────────────────────────────────
+  // ── iOS Voice Answer ─────────────────────────────────────────────
+  function toggleIOSAnswer() {
+    iosRecording ? stopIOSAnswer() : startIOSAnswer();
+  }
+
+  function startIOSAnswer() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return toast('Microphone not supported on this browser');
+    recognition = new SR();
+    recognition.lang           = 'en-AU';
+    recognition.interimResults = true;
+    recognition.continuous     = true;
+    iosTranscript = '';
+    recognition.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      iosTranscript = t;
+      const el = document.getElementById('iosTranscriptText');
+      el.textContent = t;
+      el.style.color = 'var(--ink)';
+      el.style.fontStyle = 'normal';
+    };
+    recognition.onerror = (e) => {
+      if (e.error !== 'aborted') { dbgErr('IOS-SPEECH', e.error); toast('Mic error: ' + e.error); }
+    };
+    recognition.start();
+    iosRecording = true;
+    document.getElementById('iosRecordBtn').textContent = '⏹ Stop';
+    document.getElementById('iosRecordBtn').className   = 'btn btn-ghost';
+    document.getElementById('iosDoneBtn').style.display = 'none';
+    setTalkStatus('listening', 'Listening... tap Stop when done');
+    dbg('IOS-SPEECH', 'Started');
+  }
+
+  function stopIOSAnswer() {
+    if (recognition) { try { recognition.stop(); } catch(e){} recognition = null; }
+    iosRecording = false;
+    document.getElementById('iosRecordBtn').textContent = '🎙 Record Again';
+    document.getElementById('iosRecordBtn').className   = 'btn btn-danger';
+    if (iosTranscript.trim()) {
+      document.getElementById('iosDoneBtn').style.display = 'inline-block';
+      setTalkStatus('listening', 'Happy with your answer? Tap Done ✓');
+    } else {
+      setTalkStatus('listening', 'Nothing recorded — tap 🎙 to try again');
+    }
+    dbg('IOS-SPEECH', 'Stopped, transcript:', iosTranscript);
+  }
+
+  async function submitIOSAnswer() {
+    const answer = iosTranscript.trim();
+    if (!answer) return toast('Nothing recorded yet');
+    document.getElementById('iosAnswerBar').style.display = 'none';
+    iosTranscript = '';
+    addMessage('user', answer);
+    setTalkStatus('idle', 'Saving...');
+    await addEntry('Other', answer, currentQuestion);
+    toast('Saved ✓');
+    if (isConversing) setTimeout(() => askQuestion(), 800);
+  }
+
+  // ── Text Answer (non-speech browser fallback) ────────────────────
   async function submitTextAnswer() {
     if (!isConversing) return;
     const input  = document.getElementById('textAnswerInput');
