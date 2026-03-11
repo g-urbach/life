@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.27</title>
+  <title>My Life Story v0.28</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -170,9 +170,15 @@
     #iosAnswerBar .ios-transcript {
       min-height: 60px; background: white; border: 2px solid var(--gold);
       border-radius: 8px; padding: 12px 16px; font-size: 0.95rem;
-      color: var(--ink); line-height: 1.6; font-style: italic; color: var(--ink-light);
+      color: var(--ink-light); line-height: 1.6; font-style: italic;
     }
-    #iosAnswerBar .ios-btns { display: flex; gap: 8px; }
+
+    .help-section { margin-bottom: 28px; }
+    .help-section h3 { font-family: 'Playfair Display', serif; font-size: 1.1rem; margin-bottom: 12px; color: var(--ink); }
+    .help-section p { font-size: 0.92rem; color: var(--ink-light); line-height: 1.7; margin-bottom: 8px; }
+    #helpChatLog { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
+    #helpChatLog .help-msg-user { background: var(--ink); color: white; border-radius: 12px 12px 4px 12px; padding: 10px 16px; font-size: 0.9rem; align-self: flex-end; max-width: 80%; }
+    #helpChatLog .help-msg-ai { background: white; border: 1px solid var(--border); border-radius: 12px 12px 12px 4px; padding: 10px 16px; font-size: 0.9rem; line-height: 1.6; max-width: 90%; }
 
     #textAnswerBar {
       display: none; gap: 8px; margin-top: 12px; align-items: center;
@@ -217,7 +223,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.27</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.28</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -236,6 +242,7 @@
   <button class="nav-btn" onclick="showPanel('photos', this)">📷 Photos</button>
   <button class="nav-btn" onclick="showPanel('story', this)">📖 My Story</button>
   <button class="nav-btn" onclick="showPanel('timeline', this)">📋 Timeline</button>
+  <button class="nav-btn" onclick="showPanel('help', this)">❓ Help</button>
   <button class="nav-btn danger" onclick="showPanel('delete', this)">🗑️ Delete Data</button>
 </div>
 
@@ -251,24 +258,23 @@
       <span id="statusText">Sign in to start a conversation</span>
     </div>
     <div id="conversationLog"></div>
-    <!-- iOS voice answer bar -->
+
+    <!-- iOS: live transcript + single Next Question button -->
     <div id="iosAnswerBar">
-      <div class="ios-transcript" id="iosTranscriptText">Speak your answer, then tap Done...</div>
-      <div class="ios-btns">
-        <button class="btn btn-danger" id="iosRecordBtn" onclick="toggleIOSAnswer()">🎙 Start Speaking</button>
-        <button class="btn btn-primary" id="iosDoneBtn" onclick="submitIOSAnswer()" style="display:none">Done ✓</button>
-      </div>
+      <div class="ios-transcript" id="iosTranscriptText">Listening... speak freely, tap Next Question when done.</div>
     </div>
-    <!-- desktop text fallback (kept for non-speech browsers) -->
+
+    <!-- desktop text fallback (non-speech browsers) -->
     <div id="textAnswerBar">
       <input id="textAnswerInput" type="text" placeholder="Type your answer here..." autocomplete="off"
         onkeydown="if(event.key==='Enter') submitTextAnswer()">
       <button class="btn btn-primary" onclick="submitTextAnswer()">Send</button>
     </div>
+
     <div class="talk-controls">
-      <button class="btn btn-primary" id="startTalkBtn" onclick="startConversation()" disabled>▶ Start Talking</button>
-      <button class="btn btn-ghost" id="skipBtn" onclick="skipQuestion()" style="display:none">⏭ Skip</button>
-      <button class="btn btn-danger" id="stopTalkBtn" onclick="stopConversation()" style="display:none">⛔ Stop</button>
+      <button class="btn btn-primary"  id="startTalkBtn" onclick="startConversation()" disabled>▶ Start Talking</button>
+      <button class="btn btn-ghost"    id="nextBtn"      onclick="nextQuestion()"      style="display:none">⏭ Next Question</button>
+      <button class="btn btn-danger"   id="stopTalkBtn"  onclick="stopConversation()"  style="display:none">⛔ Stop Chatting</button>
     </div>
   </div>
 
@@ -360,6 +366,7 @@
     <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="generateStory('memoir')">✨ My Life Story</button>
       <button class="btn btn-secondary" onclick="generateStory('funny')">😄 Funny Version</button>
+      <button class="btn btn-ghost" id="exportPdfBtn" onclick="exportPDF()" style="display:none">📄 Export PDF</button>
     </div>
     <div id="storyOutput" style="display:none"></div>
   </div>
@@ -378,6 +385,43 @@
       <span id="entryCount" style="font-size:0.85rem;color:var(--ink-light)"></span>
     </div>
     <div id="timelineList"></div>
+  </div>
+
+  <!-- HELP -->
+  <div class="panel" id="panel-help">
+    <h2 class="section-title">Help & About</h2>
+    <p class="section-sub">My Life Story — your personal AI-powered memoir companion.</p>
+
+    <div class="help-section">
+      <h3>📖 How it works</h3>
+      <p><strong>Let's Talk</strong> — Start a voice conversation. The AI asks you questions about your life and listens to your answers. Tap <em>Next Question</em> any time to move on, or <em>Stop Chatting</em> to finish.</p>
+      <p><strong>Typed Entry</strong> — Prefer to type? Write any memory or reflection here, with an optional category and prompt.</p>
+      <p><strong>Voice Memo</strong> — Record a longer spoken memory in one go. Hit record, speak freely, then save it.</p>
+      <p><strong>Photos</strong> — Upload a photo and tell the story behind it. The AI analyses the photo and weaves it into your story.</p>
+      <p><strong>My Story</strong> — Once you have some entries, generate a beautifully written memoir or a funny roast version. Export to PDF for printing.</p>
+      <p><strong>Timeline</strong> — Browse all your entries in chronological order, filtered by category.</p>
+    </div>
+
+    <div class="help-section">
+      <h3>🖨️ Printing your story</h3>
+      <p>Export your story as a PDF, then upload it to a print-on-demand service to have it professionally printed and bound as a book:</p>
+      <ul style="padding-left:20px;line-height:2">
+        <li><a href="https://www.lulu.com" target="_blank" style="color:var(--gold-dark)">Lulu.com</a> — flexible, global shipping, set your own price</li>
+        <li><a href="https://www.blurb.com" target="_blank" style="color:var(--gold-dark)">Blurb.com</a> — excellent photo book quality</li>
+        <li><a href="https://www.momento.com.au" target="_blank" style="color:var(--gold-dark)">Momento.com.au</a> — Australian, high quality</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>💬 Ask a question</h3>
+      <p style="margin-bottom:12px">Not sure how something works? Ask below:</p>
+      <div id="helpChatLog"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <input id="helpInput" type="text" placeholder="e.g. How do I add a photo?" style="flex:1;padding:12px 16px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem"
+          onkeydown="if(event.key==='Enter') askHelp()">
+        <button class="btn btn-primary" onclick="askHelp()">Ask</button>
+      </div>
+    </div>
   </div>
 
   <!-- DELETE -->
@@ -487,7 +531,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.27 starting...');
+    dbg('INIT', 'v0.28 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -518,7 +562,7 @@
     document.getElementById('signOutBtn').style.display        = on ? 'inline-block' : 'none';
     document.getElementById('startTalkBtn').disabled           = !on;
     if (isIOS) {
-      document.getElementById('talkSubtitle').textContent  = 'I\'ll ask you questions — tap the mic to speak each answer.';
+      document.getElementById('talkSubtitle').textContent  = 'I\'ll ask you questions — speak freely, tap Next Question when you\'re done answering.';
       document.getElementById('startTalkBtn').textContent  = '▶ Start Talking';
     }
     setTalkStatus('idle', on ? 'Ready — press Start' : 'Sign in to start a conversation');
@@ -755,6 +799,7 @@
     if (btn) btn.classList.add('active');
     if (name === 'timeline') renderTimeline();
     if (name === 'photos')   renderPhotoGrid();
+    if (name === 'help')     document.getElementById('helpInput').focus();
     if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions);
   }
 
@@ -781,10 +826,10 @@
     isConversing = true;
     document.getElementById('startTalkBtn').style.display = 'none';
     document.getElementById('stopTalkBtn').style.display  = 'inline-block';
-    document.getElementById('skipBtn').style.display      = 'inline-block';
+    document.getElementById('nextBtn').style.display      = 'inline-block';
     document.getElementById('conversationLog').innerHTML  = '';
     if (isIOS) {
-      addMessage('system', "I'll ask you questions — tap 🎙 to speak each answer.");
+      addMessage('system', "I'll ask questions — speak freely, tap Next Question when you're done answering.");
     } else {
       addMessage('system', "Conversation started — I'll ask you questions, answer out loud.");
     }
@@ -796,33 +841,44 @@
     isConversing = false;
     if (window.speechSynthesis) speechSynthesis.cancel();
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    iosRecording = false;
+    iosRecording  = false;
     iosTranscript = '';
     document.getElementById('startTalkBtn').style.display   = 'inline-block';
     document.getElementById('stopTalkBtn').style.display    = 'none';
-    document.getElementById('skipBtn').style.display        = 'none';
+    document.getElementById('nextBtn').style.display        = 'none';
     document.getElementById('iosAnswerBar').style.display   = 'none';
     document.getElementById('textAnswerBar').style.display  = 'none';
     document.getElementById('textAnswerInput').value        = '';
-    document.getElementById('iosTranscriptText').textContent = 'Speak your answer, then tap Done...';
-    document.getElementById('iosRecordBtn').textContent     = '🎙 Start Speaking';
-    document.getElementById('iosDoneBtn').style.display     = 'none';
+    document.getElementById('iosTranscriptText').textContent = 'Listening... speak freely, tap Next Question when done.';
     currentQuestion = '';
     setTalkStatus('idle', 'Conversation ended');
     addMessage('system', 'Conversation ended. Your answers have been saved.');
   }
 
-  function skipQuestion() {
+  async function nextQuestion() {
     if (!isConversing) return;
-    dbg('TALK', 'Skipping question');
-    if (window.speechSynthesis) speechSynthesis.cancel();
-    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    iosRecording  = false;
-    iosTranscript = '';
+    dbg('TALK', 'Next question — transcript so far:', iosTranscript.length, 'chars');
+
+    // On iOS — save whatever was heard before moving on
+    if (isIOS && iosTranscript.trim()) {
+      if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
+      iosRecording  = false;
+      const answer  = iosTranscript.trim();
+      iosTranscript = '';
+      addMessage('user', answer);
+      setTalkStatus('idle', 'Saving...');
+      await addEntry('Other', answer, currentQuestion);
+      toast('Saved ✓');
+    } else {
+      // Desktop or no transcript — just skip
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
+      iosTranscript = '';
+      addMessage('system', 'Moving on...');
+    }
+
     document.getElementById('iosAnswerBar').style.display = 'none';
-    addMessage('system', 'Skipped — asking something else...');
-    // Longer delay so TTS has fully stopped before mic opens again
-    setTimeout(() => { if (isConversing) askQuestion(); }, 1500);
+    setTimeout(() => { if (isConversing) askQuestion(); }, 800);
   }
 
   async function askQuestion() {
@@ -851,14 +907,34 @@
       addMessage('ai', question);
 
       if (isIOS) {
-        // iOS voice mode — show mic button, wait for user to tap
-        setTalkStatus('listening', 'Tap 🎙 to speak your answer');
+        // iOS — show transcript area and auto-start continuous listening
         iosTranscript = '';
-        document.getElementById('iosTranscriptText').textContent = 'Tap 🎙 Start Speaking below...';
-        document.getElementById('iosRecordBtn').textContent      = '🎙 Start Speaking';
-        document.getElementById('iosRecordBtn').className        = 'btn btn-danger';
-        document.getElementById('iosDoneBtn').style.display      = 'none';
-        document.getElementById('iosAnswerBar').style.display    = 'flex';
+        const el = document.getElementById('iosTranscriptText');
+        el.textContent = 'Listening... speak freely, tap Next Question when done.';
+        el.style.color = 'var(--ink-light)';
+        document.getElementById('iosAnswerBar').style.display = 'flex';
+        setTalkStatus('listening', 'Listening...');
+
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { addMessage('system', 'Mic not supported — please use the Next Question button to skip.'); return; }
+        recognition = new SR();
+        recognition.lang = 'en-AU'; recognition.interimResults = true; recognition.continuous = true;
+        recognition.onresult = (e) => {
+          let t = '';
+          for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+          iosTranscript = t;
+          el.textContent = t;
+          el.style.color = 'var(--ink)';
+        };
+        recognition.onerror = (e) => {
+          if (e.error !== 'aborted') dbgWarn('IOS-SPEECH', 'error:', e.error);
+        };
+        recognition.onend = () => {
+          dbg('IOS-SPEECH', 'Recognition ended');
+          iosRecording = false;
+        };
+        try { recognition.start(); iosRecording = true; dbg('IOS-SPEECH', 'Auto-started'); }
+        catch(e) { dbgWarn('IOS-SPEECH', 'Could not auto-start:', e.message); }
       } else {
         await speakAndWait(question);
         if (!isConversing) return;
@@ -940,66 +1016,6 @@
     setTalkStatus('listening', 'Listening... speak your answer');
     try { recognition.start(); dbg('SPEECH', 'Recognition started'); }
     catch(e) { dbgErr('SPEECH', 'Could not start mic:', e); addMessage('system', 'Could not start microphone — check permissions.'); stopConversation(); }
-  }
-
-  // ── iOS Voice Answer ─────────────────────────────────────────────
-  function toggleIOSAnswer() {
-    iosRecording ? stopIOSAnswer() : startIOSAnswer();
-  }
-
-  function startIOSAnswer() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return toast('Microphone not supported on this browser');
-    recognition = new SR();
-    recognition.lang           = 'en-AU';
-    recognition.interimResults = true;
-    recognition.continuous     = true;
-    iosTranscript = '';
-    recognition.onresult = (e) => {
-      let t = '';
-      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      iosTranscript = t;
-      const el = document.getElementById('iosTranscriptText');
-      el.textContent = t;
-      el.style.color = 'var(--ink)';
-      el.style.fontStyle = 'normal';
-    };
-    recognition.onerror = (e) => {
-      if (e.error !== 'aborted') { dbgErr('IOS-SPEECH', e.error); toast('Mic error: ' + e.error); }
-    };
-    recognition.start();
-    iosRecording = true;
-    document.getElementById('iosRecordBtn').textContent = '⏹ Stop';
-    document.getElementById('iosRecordBtn').className   = 'btn btn-ghost';
-    document.getElementById('iosDoneBtn').style.display = 'none';
-    setTalkStatus('listening', 'Listening... tap Stop when done');
-    dbg('IOS-SPEECH', 'Started');
-  }
-
-  function stopIOSAnswer() {
-    if (recognition) { try { recognition.stop(); } catch(e){} recognition = null; }
-    iosRecording = false;
-    document.getElementById('iosRecordBtn').textContent = '🎙 Record Again';
-    document.getElementById('iosRecordBtn').className   = 'btn btn-danger';
-    if (iosTranscript.trim()) {
-      document.getElementById('iosDoneBtn').style.display = 'inline-block';
-      setTalkStatus('listening', 'Happy with your answer? Tap Done ✓');
-    } else {
-      setTalkStatus('listening', 'Nothing recorded — tap 🎙 to try again');
-    }
-    dbg('IOS-SPEECH', 'Stopped, transcript:', iosTranscript);
-  }
-
-  async function submitIOSAnswer() {
-    const answer = iosTranscript.trim();
-    if (!answer) return toast('Nothing recorded yet');
-    document.getElementById('iosAnswerBar').style.display = 'none';
-    iosTranscript = '';
-    addMessage('user', answer);
-    setTalkStatus('idle', 'Saving...');
-    await addEntry('Other', answer, currentQuestion);
-    toast('Saved ✓');
-    if (isConversing) setTimeout(() => askQuestion(), 800);
   }
 
   // ── Text Answer (non-speech browser fallback) ────────────────────
@@ -1374,6 +1390,7 @@
 
       currentStory = { text: story, mode, funnyCaptions };
       renderStory(story, photoEntries, mode, funnyCaptions);
+      document.getElementById('exportPdfBtn').style.display = 'inline-block';
       dbg('STORY', 'Generated, chars:', story.length);
     } catch (err) {
       dbgErr('STORY', err);
@@ -1488,6 +1505,78 @@
       if (!res.ok) { dbgErr('DB', 'Delete failed:', res.status); toast('Error deleting entries'); }
       else { entries = []; toast('All entries deleted'); }
     } catch(err) { dbgErr('DB', 'Delete error:', err); toast('Error: ' + err.message); }
+  }
+
+  // ── Help AI Chat ─────────────────────────────────────────────────
+  async function askHelp() {
+    const input = document.getElementById('helpInput');
+    const q     = input.value.trim();
+    if (!q) return;
+    input.value = '';
+    const log   = document.getElementById('helpChatLog');
+
+    const userDiv = document.createElement('div');
+    userDiv.className = 'help-msg-user';
+    userDiv.textContent = q;
+    log.appendChild(userDiv);
+    log.scrollTop = log.scrollHeight;
+
+    const aiDiv = document.createElement('div');
+    aiDiv.className   = 'help-msg-ai';
+    aiDiv.textContent = '...';
+    log.appendChild(aiDiv);
+
+    const systemPrompt =
+      'You are a friendly help assistant for an app called "My Life Story". ' +
+      'The app helps people record their life story using voice conversations, typed entries, voice memos, and photos. ' +
+      'An AI interviewer asks questions and listens to answers. Stories can be generated as a warm memoir or a funny version. ' +
+      'The app has these sections: Let\'s Talk (AI voice interview), Typed Entry, Voice Memo, Photos (with AI analysis), My Story (generates memoir or funny story, export to PDF), Timeline (browse all entries), Help, Delete Data. ' +
+      'Users can export their story as a PDF for printing via services like Lulu, Blurb, or Momento. ' +
+      'Be warm, helpful and concise. Answer in 2-4 sentences maximum.';
+
+    try {
+      const answer = await callAI(systemPrompt + '\n\nUser question: ' + q, { max_tokens: 200 });
+      aiDiv.textContent = answer;
+    } catch(err) {
+      aiDiv.textContent = 'Sorry, I couldn\'t answer that right now. Try again in a moment.';
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // ── PDF Export ───────────────────────────────────────────────────
+  function exportPDF() {
+    if (!currentStory) return toast('Generate a story first');
+    const name  = userProfile.name || 'My Life Story';
+    const title = currentStory.mode === 'funny' ? name + '\'s Life Story (The Comedy Version)' : name + '\'s Life Story';
+
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@400;700&display=swap');
+  body { font-family: 'Lato', serif; max-width: 680px; margin: 60px auto; padding: 0 40px; color: #2c2416; line-height: 1.9; font-size: 11pt; }
+  h1 { font-family: 'Playfair Display', serif; font-size: 2.2rem; text-align: center; margin-bottom: 8px; color: #2c2416; }
+  .subtitle { text-align: center; color: #8b7355; font-style: italic; margin-bottom: 48px; font-size: 0.95rem; }
+  p { margin-bottom: 1.4em; text-align: justify; }
+  .photo-block { margin: 24px 0; page-break-inside: avoid; }
+  .photo-block img { max-width: 100%; border-radius: 6px; }
+  .photo-caption { font-size: 0.85rem; color: #8b7355; font-style: italic; margin-top: 6px; }
+  .footer { text-align: center; margin-top: 60px; color: #c9a96e; font-size: 0.8rem; border-top: 1px solid #e8dcc8; padding-top: 20px; }
+  @media print { body { margin: 0; } }
+</style>
+</head>
+<body>
+<h1>${title}</h1>
+<div class="subtitle">Generated by My Life Story · ${new Date().toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}</div>
+${document.getElementById('storyOutput').innerHTML}
+<div class="footer">Created with My Life Story &hearts;</div>
+</body>
+</html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 800);
   }
 
   // ── Reminder ─────────────────────────────────────────────────────
