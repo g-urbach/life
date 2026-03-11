@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.29</title>
+  <title>My Life Story v0.30</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -223,7 +223,7 @@
 <body>
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.29</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.30</small></h1>
   <div id="userStatus">Not signed in</div>
 </header>
 
@@ -487,7 +487,7 @@
 
 <script>
   // ── Config ───────────────────────────────────────────────────────
-  const DEPLOY_NOTES = "v0.29 — Auto-deploy dashboard, Next Question button, Stop Chatting, iOS auto-listen, Help panel with AI chat, PDF export, funny photo captions";
+  const DEPLOY_NOTES = "v0.30 — Continuous listening on desktop, mic stays open until Next Question is tapped";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -533,7 +533,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   function init() {
-    dbg('INIT', 'v0.29 starting...');
+    dbg('INIT', 'v0.30 starting...');
     dbg('INIT', 'SpeechRecognition:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
     dbg('INIT', 'SpeechSynthesis:', !!window.speechSynthesis);
     dbg('INIT', 'AI endpoint:', AI_ENDPOINT);
@@ -833,7 +833,7 @@
     if (isIOS) {
       addMessage('system', "I'll ask questions — speak freely, tap Next Question when you're done answering.");
     } else {
-      addMessage('system', "Conversation started — I'll ask you questions, answer out loud.");
+      addMessage('system', "I'll ask you questions — speak freely, tap Next Question when you're done answering.");
     }
     await askQuestion();
   }
@@ -974,49 +974,38 @@
 
     recognition = new SR();
     recognition.lang           = 'en-AU';
-    recognition.interimResults = false;
-    recognition.continuous     = false;
+    recognition.interimResults = true;
+    recognition.continuous     = true;
 
-    const silenceTimer = setTimeout(() => {
-      dbgWarn('SPEECH', '15s silence timeout');
-      try { recognition.stop(); } catch(e) {}
-      if (isConversing) {
-        addMessage('system', "Didn't catch that — let's try another question.");
-        setTimeout(() => askQuestion(), 800);
-      }
-    }, 15000);
+    let transcript = '';
 
-    recognition.onresult = async (e) => {
-      clearTimeout(silenceTimer);
-      const answer = e.results[0][0].transcript.trim();
-      dbg('SPEECH', 'Heard:', answer);
-      if (!answer) return;
-      try { recognition.stop(); } catch(e) {}
-      recognition = null;
-      addMessage('user', answer);
-      setTalkStatus('idle', 'Saving...');
-      await addEntry('Other', answer, question);
-      toast('Saved ✓');
-      if (isConversing) setTimeout(() => askQuestion(), 1500);
+    // Show live transcript in the iOS bar (reuse it for desktop too)
+    const el = document.getElementById('iosTranscriptText');
+    el.textContent = 'Listening... speak freely, tap Next Question when done.';
+    el.style.color = 'var(--ink-light)';
+    document.getElementById('iosAnswerBar').style.display = 'flex';
+
+    recognition.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      transcript = t;
+      iosTranscript = t; // share with nextQuestion()
+      el.textContent = t;
+      el.style.color = 'var(--ink)';
     };
 
     recognition.onerror = (e) => {
-      clearTimeout(silenceTimer);
-      dbgErr('SPEECH', 'Error:', e.error);
-      if (!isConversing) return;
-      if (e.error === 'no-speech') {
-        addMessage('system', "Didn't catch that — asking another question.");
-        setTimeout(() => askQuestion(), 800);
-      } else if (e.error !== 'aborted') {
+      if (e.error === 'no-speech') return; // ignore — they just haven't spoken yet
+      if (e.error !== 'aborted') {
+        dbgErr('SPEECH', 'Error:', e.error);
         addMessage('system', 'Mic error: ' + e.error);
-        stopConversation();
       }
     };
 
-    recognition.onend = () => { clearTimeout(silenceTimer); dbg('SPEECH', 'Recognition ended'); };
+    recognition.onend = () => { dbg('SPEECH', 'Recognition ended'); };
 
-    setTalkStatus('listening', 'Listening... speak your answer');
-    try { recognition.start(); dbg('SPEECH', 'Recognition started'); }
+    setTalkStatus('listening', 'Listening... tap Next Question when done');
+    try { recognition.start(); dbg('SPEECH', 'Continuous recognition started'); }
     catch(e) { dbgErr('SPEECH', 'Could not start mic:', e); addMessage('system', 'Could not start microphone — check permissions.'); stopConversation(); }
   }
 
