@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.39</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.40</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -865,21 +865,30 @@
     <!-- Mode controls -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
 
-      <!-- AI questions checkbox -->
-      <label id="aiQuestionsLabel" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9rem;font-weight:700;color:var(--text)">
-        <input type="checkbox" id="aiQuestionsCheck" checked onchange="onModeChange()"
-          style="width:18px;height:18px;accent-color:var(--gold);cursor:pointer;flex-shrink:0">
-        Ask me questions
-      </label>
+      <!-- 3-way AI mode pill -->
+      <div id="aiModePill" style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px;gap:2px">
+        <button id="aiModeFreeTalkBtn" onclick="setAIMode('free')"
+          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s;white-space:nowrap">
+          🎤 Free talk
+        </button>
+        <button id="aiModeNewTopicBtn" onclick="setAIMode('new')"
+          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--gold);color:white;transition:all 0.15s;white-space:nowrap">
+          🗺️ New topic
+        </button>
+        <button id="aiModeGoDeepBtn" onclick="setAIMode('deep')"
+          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s;white-space:nowrap">
+          🔍 Go deeper
+        </button>
+      </div>
 
       <!-- Talk / Type pill toggle -->
       <div id="inputModePill" style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px;gap:2px">
         <button id="talkModeBtn" onclick="setInputMode('talk')"
-          style="padding:6px 18px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--gold);color:white;transition:all 0.15s">
+          style="padding:6px 16px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--gold);color:white;transition:all 0.15s">
           🎙️ Talk
         </button>
         <button id="typeModeBtn" onclick="setInputMode('type')"
-          style="padding:6px 18px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s">
+          style="padding:6px 16px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s">
           ✍️ Type
         </button>
       </div>
@@ -1164,7 +1173,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.39 — Merged Talk + Voice Memo + Typed Entry into one Record tab (Ask me questions checkbox + Talk/Type toggle)";
+  const DEPLOY_NOTES = "v0.40 — Record tab: 3-way mode toggle (Free talk / New topic / Go deeper), smarter anti-repetition, follow-up question mode";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1250,7 +1259,8 @@
       document.getElementById('appShell').style.display = 'none';
     }
     document.getElementById('recStartBtn').disabled = !on;
-    setRecStatus('idle', on ? 'Ready — press Start' : 'Sign in to start');
+    setRecStatus('idle', on ? "Ready — I'll ask you about a new area of your life" : 'Sign in to start');
+    if (typeof setAIMode === 'function') setAIMode('new');
   }
 
   // ── Landing auth ─────────────────────────────────────────────────
@@ -1555,18 +1565,23 @@
 
   // State
   let recInputMode   = 'talk';   // 'talk' | 'type'
-  let recAIMode      = true;     // ask me questions on/off
+  let recAIMode      = 'new';    // 'free' | 'new' | 'deep'
   let recTranscript  = '';       // live transcript for current answer
   let recLastTags    = {};       // carries forward between answers
   let recPhotos      = [];       // queued photos for current answer
   let recCurQuestion = '';       // current AI question ('' in free mode)
 
   // ── Mode switching ────────────────────────────────────────────────
-  function onModeChange() {
-    recAIMode = document.getElementById('aiQuestionsCheck').checked;
-    if (!recActive) {
-      setRecStatus('idle', recAIMode ? "Ready — press Start, I'll ask you questions" : 'Ready — press Start and speak freely');
-    }
+  function setAIMode(mode) {
+    recAIMode = mode;
+    const btns = { free: 'aiModeFreeTalkBtn', new: 'aiModeNewTopicBtn', deep: 'aiModeGoDeepBtn' };
+    Object.entries(btns).forEach(([k, id]) => {
+      const btn = document.getElementById(id);
+      btn.style.background = k === mode ? 'var(--gold)' : 'none';
+      btn.style.color      = k === mode ? 'white' : 'var(--text-light)';
+    });
+    const labels = { free: 'Ready — press Start and speak freely', new: "Ready — I'll ask you about a new area of your life", deep: "Ready — I'll ask follow-up questions on things you've mentioned" };
+    if (!recActive) setRecStatus('idle', labels[mode]);
   }
 
   function setInputMode(mode) {
@@ -1613,7 +1628,7 @@
     document.getElementById('recordTagPanel').style.display = 'grid';
     populateTagDropdowns('rec');
 
-    if (recAIMode) {
+    if (recAIMode !== 'free') {
       await recAskQuestion();
     } else {
       // Free mode — just start listening/typing
@@ -1674,7 +1689,7 @@
 
     setTimeout(async () => {
       if (!recActive) return;
-      if (recAIMode) {
+      if (recAIMode !== 'free') {
         await recAskQuestion();
       } else {
         applyTagDefaults('rec', recLastTags);
@@ -1715,32 +1730,72 @@
   // ── AI question ───────────────────────────────────────────────────
   async function recAskQuestion() {
     if (!recActive) return;
-    setRecStatus('speaking', 'Thinking of a question...');
+    setRecStatus('speaking', recAIMode === 'deep' ? 'Finding a follow-up question...' : 'Finding a new topic...');
     document.getElementById('talkInputArea').style.display = 'none';
     document.getElementById('typeInputArea').style.display = 'none';
 
     try {
-      const history     = entries.filter(e => !e.category.startsWith('_profile')).slice(-20)
-        .map(e => (e.question ? 'Q: ' + e.question + ' ' : '') + 'A: ' + e.answer).join('\n');
-      const askedTopics = entries.slice(-30).map(e => e.question).filter(Boolean).join(' | ');
-      const prompt =
-        'You are a warm, gentle interviewer helping someone record their life story.\n\n' +
-        'ENTRIES SO FAR:\n' + (history || 'None yet.') + '\n\n' +
-        (askedTopics ? 'QUESTIONS ALREADY ASKED — DO NOT REPEAT:\n' + askedTopics + '\n\n' : '') +
-        'Ask ONE short open-ended question (max 12 words). Rotate through: childhood, family, school, career, relationships, travel, challenges, proudest moments, values, hobbies. Be warm and personal. Return ONLY the question.';
+      const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
+
+      // Build a rich summary of topics ALREADY covered — harder to accidentally repeat
+      const coveredTopics = realEntries.slice(-40).map(e => {
+        const parts = [];
+        if (e.question) parts.push('Q: ' + e.question);
+        // Summarise the answer in ~8 words for context
+        const words = e.answer.split(' ').slice(0, 8).join(' ');
+        parts.push('A: ' + words + (e.answer.split(' ').length > 8 ? '...' : ''));
+        return parts.join(' | ');
+      }).join('\n');
+
+      // Recent answers for go-deeper mode
+      const recentFull = realEntries.slice(-6).map(e =>
+        (e.question ? 'Q: ' + e.question + '\n' : '') + 'A: ' + e.answer
+      ).join('\n\n');
+
+      let prompt;
+
+      if (recAIMode === 'deep') {
+        prompt =
+          'You are a warm, deeply curious biographer helping someone record their life story.\n\n' +
+          'RECENT ANSWERS (pick ONE to follow up on):\n' + (recentFull || 'None yet — ask an opening question instead.') + '\n\n' +
+          'YOUR TASK:\n' +
+          '- Choose the most interesting or emotionally rich detail from the recent answers above\n' +
+          '- Ask ONE specific follow-up question that goes deeper into that detail (max 15 words)\n' +
+          '- Examples: "You mentioned your father — what was he really like?", "What did that moment feel like at the time?"\n' +
+          '- Be warm, personal, and specific to what they actually said\n' +
+          '- Return ONLY the question, nothing else';
+      } else {
+        // New topic mode — aggressive anti-repetition
+        const lifeAreas = ['early childhood memories', 'parents and their personalities', 'siblings and sibling dynamics',
+          'primary school years', 'high school friendships', 'first jobs', 'romantic relationships',
+          'marriage or long-term partnerships', 'having children', 'career highlights and low points',
+          'places you have lived', 'travel and adventures', 'hobbies and passions', 'proudest achievements',
+          'biggest regrets', 'hardest times and how you got through them', 'mentors or people who shaped you',
+          'beliefs and values', 'funniest memories', 'what you would tell your younger self'];
+
+        prompt =
+          'You are a warm, gentle biographer helping someone record their life story.\n\n' +
+          'TOPICS AND ANSWERS ALREADY COVERED (do NOT revisit any of these):\n' +
+          (coveredTopics || 'None yet — start with a warm opening question.') + '\n\n' +
+          'LIFE AREAS TO ROTATE THROUGH (pick one NOT already covered):\n' +
+          lifeAreas.join(', ') + '\n\n' +
+          'YOUR TASK:\n' +
+          '- Identify which life areas above have NOT been touched yet\n' +
+          '- Pick the most interesting uncovered area\n' +
+          '- Ask ONE short, open-ended question about it (max 12 words)\n' +
+          '- CRITICAL: If a topic appears in the covered list above in ANY form, skip it entirely\n' +
+          '- Be warm and personal\n' +
+          '- Return ONLY the question, nothing else, no preamble';
+      }
 
       const question = await callAI(prompt);
       if (!recActive) return;
       recCurQuestion = question;
 
-      // Show question
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
-
-      // Apply carry-forward tags
       applyTagDefaults('rec', recLastTags);
 
-      // Speak it, then start input
       if (recInputMode === 'talk') {
         await speakAndWait(question);
         if (!recActive) return;
@@ -1760,7 +1815,7 @@
     }
   }
 
-  function recShowInputArea() {
+    function recShowInputArea() {
     document.getElementById('talkInputArea').style.display = recInputMode === 'talk' ? 'block' : 'none';
     document.getElementById('typeInputArea').style.display = recInputMode === 'type' ? 'block' : 'none';
   }
