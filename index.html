@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.35</title>
+  <title>My Life Story v0.36</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.35</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.36</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1183,7 +1183,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.35 — Tags shown per-answer during Let's Talk, carry forward to next question, inline edit-tags on timeline entries";
+  const DEPLOY_NOTES = "v0.36 — Fix mic restart loop (listeningActive flag), timeline newest first, conversation log shows only current Q&A";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1206,6 +1206,7 @@
   let currentQuestion = '';
   let lastTags        = {};  // carries forward to next question as default
   let iosRecording    = false;
+  let listeningActive = false;  // controls persistent mic restart loop
   let iosTranscript   = '';
   let photoFile       = null;
   let photoRecActive  = false;
@@ -1525,14 +1526,13 @@
   }
 
   async function stopConversation() {
-    // Save any transcript that was being spoken when Stop was pressed
     const pendingTranscript = iosTranscript.trim();
     const pendingQuestion   = currentQuestion;
 
     isConversing = false;
     if (window.speechSynthesis) speechSynthesis.cancel();
-    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    iosRecording = false; iosTranscript = '';
+    stopListening();
+    iosTranscript = '';
 
     document.getElementById('startTalkBtn').style.display  = 'inline-block';
     document.getElementById('stopTalkBtn').style.display   = 'none';
@@ -1567,15 +1567,13 @@
     const transcript = iosTranscript.trim();
     const question   = currentQuestion;
 
-    // Stop mic
-    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
-    iosRecording  = false;
+    // Stop mic cleanly — kills restart loop before abort
+    stopListening();
     iosTranscript = '';
 
     if (transcript) {
-      // Read tags — carry them forward as lastTags for next question
       const tags = readTags('talk');
-      lastTags   = { ...tags };  // remember for next Q
+      lastTags   = { ...tags };
       addMessage('user', transcript);
       setTalkStatus('idle', 'Saving...');
       await addEntry('Other', transcript, question, null, null, tags);
@@ -1593,6 +1591,10 @@
   async function askQuestion() {
     if (!isConversing) return;
     setTalkStatus('speaking', 'Thinking of a question...');
+
+    // Clear log — only show current question, not history
+    document.getElementById('conversationLog').innerHTML = '';
+
     try {
       const history = entries.filter(e => !e.category.startsWith('_profile')).slice(-20).map(e =>
         (e.question ? 'Q: ' + e.question + ' ' : '') + 'A: ' + e.answer
@@ -1621,7 +1623,7 @@
         el.style.color = 'var(--text-light)';
         document.getElementById('iosAnswerBar').style.display = 'flex';
         setTalkStatus('listening', 'Listening...');
-        startPersistentListening(el, true);
+        startPersistentListening(el);
       } else {
         await speakAndWait(question);
         if (!isConversing) return;
@@ -1647,10 +1649,8 @@
     });
   }
 
-  // ── Persistent mic — restarts automatically on no-speech / end ──
-  // The browser times out after ~8s of silence. We restart silently
-  // so the mic stays open until the user taps Next Question.
-  function startPersistentListening(el, isIOSMode) {
+  // ── Persistent mic — restarts on silence, stops cleanly on abort ──
+  function startPersistentListening(el) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       addMessage('system', 'Speech not supported — use the text box below.');
@@ -1658,26 +1658,33 @@
       return;
     }
 
+    listeningActive = true;  // flag — set false before any abort to stop the loop
+
     function createAndStart() {
-      if (!isConversing) return;
+      if (!isConversing || !listeningActive) {
+        dbg('SPEECH', 'createAndStart suppressed — isConversing:', isConversing, 'listeningActive:', listeningActive);
+        return;
+      }
       const rec = new SR();
       rec.lang = 'en-AU';
       rec.interimResults = true;
-      rec.continuous = true;   // ask browser to stay open; some ignore this
+      rec.continuous = true;
       recognition = rec;
 
       rec.onresult = (e) => {
         let t = '';
         for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
         iosTranscript = t;
-        if (el) { el.textContent = t || 'Listening... speak freely, tap Next Question when done.'; el.style.color = t ? 'var(--text)' : 'var(--text-light)'; }
+        if (el) {
+          el.textContent = t || 'Listening... speak freely, tap Next Question when done.';
+          el.style.color = t ? 'var(--text)' : 'var(--text-light)';
+        }
       };
 
       rec.onerror = (e) => {
-        if (e.error === 'aborted') return;           // we aborted it intentionally
-        if (e.error === 'no-speech') return;         // will fire onend → restart
+        if (e.error === 'aborted') return;       // intentional — loop will be blocked by listeningActive
+        if (e.error === 'no-speech') return;     // fires onend → restart
         dbgWarn('SPEECH', 'Error:', e.error);
-        // network / not-allowed errors — don't loop forever
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
           addMessage('system', 'Microphone permission denied.');
           stopConversation();
@@ -1685,12 +1692,11 @@
       };
 
       rec.onend = () => {
-        dbg('SPEECH', 'Recognition ended — isConversing:', isConversing);
         iosRecording = false;
-        if (isConversing) {
-          // Small pause then restart — keeps mic alive indefinitely
+        dbg('SPEECH', 'onend — isConversing:', isConversing, 'listeningActive:', listeningActive);
+        if (isConversing && listeningActive) {
           setTimeout(() => {
-            if (isConversing) {
+            if (isConversing && listeningActive) {
               dbg('SPEECH', 'Auto-restarting mic...');
               createAndStart();
             }
@@ -1703,23 +1709,32 @@
         iosRecording = true;
         dbg('SPEECH', 'Mic started');
       } catch(e) {
-        dbgWarn('SPEECH', 'Could not start:', e.message);
-        // Already started — wait and retry
-        setTimeout(() => { if (isConversing) createAndStart(); }, 500);
+        dbgWarn('SPEECH', 'Start failed:', e.message);
+        setTimeout(() => { if (isConversing && listeningActive) createAndStart(); }, 600);
       }
     }
 
     createAndStart();
   }
 
-  function listenForAnswer(question) {
+  function stopListening() {
+    listeningActive = false;   // kill the restart loop BEFORE aborting
+    iosRecording    = false;
+    if (recognition) {
+      try { recognition.abort(); } catch(e) {}
+      recognition = null;
+    }
+    dbg('SPEECH', 'Listening stopped cleanly');
+  }
+
+  function listenForAnswer() {
     if (!isConversing) return;
     const el = document.getElementById('iosTranscriptText');
     el.textContent = 'Listening... speak freely, tap Next Question when done.';
     el.style.color = 'var(--text-light)';
     document.getElementById('iosAnswerBar').style.display = 'flex';
     setTalkStatus('listening', 'Listening... tap Next Question when done');
-    startPersistentListening(el, false);
+    startPersistentListening(el);
   }
 
   async function submitTextAnswer() {
@@ -2311,7 +2326,7 @@
 
     // Always reload from DB to ensure we have the latest
     try {
-      const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id + '&order=timestamp.asc', { headers: getAuthHeaders() });
+      const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id + '&order=timestamp.desc', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         entries = data || [];
