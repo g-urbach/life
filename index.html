@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.36</title>
+  <title>My Life Story v0.37</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.36</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.37</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -900,22 +900,31 @@
       </div>
       <div class="tag-field">
         <label>📍 Location</label>
-        <select id="talkTagLocation" onchange="handleNewTagOption(this, 'talkTagLocationCustom')"><option value="">Not specified</option></select>
+        <select id="talkTagLocation" onchange="handleNewTagOption(this,'talkTagLocationCustom')"><option value="">Not specified</option></select>
         <input type="text" id="talkTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
       </div>
       <div class="tag-field">
         <label>👥 People</label>
-        <select id="talkTagPeople" onchange="handleNewTagOption(this, 'talkTagPeopleCustom')"><option value="">Not specified</option></select>
+        <select id="talkTagPeople" onchange="handleNewTagOption(this,'talkTagPeopleCustom')"><option value="">Not specified</option></select>
         <input type="text" id="talkTagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
       </div>
       <div class="tag-field">
         <label>📚 Chapter</label>
-        <select id="talkTagChapter" onchange="handleNewTagOption(this, 'talkTagChapterCustom')"><option value="">Not specified</option></select>
+        <select id="talkTagChapter" onchange="handleNewTagOption(this,'talkTagChapterCustom')"><option value="">Not specified</option></select>
         <input type="text" id="talkTagChapterCustom" placeholder="Type a chapter name..." style="margin-top:6px;display:none">
+      </div>
+      <div class="tag-field" style="grid-column:1/-1">
+        <label>📷 Attach photos to this answer</label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button type="button" class="btn btn-ghost" style="font-size:0.8rem;padding:7px 14px" onclick="document.getElementById('talkPhotoInput').click()">＋ Add Photo</button>
+          <input type="file" id="talkPhotoInput" accept="image/*" multiple style="display:none" onchange="handleTalkPhotos(this)">
+          <span id="talkPhotoCount" style="font-size:0.78rem;color:var(--text-light)"></span>
+        </div>
+        <div id="talkPhotoPreviewStrip" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
       </div>
     </div>
 
-    <!-- Controls -->
+        <!-- Controls -->
     <div class="talk-controls" style="margin-top:14px">
       <button class="btn btn-primary"  id="startTalkBtn" onclick="startConversation()" disabled>▶ Start Talking</button>
       <button class="btn btn-ghost"    id="nextBtn"      onclick="nextQuestion()"      style="display:none">⏭ Next Question</button>
@@ -1013,38 +1022,79 @@
   <!-- PHOTOS -->
   <div class="panel" id="panel-photos">
     <h2 class="section-title">Photos</h2>
-    <p class="section-sub">Upload a photo and tell the story behind it — it'll appear in your life story.</p>
-    <div class="photo-upload-area" onclick="document.getElementById('photoFileInput').click()">
-      <span class="upload-icon">📷</span>
-      <p style="font-weight:700;margin-bottom:4px;color:var(--text)">Tap to choose a photo</p>
-      <p style="font-size:0.82rem;color:var(--text-light)">From your camera roll or files</p>
-    </div>
-    <input type="file" id="photoFileInput" accept="image/*" style="display:none" onchange="handlePhotoSelected(this)">
-    <div id="photoRecordingSection" style="display:none;margin-top:20px;">
-      <img id="photoPreview" class="photo-preview" src="" alt="Preview">
+    <p class="section-sub">Add photos with their full story — text, voice, tags. Photos can also be attached to any entry from the Timeline.</p>
+
+    <!-- Composer -->
+    <div id="photoComposer" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:28px">
+      <p style="font-weight:700;font-size:0.92rem;margin-bottom:16px;color:var(--text)">📷 New Photo Entry</p>
+
+      <!-- Multi-photo upload strip -->
+      <div id="photoDropZone" class="photo-upload-area" style="margin-bottom:16px" onclick="document.getElementById('photoFileInput').click()">
+        <span class="upload-icon">📷</span>
+        <p style="font-weight:700;margin-bottom:4px;color:var(--text)">Tap to add photos</p>
+        <p style="font-size:0.82rem;color:var(--text-light)">You can add multiple</p>
+      </div>
+      <input type="file" id="photoFileInput" accept="image/*" multiple style="display:none" onchange="handlePhotosSelected(this)">
+
+      <!-- Preview strip -->
+      <div id="photoPreviewStrip" style="display:none;margin-bottom:16px">
+        <div id="photoPreviewItems" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>
+      </div>
+
+      <!-- Category -->
       <select id="photoCat" class="cat-select">
         <option value="">Select a category...</option>
         <option>Childhood</option><option>Family</option><option>Education</option>
         <option>Career</option><option>Relationships</option><option>Adventures</option>
         <option>Challenges</option><option>Reflections</option><option>Other</option>
       </select>
-      <div class="photo-recording">
-        <p style="font-weight:700;margin-bottom:12px;font-size:0.92rem;color:var(--text)">📖 Tell the story behind this photo</p>
-        <textarea id="photoStoryText" placeholder="Write about this photo..." style="width:100%;min-height:100px;padding:12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;resize:vertical;margin-bottom:10px;background:var(--surface);color:var(--text)"></textarea>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          <button class="btn btn-danger" id="photoRecordBtn" onclick="togglePhotoRecord()">🎙 Record Instead</button>
-          <span id="photoRecordStatus" style="font-size:0.85rem;color:var(--text-light);align-self:center"></span>
+
+      <!-- Story text -->
+      <textarea id="photoStoryText" placeholder="Tell the story behind these photos..." style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;resize:vertical;margin-bottom:10px;background:var(--surface);color:var(--text)"></textarea>
+
+      <!-- Voice record -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+        <button class="btn btn-danger" id="photoRecordBtn" onclick="togglePhotoRecord()">🎙 Record Instead</button>
+        <span id="photoRecordStatus" style="font-size:0.85rem;color:var(--text-light)"></span>
+      </div>
+
+      <!-- Tags -->
+      <div class="tag-panel" style="margin-bottom:16px">
+        <div class="tag-panel-title">✨ Tag this entry (optional)</div>
+        <div class="tag-field">
+          <label>📅 Era</label>
+          <select id="photoTagYear" onchange="handleNewTagOption(this,'photoTagYearCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="photoTagYearCustom" placeholder="e.g. 1985 or 1980s..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>📍 Location</label>
+          <select id="photoTagLocation" onchange="handleNewTagOption(this,'photoTagLocationCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="photoTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>👥 People</label>
+          <select id="photoTagPeople" onchange="handleNewTagOption(this,'photoTagPeopleCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="photoTagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>📚 Chapter</label>
+          <select id="photoTagChapter" onchange="handleNewTagOption(this,'photoTagChapterCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="photoTagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
         </div>
       </div>
-      <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn btn-primary" onclick="savePhotoEntry()">Save Photo & Story</button>
-        <button class="btn btn-ghost" onclick="cancelPhotoEntry()">Cancel</button>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" onclick="savePhotoEntry()">Save Entry</button>
+        <button class="btn btn-ghost" onclick="cancelPhotoEntry()">Clear</button>
       </div>
     </div>
+
+    <!-- Photo grid — all photo entries -->
+    <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:400;margin-bottom:16px;color:var(--text)">All Photos</h3>
     <div id="photoGrid" class="photo-grid"></div>
   </div>
 
-  <!-- STORY -->
+    <!-- STORY -->
   <div class="panel" id="panel-story">
     <h2 class="section-title">My Story</h2>
     <p class="section-sub">AI will weave your entries into a beautifully written life narrative.</p>
@@ -1183,7 +1233,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.36 — Fix mic restart loop (listeningActive flag), timeline newest first, conversation log shows only current Q&A";
+  const DEPLOY_NOTES = "v0.37 — Multi-photo entries, photos attach to any entry, parent_entry_id, inline add-photo in timeline, photo composer with tags";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1207,6 +1257,7 @@
   let lastTags        = {};  // carries forward to next question as default
   let iosRecording    = false;
   let listeningActive = false;  // controls persistent mic restart loop
+  let pendingTalkPhotos = [];  // photos queued during Let's Talk, saved as children on Next Question
   let iosTranscript   = '';
   let photoFile       = null;
   let photoRecActive  = false;
@@ -1385,10 +1436,9 @@
     } catch(err) { dbgErr('DB','Load error:', err.message); }
   }
 
-  async function addEntry(category, answer, question = null, photoUrl = null, photoDesc = null, tags = null) {
+  async function addEntry(category, answer, question = null, photoUrl = null, photoDesc = null, tags = null, parentEntryId = null) {
     if (!currentUser) return false;
 
-    // Clean question — strip any legacy tag smuggling just in case
     const cleanQ = question ? question.replace(/\s*\[tags: .+?\]/, '').trim() || null : null;
 
     const newEntry = {
@@ -1402,10 +1452,10 @@
       era:                  tags?.year     || null,
       location:             tags?.location || null,
       people:               tags?.people   || null,
-      chapter:              tags?.chapter  || null
+      chapter:              tags?.chapter  || null,
+      parent_entry_id:      parentEntryId  || null
     };
     entries.push(newEntry);
-    dbg('DB', 'Adding entry — category:', newEntry.category, 'era:', newEntry.era, 'location:', newEntry.location, 'people:', newEntry.people, 'chapter:', newEntry.chapter);
 
     try {
       const res = await fetch(DB_URL, {
@@ -1419,15 +1469,30 @@
         toast('Warning: entry may not have saved (' + res.status + ')');
         return false;
       }
-      // Update local entry with the DB-assigned id
       const saved = await res.json();
       if (saved?.[0]?.id) {
         const idx = entries.findIndex(e => e.timestamp === newEntry.timestamp && !e.id);
-        if (idx > -1) entries[idx].id = saved[0].id;
+        if (idx > -1) { entries[idx].id = saved[0].id; entries[idx].parent_entry_id = saved[0].parent_entry_id; }
         dbg('DB', 'Entry saved, id:', saved[0].id);
+        return saved[0].id;
       }
     } catch(err) { dbgErr('DB', err.message); toast('Warning: could not save entry'); return false; }
     return true;
+  }
+
+  // ── Upload photo + get AI description ────────────────────────────
+  async function uploadPhotoFile(file) {
+    if (!file || !currentUser) return null;
+    const ext  = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = currentUser.id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.' + ext;
+    const uploadRes = await fetch(STORAGE_URL + '/' + path, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': file.type || 'image/jpeg', 'x-upsert': 'true' },
+      body: file
+    });
+    if (!uploadRes.ok) { dbgErr('PHOTO', 'Upload failed:', uploadRes.status); return null; }
+    const desc = await describePhoto(file);
+    return { path, desc };
   }
 
   // ── AI ────────────────────────────────────────────────────────────
@@ -1566,26 +1631,76 @@
 
     const transcript = iosTranscript.trim();
     const question   = currentQuestion;
+    const photosToSave = [...pendingTalkPhotos];
 
-    // Stop mic cleanly — kills restart loop before abort
     stopListening();
     iosTranscript = '';
 
     if (transcript) {
-      const tags = readTags('talk');
-      lastTags   = { ...tags };
+      const tags   = readTags('talk');
+      lastTags     = { ...tags };
       addMessage('user', transcript);
       setTalkStatus('idle', 'Saving...');
-      await addEntry('Other', transcript, question, null, null, tags);
+      const entryId = await addEntry('Other', transcript, question, null, null, tags);
+
+      // Save queued photos as child entries
+      if (photosToSave.length && entryId) {
+        setTalkStatus('idle', 'Uploading ' + photosToSave.length + ' photo(s)...');
+        for (const pf of photosToSave) {
+          const uploaded = await uploadPhotoFile(pf.file);
+          if (uploaded) {
+            await addEntry(tags?.chapter || 'Other', pf.caption || 'Photo from conversation', question, uploaded.path, uploaded.desc, tags, entryId);
+          }
+        }
+      }
+      clearTalkPhotos();
       toast('Saved ✓');
     } else {
       if (window.speechSynthesis) speechSynthesis.cancel();
+      clearTalkPhotos();
       addMessage('system', 'Moving on...');
     }
 
     document.getElementById('iosAnswerBar').style.display  = 'none';
     document.getElementById('talkTagPanel').style.display  = 'none';
     setTimeout(() => { if (isConversing) askQuestion(); }, 800);
+  }
+
+  function handleTalkPhotos(input) {
+    const files = Array.from(input.files);
+    if (!files.length) return;
+    files.forEach(file => {
+      if (file.size > 10 * 1024 * 1024) { toast('Photo too large — max 10MB'); return; }
+      const url = URL.createObjectURL(file);
+      pendingTalkPhotos.push({ file, preview: url, caption: '' });
+    });
+    input.value = '';
+    renderTalkPhotoStrip();
+  }
+
+  function renderTalkPhotoStrip() {
+    const strip = document.getElementById('talkPhotoPreviewStrip');
+    const count = document.getElementById('talkPhotoCount');
+    if (!strip) return;
+    count.textContent = pendingTalkPhotos.length ? pendingTalkPhotos.length + ' photo' + (pendingTalkPhotos.length > 1 ? 's' : '') + ' queued' : '';
+    strip.innerHTML = pendingTalkPhotos.map((p, i) =>
+      '<div style="position:relative;display:inline-block">' +
+        '<img src="' + p.preview + '" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:2px solid var(--gold)">' +
+        '<button onclick="removeTalkPhoto(' + i + ')" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:10px;cursor:pointer;line-height:18px;text-align:center">✕</button>' +
+      '</div>'
+    ).join('');
+  }
+
+  function removeTalkPhoto(idx) {
+    URL.revokeObjectURL(pendingTalkPhotos[idx].preview);
+    pendingTalkPhotos.splice(idx, 1);
+    renderTalkPhotoStrip();
+  }
+
+  function clearTalkPhotos() {
+    pendingTalkPhotos.forEach(p => URL.revokeObjectURL(p.preview));
+    pendingTalkPhotos = [];
+    renderTalkPhotoStrip();
   }
 
   async function askQuestion() {
@@ -1825,30 +1940,56 @@
   }
 
   // ── Photos ───────────────────────────────────────────────────────
-  function handlePhotoSelected(input) {
-    const file = input.files[0];
-    if (!file) return;
+  // ── Photos composer ──────────────────────────────────────────────
+  let composerPhotos = [];  // [{file, preview}] in the photos composer
+
+  function handlePhotosSelected(input) {
     if (!currentUser) return toast('Please sign in first');
-    if (file.size > 5 * 1024 * 1024) { toast('Photo too large — under 5MB please'); input.value = ''; return; }
-    photoFile = file;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      document.getElementById('photoPreview').src = e.target.result;
-      document.getElementById('photoRecordingSection').style.display = 'block';
-      document.getElementById('photoStoryText').value = '';
-      photoRecText = '';
-    };
-    reader.readAsDataURL(file);
+    const files = Array.from(input.files);
+    files.forEach(file => {
+      if (file.size > 10 * 1024 * 1024) { toast(file.name + ' is too large — max 10MB'); return; }
+      composerPhotos.push({ file, preview: URL.createObjectURL(file) });
+    });
+    input.value = '';
+    renderComposerStrip();
+  }
+
+  // Keep old single-file handler as alias for any legacy calls
+  function handlePhotoSelected(input) { handlePhotosSelected(input); }
+
+  function renderComposerStrip() {
+    const strip = document.getElementById('photoPreviewStrip');
+    const items = document.getElementById('photoPreviewItems');
+    if (!strip || !items) return;
+    if (!composerPhotos.length) { strip.style.display = 'none'; return; }
+    strip.style.display = 'block';
+    items.innerHTML = composerPhotos.map((p, i) =>
+      '<div style="position:relative;display:inline-block">' +
+        '<img src="' + p.preview + '" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:2px solid var(--gold)">' +
+        '<button onclick="removeComposerPhoto(' + i + ')" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:11px;cursor:pointer;line-height:20px;text-align:center">✕</button>' +
+      '</div>'
+    ).join('');
+  }
+
+  function removeComposerPhoto(idx) {
+    URL.revokeObjectURL(composerPhotos[idx].preview);
+    composerPhotos.splice(idx, 1);
+    renderComposerStrip();
   }
 
   function cancelPhotoEntry() {
-    photoFile = null; photoRecText = '';
-    document.getElementById('photoRecordingSection').style.display = 'none';
+    composerPhotos.forEach(p => URL.revokeObjectURL(p.preview));
+    composerPhotos = [];
+    renderComposerStrip();
+    document.getElementById('photoStoryText').value = '';
     document.getElementById('photoFileInput').value = '';
+    document.getElementById('photoCat').value       = '';
+    document.getElementById('photoRecordStatus').textContent = '';
+    document.getElementById('photoRecordBtn').textContent    = '🎙 Record Instead';
+    document.getElementById('photoRecordBtn').className      = 'btn btn-danger';
     if (photoRecRec) { try { photoRecRec.stop(); } catch(e){} photoRecRec = null; }
     photoRecActive = false;
-    document.getElementById('photoRecordBtn').textContent = '🎙 Record Instead';
-    document.getElementById('photoRecordBtn').className   = 'btn btn-danger';
+    resetTagFields('photo');
   }
 
   function togglePhotoRecord() { photoRecActive ? stopPhotoRecord() : startPhotoRecord(); }
@@ -1900,29 +2041,39 @@
   }
 
   async function savePhotoEntry() {
-    if (!photoFile)   return toast('No photo selected');
-    if (!currentUser) return toast('Please sign in first');
+    if (!currentUser)           return toast('Please sign in first');
+    if (!composerPhotos.length) return toast('Please add at least one photo');
     const story = document.getElementById('photoStoryText').value.trim() || photoRecText.trim();
-    if (!story) return toast('Please tell the story behind this photo');
-    const cat = document.getElementById('photoCat').value || 'Other';
-    toast('Uploading photo...');
+    if (!story) return toast('Please tell the story behind these photos');
+    const cat  = document.getElementById('photoCat').value || 'Other';
+    const tags = readTags('photo');
+
+    toast('Saving entry...');
     try {
-      const ext = photoFile.name.split('.').pop() || 'jpg';
-      const photoPath = currentUser.id + '/' + Date.now() + '.' + ext;
-      const uploadRes = await fetch(STORAGE_URL + '/' + photoPath, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': photoFile.type, 'x-upsert': 'true' },
-        body: photoFile
-      });
-      if (!uploadRes.ok) return toast('Photo upload failed');
-      toast('Analysing photo...');
-      const photoDesc = await describePhoto(photoFile);
-      const ok = await addEntry(cat, story, 'Tell me about this photo', photoPath, photoDesc);
-      if (ok) { toast('Photo & story saved ✓'); cancelPhotoEntry(); renderPhotoGrid(); }
-    } catch(err) { toast('Error saving photo: ' + err.message); }
+      // Save the parent (text) entry first — first photo goes on parent, rest as children
+      const firstPhoto = composerPhotos[0];
+      toast('Uploading photo 1 of ' + composerPhotos.length + '...');
+      const firstUp = await uploadPhotoFile(firstPhoto.file);
+      if (!firstUp) return toast('Photo upload failed');
+
+      const parentId = await addEntry(cat, story, null, firstUp.path, firstUp.desc, tags);
+      if (!parentId) return toast('Could not save entry');
+
+      // Additional photos saved as children
+      for (let i = 1; i < composerPhotos.length; i++) {
+        toast('Uploading photo ' + (i+1) + ' of ' + composerPhotos.length + '...');
+        const up = await uploadPhotoFile(composerPhotos[i].file);
+        if (up) await addEntry(cat, 'Additional photo', null, up.path, up.desc, tags, parentId);
+      }
+
+      toast('Saved ✓');
+      cancelPhotoEntry();
+      renderPhotoGrid();
+      populateTagDropdowns('photo');
+    } catch(err) { toast('Error: ' + err.message); }
   }
 
-  async function getSignedUrl(path) {
+    async function getSignedUrl(path) {
     try {
       const res  = await fetch(STORAGE_SIGN + '/' + path, {
         method: 'POST',
@@ -1936,24 +2087,34 @@
   }
 
   async function renderPhotoGrid() {
-    const photoEntries = entries.filter(e => e.photo_url);
-    const grid = document.getElementById('photoGrid');
-    if (!photoEntries.length) {
+    // Show all photo entries — parents (no parent_entry_id) and children grouped
+    const allPhotos = entries.filter(e => e.photo_url && !e.category.startsWith('_profile'));
+    const grid      = document.getElementById('photoGrid');
+    if (!allPhotos.length) {
       grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📷</div><p>No photos yet — add one above!</p></div>';
       return;
     }
-    grid.innerHTML = photoEntries.map(() =>
+    // Group: parents first, then children under their parent
+    const parents  = allPhotos.filter(e => !e.parent_entry_id);
+    const orphans  = allPhotos.filter(e => e.parent_entry_id && !parents.find(p => p.id === e.parent_entry_id));
+    const toShow   = [...parents, ...orphans];
+
+    grid.innerHTML = toShow.map(() =>
       '<div class="photo-card"><div style="width:100%;height:180px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:2rem">⏳</div></div>'
     ).join('');
-    const withUrls = await Promise.all(photoEntries.map(async e => ({ ...e, signedUrl: await getSignedUrl(e.photo_url) })));
-    grid.innerHTML = withUrls.map(e =>
-      '<div class="photo-card">' +
-        (e.signedUrl ? '<img src="' + e.signedUrl + '" alt="Life photo" loading="lazy">' : '<div style="width:100%;height:180px;background:var(--surface2);display:flex;align-items:center;justify-content:center">📷</div>') +
+
+    const withUrls = await Promise.all(toShow.map(async e => ({ ...e, signedUrl: await getSignedUrl(e.photo_url) })));
+
+    grid.innerHTML = withUrls.map(e => {
+      const children = entries.filter(c => c.parent_entry_id === e.id && c.photo_url);
+      return '<div class="photo-card">' +
+        (e.signedUrl ? '<img src="' + e.signedUrl + '" alt="photo" loading="lazy">' : '<div style="width:100%;height:180px;background:var(--surface2);display:flex;align-items:center;justify-content:center">📷</div>') +
+        (children.length ? '<div style="padding:8px 12px 0;font-size:0.72rem;color:var(--gold-dark)">+' + children.length + ' more photo' + (children.length>1?'s':'') + '</div>' : '') +
         '<div class="photo-caption">' + e.answer + '</div>' +
         (e.photo_ai_description ? '<div class="photo-caption" style="color:var(--gold-dark);font-style:italic;font-size:0.8rem;border-top:1px solid var(--border);padding-top:6px">✨ ' + e.photo_ai_description.substring(0,120) + (e.photo_ai_description.length > 120 ? '...' : '') + '</div>' : '') +
         '<div class="photo-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</div>' +
-      '</div>'
-    ).join('');
+      '</div>';
+    }).join('');
   }
 
   // ── Story ────────────────────────────────────────────────────────
@@ -2393,8 +2554,16 @@
           </div>
         </div>` : '';
 
+      // Child photo entries (other entries with this as parent)
+      const childPhotos = e.id ? entries.filter(c => c.parent_entry_id === e.id && c.photo_url) : [];
+      const allEntryPhotos = e.photo_url ? [e, ...childPhotos] : childPhotos;
+      const photoStripHtml = allEntryPhotos.length
+        ? '<div id="photostrip-' + safeId + '" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">' +
+            allEntryPhotos.map(p => '<div class="timeline-photo-thumb" id="tthumb-' + p.timestamp.replace(/[:.+]/g,'-') + '" style="width:72px;height:72px;background:var(--surface2);border-radius:6px;overflow:hidden;flex-shrink:0">⏳</div>').join('') +
+          '</div>'
+        : '';
+
       return '<div class="entry-card type-' + type + '" id="' + safeId + '">' +
-        (e.photo_url ? '<div class="entry-photo-placeholder" id="timg-' + safeId + '">⏳</div>' : '') +
         '<div class="entry-meta">' +
           getEntryTypeBadge(type) +
           '<span class="entry-cat">' + (e.category || 'Other') + '</span>' +
@@ -2403,20 +2572,45 @@
         '</div>' +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
         '<p class="entry-text">' + e.answer + '</p>' +
+        photoStripHtml +
         tagHtml +
-        (e.id ? '<div style="margin-top:10px"><button onclick="toggleEditTags(\'' + e.id + '\',' + currentTagsJson + ')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags ? '✏️ Edit tags' : '＋ Add tags') + '</button></div>' : '') +
+        (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button onclick="toggleEditTags(\'' + e.id + '\',' + currentTagsJson + ')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags ? '✏️ Edit tags' : '＋ Add tags') + '</button>' +
+          '<label style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">📷 Add photo<input type="file" accept="image/*" style="display:none" onchange="addPhotoToEntry(this,\'' + e.id + '\')"></label>' +
+        '</div>' : '') +
         editPanel +
       '</div>';
     }).join('');
 
-    // Load signed URLs for photo entries
-    const photoEntries = filtered.filter(e => e.photo_url);
-    for (const e of photoEntries) {
-      const safeId = 'entry-' + e.timestamp.replace(/[:.+]/g, '-');
+    // Load signed URLs for all photo thumbnails
+    const allPhotoEntries = filtered.filter(e => e.photo_url);
+    // Also load child photos of visible entries
+    const visibleIds = filtered.filter(e => e.id).map(e => e.id);
+    const childPhotoEntries = entries.filter(e => e.photo_url && e.parent_entry_id && visibleIds.includes(e.parent_entry_id));
+    const toLoad = [...allPhotoEntries, ...childPhotoEntries];
+    for (const e of toLoad) {
+      const thumbId = 'tthumb-' + e.timestamp.replace(/[:.+]/g, '-');
+      const el      = document.getElementById(thumbId);
+      if (!el) continue;
       const url = await getSignedUrl(e.photo_url);
-      const el  = document.getElementById('timg-' + safeId);
-      if (el && url) el.outerHTML = '<img src="' + url + '" class="entry-photo-preview" loading="lazy">';
+      if (url) el.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover" loading="lazy">';
     }
+  }
+
+  // ── Add a photo directly to an existing entry from Timeline ──────
+  async function addPhotoToEntry(input, entryId) {
+    const file = input.files[0];
+    input.value = '';
+    if (!file) return;
+    if (!entryId) return toast('Cannot add photo — entry has no id');
+    if (file.size > 10 * 1024 * 1024) return toast('Photo too large — max 10MB');
+    toast('Uploading photo...');
+    const up = await uploadPhotoFile(file);
+    if (!up) return toast('Upload failed');
+    const cat = entries.find(e => e.id === entryId)?.category || 'Other';
+    await addEntry(cat, 'Photo attached to entry', null, up.path, up.desc, null, entryId);
+    toast('Photo added ✓');
+    renderTimeline();
   }
 
   // ── Delete ───────────────────────────────────────────────────────
