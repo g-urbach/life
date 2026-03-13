@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.49</title>
+  <title>My Life Story v0.50</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.49</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.50</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -926,14 +926,6 @@
       <button class="btn btn-ghost"     id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
     </div>
 
-    <!-- AI conversation controls (shown during conversation) -->
-    <div id="memConvControls" style="display:none;flex-direction:column;gap:8px;margin-top:10px">
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-ghost"     onclick="memConvNext()">⏭ Next topic</button>
-        <button class="btn btn-secondary" onclick="memConvDeeper()">🔍 Go deeper</button>
-      </div>
-
-    </div>
   </div>
 
 
@@ -1076,7 +1068,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.49 — Memories tab redesigned: form-first (title, tags, photo, textarea+mic), AI buttons save and start conversation, Save resets form";
+  const DEPLOY_NOTES = "v0.50 — AI Conversation: saves entry then asks follow-up in same form, answer saves as linked child, same buttons throughout; v0.49 — Memories tab redesigned: form-first (title, tags, photo, textarea+mic), AI buttons save and start conversation, Save resets form";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1233,7 +1225,7 @@
   }
 
   async function signOut() {
-    if (recActive) memConvEnd();
+    if (recActive) { recActive = false; stopListening(); }
     await sb.auth.signOut();
     entries = [];
     toast('Signed out');
@@ -1455,7 +1447,7 @@
     }
     if (name === 'timeline') renderTimeline();
     // End AI session when navigating away from memories
-    if (name !== 'memories' && recActive) memConvEnd();
+    if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
 
     if (name === 'help')     document.getElementById('helpInput').focus();
     if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions);
@@ -1544,16 +1536,16 @@
     document.getElementById('memTitle').value  = '';
     document.getElementById('memAnswer').value = '';
     document.getElementById('aiQuestionBox').style.display  = 'none';
-    document.getElementById('memConvControls').style.display = 'none';
-    document.getElementById('memButtons').style.display     = 'flex';
+
     if (!keepTags) resetTagFields('rec');
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = [];
     renderRecPhotoStrip();
     if (memMicActive) toggleMemMic();
     setMemStatus('idle', '');
-    recCurQuestion = '';
-    recDeepContext = '';
+    recCurQuestion  = '';
+    recDeepContext  = '';
+    recLastParentId = null;
     recActive = false;
     memCheckButtons();
     populateTagDropdowns('rec');
@@ -1565,7 +1557,8 @@
     if (!answer && !title && !recPhotos.length) return null;
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
-    const eid   = await addEntry(fullTags.chapter || 'Other', text, recCurQuestion || null, null, null, fullTags);
+    // Link to parent if we're in a follow-up conversation
+    const eid   = await addEntry(fullTags.chapter || 'Other', text, recCurQuestion || null, null, null, fullTags, recLastParentId);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
@@ -1574,6 +1567,8 @@
       }
     }
     recLastTags = { ...tags };
+    // After saving a follow-up, the new entry becomes the parent for further follow-ups
+    if (recLastParentId && eid) recLastParentId = eid;
     return eid;
   }
 
@@ -1582,7 +1577,13 @@
     if (!currentUser) return toast('Please sign in first');
     setMemStatus('idle', 'Saving...');
     const eid = await memSaveCurrentEntry();
-    if (eid) { toast('Saved ✓'); memResetForm(true); }
+    if (eid) {
+      toast('Saved ✓');
+      recLastParentId = null;
+      recCurQuestion  = '';
+      document.getElementById('aiQuestionBox').style.display = 'none';
+      memResetForm(true);
+    }
   }
 
   // ── Cancel button ─────────────────────────────────────────────────
@@ -1591,23 +1592,52 @@
   }
 
   // ── AI Conversation ───────────────────────────────────────────────
+  // Saves current entry, then asks a follow-up question above the textarea.
+  // User answers normally and saves — linked as a child of the original.
   async function memAIConversation() {
     if (!currentUser) return toast('Please sign in first');
-    // Save current entry first, use it as context for follow-ups
-    setMemStatus('speaking', 'Saving and thinking...');
-    const eid = await memSaveCurrentEntry();
-    recActive = true;
-    document.getElementById('memButtons').style.display     = 'none';
-    document.getElementById('memConvControls').style.display = 'flex';
-    // Build deep context from what they just wrote
     const { title, answer } = memReadEntry();
-    recDeepContext = (title ? 'Title: ' + title + '\n' : '') + (answer ? 'A: ' + answer : '');
-    // Clear textarea for next answer
+    if (!answer && !title) return toast('Write something first, then tap AI Conversation');
+
+    setMemStatus('speaking', 'Saving and thinking of a follow-up...');
+
+    // Save the current entry and keep its id for linking
+    const parentId = await memSaveCurrentEntry();
+    recLastParentId = parentId || null;
+
+    // Build context from what they just wrote
+    recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
+
+    // Clear textarea ready for their follow-up answer
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = []; renderRecPhotoStrip();
-    await memAskQuestion('deep');
+    // Keep tags — user asked for same tags to carry through
+
+    // Ask the follow-up — question shows above textarea, buttons stay normal
+    await memAskFollowUp();
+  }
+
+  // Ask a single follow-up question, display it, keep normal buttons
+  async function memAskFollowUp() {
+    if (!recDeepContext) return;
+    try {
+      const prompt =
+        'You are a warm, curious biographer in conversation with someone recording their life story.\n\n' +
+        'WHAT THEY JUST SHARED:\n' + recDeepContext + '\n\n' +
+        'Ask ONE specific follow-up question (max 15 words) that digs into the most interesting detail. ' +
+        'Be warm and show genuine curiosity. Return ONLY the question.';
+      const question = await callAI(prompt);
+      recCurQuestion = question;
+      document.getElementById('aiQuestionText').textContent  = question;
+      document.getElementById('aiQuestionBox').style.display = 'block';
+      setMemStatus('idle', 'Answer below, then Save or ask AI Conversation again to keep going');
+      memCheckButtons();
+    } catch(err) {
+      dbgErr('MEM', 'Follow-up failed:', err.message);
+      setMemStatus('idle', '');
+    }
   }
 
   // ── AI New Topic ──────────────────────────────────────────────────
@@ -1620,8 +1650,7 @@
       toast('Saved ✓');
     }
     recActive = true;
-    document.getElementById('memButtons').style.display     = 'none';
-    document.getElementById('memConvControls').style.display = 'flex';
+
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
@@ -1666,8 +1695,7 @@
     recActive = false;
     stopListening();
     if (window.speechSynthesis) speechSynthesis.cancel();
-    document.getElementById('memButtons').style.display     = 'flex';
-    document.getElementById('memConvControls').style.display = 'none';
+
     document.getElementById('aiQuestionBox').style.display  = 'none';
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
@@ -1730,7 +1758,7 @@
     } catch(err) {
       dbgErr('MEM', err.message);
       setMemStatus('idle', 'Could not reach AI');
-      memConvStop();
+      // conversation cleaned up by reset
     }
   }
 
