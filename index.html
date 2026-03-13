@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.51</title>
+  <title>My Life Story v0.53</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.51</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.53</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -920,10 +920,10 @@
 
     <!-- Buttons -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px" id="memButtons">
-      <button class="btn btn-secondary" id="memAIConvBtn"     onclick="memAIConversation()"  disabled>💬 AI Conversation</button>
-      <button class="btn btn-ghost"     id="memAITopicBtn"    onclick="memAINewTopic()"      disabled>🗺️ AI New Topic</button>
-      <button class="btn btn-primary"   id="memSaveBtn"       onclick="memSave()"            disabled>💾 Save</button>
-      <button class="btn btn-ghost"     id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
+      <button class="btn btn-primary"  id="memSaveBtn"       onclick="memSave()"            disabled>💾 Save</button>
+      <button class="btn btn-ghost"    id="memAIConvBtn"     onclick="memAIConversation()"  disabled>💬 AI Conversation</button>
+      <button class="btn btn-ghost"    id="memAITopicBtn"    onclick="memAINewTopic()"      disabled>🗺️ AI New Topic</button>
+      <button class="btn btn-ghost"    id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
     </div>
 
   </div>
@@ -1068,7 +1068,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.51 — Fixed: recLastParentId not declared (crash on AI Conversation); v0.50 — AI Conversation: saves entry then asks follow-up in same form, answer saves as linked child, same buttons throughout; v0.49 — Memories tab redesigned: form-first (title, tags, photo, textarea+mic), AI buttons save and start conversation, Save resets form";
+  const DEPLOY_NOTES = "v0.53 — Fix AI Conversation: reset mic transcript + restart mic cleanly so each follow-up is a fresh answer — Consistent button colours: Save=gold, all others=ghost; v0.51 — Fixed: recLastParentId not declared (crash on AI Conversation); v0.50 — AI Conversation: saves entry then asks follow-up in same form, answer saves as linked child, same buttons throughout; v0.49 — Memories tab redesigned: form-first (title, tags, photo, textarea+mic), AI buttons save and start conversation, Save resets form";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1356,7 +1356,16 @@
         let t = '';
         for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
         recTranscript = t;
-        if (el) { el.textContent = t || 'Listening... speak freely.'; el.style.color = t ? 'var(--text)' : 'var(--text-light)'; }
+        const target = el || document.getElementById('memAnswer');
+        if (target) {
+          if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
+            target.value = t;
+          } else {
+            target.textContent = t || 'Listening... speak freely.';
+            target.style.color = t ? 'var(--text)' : 'var(--text-light)';
+          }
+        }
+        memCheckButtons();
       };
 
       rec.onerror = (e) => {
@@ -1609,12 +1618,19 @@
     // Build context from what they just wrote
     recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
 
-    // Clear textarea ready for their follow-up answer
+    // Clear textarea AND mic transcript so next answer starts fresh
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
+    recTranscript = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = []; renderRecPhotoStrip();
-    // Keep tags — user asked for same tags to carry through
+
+    // Restart mic cleanly so it doesn't carry over old speech session
+    if (recActive) {
+      stopListening();
+      await new Promise(r => setTimeout(r, 350));
+      startPersistentListening(null);
+    }
 
     // Ask the follow-up — question shows above textarea, buttons stay normal
     await memAskFollowUp();
