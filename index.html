@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.55</title>
+  <title>My Life Story v0.56</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.55</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.56</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -920,9 +920,9 @@
 
     <!-- Buttons -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px" id="memButtons">
-      <button class="btn btn-primary"  id="memSaveBtn"       onclick="memSave()"            disabled>💾 Save</button>
-      <button class="btn btn-ghost"    id="memAIConvBtn"     onclick="memAIConversation()"  disabled>💬 AI Conversation</button>
-      <button class="btn btn-ghost"    id="memAITopicBtn"    onclick="memAINewTopic()"      disabled>🗺️ AI New Topic</button>
+      <button class="btn btn-primary"  id="memSaveBtn"       onclick="memSave()">💾 Save</button>
+      <button class="btn btn-ghost"    id="memAIConvBtn"     onclick="memAIConversation()">💬 AI Conversation</button>
+      <button class="btn btn-ghost"    id="memAITopicBtn"    onclick="memAINewTopic()">🗺️ AI New Topic</button>
       <button class="btn btn-ghost"    id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
     </div>
 
@@ -1068,7 +1068,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.55 — Fix button colours (ghost=white), mic stops before TTS so question not transcribed, mic restarts only after speaking done";
+  const DEPLOY_NOTES = "v0.56 — Buttons never disabled (consistent colour always), fix phone mic doubling via resultIndex tracking + session finals accumulation";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1476,13 +1476,7 @@
 
   // ── Enable/disable buttons based on content ───────────────────────
   function memCheckButtons() {
-    const hasContent = (document.getElementById('memAnswer')?.value.trim().length > 0)
-                    || (document.getElementById('memTitle')?.value.trim().length > 0)
-                    || recPhotos.length > 0;
-    const on = !!currentUser;
-    document.getElementById('memAIConvBtn').disabled  = !on || !hasContent;
-    document.getElementById('memAITopicBtn').disabled = !on;
-    document.getElementById('memSaveBtn').disabled    = !on || !hasContent;
+    // Buttons always enabled — no disabling
   }
 
   // ── Mic dictation into textarea ───────────────────────────────────
@@ -1496,19 +1490,41 @@
     setMemStatus('listening', 'Listening...');
     const el = document.getElementById('memAnswer');
     listeningActive = true;
+    let accumulated = ''; // finals committed across restarts
+
     function createAndStart() {
       if (!memMicActive || !listeningActive) return;
       const rec = new SR();
       recognition = rec;
       rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = true;
+      let sessionFinals = ''; // finals from this session only
+
       rec.onresult = (e) => {
-        // Always write only the current session's transcript — never append old text
-        let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-        el.value = t;
+        let interim = '';
+        // Only process results from this session (e.resultIndex onwards)
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const txt = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            sessionFinals += (sessionFinals ? ' ' : '') + txt.trim();
+          } else {
+            interim = txt;
+          }
+        }
+        const full = [accumulated, sessionFinals, interim].filter(Boolean).join(' ');
+        el.value = full;
         memCheckButtons();
       };
-      rec.onerror = (e) => { if (e.error === 'not-allowed') { stopMemMic(); toast('Microphone permission denied'); } };
-      rec.onend   = () => { if (memMicActive && listeningActive) setTimeout(createAndStart, 300); };
+
+      rec.onend = () => {
+        // Commit this session's finals into accumulated before restarting
+        if (sessionFinals) accumulated += (accumulated ? ' ' : '') + sessionFinals.trim();
+        if (memMicActive && listeningActive) setTimeout(createAndStart, 300);
+      };
+
+      rec.onerror = (e) => {
+        if (e.error === 'not-allowed') { stopMemMic(); toast('Microphone permission denied'); }
+      };
+
       try { rec.start(); } catch(e) { setTimeout(createAndStart, 600); }
     }
     createAndStart();
