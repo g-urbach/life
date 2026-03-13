@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.43</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.45</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -860,23 +860,7 @@
     <!-- Mode controls -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
 
-      <!-- 3-way AI mode pill -->
-      <div id="aiModePill" style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px;gap:2px">
-        <button id="aiModeFreeTalkBtn" onclick="setAIMode('free')"
-          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s;white-space:nowrap">
-          🎤 Free talk
-        </button>
-        <button id="aiModeNewTopicBtn" onclick="setAIMode('new')"
-          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--gold);color:white;transition:all 0.15s;white-space:nowrap">
-          🗺️ New topic
-        </button>
-        <button id="aiModeGoDeepBtn" onclick="setAIMode('deep')"
-          style="padding:6px 14px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:none;color:var(--text-light);transition:all 0.15s;white-space:nowrap">
-          🔍 Go deeper
-        </button>
-      </div>
-
-      <!-- Talk / Type pill toggle -->
+            <!-- Talk / Type pill toggle -->
       <div id="inputModePill" style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px;gap:2px">
         <button id="talkModeBtn" onclick="setInputMode('talk')"
           style="padding:6px 16px;border:none;border-radius:16px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--gold);color:white;transition:all 0.15s">
@@ -1134,7 +1118,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.43 — Go Deeper button (always visible), conversational follow-ups stay on topic until Next topic, multi-photo captions per answer";
+  const DEPLOY_NOTES = "v0.45 — Fixed: standalone photo preview now shows on select; Next topic now explicitly tracks all covered questions and only picks from uncovered areas";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1220,8 +1204,7 @@
       document.getElementById('appShell').style.display = 'none';
     }
     document.getElementById('recStartBtn').disabled = !on;
-    setRecStatus('idle', on ? "Ready — tap Start to begin" : 'Sign in to start');
-    if (typeof setAIMode === 'function') setAIMode('new');
+    setRecStatus('idle', on ? 'Ready — tap Start' : 'Sign in to start');
   }
 
   // ── Landing auth ─────────────────────────────────────────────────
@@ -1527,7 +1510,6 @@
 
   // State
   let recInputMode   = 'talk';   // 'talk' | 'type'
-  let recAIMode      = 'new';    // 'free' | 'new' | 'deep'
   let recTranscript  = '';       // live transcript for current answer
   let recLastTags    = {};       // carries forward between answers
   let recPhotos      = [];       // queued photos for current answer
@@ -1535,17 +1517,6 @@
   let recDeepContext  = '';       // last Q+A pair for go-deeper follow-ups
 
   // ── Mode switching ────────────────────────────────────────────────
-  function setAIMode(mode) {
-    recAIMode = mode;
-    const btns = { free: 'aiModeFreeTalkBtn', new: 'aiModeNewTopicBtn', deep: 'aiModeGoDeepBtn' };
-    Object.entries(btns).forEach(([k, id]) => {
-      const btn = document.getElementById(id);
-      btn.style.background = k === mode ? 'var(--gold)' : 'none';
-      btn.style.color      = k === mode ? 'white' : 'var(--text-light)';
-    });
-    const labels = { free: 'Ready — press Start and speak freely', new: "Ready — I'll ask you about a new area of your life", deep: "Ready — I'll ask follow-up questions on things you've mentioned" };
-    if (!recActive) setRecStatus('idle', labels[mode]);
-  }
 
   function setInputMode(mode) {
     recInputMode = mode;
@@ -1591,13 +1562,7 @@
     document.getElementById('recDeeperBtn').style.display = 'inline-block';
     document.getElementById('recStopBtn').style.display   = 'inline-block';
 
-    if (recAIMode !== 'free') {
-      await recAskQuestion(recAIMode === 'deep' ? 'deep' : 'new');
-    } else {
-      recShowInputArea();
-      setRecStatus('listening', recInputMode === 'talk' ? 'Listening — tap Next topic to save & continue' : 'Type your memory — tap Next topic to save & continue');
-      if (recInputMode === 'talk') startRecListening();
-    }
+    await recAskQuestion('new');
   }
 
   async function recStop() {
@@ -1623,7 +1588,7 @@
   // direction: 'new' = next topic, 'deep' = follow up on this answer
   async function recNext(direction) {
     if (!recActive) return;
-    direction = direction || recAIMode || 'new';
+    direction = direction || 'new';
 
     const transcript = recInputMode === 'type'
       ? document.getElementById('typeAnswerInput').value.trim()
@@ -1660,15 +1625,7 @@
 
     setTimeout(async () => {
       if (!recActive) return;
-      if (recAIMode === 'free' && direction === 'new') {
-        // Free mode + new topic — just listen again
-        applyTagDefaults('rec', recLastTags);
-        recShowInputArea();
-        setRecStatus('listening', recInputMode === 'talk' ? 'Listening...' : 'Ready for next memory');
-        if (recInputMode === 'talk') startRecListening();
-      } else {
-        await recAskQuestion(direction);
-      }
+      await recAskQuestion(direction);
     }, 600);
   }
 
@@ -1732,13 +1689,22 @@
           '- Do NOT introduce a new topic\n' +
           '- Return ONLY the question, nothing else';
       } else {
-        // New topic — aggressive anti-repetition
-        const coveredTopics = realEntries.slice(-40).map(e => {
-          const parts = [];
-          if (e.question) parts.push('Q: ' + e.question);
-          const words = e.answer.split(' ').slice(0, 8).join(' ');
-          parts.push('A: ' + words + (e.answer.split(' ').length > 8 ? '...' : ''));
-          return parts.join(' | ');
+        // New topic — build exhaustive list of covered themes
+        // Include all saved entries PLUS the current question just answered
+        const allCovered = [...realEntries];
+        // Add the just-answered exchange if not yet in entries (race condition)
+        const lastQ = recCurQuestion;
+        const lastA = recTranscript || (recInputMode === 'type' ? document.getElementById('typeAnswerInput').value : '');
+
+        const coveredQuestions = allCovered
+          .map(e => e.question).filter(Boolean)
+          .concat(lastQ ? [lastQ] : [])
+          .join('\n');
+
+        const coveredSummaries = allCovered.slice(-40).map(e => {
+          const q = e.question ? e.question : '';
+          const a = e.answer.split(' ').slice(0, 10).join(' ') + (e.answer.split(' ').length > 10 ? '...' : '');
+          return q ? q + ' → ' + a : a;
         }).join('\n');
 
         const lifeAreas = ['early childhood memories', 'parents and their personalities',
@@ -1750,19 +1716,20 @@
           'mentors or people who shaped you', 'beliefs and values',
           'funniest memories', 'what you would tell your younger self'];
 
+        // Find uncovered areas to explicitly tell the AI what's left
+        const uncovered = lifeAreas.filter(area => {
+          const areaWords = area.toLowerCase().split(' ');
+          const covered = coveredSummaries.toLowerCase();
+          return !areaWords.some(w => w.length > 4 && covered.includes(w));
+        });
+
         prompt =
           'You are a warm, gentle biographer helping someone record their life story.\n\n' +
-          'TOPICS AND ANSWERS ALREADY COVERED (do NOT revisit any of these):\n' +
-          (coveredTopics || 'None yet — start with a warm opening question.') + '\n\n' +
-          'LIFE AREAS TO ROTATE THROUGH (pick one NOT already covered):\n' +
-          lifeAreas.join(', ') + '\n\n' +
-          'YOUR TASK:\n' +
-          '- Identify which life areas have NOT been touched yet\n' +
-          '- Pick the most interesting uncovered area\n' +
-          '- Ask ONE short, open-ended question about it (max 12 words)\n' +
-          '- CRITICAL: If a topic appears in the covered list above in ANY form, skip it entirely\n' +
-          '- Be warm and personal\n' +
-          '- Return ONLY the question, nothing else';
+          'QUESTIONS ALREADY ASKED — YOU MUST NOT REPEAT OR REPHRASE ANY OF THESE:\n' +
+          (coveredQuestions || 'None yet.') + '\n\n' +
+          'UNCOVERED LIFE AREAS (choose from ONLY these):\n' +
+          (uncovered.length ? uncovered.join(', ') : lifeAreas.slice(-10).join(', ')) + '\n\n' +
+          'Ask ONE short warm question about one of the uncovered areas above. Max 12 words. Return ONLY the question.';
       }
 
       const question = await callAI(prompt);
@@ -1855,8 +1822,21 @@
     renderComposerStrip();
   }
 
-  // Keep old single-file handler as alias for any legacy calls
-  function handlePhotoSelected(input) { handlePhotosSelected(input); }
+  // Standalone photo section handler — shows preview + story form
+  function handlePhotoSelected(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (!currentUser) return toast('Please sign in first');
+    if (file.size > 10 * 1024 * 1024) { input.value = ''; return toast('Photo too large — max 10MB'); }
+    // Add to composerPhotos so savePhotoEntry can use it
+    composerPhotos = [{ file, preview: URL.createObjectURL(file) }];
+    // Show preview image
+    document.getElementById('photoPreview').src = composerPhotos[0].preview;
+    document.getElementById('photoRecordingSection').style.display = 'block';
+    document.getElementById('photoStoryText').value = '';
+    resetTagFields('photo');
+    input.value = '';
+  }
 
   function renderComposerStrip() {
     const strip = document.getElementById('photoPreviewStrip');
