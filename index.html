@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.54</title>
+  <title>My Life Story v0.55</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -591,8 +591,8 @@
     .btn-secondary { background: var(--ink); color: var(--cream); }
     [data-theme="dark"] .btn-secondary { background: #3a3020; color: #f0e8d8; }
     .btn-secondary:hover:not(:disabled) { background: #1a140c; }
-    .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface2); }
     .btn-danger { background: var(--rose); color: white; }
     .btn-danger:hover:not(:disabled) { background: #a85e52; }
 
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.54</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.55</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1068,7 +1068,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.54 — Fix mic append bug (no baseText capture), fresh mic restart on AI Conversation, question now spoken aloud";
+  const DEPLOY_NOTES = "v0.55 — Fix button colours (ghost=white), mic stops before TTS so question not transcribed, mic restarts only after speaking done";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1623,7 +1623,7 @@
     // Build context from what they just wrote
     recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
 
-    // Stop mic, clear form fully, restart mic fresh for next answer
+    // Stop mic, clear form fully — mic will restart after question is spoken
     if (memMicActive) stopMemMic();
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
@@ -1631,11 +1631,7 @@
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = []; renderRecPhotoStrip();
 
-    // Small pause then restart mic fresh
-    await new Promise(r => setTimeout(r, 200));
-    startMemMic();
-
-    // Ask the follow-up — question shows above textarea, buttons stay normal
+    // Ask the follow-up — will speak question then restart mic
     await memAskFollowUp();
   }
 
@@ -1652,14 +1648,25 @@
       recCurQuestion = question;
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
-      setMemStatus('listening', 'Listening...');
       memCheckButtons();
-      // Speak the question aloud
+      // Stop mic while speaking so it doesn't transcribe its own question
+      if (memMicActive) stopMemMic();
       if (window.speechSynthesis) {
         speechSynthesis.cancel();
         const utt = new SpeechSynthesisUtterance(question);
         utt.lang = 'en-AU'; utt.rate = 0.92;
+        utt.onend = () => {
+          setMemStatus('listening', 'Listening...');
+          startMemMic();
+        };
+        utt.onerror = () => {
+          setMemStatus('listening', 'Listening...');
+          startMemMic();
+        };
         speechSynthesis.speak(utt);
+      } else {
+        setMemStatus('listening', 'Listening...');
+        startMemMic();
       }
     } catch(err) {
       dbgErr('MEM', 'Follow-up failed:', err.message);
