@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.53</title>
+  <title>My Life Story v0.54</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -807,7 +807,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.53</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.54</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1068,7 +1068,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.53 — Fix AI Conversation: reset mic transcript + restart mic cleanly so each follow-up is a fresh answer — Consistent button colours: Save=gold, all others=ghost; v0.51 — Fixed: recLastParentId not declared (crash on AI Conversation); v0.50 — AI Conversation: saves entry then asks follow-up in same form, answer saves as linked child, same buttons throughout; v0.49 — Memories tab redesigned: form-first (title, tags, photo, textarea+mic), AI buttons save and start conversation, Save resets form";
+  const DEPLOY_NOTES = "v0.54 — Fix mic append bug (no baseText capture), fresh mic restart on AI Conversation, question now spoken aloud";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1486,39 +1486,44 @@
   }
 
   // ── Mic dictation into textarea ───────────────────────────────────
-  function toggleMemMic() {
-    if (memMicActive) {
-      stopListening();
-      memMicActive = false;
-      document.getElementById('memMicBtn').style.background = 'var(--gold)';
-      document.getElementById('memMicBtn').textContent = '🎙️';
-      setMemStatus('idle', '');
-    } else {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return toast('Speech not supported in this browser');
-      memMicActive = true;
-      document.getElementById('memMicBtn').style.background = 'var(--rose)';
-      document.getElementById('memMicBtn').textContent = '⏹';
-      setMemStatus('listening', 'Listening...');
-      const el = document.getElementById('memAnswer');
-      const baseText = el.value;
-      listeningActive = true;
-      function createAndStart() {
-        if (!memMicActive || !listeningActive) return;
-        const rec = new SR();
-        recognition = rec;
-        rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = true;
-        rec.onresult = (e) => {
-          let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-          el.value = (baseText ? baseText + ' ' : '') + t;
-          memCheckButtons();
-        };
-        rec.onerror = (e) => { if (e.error === 'not-allowed') { toggleMemMic(); toast('Microphone permission denied'); } };
-        rec.onend   = () => { if (memMicActive && listeningActive) setTimeout(createAndStart, 300); };
-        try { rec.start(); } catch(e) { setTimeout(createAndStart, 600); }
-      }
-      createAndStart();
+  function startMemMic() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return toast('Speech not supported in this browser');
+    stopListening(); // kill any existing session first
+    memMicActive = true;
+    document.getElementById('memMicBtn').style.background = 'var(--rose)';
+    document.getElementById('memMicBtn').textContent = '⏹';
+    setMemStatus('listening', 'Listening...');
+    const el = document.getElementById('memAnswer');
+    listeningActive = true;
+    function createAndStart() {
+      if (!memMicActive || !listeningActive) return;
+      const rec = new SR();
+      recognition = rec;
+      rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = true;
+      rec.onresult = (e) => {
+        // Always write only the current session's transcript — never append old text
+        let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+        el.value = t;
+        memCheckButtons();
+      };
+      rec.onerror = (e) => { if (e.error === 'not-allowed') { stopMemMic(); toast('Microphone permission denied'); } };
+      rec.onend   = () => { if (memMicActive && listeningActive) setTimeout(createAndStart, 300); };
+      try { rec.start(); } catch(e) { setTimeout(createAndStart, 600); }
     }
+    createAndStart();
+  }
+
+  function stopMemMic() {
+    stopListening();
+    memMicActive = false;
+    document.getElementById('memMicBtn').style.background = 'var(--gold)';
+    document.getElementById('memMicBtn').textContent = '🎙️';
+    setMemStatus('idle', '');
+  }
+
+  function toggleMemMic() {
+    if (memMicActive) { stopMemMic(); } else { startMemMic(); }
   }
 
   function setMemStatus(state, text) {
@@ -1551,7 +1556,7 @@
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = [];
     renderRecPhotoStrip();
-    if (memMicActive) toggleMemMic();
+    if (memMicActive) stopMemMic();
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recDeepContext  = '';
@@ -1618,19 +1623,17 @@
     // Build context from what they just wrote
     recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
 
-    // Clear textarea AND mic transcript so next answer starts fresh
+    // Stop mic, clear form fully, restart mic fresh for next answer
+    if (memMicActive) stopMemMic();
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recTranscript = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = []; renderRecPhotoStrip();
 
-    // Restart mic cleanly so it doesn't carry over old speech session
-    if (recActive) {
-      stopListening();
-      await new Promise(r => setTimeout(r, 350));
-      startPersistentListening(null);
-    }
+    // Small pause then restart mic fresh
+    await new Promise(r => setTimeout(r, 200));
+    startMemMic();
 
     // Ask the follow-up — question shows above textarea, buttons stay normal
     await memAskFollowUp();
@@ -1649,8 +1652,15 @@
       recCurQuestion = question;
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
-      setMemStatus('idle', 'Answer below, then Save or ask AI Conversation again to keep going');
+      setMemStatus('listening', 'Listening...');
       memCheckButtons();
+      // Speak the question aloud
+      if (window.speechSynthesis) {
+        speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(question);
+        utt.lang = 'en-AU'; utt.rate = 0.92;
+        speechSynthesis.speak(utt);
+      }
     } catch(err) {
       dbgErr('MEM', 'Follow-up failed:', err.message);
       setMemStatus('idle', '');
@@ -1769,8 +1779,10 @@
       await speakAndWait(question);
       if (!recActive) return;
       setMemStatus('listening', 'Listening... answer below, then Next topic or Go deeper');
-      // Start mic auto-dictation into textarea
-      if (!memMicActive) toggleMemMic();
+      // Start mic fresh for this answer
+      if (memMicActive) stopMemMic();
+      await new Promise(r => setTimeout(r, 150));
+      startMemMic();
 
     } catch(err) {
       dbgErr('MEM', err.message);
