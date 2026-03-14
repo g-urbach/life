@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.65</title>
+  <title>My Life Story v0.66</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -799,6 +799,38 @@
     }
     .prompt-chip:hover { border-color: var(--gold); background: var(--surface2); color: var(--gold-dark); }
 
+    .chapter-card { cursor: pointer; }
+    .chapter-card:hover .ch-name { color: var(--gold-dark); }
+
+    #chapterDetail { display: none; }
+    .chapter-back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.82rem; color: var(--text-light); cursor: pointer;
+      border: none; background: none; padding: 0; margin-bottom: 20px;
+      font-family: 'Lato', sans-serif;
+    }
+    .chapter-back-btn:hover { color: var(--gold-dark); }
+    .thread-group {
+      border: 1px solid var(--border); border-radius: 12px;
+      margin-bottom: 16px; overflow: hidden;
+    }
+    .thread-parent {
+      background: var(--surface); padding: 16px 18px;
+      border-left: 4px solid var(--gold);
+    }
+    .thread-children {
+      background: var(--surface2); padding: 0;
+    }
+    .thread-child {
+      padding: 12px 18px 12px 28px;
+      border-top: 1px solid var(--border);
+      font-size: 0.9rem; position: relative;
+    }
+    .thread-child::before {
+      content: '↳'; position: absolute; left: 12px;
+      color: var(--gold); font-size: 0.9rem; top: 13px;
+    }
+
     .review-sub-label {
       font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
       text-transform: uppercase; color: var(--text-light); margin-bottom: 12px;
@@ -872,7 +904,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.65</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.66</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1041,6 +1073,14 @@
     </div>
     <div id="chapterGrid" class="chapter-grid"></div>
 
+    <!-- Chapter detail drilldown (hidden until chapter clicked) -->
+    <div id="chapterDetail">
+      <button class="chapter-back-btn" onclick="closeChapterDetail()">← Back to all chapters</button>
+      <div id="chapterDetailTitle" style="font-family:'Playfair Display',serif;font-size:1.3rem;margin-bottom:6px"></div>
+      <div id="chapterDetailStats" style="font-size:0.82rem;color:var(--text-light);margin-bottom:20px"></div>
+      <div id="chapterDetailList"></div>
+    </div>
+
     <!-- Section 2: Your Entries -->
     <div class="review-section-head" style="margin-top:36px">
       <h3>📋 Your Entries</h3>
@@ -1163,7 +1203,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.65 — Fix onclick syntax error: tags stored in JS registry not HTML attributes";
+  const DEPLOY_NOTES = "v0.66 — Chapter drill-down with threaded entries, fix improve tag suggestions prompt";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2497,6 +2537,7 @@
 
   // Registry so we never pass tag JSON through onclick attributes
   const _entryTagsRegistry = {};
+  const _chapterRegistry   = {}; // chapter name -> entries array
 
   function registerEntryTags(entryId, tags) {
     _entryTagsRegistry[entryId] = tags || {};
@@ -2725,7 +2766,9 @@
         const tl    = isOther ? 'tl-red' : trafficLight(score);
         const lbl   = isOther ? 'Add a chapter to these entries' : trafficLabel(score);
         const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-        return `<div class="chapter-card">
+        // Register this chapter's entries for drill-down
+        _chapterRegistry[ch] = ents;
+        return `<div class="chapter-card" onclick="openChapterDetail('${ch.replace(/'/g,"\\'")}')">
           <div class="ch-name">
             <span class="traffic-light ${tl}"></span>
             ${ch}
@@ -2734,9 +2777,10 @@
             ${ents.length} entr${ents.length===1?'y':'ies'} · ~${words} words<br>
             ${lbl} · ${score}/100
           </div>
-          <button class="ch-ask-btn" onclick="askAboutChapter('${ch.replace(/'/g,"\\'")}')">
-            💬 Ask me about ${ch}
-          </button>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+            <span style="font-size:0.72rem;color:var(--gold-dark);border:1px solid var(--border);border-radius:6px;padding:2px 8px">View entries →</span>
+            <button class="ch-ask-btn" style="width:auto" onclick="event.stopPropagation();askAboutChapter('${ch.replace(/'/g,"\\'")}')">💬 Ask AI</button>
+          </div>
         </div>`;
       }).join('');
     }
@@ -2866,18 +2910,21 @@
       if (!existingTags.location) missingTags.push('location');
 
       const prompt =
-        'You are a careful editor helping someone improve their memoir entry.\n\n' +
-        'ORIGINAL TEXT:\n"' + entry.answer + '"\n\n' +
-        'EXISTING TAGS: ' + (Object.keys(existingTags).length ? JSON.stringify(existingTags) : 'none') + '\n\n' +
-        'Your tasks:\n' +
-        '1. Fix any spelling or grammar errors\n' +
-        '2. Improve clarity and flow slightly — but preserve the person\'s voice exactly\n' +
-        '3. Do NOT add new facts or expand the story\n' +
-        (missingTags.length ? '4. Suggest values for these missing tags based on the text: ' + missingTags.join(', ') + '\n' : '') +
-        '\nRespond in this exact JSON format (no markdown, no backticks):\n' +
-        '{"changed":true,"improved":"corrected text","notes":"brief description","suggestedTags":{"chapter":"Childhood","era":"1970s","people":"Mum","location":"Sydney"}}\n' +
-        'Only include tags in suggestedTags that you are confident about from the text.\n' +
-        'If no text changes needed: {"changed":false,"improved":"","notes":"No changes needed","suggestedTags":{}}';
+        'Respond ONLY with a valid JSON object. No prose, no markdown, no backticks, no explanation.\n\n' +
+        'MEMOIR ENTRY TO REVIEW:\n"' + entry.answer + '"\n\n' +
+        'ALREADY HAS THESE TAGS: ' + (Object.keys(existingTags).length ? JSON.stringify(existingTags) : 'none') + '\n' +
+        'MISSING TAGS: ' + (missingTags.length ? missingTags.join(', ') : 'none') + '\n\n' +
+        'Return exactly this JSON shape:\n' +
+        '{"changed":BOOL,"improved":"corrected text or empty","notes":"one sentence","suggestedTags":{"chapter":"...","era":"...","people":"...","location":"..."}}\n\n' +
+        'Rules:\n' +
+        '- changed: true only if you fixed spelling, grammar or flow\n' +
+        '- improved: the corrected text if changed=true, else empty string\n' +
+        '- suggestedTags: ALWAYS include this object. For each of chapter/era/people/location, add a value if you can infer it from the text. Omit keys you cannot determine. Do not repeat values already in existing tags.\n' +
+        '- chapter should be one of: Childhood, Family, Education, Career, Relationships, Adventures, Challenges, Reflections — pick the best fit\n' +
+        '- era: a decade like "1970s" or year like "1985" if inferable\n' +
+        '- people: first names or relationships mentioned e.g. "Mum, Dad"\n' +
+        '- location: city, suburb or place mentioned\n\n' +
+        'Output the JSON object now:';
 
       const raw    = await callAI(prompt, { max_tokens: 800 });
       const clean  = raw.replace(/```json|```/g,'').trim();
@@ -2979,6 +3026,68 @@
         btn.disabled = false; btn.textContent = '✓ Accept';
       }
     } catch(err) { toast('Error: ' + err.message); btn.disabled = false; }
+  }
+
+  function openChapterDetail(chapter) {
+    const ents = _chapterRegistry[chapter] || [];
+    // Hide main review sections, show detail
+    document.getElementById('chapterGrid').style.display = 'none';
+    document.querySelectorAll('.review-section-head').forEach(el => el.style.display = 'none');
+    document.getElementById('reviewEntryList').style.display = 'none';
+    document.getElementById('promptsGrid').parentElement.style.display = 'none';
+    document.getElementById('chapterDetail').style.display = 'block';
+
+    const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
+    document.getElementById('chapterDetailTitle').textContent = '📚 ' + chapter;
+    document.getElementById('chapterDetailStats').textContent =
+      ents.length + ' entr' + (ents.length===1?'y':'ies') + ' · ~' + words + ' words';
+
+    // Group into threads: parents with their children
+    const parents  = ents.filter(e => !e.parent_entry_id);
+    const children = ents.filter(e =>  e.parent_entry_id);
+    // Also include orphaned children (parent in different chapter)
+    const childIds = new Set(children.map(c => c.parent_entry_id));
+    const orphans  = children.filter(c => !ents.find(p => p.id === c.parent_entry_id));
+    const threads  = parents.length ? parents : ents.filter(e => !e.parent_entry_id || orphans.includes(e));
+
+    let html = '';
+    if (!threads.length && !orphans.length) {
+      html = '<div class="empty"><div class="empty-icon">📭</div><p>No entries in this chapter yet.</p></div>';
+    } else {
+      // Render each parent + its children as a thread
+      [...threads, ...orphans].forEach(parent => {
+        const kids = children.filter(c => c.parent_entry_id === parent.id);
+        const cleanQ = cleanQuestion(parent.question);
+        html += '<div class="thread-group">';
+        html += '<div class="thread-parent">';
+        if (parent.title) html += '<p style="font-weight:700;margin-bottom:4px">🏷️ ' + parent.title + '</p>';
+        if (cleanQ && cleanQ !== 'Tell me about this photo') html += '<p class="entry-q" style="margin-bottom:6px">"' + cleanQ + '"</p>';
+        html += '<p style="font-size:0.95rem;line-height:1.7">' + parent.answer + '</p>';
+        html += '<p style="font-size:0.72rem;color:var(--text-light);margin-top:6px">' +
+          new Date(parent.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</p>';
+        html += '</div>';
+        kids.forEach(kid => {
+          const kidQ = cleanQuestion(kid.question);
+          html += '<div class="thread-child">';
+          if (kidQ) html += '<p class="entry-q" style="margin-bottom:4px">"' + kidQ + '"</p>';
+          html += '<p style="font-size:0.9rem;line-height:1.7">' + kid.answer + '</p>';
+          html += '<p style="font-size:0.72rem;color:var(--text-light);margin-top:4px">' +
+            new Date(kid.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</p>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+    }
+
+    document.getElementById('chapterDetailList').innerHTML = html;
+  }
+
+  function closeChapterDetail() {
+    document.getElementById('chapterDetail').style.display = 'none';
+    document.getElementById('chapterGrid').style.display = '';
+    document.getElementById('reviewEntryList').style.display = '';
+    document.getElementById('promptsGrid').style.display = '';
+    document.querySelectorAll('#panel-review .review-section-head').forEach(el => el.style.display = '');
   }
 
   async function askAboutChapter(chapter) {
