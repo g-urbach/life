@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.62</title>
+  <title>My Life Story v0.65</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -872,7 +872,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.62</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.65</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -985,16 +985,16 @@
 
     <!-- Buttons -->
     <div id="memButtons" style="margin-top:16px">
-      <!-- Row 1: primary actions -->
+      <!-- Row 1: AI actions (hero) -->
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <button class="btn btn-primary"   id="memSaveBtn"       onclick="memSave()">💾 Save</button>
-        <button class="btn btn-secondary" id="memSaveNewBtn"    onclick="memSaveAndNew()">💾 Save &amp; New</button>
-        <button class="btn btn-ghost"     id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
+        <button class="btn btn-primary" id="memAIConvBtn"  onclick="memAIConversation()">💬 AI Conversation</button>
+        <button class="btn btn-ghost"   id="memAITopicBtn" onclick="memAINewTopic()">🗺️ New Topic</button>
       </div>
-      <!-- Row 2: AI actions -->
+      <!-- Row 2: save actions -->
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-ghost" id="memAIConvBtn"  onclick="memAIConversation()">💬 AI Conversation</button>
-        <button class="btn btn-ghost" id="memAITopicBtn" onclick="memAINewTopic()">🗺️ AI New Topic</button>
+        <button class="btn btn-secondary" id="memSaveBtn"    onclick="memSave()">💾 Save</button>
+        <button class="btn btn-ghost"     id="memSaveNewBtn" onclick="memSaveAndNew()">💾 Save &amp; New</button>
+        <button class="btn btn-ghost"     id="memCancelBtn"  onclick="memCancel()">✕ Cancel</button>
       </div>
     </div>
 
@@ -1163,7 +1163,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.62 — Memory buttons: Save+Save&New+Cancel row 1, AI Conversation+New Topic row 2; Other renamed Unspecified";
+  const DEPLOY_NOTES = "v0.65 — Fix onclick syntax error: tags stored in JS registry not HTML attributes";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2495,12 +2495,20 @@
     } catch(err) { toast('Error: ' + err.message); }
   }
 
-  function toggleEditTags(entryId, currentTags, inReview) {
+  // Registry so we never pass tag JSON through onclick attributes
+  const _entryTagsRegistry = {};
+
+  function registerEntryTags(entryId, tags) {
+    _entryTagsRegistry[entryId] = tags || {};
+  }
+
+  function toggleEditTags(entryId, inReview) {
     const panelId = inReview ? 'redit-' + entryId : 'edit-tags-' + entryId;
     const prefix  = inReview ? 'redit_' + entryId : 'edit_' + entryId;
     const panel = document.getElementById(panelId);
     if (!panel) return;
     if (panel.style.display === 'none' || !panel.style.display) {
+      const currentTags = _entryTagsRegistry[entryId] || {};
       populateTagDropdowns(prefix);
       applyTagDefaults(prefix, currentTags);
       panel.style.display = 'grid';
@@ -2688,6 +2696,11 @@
       if (res.ok) entries = (await res.json()) || [];
     } catch(e) { dbgErr('REVIEW', e.message); }
 
+    // Treat legacy 'Other' as 'Unspecified' in display
+    entries.forEach(e => {
+      if (e.category === 'Other') e.category = 'Unspecified';
+      if (e.chapter  === 'Other') e.chapter  = 'Unspecified';
+    });
     const real = entries.filter(e => !e.category.startsWith('_profile'));
 
     // ── Section 1: Chapter Coverage ───────────────────────────────
@@ -2760,7 +2773,6 @@
       const hasTags = Object.keys(tags).length > 0;
       const cleanQ  = cleanQuestion(e.question);
       const safeId  = 'rev-' + (e.id || e.timestamp.replace(/[:.+]/g,'-'));
-      const currentTagsJson = JSON.stringify(tags).replace(/"/g,'&quot;');
       const deleteId = e.id ? "'" + e.id + "'" : 'null';
 
       const tagHtml = hasTags
@@ -2822,13 +2834,15 @@
         ${tagHtml}
         ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="improve-btn" onclick="improveEntry('${e.id}')">✨ Improve</button>
-          <button onclick="toggleEditTags('${e.id}',${currentTagsJson.replace(/&quot;/g,'"')},true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
+          <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
         </div>` : ''}
         ${improvePanel}
         ${editPanel}
       </div>`;
     }).join('');
 
+    // Register tags in registry (safe — no HTML attribute quoting)
+    filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
     // Populate tag dropdowns for edit panels
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
   }
@@ -2867,7 +2881,16 @@
 
       const raw    = await callAI(prompt, { max_tokens: 800 });
       const clean  = raw.replace(/```json|```/g,'').trim();
-      const result = JSON.parse(clean);
+      dbg('IMPROVE', 'Raw response:', clean.substring(0, 200));
+      let result;
+      try { result = JSON.parse(clean); }
+      catch(parseErr) {
+        dbgErr('IMPROVE', 'JSON parse failed:', parseErr.message, 'raw:', clean.substring(0,300));
+        // Try extracting JSON from response
+        const match = clean.match(/\{[\s\S]*\}/);
+        if (match) result = JSON.parse(match[0]);
+        else throw new Error('Could not parse AI response as JSON');
+      }
       const suggested = result.suggestedTags || {};
       const hasSuggested = Object.keys(suggested).length > 0;
 
@@ -3096,7 +3119,6 @@
       const safeId   = 'entry-' + e.timestamp.replace(/[:.+]/g, '-');
       const deleteId = e.id ? '\'' + e.id + '\'' : 'null';
       // Inline edit tags panel (hidden by default)
-      const currentTagsJson = JSON.stringify(tags).replace(/"/g, '&quot;');
       const editPanel = e.id ? `
         <div id="edit-tags-${e.id}" class="tag-panel" style="display:none;margin-top:12px">
           <div class="tag-panel-title">✏️ Edit tags & photos</div>
@@ -3152,12 +3174,15 @@
         photoStripHtml +
         tagHtml +
         (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
-          '<button onclick="toggleEditTags(\'' + e.id + '\',' + currentTagsJson + ')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags ? '✏️ Edit tags & photos' : '＋ Add tags & photos') + '</button>' +
+          '<button onclick="toggleEditTags(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags ? '✏️ Edit tags & photos' : '＋ Add tags & photos') + '</button>' +
           '<label style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">📷 Add photo<input type="file" accept="image/*" style="display:none" onchange="addPhotoToEntry(this,\'' + e.id + '\')"></label>' +
         '</div>' : '') +
         editPanel +
       '</div>';
     }).join('');
+
+    // Register tags for safe edit panel access
+    filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
 
     // Load signed URLs for all photo thumbnails
     const allPhotoEntries = filtered.filter(e => e.photo_url);
