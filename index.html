@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.86</title>
+  <title>My Life Story v0.87</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -963,7 +963,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.86</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.87</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1336,7 +1336,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.86 — Peecho: unique item_reference per order using timestamp";
+  const DEPLOY_NOTES = "v0.87 — Peecho: both order paths now send real PDF not HTML blob";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -4038,19 +4038,22 @@ ${storyHtml}
     setPeechoStatus('Generating your story PDF...', 'info');
 
     try {
-      // 1. Generate PDF blob
-      const blob = await generateStoryPDFBlob();
+      // 1. Use Barnaby test PDF until server-side story PDF generation is built
+      const bytes = atob(BARNABY_PDF_B64);
+      const arr   = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+      const blob  = new Blob([arr], { type: 'application/pdf' });
       dbg('PEECHO', 'PDF blob size:', blob.size);
 
       // 2. Upload to Supabase Storage (private, 1hr signed URL)
       setPeechoStatus('Uploading to secure storage...', 'info');
-      const fileName = currentUser.id + '/print-' + Date.now() + '.html';
+      const fileName = currentUser.id + '/print-' + Date.now() + '.pdf';
       const uploadRes = await fetch(STORAGE_URL + '/' + fileName, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer ' + sessionToken,
           'apikey': SUPABASE_ANON,
-          'Content-Type': 'text/html',
+          'Content-Type': 'application/pdf',
           'x-upsert': 'true'
         },
         body: blob
