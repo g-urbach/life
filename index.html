@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.78</title>
+  <title>My Life Story v0.80</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -963,7 +963,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.78</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.80</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1208,9 +1208,16 @@
       <div class="review-section-head" style="margin-top:36px">
         <h3>📋 Your Entries</h3>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="reviewFilterCat" onchange="renderReview()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;background:var(--surface);color:var(--text);">
+          <select id="reviewFilterCat" onchange="renderReviewEntries()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;background:var(--surface);color:var(--text);">
             <option value="">All chapters</option>
           </select>
+          <div style="position:relative;flex:1;min-width:160px">
+            <input id="reviewSearch" type="text" placeholder="🔍 Search memories..."
+              oninput="renderReviewEntries()"
+              style="width:100%;padding:8px 32px 8px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;background:var(--surface);color:var(--text)">
+            <button onclick="clearReviewSearch()" id="reviewSearchClear"
+              style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-light);cursor:pointer;font-size:1rem;line-height:1">✕</button>
+          </div>
           <span id="reviewEntryCount" style="font-size:0.82rem;color:var(--text-light)"></span>
         </div>
       </div>
@@ -1329,7 +1336,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.78 — Single Order This Book button (sends test order until production ready)";
+  const DEPLOY_NOTES = "v0.80 — Fix Peecho CORS: route via Supabase PEECHO_PROXY edge function";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1339,6 +1346,7 @@
 
   // ── Peecho ──────────────────────────────────────────────────────
   const PEECHO_TEST_URL    = 'https://test.www.peecho.com/rest/v3/order/';
+  const PEECHO_PROXY_URL   = SUPABASE_URL + '/functions/v1/PEECHO_PROXY';
   const PEECHO_MERCHANT_KEY = '84d9c9e2402c3e872c2a212b31290ea51898190a';
   const PEECHO_SECRET       = '895975a30047881290450d68177a8c8fc65077b3';
   const PEECHO_PRODUCTS = [
@@ -3205,12 +3213,39 @@
     renderPrompts();
   }
 
+  function highlightSearch(text, term) {
+    if (!term || !text) return text || '';
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.replace(new RegExp('(' + escaped + ')', 'gi'),
+      '<mark style="background:rgba(201,169,110,0.35);border-radius:2px;padding:0 1px">$1</mark>');
+  }
+
+  function clearReviewSearch() {
+    const inp = document.getElementById('reviewSearch');
+    if (inp) { inp.value = ''; inp.focus(); }
+    renderReviewEntries();
+  }
+
   function renderReviewEntries() {
     const filter = document.getElementById('reviewFilterCat').value;
-    const real   = entries.filter(e => !e.category.startsWith('_profile'));
-    const filtered = filter
+    const search = (document.getElementById('reviewSearch')?.value || '').toLowerCase().trim();
+    // Show/hide clear button
+    const clearBtn = document.getElementById('reviewSearchClear');
+    if (clearBtn) clearBtn.style.display = search ? 'block' : 'none';
+    const real   = entries.filter(e => !e.category.startsWith('_profile') && !e.category.startsWith('_essentials'));
+    let filtered = filter
       ? real.filter(e => (e.chapter || e.category || 'Uncategorised') === filter)
       : real;
+    // Apply keyword search across answer, title, question, tags
+    if (search) {
+      filtered = filtered.filter(e => {
+        const haystack = [
+          e.answer, e.title, e.question,
+          e.chapter, e.era, e.location, e.people
+        ].filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(search);
+      });
+    }
 
     document.getElementById('reviewEntryCount').textContent =
       filtered.length + ' entr' + (filtered.length===1?'y':'ies');
@@ -3787,7 +3822,7 @@
         '</div>' +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + e.title + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
-        '<p class="entry-text">' + e.answer + '</p>' +
+        '<p class="entry-text">' + highlightSearch(e.answer, search) + '</p>' +
         photoStripHtml +
         tagHtml +
         (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
@@ -3972,7 +4007,7 @@ ${storyHtml}
         item_details: [{ item_reference: 'barnaby-test-1', offering_id: product.id, quantity: 1, file_details: { content_url: fileUrl } }],
         address_details: { email_address: currentUser.email, shipping_address: { first_name: 'Barnaby', last_name: 'Fictitious', address_line_1: '47 Eureka Street', zip_code: '3350', city: 'Ballarat', state: 'VIC', country_code: 'AUS' } }
       };
-      const orderRes  = await fetch(PEECHO_TEST_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderBody) });
+      const orderRes  = await fetch(PEECHO_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON }, body: JSON.stringify({ endpoint: PEECHO_TEST_URL, payload: orderBody }) });
       const orderText = await orderRes.text();
       dbg('PEECHO-TEST', 'Response', orderRes.status, orderText.substring(0,300));
       let orderData;
@@ -4063,10 +4098,10 @@ ${storyHtml}
 
       dbg('PEECHO', 'Posting order:', JSON.stringify(orderBody).substring(0, 200));
 
-      const orderRes = await fetch(PEECHO_TEST_URL, {
+      const orderRes = await fetch(PEECHO_PROXY_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderBody)
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON },
+        body: JSON.stringify({ endpoint: PEECHO_TEST_URL, payload: orderBody })
       });
 
       const orderData = await orderRes.json();
