@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.67</title>
+  <title>My Life Story v0.68</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -904,7 +904,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.67</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.68</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1067,11 +1067,13 @@
     <p class="section-sub">Your life coverage, entry by entry — improve, score, and find the gaps.</p>
 
     <!-- Section 1: Life Coverage -->
-    <div class="review-section-head">
-      <h3>📊 Life Coverage</h3>
-      <span id="reviewTotalStats" style="font-size:0.82rem;color:var(--text-light)"></span>
+    <div id="reviewSectionCoverage">
+      <div class="review-section-head">
+        <h3>📊 Life Coverage</h3>
+        <span id="reviewTotalStats" style="font-size:0.82rem;color:var(--text-light)"></span>
+      </div>
+      <div id="chapterGrid" class="chapter-grid"></div>
     </div>
-    <div id="chapterGrid" class="chapter-grid"></div>
 
     <!-- Chapter detail drilldown (hidden until chapter clicked) -->
     <div id="chapterDetail">
@@ -1207,7 +1209,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.67 — Fix chapter drill-down black screen: hide by ID not parentElement";
+  const DEPLOY_NOTES = "v0.68 — Chapter detail: fix section hiding, full entry cards with improve/edit/delete in threads";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3035,60 +3037,153 @@
   function openChapterDetail(chapter) {
     const ents = _chapterRegistry[chapter] || [];
 
-    // Hide the three review sections by their container IDs
-    document.getElementById('chapterGrid').style.display        = 'none';
-    document.getElementById('reviewSectionEntries').style.display = 'none';
-    document.getElementById('reviewSectionPrompts').style.display = 'none';
-    document.getElementById('chapterDetail').style.display      = 'block';
+    // Hide all three review sections, show detail
+    document.getElementById('reviewSectionCoverage').style.display = 'none';
+    document.getElementById('reviewSectionEntries').style.display  = 'none';
+    document.getElementById('reviewSectionPrompts').style.display  = 'none';
+    document.getElementById('chapterDetail').style.display         = 'block';
 
     const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
     document.getElementById('chapterDetailTitle').textContent = '📚 ' + chapter;
     document.getElementById('chapterDetailStats').textContent =
       ents.length + ' entr' + (ents.length===1?'y':'ies') + ' · ~' + words + ' words';
 
-    // Group into threads: parents with their children
+    // Split into parents and children
     const parents  = ents.filter(e => !e.parent_entry_id);
     const children = ents.filter(e =>  e.parent_entry_id);
-    // Also include orphaned children (parent in different chapter)
-    const childIds = new Set(children.map(c => c.parent_entry_id));
     const orphans  = children.filter(c => !ents.find(p => p.id === c.parent_entry_id));
-    const threads  = parents.length ? parents : ents.filter(e => !e.parent_entry_id || orphans.includes(e));
+    const threads  = [...parents, ...orphans];
 
-    let html = '';
-    if (!threads.length && !orphans.length) {
-      html = '<div class="empty"><div class="empty-icon">📭</div><p>No entries in this chapter yet.</p></div>';
-    } else {
-      // Render each parent + its children as a thread
-      [...threads, ...orphans].forEach(parent => {
-        const kids = children.filter(c => c.parent_entry_id === parent.id);
-        const cleanQ = cleanQuestion(parent.question);
-        html += '<div class="thread-group">';
-        html += '<div class="thread-parent">';
-        if (parent.title) html += '<p style="font-weight:700;margin-bottom:4px">🏷️ ' + parent.title + '</p>';
-        if (cleanQ && cleanQ !== 'Tell me about this photo') html += '<p class="entry-q" style="margin-bottom:6px">"' + cleanQ + '"</p>';
-        html += '<p style="font-size:0.95rem;line-height:1.7">' + parent.answer + '</p>';
-        html += '<p style="font-size:0.72rem;color:var(--text-light);margin-top:6px">' +
-          new Date(parent.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</p>';
-        html += '</div>';
-        kids.forEach(kid => {
-          const kidQ = cleanQuestion(kid.question);
-          html += '<div class="thread-child">';
-          if (kidQ) html += '<p class="entry-q" style="margin-bottom:4px">"' + kidQ + '"</p>';
-          html += '<p style="font-size:0.9rem;line-height:1.7">' + kid.answer + '</p>';
-          html += '<p style="font-size:0.72rem;color:var(--text-light);margin-top:4px">' +
-            new Date(kid.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</p>';
-          html += '</div>';
-        });
-        html += '</div>';
-      });
+    if (!threads.length) {
+      document.getElementById('chapterDetailList').innerHTML =
+        '<div class="empty"><div class="empty-icon">📭</div><p>No entries in this chapter yet.</p></div>';
+      return;
     }
 
+    // Build full-featured thread cards
+    let html = '';
+    threads.forEach(parent => {
+      const kids   = children.filter(c => c.parent_entry_id === parent.id);
+      const allInThread = [parent, ...kids];
+
+      html += '<div class="thread-group">';
+
+      allInThread.forEach((e, idx) => {
+        const isParent = idx === 0;
+        const tags     = getEntryTags(e);
+        const hasTags  = Object.keys(tags).length > 0;
+        const cleanQ   = cleanQuestion(e.question);
+        const deleteId = e.id ? "'" + e.id + "'" : 'null';
+
+        // Tag chips
+        const tagHtml = hasTags
+          ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+              Object.entries(tags).map(([k,v]) => {
+                const icons = {title:'🏷️',year:'📅',location:'📍',people:'👥',chapter:'📚'};
+                return '<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">' + (icons[k]||'') + ' ' + v + '</span>';
+              }).join('') + '</div>'
+          : '';
+
+        // Improve panel
+        const improvePanel = e.id
+          ? '<div id="cdimprove-' + e.id + '" class="improve-panel" style="display:none"></div>'
+          : '';
+
+        // Edit tags panel
+        const editPanel = e.id ? `
+          <div id="cdedit-${e.id}" class="tag-panel" style="display:none;margin-top:12px">
+            <div class="tag-panel-title">✏️ Edit tags & photos</div>
+            <div class="tag-field" style="grid-column:1/-1">
+              <label>🏷️ Title</label>
+              <input type="text" id="cdedit_${e.id}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
+            </div>
+            <div class="tag-field">
+              <label>📅 Era</label>
+              <select id="cdedit_${e.id}TagYear" onchange="handleNewTagOption(this,'cdedit_${e.id}TagYearCustom')"><option value="">Not specified</option></select>
+              <input type="text" id="cdedit_${e.id}TagYearCustom" placeholder="e.g. 1985..." style="margin-top:6px;display:none">
+            </div>
+            <div class="tag-field">
+              <label>📍 Location</label>
+              <select id="cdedit_${e.id}TagLocation" onchange="handleNewTagOption(this,'cdedit_${e.id}TagLocationCustom')"><option value="">Not specified</option></select>
+              <input type="text" id="cdedit_${e.id}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+            </div>
+            <div class="tag-field">
+              <label>👥 People</label>
+              <select id="cdedit_${e.id}TagPeople" onchange="handleNewTagOption(this,'cdedit_${e.id}TagPeopleCustom')"><option value="">Not specified</option></select>
+              <input type="text" id="cdedit_${e.id}TagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
+            </div>
+            <div class="tag-field">
+              <label>📚 Chapter</label>
+              <select id="cdedit_${e.id}TagChapter" onchange="handleNewTagOption(this,'cdedit_${e.id}TagChapterCustom')"><option value="">Not specified</option></select>
+              <input type="text" id="cdedit_${e.id}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
+            </div>
+            <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
+              <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${e.id}','cdedit')">Save tags</button>
+              <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('cdedit-${e.id}').style.display='none'">Cancel</button>
+            </div>
+          </div>` : '';
+
+        html += '<div class="' + (isParent ? 'thread-parent' : 'thread-child') + '">';
+        if (e.title) html += '<p style="font-weight:700;margin-bottom:4px">🏷️ ' + e.title + '</p>';
+        if (cleanQ && cleanQ !== 'Tell me about this photo') html += '<p class="entry-q" style="margin-bottom:6px">"' + cleanQ + '"</p>';
+        html += '<p style="font-size:' + (isParent?'0.95':'0.9') + 'rem;line-height:1.7">' + e.answer + '</p>';
+        html += tagHtml;
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">';
+        html += '<span style="font-size:0.72rem;color:var(--text-light)">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>';
+        if (e.id) {
+          html += '<button class="improve-btn" onclick="improveEntryInDetail(\'' + e.id + '\')">✨ Improve</button>';
+          html += '<button onclick="toggleEditTagsInDetail(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags':'＋ Add tags') + '</button>';
+          html += '<button class="entry-delete-btn" style="position:static;opacity:1" onclick="deleteEntry(' + deleteId + ')" title="Delete">✕</button>';
+        }
+        html += '</div>';
+        html += improvePanel;
+        html += editPanel;
+        html += '</div>';
+
+        // Register for safe tag access
+        if (e.id) registerEntryTags(e.id, tags);
+      });
+
+      html += '</div>'; // thread-group
+    });
+
     document.getElementById('chapterDetailList').innerHTML = html;
+
+    // Populate tag dropdowns after render
+    threads.forEach(parent => {
+      const kids = children.filter(c => c.parent_entry_id === parent.id);
+      [parent, ...kids].forEach(e => {
+        if (e.id) populateTagDropdowns('cdedit_' + e.id);
+      });
+    });
+  }
+
+  // Improve button in chapter detail reuses improveEntry but targets cdimprove- panel
+  async function improveEntryInDetail(entryId) {
+    // Temporarily swap panel ID so improveEntry finds the right panel
+    const panel = document.getElementById('cdimprove-' + entryId);
+    if (!panel) return;
+    // Create a temporary alias panel ID that improveEntry expects
+    panel.id = 'improve-' + entryId;
+    await improveEntry(entryId);
+    panel.id = 'cdimprove-' + entryId;
+  }
+
+  function toggleEditTagsInDetail(entryId) {
+    const panel = document.getElementById('cdedit-' + entryId);
+    if (!panel) return;
+    if (panel.style.display === 'none' || !panel.style.display) {
+      populateTagDropdowns('cdedit_' + entryId);
+      applyTagDefaults('cdedit_' + entryId, _entryTagsRegistry[entryId] || {});
+      panel.style.display = 'grid';
+    } else {
+      panel.style.display = 'none';
+    }
   }
 
   function closeChapterDetail() {
     document.getElementById('chapterDetail').style.display          = 'none';
-    document.getElementById('chapterGrid').style.display            = '';
+    document.getElementById('reviewSectionCoverage').style.display  = '';
     document.getElementById('reviewSectionEntries').style.display   = '';
     document.getElementById('reviewSectionPrompts').style.display   = '';
   }
