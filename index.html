@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.60</title>
+  <title>My Life Story v0.62</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -872,7 +872,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.60</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.62</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -984,11 +984,18 @@
     </div>
 
     <!-- Buttons -->
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px" id="memButtons">
-      <button class="btn btn-primary"   id="memSaveBtn"       onclick="memSave()">💾 Save</button>
-      <button class="btn btn-secondary" id="memAIConvBtn"     onclick="memAIConversation()">💬 AI Conversation</button>
-      <button class="btn btn-ghost"     id="memAITopicBtn"    onclick="memAINewTopic()">🗺️ AI New Topic</button>
-      <button class="btn btn-ghost"     id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
+    <div id="memButtons" style="margin-top:16px">
+      <!-- Row 1: primary actions -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="btn btn-primary"   id="memSaveBtn"       onclick="memSave()">💾 Save</button>
+        <button class="btn btn-secondary" id="memSaveNewBtn"    onclick="memSaveAndNew()">💾 Save &amp; New</button>
+        <button class="btn btn-ghost"     id="memCancelBtn"     onclick="memCancel()">✕ Cancel</button>
+      </div>
+      <!-- Row 2: AI actions -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="memAIConvBtn"  onclick="memAIConversation()">💬 AI Conversation</button>
+        <button class="btn btn-ghost" id="memAITopicBtn" onclick="memAINewTopic()">🗺️ AI New Topic</button>
+      </div>
     </div>
 
   </div>
@@ -1156,7 +1163,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.60 — New Review tab: chapter coverage scoring, traffic lights, entry improve (AI grammar/spell), 50 memory prompts, Ask me about chapter";
+  const DEPLOY_NOTES = "v0.62 — Memory buttons: Save+Save&New+Cancel row 1, AI Conversation+New Topic row 2; Other renamed Unspecified";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1358,7 +1365,7 @@
 
     const newEntry = {
       user_id:              currentUser.id,
-      category:             category || 'Other',
+      category:             category || 'Unspecified',
       answer:               answer.trim(),
       question:             cleanQ,
       timestamp:            new Date().toISOString(),
@@ -1672,12 +1679,12 @@
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
     // Link to parent if we're in a follow-up conversation
-    const eid   = await addEntry(fullTags.chapter || 'Other', text, recCurQuestion || null, null, null, fullTags, recLastParentId);
+    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, recCurQuestion || null, null, null, fullTags, recLastParentId);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
         const up = await uploadPhotoFile(recPhotos[i].file);
-        if (up) await addEntry(fullTags.chapter || 'Other', recPhotos[i].caption || title || 'Photo', recCurQuestion || null, up.path, up.desc, fullTags, eid);
+        if (up) await addEntry(fullTags.chapter || 'Unspecified', recPhotos[i].caption || title || 'Photo', recCurQuestion || null, up.path, up.desc, fullTags, eid);
       }
     }
     recLastTags = { ...tags };
@@ -1697,6 +1704,20 @@
       recCurQuestion  = '';
       document.getElementById('aiQuestionBox').style.display = 'none';
       memResetForm(true);
+    }
+  }
+
+  async function memSaveAndNew() {
+    if (!currentUser) return toast('Please sign in first');
+    setMemStatus('idle', 'Saving...');
+    const eid = await memSaveCurrentEntry();
+    if (eid) {
+      toast('Saved ✓ — ready for next memory');
+      recLastParentId = null;
+      recCurQuestion  = '';
+      document.getElementById('aiQuestionBox').style.display = 'none';
+      memResetForm(false); // false = also clear tags for a truly fresh entry
+      if (memMicActive) { stopMemMic(); startMemMic(); } // restart mic fresh
     }
   }
 
@@ -2092,7 +2113,7 @@
     if (!composerPhotos.length) return toast('Please add at least one photo');
     const story = document.getElementById('photoStoryText').value.trim() || photoRecText.trim();
     if (!story) return toast('Please tell the story behind these photos');
-    const cat  = document.getElementById('photoCat').value || 'Other';
+    const cat  = document.getElementById('photoCat').value || 'Unspecified';
     const tags = readTags('photo');
 
     toast('Saving entry...');
@@ -2686,9 +2707,10 @@
       grid.innerHTML = '<p style="color:var(--text-light);font-size:0.9rem">No entries yet — start in Memories!</p>';
     } else {
       grid.innerHTML = Object.entries(byChapter).map(([ch, ents]) => {
-        const score = scoreChapter(ents);
-        const tl    = trafficLight(score);
-        const lbl   = trafficLabel(score);
+        const isOther = ch === 'Other' || ch === 'Uncategorised' || ch === 'Unspecified';
+        const score = isOther ? 0 : scoreChapter(ents);
+        const tl    = isOther ? 'tl-red' : trafficLight(score);
+        const lbl   = isOther ? 'Add a chapter to these entries' : trafficLabel(score);
         const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
         return `<div class="chapter-card">
           <div class="ch-name">
@@ -2790,7 +2812,7 @@
 
       return `<div class="entry-card" id="${safeId}">
         <div class="entry-meta">
-          <span class="entry-cat">${e.chapter || e.category || 'Other'}</span>
+          <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
           <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}</span>
           ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
         </div>
@@ -2801,7 +2823,6 @@
         ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="improve-btn" onclick="improveEntry('${e.id}')">✨ Improve</button>
           <button onclick="toggleEditTags('${e.id}',${currentTagsJson.replace(/&quot;/g,'"')},true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
-          <label style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">📷 Add photo<input type="file" accept="image/*" style="display:none" onchange="addPhotoToEntry(this,'${e.id}')"></label>
         </div>` : ''}
         ${improvePanel}
         ${editPanel}
@@ -2823,43 +2844,94 @@
     panel.innerHTML = '<div style="color:var(--text-light);font-style:italic">✨ Checking for improvements...</div>';
 
     try {
+      const existingTags = getEntryTags(entry);
+      const missingTags  = [];
+      if (!existingTags.chapter) missingTags.push('chapter');
+      if (!existingTags.year)    missingTags.push('era');
+      if (!existingTags.people)  missingTags.push('people');
+      if (!existingTags.location) missingTags.push('location');
+
       const prompt =
         'You are a careful editor helping someone improve their memoir entry.\n\n' +
         'ORIGINAL TEXT:\n"' + entry.answer + '"\n\n' +
+        'EXISTING TAGS: ' + (Object.keys(existingTags).length ? JSON.stringify(existingTags) : 'none') + '\n\n' +
         'Your tasks:\n' +
         '1. Fix any spelling or grammar errors\n' +
         '2. Improve clarity and flow slightly — but preserve the person\'s voice exactly\n' +
-        '3. Do NOT add new facts or expand the story\n\n' +
-        'Respond in this exact JSON format (no markdown, no backticks):\n' +
-        '{"changed":true,"improved":"the corrected text here","notes":"brief description of changes"}\n' +
-        'If no changes needed: {"changed":false,"improved":"","notes":"No changes needed"}';
+        '3. Do NOT add new facts or expand the story\n' +
+        (missingTags.length ? '4. Suggest values for these missing tags based on the text: ' + missingTags.join(', ') + '\n' : '') +
+        '\nRespond in this exact JSON format (no markdown, no backticks):\n' +
+        '{"changed":true,"improved":"corrected text","notes":"brief description","suggestedTags":{"chapter":"Childhood","era":"1970s","people":"Mum","location":"Sydney"}}\n' +
+        'Only include tags in suggestedTags that you are confident about from the text.\n' +
+        'If no text changes needed: {"changed":false,"improved":"","notes":"No changes needed","suggestedTags":{}}';
 
-      const raw  = await callAI(prompt, { max_tokens: 800 });
-      const clean = raw.replace(/```json|```/g,'').trim();
+      const raw    = await callAI(prompt, { max_tokens: 800 });
+      const clean  = raw.replace(/```json|```/g,'').trim();
       const result = JSON.parse(clean);
+      const suggested = result.suggestedTags || {};
+      const hasSuggested = Object.keys(suggested).length > 0;
 
-      if (!result.changed) {
-        panel.innerHTML = '<p style="color:var(--text-light);font-style:italic">✅ No changes needed — this entry looks great!</p>';
+      const tagSuggestHtml = hasSuggested
+        ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);margin-bottom:8px">🏷️ SUGGESTED TAGS</p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+              ${Object.entries(suggested).map(([k,v]) =>
+                `<span style="font-size:0.78rem;padding:3px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark)">${k}: ${v}</span>`
+              ).join('')}
+            </div>
+            <button class="btn btn-ghost" style="font-size:0.78rem;padding:6px 14px" onclick="applyTagSuggestions('${entryId}',this)">＋ Apply suggested tags</button>
+          </div>`
+        : '';
+
+      if (!result.changed && !hasSuggested) {
+        panel.innerHTML = '<p style="color:var(--text-light);font-style:italic">✅ This entry looks great — no changes needed!</p>';
         return;
       }
 
       panel.innerHTML = `
-        <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);margin-bottom:8px">SUGGESTED IMPROVEMENT</p>
-        <p class="diff-old">${entry.answer}</p>
-        <p class="diff-new">${result.improved}</p>
-        <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px">📝 ${result.notes}</p>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="acceptImprovement('${entryId}',this)">✓ Accept</button>
-          <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('improve-${entryId}').style.display='none'">Ignore</button>
-        </div>`;
+        ${result.changed ? `
+          <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);margin-bottom:8px">SUGGESTED IMPROVEMENT</p>
+          <p class="diff-old">${entry.answer}</p>
+          <p class="diff-new">${result.improved}</p>
+          <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px">📝 ${result.notes}</p>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="acceptImprovement('${entryId}',this)">✓ Accept text</button>
+            <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('improve-${entryId}').style.display='none'">Ignore</button>
+          </div>` : '<p style="color:var(--text-light);font-style:italic;margin-bottom:4px">✅ No text changes needed.</p>'}
+        ${tagSuggestHtml}`;
 
-      // Store improved text on panel for accept handler
-      panel.dataset.improved = result.improved;
+      panel.dataset.improved = result.improved || '';
+      panel.dataset.suggestedTags = JSON.stringify(suggested);
 
     } catch(err) {
       panel.innerHTML = '<p style="color:var(--rose)">Could not check — try again.</p>';
       dbgErr('IMPROVE', err.message);
     }
+  }
+
+  async function applyTagSuggestions(entryId, btn) {
+    const panel = document.getElementById('improve-' + entryId);
+    const tags  = JSON.parse(panel?.dataset.suggestedTags || '{}');
+    if (!Object.keys(tags).length) return;
+    btn.disabled = true; btn.textContent = 'Applying...';
+    try {
+      const patch = {};
+      if (tags.chapter)  patch.chapter  = tags.chapter;
+      if (tags.era)      patch.era       = tags.era;
+      if (tags.people)   patch.people    = tags.people;
+      if (tags.location) patch.location  = tags.location;
+      const res = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      if (res.ok) {
+        const e = entries.find(e => e.id === entryId);
+        if (e) Object.assign(e, patch);
+        toast('Tags applied ✓');
+        renderReview();
+      } else { toast('Could not save tags'); btn.disabled = false; btn.textContent = '＋ Apply suggested tags'; }
+    } catch(err) { toast('Error: ' + err.message); btn.disabled = false; }
   }
 
   async function acceptImprovement(entryId, btn) {
@@ -3070,7 +3142,7 @@
       return '<div class="entry-card type-' + type + '" id="' + safeId + '">' +
         '<div class="entry-meta">' +
           getEntryTypeBadge(type) +
-          '<span class="entry-cat">' + (e.category || 'Other') + '</span>' +
+          '<span class="entry-cat">' + (e.category || 'Unspecified') + '</span>' +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>' +
           (e.id ? '<button class="entry-delete-btn" onclick="deleteEntry(' + deleteId + ')" title="Delete entry">✕</button>' : '') +
         '</div>' +
@@ -3112,7 +3184,7 @@
     toast('Uploading photo...');
     const up = await uploadPhotoFile(file);
     if (!up) return toast('Upload failed');
-    const cat = entries.find(e => e.id === entryId)?.category || 'Other';
+    const cat = entries.find(e => e.id === entryId)?.category || 'Unspecified';
     await addEntry(cat, 'Photo attached to entry', null, up.path, up.desc, null, entryId);
     toast('Photo added ✓');
     if (document.getElementById('panel-review').classList.contains('active')) renderReview();
