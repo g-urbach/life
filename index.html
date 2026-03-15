@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.88</title>
+  <title>My Life Story v0.90</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.88</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.90</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1337,6 +1337,22 @@
   </div>
 </div>
 
+<!-- SET NEW PASSWORD (after clicking reset link in email) -->
+<div id="newPasswordOverlay" style="display:none;position:fixed;inset:0;background:rgba(44,36,22,0.75);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px">
+  <div style="background:var(--cream);border-radius:16px;padding:36px;max-width:400px;width:100%;box-shadow:0 8px 48px rgba(44,36,22,0.3)">
+    <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:400;margin-bottom:8px">Set a new password</h2>
+    <p style="font-size:0.88rem;color:var(--ink-light);margin-bottom:20px;line-height:1.6">Choose a new password for your account.</p>
+    <input id="newPasswordInput" type="password" placeholder="New password (min 6 characters)"
+      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;margin-bottom:10px"
+      onkeydown="if(event.key==='Enter') submitNewPassword()">
+    <input id="newPasswordConfirm" type="password" placeholder="Confirm new password"
+      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;margin-bottom:14px"
+      onkeydown="if(event.key==='Enter') submitNewPassword()">
+    <div id="newPasswordMsg" style="display:none;font-size:0.85rem;margin-bottom:14px;line-height:1.5"></div>
+    <button class="btn btn-primary" style="width:100%" id="newPasswordBtn" onclick="submitNewPassword()">Set New Password</button>
+  </div>
+</div>
+
 <div id="onboardingOverlay" style="display:none">
   <div id="onboardingBox">
     <h2>Welcome! Let's get started 👋</h2>
@@ -1361,7 +1377,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.88 — Auth: friendly error messages, forgot password flow with email reset link";
+  const DEPLOY_NOTES = "v0.90 — iOS fixes: prime TTS on button tap for gesture context, mic stays alive between questions";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1440,6 +1456,13 @@
 
     sb.auth.onAuthStateChange(async (event, session) => {
       dbg('AUTH','Event:', event, session ? session.user.email : 'no session');
+
+      // Handle password reset link click
+      if (event === 'PASSWORD_RECOVERY') {
+        showSetNewPassword();
+        return;
+      }
+
       currentUser  = session?.user ?? null;
       sessionToken = session?.access_token ?? null;
       updateAuthUI();
@@ -1508,6 +1531,35 @@
     document.querySelector('.landing-auth').style.display = 'block';
   }
 
+  function showSetNewPassword() {
+    const overlay = document.getElementById('newPasswordOverlay');
+    overlay.style.display = 'flex';
+    document.getElementById('newPasswordInput').focus();
+  }
+
+  async function submitNewPassword() {
+    const pass    = document.getElementById('newPasswordInput').value;
+    const confirm = document.getElementById('newPasswordConfirm').value;
+    const msg     = document.getElementById('newPasswordMsg');
+    const btn     = document.getElementById('newPasswordBtn');
+
+    if (pass.length < 6) {
+      msg.style.color = '#e07060'; msg.textContent = 'Password must be at least 6 characters.'; msg.style.display = 'block'; return;
+    }
+    if (pass !== confirm) {
+      msg.style.color = '#e07060'; msg.textContent = 'Passwords do not match.'; msg.style.display = 'block'; return;
+    }
+    btn.textContent = 'Saving...'; btn.disabled = true;
+    const { error } = await sb.auth.updateUser({ password: pass });
+    btn.textContent = 'Set New Password'; btn.disabled = false;
+    if (error) {
+      msg.style.color = '#e07060'; msg.textContent = 'Could not update password — please try again.'; msg.style.display = 'block';
+    } else {
+      msg.style.color = '#4caf72'; msg.textContent = '✓ Password updated! Signing you in...'; msg.style.display = 'block';
+      setTimeout(() => { document.getElementById('newPasswordOverlay').style.display = 'none'; }, 1500);
+    }
+  }
+
   async function sendPasswordReset() {
     const email = document.getElementById('forgotEmail').value.trim();
     const btn   = document.getElementById('forgotBtn');
@@ -1515,7 +1567,7 @@
     if (!email) { msg.style.color='#e07060'; msg.textContent='Please enter your email address.'; msg.style.display='block'; return; }
     btn.textContent = 'Sending...'; btn.disabled = true;
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + window.location.pathname
+      redirectTo: 'https://g-urbach.github.io/life/'
     });
     btn.textContent = 'Send Reset Link'; btn.disabled = false;
     if (error) {
@@ -1999,8 +2051,14 @@
     if (!currentUser) return toast('Please sign in first');
     const { title, answer } = memReadEntry();
 
-    // If there's content, save it and ask a follow-up
-    // If empty, just ask a fresh question about an uncovered area (same as New Topic but stays in conversation mode)
+    // Prime iOS speech engine immediately on user tap (required for gesture context)
+    if (window.speechSynthesis) {
+      const primer = new SpeechSynthesisUtterance('');
+      speechSynthesis.speak(primer);
+      speechSynthesis.cancel();
+    }
+
+    // If empty, ask a fresh question
     if (!answer && !title) {
       await memAINewTopic();
       return;
@@ -2008,22 +2066,19 @@
 
     setMemStatus('speaking', 'Saving and thinking of a follow-up...');
 
-    // Save the current entry and keep its id for linking
     const parentId = await memSaveCurrentEntry();
     recLastParentId = parentId || null;
-
-    // Build context from what they just wrote
     recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
 
-    // Stop mic, clear form fully — mic will restart after question is spoken
-    if (memMicActive) stopMemMic();
+    // Clear form but keep mic running — just reset the transcript
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recTranscript = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = []; renderRecPhotoStrip();
 
-    // Ask the follow-up — will speak question then restart mic
+    // Pause mic briefly while AI thinks, then speak question, then resume
+    if (memMicActive) stopMemMic();
     await memAskFollowUp();
   }
 
@@ -2041,19 +2096,19 @@
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
       memCheckButtons();
-      // Stop mic while speaking so it doesn't transcribe its own question
+      // Speak question then start mic fresh
       if (memMicActive) stopMemMic();
+      setMemStatus('speaking', 'Asking question...');
       if (window.speechSynthesis) {
         speechSynthesis.cancel();
         const utt = new SpeechSynthesisUtterance(question);
         utt.lang = 'en-AU'; utt.rate = 0.92;
+        // Small delay before starting mic on iOS to avoid capturing TTS audio
         utt.onend = () => {
-          setMemStatus('listening', 'Listening...');
-          startMemMic();
+          setTimeout(() => { setMemStatus('listening', 'Listening...'); startMemMic(); }, 300);
         };
         utt.onerror = () => {
-          setMemStatus('listening', 'Listening...');
-          startMemMic();
+          setTimeout(() => { setMemStatus('listening', 'Listening...'); startMemMic(); }, 300);
         };
         speechSynthesis.speak(utt);
       } else {
@@ -2069,6 +2124,12 @@
   // ── AI New Topic ──────────────────────────────────────────────────
   async function memAINewTopic() {
     if (!currentUser) return toast('Please sign in first');
+    // Prime iOS speech engine on user tap
+    if (window.speechSynthesis) {
+      const primer = new SpeechSynthesisUtterance('');
+      speechSynthesis.speak(primer);
+      speechSynthesis.cancel();
+    }
     const { answer, title } = memReadEntry();
     if (answer || title || recPhotos.length) {
       setMemStatus('idle', 'Saving...');
