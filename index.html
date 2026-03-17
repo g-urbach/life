@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.90</title>
+  <title>My Life Story v0.91</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.90</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.91</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1099,12 +1099,16 @@
         style="position:absolute;bottom:12px;right:12px;width:34px;height:34px;border-radius:50%;border:none;background:var(--gold);color:white;font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s">🎙️</button>
     </div>
 
+    <!-- Spell check result -->
+    <div id="memSpellPanel" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:0.9rem;line-height:1.7"></div>
+
     <!-- Buttons -->
     <div id="memButtons" style="margin-top:16px">
       <!-- Row 1: AI actions (hero) -->
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <button class="btn btn-primary" id="memAIConvBtn"  onclick="memAIConversation()">💬 AI Conversation</button>
-        <button class="btn btn-ghost"   id="memAITopicBtn" onclick="memAINewTopic()">🗺️ New Topic</button>
+        <button class="btn btn-primary" id="memAIConvBtn"  onclick="memAIConversation()">💬 Talk to me about this</button>
+        <button class="btn btn-ghost"   id="memAITopicBtn" onclick="memAINewTopic()">💡 Suggest new topic</button>
+        <button class="btn btn-ghost"   id="memSpellBtn"   onclick="spellCheckMemory()">✏️ Fix spelling</button>
       </div>
       <!-- Row 2: save actions -->
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -1377,7 +1381,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.90 — iOS fixes: prime TTS on button tap for gesture context, mic stays alive between questions";
+  const DEPLOY_NOTES = "v0.91 — Spell check in Memories, renamed AI buttons, factual story rules, not-enough-content gates";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2025,6 +2029,66 @@
     }
   }
 
+  async function spellCheckMemory() {
+    const el     = document.getElementById('memAnswer');
+    const text   = el?.value.trim();
+    const panel  = document.getElementById('memSpellPanel');
+    const btn    = document.getElementById('memSpellBtn');
+    if (!text) return toast('Nothing to check — write or speak something first');
+    if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+
+    btn.textContent = '⏳ Checking...'; btn.disabled = true;
+    panel.style.display = 'block';
+    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Checking spelling and grammar...</span>';
+
+    try {
+      const prompt =
+        'Fix any spelling, grammar or transcription errors in this text. ' +
+        'This may be speech-to-text so watch for homophones and run-on words. ' +
+        'Preserve the person\'s voice and all facts exactly — do not add or change meaning. ' +
+        'Respond ONLY with valid JSON, no markdown:\n' +
+        '{"changed":true,"fixed":"corrected text here","notes":"brief description of changes"}\n' +
+        'If nothing needs fixing: {"changed":false,"fixed":"","notes":"Looks good!"}\n\n' +
+        'TEXT:\n"' + text + '"';
+
+      const raw    = await callAI(prompt, { max_tokens: 600 });
+      const clean  = raw.replace(/```json|```/g,'').trim();
+      const match  = clean.match(/\{[\s\S]*\}/);
+      const result = JSON.parse(match ? match[0] : clean);
+
+      if (!result.changed) {
+        panel.innerHTML =
+          '<span style="color:#4caf72">✅ Looks good — no changes needed!</span>';
+      } else {
+        panel.innerHTML =
+          '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:8px">SUGGESTED FIX</p>' +
+          '<p style="color:var(--rose);text-decoration:line-through;margin-bottom:6px">' + text + '</p>' +
+          '<p style="color:#4caf72;margin-bottom:8px">' + result.fixed + '</p>' +
+          '<p style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px">📝 ' + result.notes + '</p>' +
+          '<div style="display:flex;gap:8px">' +
+            '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptSpellFix()">✓ Accept</button>' +
+            '<button class="btn btn-ghost"   style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById(\'memSpellPanel\').style.display=\'none\'">Ignore</button>' +
+          '</div>';
+        document.getElementById('memSpellPanel').dataset.fixed = result.fixed;
+      }
+    } catch(err) {
+      panel.innerHTML = '<span style="color:var(--rose)">Could not check — try again.</span>';
+      dbgErr('SPELL', err.message);
+    } finally {
+      btn.textContent = '✏️ Fix spelling'; btn.disabled = false;
+    }
+  }
+
+  function acceptSpellFix() {
+    const panel = document.getElementById('memSpellPanel');
+    const fixed = panel?.dataset.fixed;
+    if (!fixed) return;
+    document.getElementById('memAnswer').value = fixed;
+    panel.style.display = 'none';
+    toast('Fixed ✓');
+    memCheckButtons();
+  }
+
   async function memSaveAndNew() {
     if (!currentUser) return toast('Please sign in first');
     setMemStatus('idle', 'Saving...');
@@ -2588,28 +2652,68 @@
         : '';
       let prompt, maxTok;
 
+      const wordCount = realEntries.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
+      const strictNote = funny ? '' :
+        'CRITICAL RULES FOR FACTUAL WRITING:\n' +
+        '- Write ONLY what is stated in the entries. Do NOT invent, embellish or assume any facts.\n' +
+        '- If a detail is not in the entries, do not include it.\n' +
+        '- You may use warm, literary language but every fact must come directly from the entries.\n\n';
+
       if (mode === 'blurb') {
-        prompt = base + funnyPrefix +
+        prompt = base + funnyPrefix + strictNote +
           (funny
             ? 'Write a single hilariously funny paragraph (150–200 words) — the roast back-cover of this person\'s life. Third person. Return only the paragraph.\n\nLIFE ENTRIES:\n' + entriesText
-            : 'Write a single evocative paragraph (150–200 words) — the back-cover blurb of this person\'s life. Capture their essence, hint at key moments. Third person, warm, literary. Return only the paragraph.\n\nLIFE ENTRIES:\n' + entriesText);
+            : 'Write a single evocative paragraph (150–200 words) — the back-cover blurb of this person\'s life. Capture their essence based only on what is written. Third person, warm. Return only the paragraph.\n\nLIFE ENTRIES:\n' + entriesText);
         maxTok = 500;
       } else if (mode === 'short') {
-        prompt = base + funnyPrefix +
-          'Write a ' + (funny ? 'funny roast-style' : 'warm') + ' 3–5 paragraph memoir hitting the most meaningful highlights. ' +
+        if (!funny && wordCount < 50) {
+          skeleton.style.display = 'none';
+          out.style.display = 'block'; out.className = '';
+          out.innerHTML = \`<div style="text-align:center;padding:40px 20px">
+            <div style="font-size:2.5rem;margin-bottom:16px">📝</div>
+            <p style="font-family:\'Playfair Display\',serif;font-size:1.2rem;margin-bottom:12px">Not enough memories yet</p>
+            <p style="color:var(--text-light);font-size:0.92rem;max-width:400px;margin:0 auto 20px">The Short Version needs at least a few memories to work with. Add more in the Memories tab, or try the Funny version which works great even with just a few entries!</p>
+            <button class="btn btn-ghost" onclick="showPanel('memories',null,0)">➕ Add more memories</button>
+          </div>\`; return;
+        }
+        prompt = base + funnyPrefix + strictNote +
+          'Write a ' + (funny ? 'funny roast-style' : 'warm factual') + ' 3–5 paragraph memoir hitting the most meaningful highlights. ' +
           'Flowing prose, no headings. Third person. Return only the story.\n\nLIFE ENTRIES:\n' + entriesText;
         maxTok = 1500;
       } else if (mode === 'extended') {
-        prompt = base + funnyPrefix +
-          'Write a ' + (funny ? 'hilarious roast-style' : 'full') + ' memoir covering EVERY entry — do not skip or summarise briefly. ' +
+        if (!funny && wordCount < 150) {
+          skeleton.style.display = 'none';
+          out.style.display = 'block'; out.className = '';
+          out.innerHTML = \`<div style="text-align:center;padding:40px 20px">
+            <div style="font-size:2.5rem;margin-bottom:16px">📖</div>
+            <p style="font-family:\'Playfair Display\',serif;font-size:1.2rem;margin-bottom:12px">More memories needed for The Full Story</p>
+            <p style="color:var(--text-light);font-size:0.92rem;max-width:400px;margin:0 auto 20px">The Full Story covers every memory in depth — you currently have ~\${wordCount} words of memories. Aim for at least 150 words across your entries for a satisfying read. Keep adding to the Memories tab!</p>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">
+              <button class="btn btn-ghost" onclick="showPanel('memories',null,0)">➕ Add more memories</button>
+              <button class="btn btn-ghost" onclick="toggleFunny();generateStory('short')">😄 Try a Funny Short Version</button>
+            </div>
+          </div>\`; return;
+        }
+        prompt = base + funnyPrefix + strictNote +
+          'Write a ' + (funny ? 'hilarious roast-style' : 'full factual') + ' memoir covering EVERY entry — do not skip or summarise briefly. ' +
           'Give each memory its own space. Flowing prose, no headings. Third person. ' +
           'Aim for at least one substantial paragraph per memory. Return only the story.\n\nLIFE ENTRIES:\n' + entriesText;
         maxTok = 8000;
       } else if (mode === 'chapters') {
-        prompt = base + funnyPrefix +
-          'Write a ' + (funny ? 'funny roast-style' : '') + ' memoir organised as a chapter book. Entries are grouped by chapter below. ' +
+        if (!funny && wordCount < 150) {
+          skeleton.style.display = 'none';
+          out.style.display = 'block'; out.className = '';
+          out.innerHTML = \`<div style="text-align:center;padding:40px 20px">
+            <div style="font-size:2.5rem;margin-bottom:16px">📚</div>
+            <p style="font-family:\'Playfair Display\',serif;font-size:1.2rem;margin-bottom:12px">More memories needed for the Book Edition</p>
+            <p style="color:var(--text-light);font-size:0.92rem;max-width:400px;margin:0 auto 20px">The Book Edition organises your memories into chapters — you need enough entries across multiple chapters to make it worthwhile. Keep adding memories and tagging them with chapters!</p>
+            <button class="btn btn-ghost" onclick="showPanel('memories',null,0)">➕ Add more memories</button>
+          </div>\`; return;
+        }
+        prompt = base + funnyPrefix + strictNote +
+          'Write a ' + (funny ? 'funny roast-style' : 'factual') + ' memoir organised as a chapter book. Entries are grouped by chapter below. ' +
           'Write each chapter as a named section — put the chapter heading on its own line prefixed with ##. ' +
-          'Within each chapter, flowing prose covering every entry. No bullet points. Third person. ' +
+          'Within each chapter, flowing prose covering every entry — facts only, nothing invented. No bullet points. Third person. ' +
           'Return only the story.\n\nENTRIES BY CHAPTER:\n' + chapterText;
         maxTok = 8000;
       }
