@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.97</title>
+  <title>My Life Story v0.98</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.97</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.98</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1391,7 +1391,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.97 — Harden AI Review JSON parsing: flat keys, 3 parse fallbacks, control char strip";
+  const DEPLOY_NOTES = "v0.98 — Fix AI Review JSON errors: 3 separate plain-text calls instead of one big JSON with free text";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2059,48 +2059,66 @@
       const hasPeople   = !!tags.people;
       const hasLocation = !!tags.location;
 
-      const prompt =
-        'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no backticks, no extra text.\n\n' +
+      // ── Call 1: Structured hygiene check (NO free text fields — avoids JSON escaping issues) ──
+      const hygienePrompt =
+        'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no prose.\n\n' +
         'ENTRY TEXT:\n' + text.substring(0, 800) + '\n\n' +
         'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
-        'Return ONLY this JSON structure (all string values must be properly escaped):\n' +
-        '{"spelling_ok":true,"spelling_fixed":"corrected text or empty","spelling_notes":"description or empty",' +
-        '"grammar_ok":true,"grammar_notes":"issues or empty",' +
+        'Return ONLY this JSON — use true/false for booleans, short plain strings (no apostrophes or quotes) for notes:\n' +
+        '{"spelling_ok":true,"spelling_notes":"description",' +
+        '"grammar_ok":true,"grammar_notes":"issues or none",' +
         '"length_ok":true,"length_notes":"too short or good or rich",' +
-        '"voice_ok":true,"voice_notes":"clarity issues or empty",' +
+        '"voice_ok":true,"voice_notes":"clarity issues or none",' +
         '"suggest_chapter":"chapter name or empty","suggest_era":"decade or year or empty",' +
-        '"suggest_people":"people mentioned or empty","suggest_location":"place or empty",' +
-        '"reconstruction":"clean rewrite preserving all facts and voice, or empty if already clean"}\n\n' +
-        'IMPORTANT: escape all apostrophes and quotes inside string values. Keep reconstruction under 200 words.';
+        '"suggest_people":"first names mentioned or empty","suggest_location":"place or empty"}';
 
-      const raw   = await callAI(prompt, { max_tokens: 1200 });
-      const clean = raw.replace(/```json|```/g,'').trim();
-      dbg('AI-REVIEW', 'Raw response:', clean.substring(0,200));
+      const hygieneRaw   = await callAI(hygienePrompt, { max_tokens: 400 });
+      const hygieneClean = hygieneRaw.replace(/```json|```/g,'').trim();
+      dbg('AI-REVIEW', 'Hygiene response:', hygieneClean.substring(0,200));
 
-      // Robust JSON parsing — try multiple strategies
       let r = null;
-      const parseAttempts = [
-        () => JSON.parse(clean),
-        () => JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || ''),
-        // Strip any control characters that break JSON
-        () => JSON.parse(clean.replace(/[\x00-\x1F\x7F]/g, ' ').match(/\{[\s\S]*\}/)?.[0] || ''),
-      ];
-      for (const attempt of parseAttempts) {
-        try { r = attempt(); if (r) break; } catch(e) { dbgWarn('AI-REVIEW', 'Parse attempt failed:', e.message); }
+      for (const attempt of [
+        () => JSON.parse(hygieneClean),
+        () => JSON.parse(hygieneClean.match(/\{[^{}]*\}/)?.[0] || ''),
+        () => JSON.parse(hygieneClean.replace(/[\x00-\x1F\x7F]/g,' ').match(/\{[^{}]*\}/)?.[0] || ''),
+      ]) {
+        try { r = attempt(); if (r) break; } catch(e) { dbgWarn('AI-REVIEW', 'Parse failed:', e.message); }
       }
-      if (!r) throw new Error('Could not parse AI response as JSON. Raw: ' + clean.substring(0,100));
+      if (!r) throw new Error('Could not parse hygiene response. Raw: ' + hygieneClean.substring(0,100));
 
-      // Normalise flat structure to what the rest of the code expects
-      if (r.spelling_ok !== undefined) {
-        r.spelling = { ok: r.spelling_ok, fixed: r.spelling_fixed || '', notes: r.spelling_notes || '' };
-        r.grammar  = { ok: r.grammar_ok,  notes: r.grammar_notes  || '' };
-        r.length   = { ok: r.length_ok,   notes: r.length_notes   || '' };
-        r.voice    = { ok: r.voice_ok,    notes: r.voice_notes    || '' };
-        r.suggestChapter  = r.suggest_chapter  || '';
-        r.suggestEra      = r.suggest_era      || '';
-        r.suggestPeople   = r.suggest_people   || '';
-        r.suggestLocation = r.suggest_location || '';
-        r.reconstruction  = r.reconstruction   || '';
+      // Normalise
+      r.spelling = { ok: !!r.spelling_ok, fixed: '', notes: r.spelling_notes || '' };
+      r.grammar  = { ok: !!r.grammar_ok,  notes: r.grammar_notes  || '' };
+      r.length   = { ok: !!r.length_ok,   notes: r.length_notes   || '' };
+      r.voice    = { ok: !!r.voice_ok,    notes: r.voice_notes    || '' };
+      r.suggestChapter  = r.suggest_chapter  || '';
+      r.suggestEra      = r.suggest_era      || '';
+      r.suggestPeople   = r.suggest_people   || '';
+      r.suggestLocation = r.suggest_location || '';
+
+      // ── Call 2: Spelling fix (only if needed, plain text — no JSON) ──
+      if (!r.spelling.ok) {
+        const fixPrompt =
+          'Fix ONLY the spelling errors in this text. Preserve every word, fact and the person\'s exact voice. ' +
+          'Return ONLY the corrected text, nothing else:\n\n' + text;
+        try {
+          r.spelling.fixed = (await callAI(fixPrompt, { max_tokens: 600 })).trim();
+        } catch(e) { dbgWarn('AI-REVIEW', 'Spelling fix failed:', e.message); }
+      }
+
+      // ── Call 3: Reconstruction (plain text — no JSON) ──
+      const reconPrompt =
+        'Rewrite this memoir entry as a clean, coherent paragraph. ' +
+        'Preserve ALL facts and the person\'s warm personal voice exactly. ' +
+        'Fix rambling, repetition, and speech-to-text errors. ' +
+        'If the original is already clean and clear, reply with exactly: CLEAN\n\n' +
+        'ENTRY:\n' + text;
+      try {
+        const reconRaw = (await callAI(reconPrompt, { max_tokens: 600 })).trim();
+        r.reconstruction = reconRaw === 'CLEAN' ? '' : reconRaw;
+      } catch(e) {
+        dbgWarn('AI-REVIEW', 'Reconstruction failed:', e.message);
+        r.reconstruction = '';
       }
 
       // ── Build hygiene checklist ──
