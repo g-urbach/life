@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.00</title>
+  <title>My Life Story v1.01</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.00</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.01</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1398,7 +1398,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.00 — Consistent tags everywhere: shared buildTagChips+buildEditPanel, date+reference in all panels, AI Review unified";
+  const DEPLOY_NOTES = "v1.01 — AI Review: title suggestion, no empty filler values, chapter must be broad not specific";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2075,14 +2075,18 @@
         'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no prose.\n\n' +
         'ENTRY TEXT:\n' + text.substring(0, 800) + '\n\n' +
         'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
-        'Return ONLY this JSON — use true/false for booleans, short plain strings (no apostrophes or quotes) for notes:\n' +
-        '{"spelling_ok":true,"spelling_notes":"description",' +
-        '"grammar_ok":true,"grammar_notes":"issues or none",' +
+        'Return ONLY this JSON. Use true/false for booleans, short plain strings for notes.\n' +
+        'CRITICAL: if you cannot confidently determine a value, use a blank string "" — NEVER use the word "empty" as a value.\n' +
+        '{"spelling_ok":true,"spelling_notes":"list specific errors or blank",' +
+        '"grammar_ok":true,"grammar_notes":"specific issues or blank",' +
         '"length_ok":true,"length_notes":"too short or good or rich",' +
-        '"voice_ok":true,"voice_notes":"clarity issues or none",' +
-        '"suggest_chapter":"chapter name or empty","suggest_era":"decade or year or empty",' +
-        '"suggest_people":"comma separated first names mentioned or empty","suggest_location":"place or empty",' +
-        '"suggest_reference":"historical or cultural context like World War 2 or The Beatles era or empty"}';
+        '"voice_ok":true,"voice_notes":"specific clarity issues or blank",' +
+        '"suggest_title":"a short evocative title for this specific memory e.g. Dad and the old shed or blank if already set",' +
+        '"suggest_chapter":"broad life chapter like Family or Childhood or Career or Challenges — NOT a specific event name",' +
+        '"suggest_era":"decade like 1980s or year like 1985 only if clearly inferable from text",' +
+        '"suggest_people":"first names of people mentioned in text — comma separated — or blank",' +
+        '"suggest_location":"specific place mentioned in text or blank",' +
+        '"suggest_reference":"broad historical or cultural context if relevant e.g. World War 2 or blank"}';
 
       const hygieneRaw   = await callAI(hygienePrompt, { max_tokens: 400 });
       const hygieneClean = hygieneRaw.replace(/```json|```/g,'').trim();
@@ -2098,16 +2102,24 @@
       }
       if (!r) throw new Error('Could not parse hygiene response. Raw: ' + hygieneClean.substring(0,100));
 
+      // Strip AI filler — if the model returns "empty", "n/a", "none" treat as blank
+      const cleanSuggest = (v) => {
+        if (!v) return '';
+        const l = v.toString().toLowerCase().trim();
+        if (['empty','none','n/a','not applicable','unknown','unclear','not mentioned'].includes(l)) return '';
+        return v.trim();
+      };
       // Normalise
       r.spelling = { ok: !!r.spelling_ok, fixed: '', notes: r.spelling_notes || '' };
       r.grammar  = { ok: !!r.grammar_ok,  notes: r.grammar_notes  || '' };
       r.length   = { ok: !!r.length_ok,   notes: r.length_notes   || '' };
       r.voice    = { ok: !!r.voice_ok,    notes: r.voice_notes    || '' };
-      r.suggestChapter   = r.suggest_chapter   || '';
-      r.suggestEra       = r.suggest_era       || '';
-      r.suggestPeople    = r.suggest_people    || '';
-      r.suggestLocation  = r.suggest_location  || '';
-      r.suggestReference = r.suggest_reference || '';
+      r.suggestTitle     = cleanSuggest(r.suggest_title);
+      r.suggestChapter   = cleanSuggest(r.suggest_chapter);
+      r.suggestEra       = cleanSuggest(r.suggest_era);
+      r.suggestPeople    = cleanSuggest(r.suggest_people);
+      r.suggestLocation  = cleanSuggest(r.suggest_location);
+      r.suggestReference = cleanSuggest(r.suggest_reference);
 
       // ── Call 2: Spelling fix (only if needed, plain text — no JSON) ──
       if (!r.spelling.ok) {
@@ -2159,17 +2171,17 @@
       html += row(r.grammar?.ok,  'Grammar',  r.grammar?.notes);
       html += row(r.length?.ok,   'Length',   r.length?.notes);
       html += row(r.voice?.ok,    'Clarity',  r.voice?.notes);
-      html += row(hasTitle,    'Title tag',    !hasTitle    ? 'Not set — give this memory a title' : '', false);
-      html += row(hasChapter,  'Chapter tag',  !hasChapter  ? (r.suggestChapter ? 'Suggested: ' + r.suggestChapter : 'Not set — add one in tags') : '', false);
-      html += row(hasEra,      'Era tag',      !hasEra      ? (r.suggestEra     ? 'Suggested: ' + r.suggestEra     : 'Not set — when did this happen?') : '', false);
-      html += row(hasPeople,   'People',       !hasPeople   ? (r.suggestPeople  ? 'Suggested: ' + r.suggestPeople  : 'Not set — who was involved?') : '', !hasPeople);
-      html += row(hasLocation, 'Location',     !hasLocation ? (r.suggestLocation ? 'Suggested: ' + r.suggestLocation : 'Not set — where did this happen?') : '', !hasLocation);
-      html += row(hasRef || !r.suggestReference, 'Reference context', !hasRef && r.suggestReference ? 'Suggested: ' + r.suggestReference : '', !hasRef && !!r.suggestReference);
+      html += row(hasTitle,    'Title',    !hasTitle    ? (r.suggestTitle    ? 'Suggested: ' + r.suggestTitle    : 'Not set — give this memory a title') : '', false);
+      html += row(hasChapter,  'Chapter',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — broad life chapter e.g. Family') : '', false);
+      html += row(hasEra,      'Era',      !hasEra      ? (r.suggestEra      ? 'Suggested: ' + r.suggestEra      : 'Not set — when did this happen?') : '', false);
+      html += row(hasPeople,   'People',   !hasPeople   ? (r.suggestPeople   ? 'Suggested: ' + r.suggestPeople   : 'Not set — who was there?') : '', !hasPeople);
+      html += row(hasLocation, 'Location', !hasLocation ? (r.suggestLocation ? 'Suggested: ' + r.suggestLocation : 'Not set — where did this happen?') : '', !hasLocation);
+      if (r.suggestReference || hasRef) html += row(hasRef, 'Reference', !hasRef && r.suggestReference ? 'Suggested: ' + r.suggestReference : '', !hasRef);
       html += '</div>';
 
       // ── Tag suggestions apply button ──
       const sugTags = {};
-      if (!hasTitle    && r.suggestChapter)    sugTags.chapter   = r.suggestChapter;
+      if (!hasTitle    && r.suggestTitle)      sugTags.title     = r.suggestTitle;
       if (!hasChapter  && r.suggestChapter)  sugTags.chapter   = r.suggestChapter;
       if (!hasEra      && r.suggestEra)      sugTags.year      = r.suggestEra;
       if (!hasPeople   && r.suggestPeople)   sugTags.people    = r.suggestPeople;
