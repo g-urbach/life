@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.94</title>
+  <title>My Life Story v0.95</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.94</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.95</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1079,6 +1079,15 @@
         <select id="recTagChapter" onchange="handleNewTagOption(this,'recTagChapterCustom')"><option value="">Not specified</option></select>
         <input type="text" id="recTagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
       </div>
+      <div class="tag-field">
+        <label>🗓️ Date <span style="font-weight:400;font-size:0.75em;color:var(--text-light)">(journal/diary)</span></label>
+        <input type="date" id="recTagDate" onchange="onTagDateChange()"
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
+        <div style="margin-top:4px;display:flex;gap:6px">
+          <button type="button" onclick="setTagDateToday()" style="font-size:0.72rem;padding:2px 8px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Today</button>
+          <button type="button" onclick="clearTagDate()" style="font-size:0.72rem;padding:2px 8px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Clear</button>
+        </div>
+      </div>
       <div class="tag-field" style="grid-column:1/-1">
         <label>📷 Photos</label>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -1109,7 +1118,7 @@
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <button class="btn btn-primary" id="memAIConvBtn"  onclick="memAIConversation()">💬 Talk to me about this</button>
         <button class="btn btn-ghost"   id="memAITopicBtn" onclick="memAINewTopic()">💡 Suggest new topic</button>
-        <button class="btn btn-ghost"   id="memSpellBtn"   onclick="spellCheckMemory()">✏️ Fix spelling &amp; grammar</button>
+        <button class="btn btn-ghost"   id="memSpellBtn"   onclick="spellCheckMemory()">🔍 AI Review</button>
       </div>
       <!-- Row 2: save actions -->
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -1382,7 +1391,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.94 — Native browser spell/grammar check on memories textarea (red/green underlines)";
+  const DEPLOY_NOTES = "v0.95 — AI Review: hygiene checklist + tag suggestions + reconstruction; Date tag with auto-era";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2031,52 +2040,114 @@
   }
 
   async function spellCheckMemory() {
-    const el     = document.getElementById('memAnswer');
-    const text   = el?.value.trim();
-    const panel  = document.getElementById('memSpellPanel');
-    const btn    = document.getElementById('memSpellBtn');
-    if (!text) return toast('Nothing to check — write or speak something first');
+    const el    = document.getElementById('memAnswer');
+    const text  = el?.value.trim();
+    const panel = document.getElementById('memSpellPanel');
+    const btn   = document.getElementById('memSpellBtn');
+    if (!text) return toast('Nothing to review — write or speak something first');
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
 
-    btn.textContent = '⏳ Checking...'; btn.disabled = true;
+    btn.textContent = '⏳ Reviewing...'; btn.disabled = true;
     panel.style.display = 'block';
-    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Checking spelling and grammar...</span>';
+    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Running AI review...</span>';
 
     try {
+      const tags        = readTags('rec');
+      const wordCount   = text.split(/\s+/).filter(Boolean).length;
+      const hasChapter  = !!tags.chapter;
+      const hasEra      = !!(tags.year || tags.date);
+      const hasPeople   = !!tags.people;
+      const hasLocation = !!tags.location;
+
       const prompt =
-        'Fix any spelling, grammar or transcription errors in this text. ' +
-        'This may be speech-to-text so watch for homophones and run-on words. ' +
-        'Preserve the person\'s voice and all facts exactly — do not add or change meaning. ' +
-        'Respond ONLY with valid JSON, no markdown:\n' +
-        '{"changed":true,"fixed":"corrected text here","notes":"brief description of changes"}\n' +
-        'If nothing needs fixing: {"changed":false,"fixed":"","notes":"Looks good!"}\n\n' +
-        'TEXT:\n"' + text + '"';
+        'You are a memoir editor reviewing a personal memory entry. Respond ONLY with valid JSON — no markdown, no backticks.\n\n' +
+        'ENTRY TEXT:\n"' + text + '"\n\n' +
+        'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
+        'Return this exact JSON:\n' +
+        '{\n' +
+        '  "spelling": {"ok":true,"fixed":"corrected text if needed, else empty","notes":"description or empty"},\n' +
+        '  "grammar": {"ok":true,"notes":"any grammar issues or empty"},\n' +
+        '  "length": {"ok":true,"notes":"too short / good / rich"},\n' +
+        '  "voice": {"ok":true,"notes":"any issues with clarity, rambling, or speech-to-text artifacts"},\n' +
+        '  "suggestChapter": "best chapter name if missing, else empty",\n' +
+        '  "suggestEra": "decade or year if inferable and missing, else empty",\n' +
+        '  "suggestPeople": "people mentioned if missing from tags, else empty",\n' +
+        '  "suggestLocation": "place mentioned if missing from tags, else empty",\n' +
+        '  "reconstruction": "a clean, coherent rewrite preserving ALL facts and the person\'s voice — fix rambling, repetition, and transcription errors. Keep it warm and personal. If the original is already clean, return empty string."\n' +
+        '}\n\n' +
+        'Rules: only suggest tags you are confident about from the text. reconstruction should feel like the same person wrote it, just tidier.';
 
-      const raw    = await callAI(prompt, { max_tokens: 600 });
+      const raw    = await callAI(prompt, { max_tokens: 1000 });
       const clean  = raw.replace(/```json|```/g,'').trim();
-      const match  = clean.match(/\{[\s\S]*\}/);
-      const result = JSON.parse(match ? match[0] : clean);
+      const m      = clean.match(/\{[\s\S]*\}/);
+      const r      = JSON.parse(m ? m[0] : clean);
 
-      if (!result.changed) {
-        panel.innerHTML =
-          '<span style="color:#4caf72">✅ Looks good — no changes needed!</span>';
-      } else {
-        panel.innerHTML =
-          '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:8px">SUGGESTED FIX</p>' +
-          '<p style="color:var(--rose);text-decoration:line-through;margin-bottom:6px">' + text + '</p>' +
-          '<p style="color:#4caf72;margin-bottom:8px">' + result.fixed + '</p>' +
-          '<p style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px">📝 ' + result.notes + '</p>' +
-          '<div style="display:flex;gap:8px">' +
-            '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptSpellFix()">✓ Accept</button>' +
-            '<button class="btn btn-ghost"   style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById(\'memSpellPanel\').style.display=\'none\'">Ignore</button>' +
-          '</div>';
-        document.getElementById('memSpellPanel').dataset.fixed = result.fixed;
+      // ── Build hygiene checklist ──
+      let html = '<div style="margin-bottom:14px">';
+      html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:10px">HYGIENE CHECK</p>';
+
+      const row = (ok, label, detail) =>
+        '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:0.85rem">' +
+          '<span style="color:' + (ok ? '#4caf72' : 'var(--rose)') + ';flex-shrink:0">' + (ok ? '✓' : '✗') + '</span>' +
+          '<span><span style="color:var(--text)">' + label + '</span>' + (detail ? ' <span style="color:var(--text-light);font-size:0.78rem">— ' + detail + '</span>' : '') + '</span>' +
+        '</div>';
+
+      html += row(r.spelling?.ok, 'Spelling', r.spelling?.notes);
+      html += row(r.grammar?.ok,  'Grammar',  r.grammar?.notes);
+      html += row(r.length?.ok,   'Length',   r.length?.notes);
+      html += row(r.voice?.ok,    'Clarity',  r.voice?.notes);
+      html += row(hasChapter || !r.suggestChapter, 'Chapter tag', !hasChapter && r.suggestChapter ? 'Suggested: ' + r.suggestChapter : '');
+      html += row(hasEra     || !r.suggestEra,     'Era tag',     !hasEra     && r.suggestEra     ? 'Suggested: ' + r.suggestEra     : '');
+      html += row(hasPeople  || !r.suggestPeople,  'People tag',  !hasPeople  && r.suggestPeople  ? 'Suggested: ' + r.suggestPeople  : '');
+      html += '</div>';
+
+      // ── Tag suggestions apply button ──
+      const sugTags = {};
+      if (!hasChapter  && r.suggestChapter)  sugTags.chapter  = r.suggestChapter;
+      if (!hasEra      && r.suggestEra)      sugTags.year     = r.suggestEra;
+      if (!hasPeople   && r.suggestPeople)   sugTags.people   = r.suggestPeople;
+      if (!hasLocation && r.suggestLocation) sugTags.location = r.suggestLocation;
+
+      if (Object.keys(sugTags).length) {
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
+        Object.entries(sugTags).forEach(([k,v]) => {
+          html += `<span style="font-size:0.75rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark)">${k}: ${v}</span>`;
+        });
+        html += '</div>';
+        html += `<button class="btn btn-ghost" style="font-size:0.78rem;padding:6px 14px;margin-bottom:14px" onclick="applyAIReviewTags(${JSON.stringify(sugTags).replace(/"/g,'&quot;')})">＋ Apply suggested tags</button>`;
       }
+
+      // ── Spelling fix ──
+      if (!r.spelling?.ok && r.spelling?.fixed) {
+        html += '<div style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:14px">';
+        html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:8px">SPELLING FIX</p>';
+        html += '<p style="color:var(--rose);text-decoration:line-through;margin-bottom:6px;font-size:0.88rem">' + text + '</p>';
+        html += '<p style="color:#4caf72;margin-bottom:10px;font-size:0.88rem">' + r.spelling.fixed + '</p>';
+        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptSpellFix()">✓ Accept spelling fix</button>';
+        html += '</div>';
+        panel.dataset.fixed = r.spelling.fixed;
+      }
+
+      // ── Reconstruction ──
+      if (r.reconstruction && r.reconstruction.trim()) {
+        html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
+        html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:4px">AI RECONSTRUCTION</p>';
+        html += '<p style="font-size:0.75rem;color:var(--text-light);margin-bottom:8px">Your entry, cleaned up — all your facts, just tidier</p>';
+        html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + r.reconstruction + '</div>';
+        html += '<div style="display:flex;gap:8px">';
+        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptReconstruction()">✓ Use this version</button>';
+        html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById(\'memSpellPanel\').style.display=\'none\'">Keep mine</button>';
+        html += '</div></div>';
+        panel.dataset.reconstruction = r.reconstruction;
+      }
+
+      panel.innerHTML = html;
+
     } catch(err) {
-      panel.innerHTML = '<span style="color:var(--rose)">Could not check — try again.</span>';
-      dbgErr('SPELL', err.message);
+      panel.innerHTML = '<span style="color:var(--rose)">Could not review — try again.</span>';
+      dbgErr('AI-REVIEW', err.message);
     } finally {
-      btn.textContent = '✏️ Fix spelling & grammar'; btn.disabled = false;
+      btn.textContent = '🔍 AI Review'; btn.disabled = false;
     }
   }
 
@@ -2086,9 +2157,29 @@
     if (!fixed) return;
     document.getElementById('memAnswer').value = fixed;
     panel.style.display = 'none';
-    toast('Fixed ✓');
+    toast('Spelling fixed ✓');
     memCheckButtons();
   }
+
+  function acceptReconstruction() {
+    const panel = document.getElementById('memSpellPanel');
+    const text  = panel?.dataset.reconstruction;
+    if (!text) return;
+    document.getElementById('memAnswer').value = text;
+    panel.style.display = 'none';
+    toast('Entry updated ✓');
+    memCheckButtons();
+  }
+
+  function applyAIReviewTags(tagsJson) {
+    let tags;
+    try { tags = typeof tagsJson === 'string' ? JSON.parse(tagsJson.replace(/&quot;/g,'"')) : tagsJson; }
+    catch(e) { return; }
+    applyTagDefaults('rec', tags);
+    toast('Tags applied ✓');
+  }
+
+
 
   async function memSaveAndNew() {
     if (!currentUser) return toast('Please sign in first');
@@ -2920,6 +3011,9 @@
     // Title (free text)
     const titleEl = document.getElementById(prefix + 'TagTitle');
     if (titleEl && titleEl.value.trim()) tags.title = titleEl.value.trim();
+    // Date (journal mode)
+    const dateEl = document.getElementById(prefix + 'TagDate');
+    if (dateEl && dateEl.value) tags.date = dateEl.value;
     fields.forEach((f, i) => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
@@ -2929,9 +3023,39 @@
     return tags;
   }
 
+  function setTagDateToday() {
+    const d = document.getElementById('recTagDate');
+    if (d) { d.value = new Date().toISOString().split('T')[0]; onTagDateChange(); }
+  }
+
+  function clearTagDate() {
+    const d = document.getElementById('recTagDate');
+    if (d) d.value = '';
+  }
+
+  function onTagDateChange() {
+    const d = document.getElementById('recTagDate');
+    if (!d || !d.value) return;
+    // Auto-populate Era from date if not already set
+    const yearSel = document.getElementById('recTagYear');
+    const yearCustom = document.getElementById('recTagYearCustom');
+    if (yearSel && !yearSel.value && yearCustom && !yearCustom.value) {
+      const year = d.value.split('-')[0];
+      const decade = year.slice(0,3) + '0s';
+      // Check if decade exists in dropdown
+      let found = false;
+      for (let opt of yearSel.options) {
+        if (opt.value === decade) { yearSel.value = decade; found = true; break; }
+      }
+      if (!found) { yearCustom.value = year; yearCustom.style.display = 'block'; }
+    }
+  }
+
   function resetTagFields(prefix) {
     const titleEl = document.getElementById(prefix + 'TagTitle');
     if (titleEl) titleEl.value = '';
+    const dateEl = document.getElementById(prefix + 'TagDate');
+    if (dateEl) dateEl.value = '';
     ['Year','Location','People','Chapter'].forEach(f => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
