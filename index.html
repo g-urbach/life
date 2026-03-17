@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.98</title>
+  <title>My Life Story v1.00</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.98</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.00</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1072,7 +1072,7 @@
       <div class="tag-field">
         <label>👥 People</label>
         <select id="recTagPeople" onchange="handleNewTagOption(this,'recTagPeopleCustom')"><option value="">Not specified</option></select>
-        <input type="text" id="recTagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
+        <input type="text" id="recTagPeopleCustom" placeholder="e.g. Mum, Dad, Uncle Bob..." style="margin-top:6px;display:none">
       </div>
       <div class="tag-field">
         <label>📚 Chapter</label>
@@ -1087,6 +1087,13 @@
           <button type="button" onclick="setTagDateToday()" style="font-size:0.72rem;padding:2px 8px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Today</button>
           <button type="button" onclick="clearTagDate()" style="font-size:0.72rem;padding:2px 8px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Clear</button>
         </div>
+      </div>
+      <div class="tag-field" style="grid-column:1/-1">
+        <label>🔗 Reference <span style="font-weight:400;font-size:0.75em;color:var(--text-light)">(context or source)</span></label>
+        <input type="text" id="recTagRef" placeholder="e.g. World War 2, The Great Depression..."
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text);margin-bottom:6px">
+        <input type="url" id="recTagRefUrl" placeholder="Optional URL (e.g. Wikipedia link)..."
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
       </div>
       <div class="tag-field" style="grid-column:1/-1">
         <label>📷 Photos</label>
@@ -1391,7 +1398,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.98 — Fix AI Review JSON errors: 3 separate plain-text calls instead of one big JSON with free text";
+  const DEPLOY_NOTES = "v1.00 — Consistent tags everywhere: shared buildTagChips+buildEditPanel, date+reference in all panels, AI Review unified";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1706,6 +1713,8 @@
       era:                  tags?.year     || null,
       location:             tags?.location || null,
       people:               tags?.people   || null,
+      reference:            tags?.reference     || null,
+      reference_url:        tags?.reference_url || null,
       chapter:              tags?.chapter  || null,
       title:                tags?.title    || null,
       parent_entry_id:      parentEntryId  || null
@@ -2054,10 +2063,12 @@
     try {
       const tags        = readTags('rec');
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
+      const hasTitle    = !!tags.title;
       const hasChapter  = !!tags.chapter;
       const hasEra      = !!(tags.year || tags.date);
       const hasPeople   = !!tags.people;
       const hasLocation = !!tags.location;
+      const hasRef      = !!tags.reference;
 
       // ── Call 1: Structured hygiene check (NO free text fields — avoids JSON escaping issues) ──
       const hygienePrompt =
@@ -2070,7 +2081,8 @@
         '"length_ok":true,"length_notes":"too short or good or rich",' +
         '"voice_ok":true,"voice_notes":"clarity issues or none",' +
         '"suggest_chapter":"chapter name or empty","suggest_era":"decade or year or empty",' +
-        '"suggest_people":"first names mentioned or empty","suggest_location":"place or empty"}';
+        '"suggest_people":"comma separated first names mentioned or empty","suggest_location":"place or empty",' +
+        '"suggest_reference":"historical or cultural context like World War 2 or The Beatles era or empty"}';
 
       const hygieneRaw   = await callAI(hygienePrompt, { max_tokens: 400 });
       const hygieneClean = hygieneRaw.replace(/```json|```/g,'').trim();
@@ -2091,10 +2103,11 @@
       r.grammar  = { ok: !!r.grammar_ok,  notes: r.grammar_notes  || '' };
       r.length   = { ok: !!r.length_ok,   notes: r.length_notes   || '' };
       r.voice    = { ok: !!r.voice_ok,    notes: r.voice_notes    || '' };
-      r.suggestChapter  = r.suggest_chapter  || '';
-      r.suggestEra      = r.suggest_era      || '';
-      r.suggestPeople   = r.suggest_people   || '';
-      r.suggestLocation = r.suggest_location || '';
+      r.suggestChapter   = r.suggest_chapter   || '';
+      r.suggestEra       = r.suggest_era       || '';
+      r.suggestPeople    = r.suggest_people    || '';
+      r.suggestLocation  = r.suggest_location  || '';
+      r.suggestReference = r.suggest_reference || '';
 
       // ── Call 2: Spelling fix (only if needed, plain text — no JSON) ──
       if (!r.spelling.ok) {
@@ -2125,27 +2138,43 @@
       let html = '<div style="margin-bottom:14px">';
       html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:10px">HYGIENE CHECK</p>';
 
-      const row = (ok, label, detail) =>
-        '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:0.85rem">' +
-          '<span style="color:' + (ok ? '#4caf72' : 'var(--rose)') + ';flex-shrink:0">' + (ok ? '✓' : '✗') + '</span>' +
-          '<span><span style="color:var(--text)">' + label + '</span>' + (detail ? ' <span style="color:var(--text-light);font-size:0.78rem">— ' + detail + '</span>' : '') + '</span>' +
+      // Strip AI filler words that clutter the UI when ok
+      const cleanNote = (note) => {
+        if (!note) return '';
+        const lower = note.toLowerCase().trim();
+        if (['none','n/a','empty','no issues','ok','good','clear','fine','looks good','no problems','not applicable'].includes(lower)) return '';
+        return note;
+      };
+      const row = (ok, label, detail, warn) => {
+        const colour = ok ? '#4caf72' : warn ? 'var(--amber, #e8a020)' : 'var(--rose)';
+        const icon   = ok ? '✓' : warn ? '⚠' : '✗';
+        const d      = cleanNote(detail);
+        return '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:0.85rem">' +
+          '<span style="color:' + colour + ';flex-shrink:0">' + icon + '</span>' +
+          '<span><span style="color:var(--text)">' + label + '</span>' + (d ? ' <span style="color:var(--text-light);font-size:0.78rem">— ' + d + '</span>' : '') + '</span>' +
         '</div>';
+      };
 
       html += row(r.spelling?.ok, 'Spelling', r.spelling?.notes);
       html += row(r.grammar?.ok,  'Grammar',  r.grammar?.notes);
       html += row(r.length?.ok,   'Length',   r.length?.notes);
       html += row(r.voice?.ok,    'Clarity',  r.voice?.notes);
-      html += row(hasChapter,  'Chapter tag',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — add one in tags') : '');
-      html += row(hasEra,      'Era tag',      !hasEra      ? (r.suggestEra      ? 'Suggested: ' + r.suggestEra      : 'Not set — when did this happen?') : '');
-      html += row(hasPeople,   'People tag',   !hasPeople   ? (r.suggestPeople   ? 'Suggested: ' + r.suggestPeople   : 'Not set — who was involved?') : '');
+      html += row(hasTitle,    'Title tag',    !hasTitle    ? 'Not set — give this memory a title' : '', false);
+      html += row(hasChapter,  'Chapter tag',  !hasChapter  ? (r.suggestChapter ? 'Suggested: ' + r.suggestChapter : 'Not set — add one in tags') : '', false);
+      html += row(hasEra,      'Era tag',      !hasEra      ? (r.suggestEra     ? 'Suggested: ' + r.suggestEra     : 'Not set — when did this happen?') : '', false);
+      html += row(hasPeople,   'People',       !hasPeople   ? (r.suggestPeople  ? 'Suggested: ' + r.suggestPeople  : 'Not set — who was involved?') : '', !hasPeople);
+      html += row(hasLocation, 'Location',     !hasLocation ? (r.suggestLocation ? 'Suggested: ' + r.suggestLocation : 'Not set — where did this happen?') : '', !hasLocation);
+      html += row(hasRef || !r.suggestReference, 'Reference context', !hasRef && r.suggestReference ? 'Suggested: ' + r.suggestReference : '', !hasRef && !!r.suggestReference);
       html += '</div>';
 
       // ── Tag suggestions apply button ──
       const sugTags = {};
-      if (!hasChapter  && r.suggestChapter)  sugTags.chapter  = r.suggestChapter;
-      if (!hasEra      && r.suggestEra)      sugTags.year     = r.suggestEra;
-      if (!hasPeople   && r.suggestPeople)   sugTags.people   = r.suggestPeople;
-      if (!hasLocation && r.suggestLocation) sugTags.location = r.suggestLocation;
+      if (!hasTitle    && r.suggestChapter)    sugTags.chapter   = r.suggestChapter;
+      if (!hasChapter  && r.suggestChapter)  sugTags.chapter   = r.suggestChapter;
+      if (!hasEra      && r.suggestEra)      sugTags.year      = r.suggestEra;
+      if (!hasPeople   && r.suggestPeople)   sugTags.people    = r.suggestPeople;
+      if (!hasLocation && r.suggestLocation) sugTags.location  = r.suggestLocation;
+      if (!hasRef      && r.suggestReference) sugTags.reference = r.suggestReference;
 
       if (Object.keys(sugTags).length) {
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
@@ -3053,6 +3082,11 @@
     // Date (journal mode)
     const dateEl = document.getElementById(prefix + 'TagDate');
     if (dateEl && dateEl.value) tags.date = dateEl.value;
+    // Reference context + URL
+    const refEl    = document.getElementById(prefix + 'TagRef');
+    const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
+    if (refEl    && refEl.value.trim())    tags.reference    = refEl.value.trim();
+    if (refUrlEl && refUrlEl.value.trim()) tags.reference_url = refUrlEl.value.trim();
     fields.forEach((f, i) => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
@@ -3095,6 +3129,10 @@
     if (titleEl) titleEl.value = '';
     const dateEl = document.getElementById(prefix + 'TagDate');
     if (dateEl) dateEl.value = '';
+    const refEl    = document.getElementById(prefix + 'TagRef');
+    const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
+    if (refEl)    refEl.value = '';
+    if (refUrlEl) refUrlEl.value = '';
     ['Year','Location','People','Chapter'].forEach(f => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
@@ -3108,6 +3146,10 @@
     if (!tags || !Object.keys(tags).length) return;
     const titleEl = document.getElementById(prefix + 'TagTitle');
     if (titleEl && tags.title) titleEl.value = tags.title;
+    const refEl    = document.getElementById(prefix + 'TagRef');
+    const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
+    if (refEl    && tags.reference)     refEl.value    = tags.reference;
+    if (refUrlEl && tags.reference_url) refUrlEl.value = tags.reference_url;
     const map = { year:'Year', location:'Location', people:'People', chapter:'Chapter' };
     Object.entries(tags).forEach(([k, v]) => {
       if (!v) return;
@@ -3115,7 +3157,6 @@
       if (!label) return;
       const sel = document.getElementById(prefix + 'Tag' + label);
       if (!sel) return;
-      // If value exists in options, select it; otherwise show custom input
       const exists = [...sel.options].some(o => o.value === v);
       if (exists) {
         sel.value = v;
@@ -3136,24 +3177,30 @@
         method: 'PATCH',
         headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
         body: JSON.stringify({
-          era:      tags.year     || null,
-          location: tags.location || null,
-          people:   tags.people   || null,
-          chapter:  tags.chapter  || null,
-          title:    tags.title    || null
+          era:           tags.year          || null,
+          location:      tags.location      || null,
+          people:        tags.people        || null,
+          chapter:       tags.chapter       || null,
+          title:         tags.title         || null,
+          date:          tags.date          || null,
+          reference:     tags.reference     || null,
+          reference_url: tags.reference_url || null
         })
       });
       if (!res.ok) { toast('Could not save tags'); return; }
       const idx = entries.findIndex(e => e.id === entryId);
       if (idx > -1) {
-        entries[idx].era      = tags.year     || null;
-        entries[idx].location = tags.location || null;
-        entries[idx].people   = tags.people   || null;
-        entries[idx].chapter  = tags.chapter  || null;
-        entries[idx].title    = tags.title    || null;
+        entries[idx].era           = tags.year          || null;
+        entries[idx].location      = tags.location      || null;
+        entries[idx].people        = tags.people        || null;
+        entries[idx].chapter       = tags.chapter       || null;
+        entries[idx].title         = tags.title         || null;
+        entries[idx].date          = tags.date          || null;
+        entries[idx].reference     = tags.reference     || null;
+        entries[idx].reference_url = tags.reference_url || null;
       }
       toast('Tags saved ✓');
-      const panel = document.getElementById('edit-tags-' + entryId) || document.getElementById('redit-' + entryId);
+      const panel = document.getElementById('edit-' + entryId) || document.getElementById('redit-' + entryId) || document.getElementById('cdedit-' + entryId);
       if (panel) panel.style.display = 'none';
       // Refresh whichever panel is active
       if (document.getElementById('panel-review').classList.contains('active')) renderReview();
@@ -3170,7 +3217,7 @@
   }
 
   function toggleEditTags(entryId, inReview) {
-    const panelId = inReview ? 'redit-' + entryId : 'edit-tags-' + entryId;
+    const panelId = inReview ? 'redit-' + entryId : 'edit-' + entryId;
     const prefix  = inReview ? 'redit_' + entryId : 'edit_' + entryId;
     const panel = document.getElementById(panelId);
     if (!panel) return;
@@ -3187,11 +3234,14 @@
   function getEntryTags(e) {
     // Read from proper columns first, fallback to legacy smuggled tags
     const tags = {};
-    if (e.title)    tags.title    = e.title;
-    if (e.era)      tags.year     = e.era;
-    if (e.location) tags.location = e.location;
-    if (e.people)   tags.people   = e.people;
-    if (e.chapter)  tags.chapter  = e.chapter;
+    if (e.title)         tags.title         = e.title;
+    if (e.era)           tags.year          = e.era;
+    if (e.location)      tags.location      = e.location;
+    if (e.people)        tags.people        = e.people;
+    if (e.chapter)       tags.chapter       = e.chapter;
+    if (e.date)          tags.date          = e.date;
+    if (e.reference)     tags.reference     = e.reference;
+    if (e.reference_url) tags.reference_url = e.reference_url;
     // Legacy fallback
     if (!Object.keys(tags).length && e.question) {
       const m = e.question.match(/\[tags: (.+?)\]/);
@@ -3201,6 +3251,68 @@
       });
     }
     return tags;
+  }
+
+  // ── Shared tag chips display ─────────────────────────────────────
+  function buildTagChips(tags) {
+    if (!tags || !Object.keys(tags).length) return '';
+    const icons = { title:'🏷️', year:'📅', location:'📍', people:'👥', chapter:'📚', date:'🗓️', reference:'🔗' };
+    const skip  = ['reference_url']; // shown inline with reference
+    const chips = Object.entries(tags)
+      .filter(([k]) => !skip.includes(k))
+      .map(([k, v]) => {
+        if (k === 'reference' && tags.reference_url) {
+          return `<a href="${tags.reference_url}" target="_blank" style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark);text-decoration:none">${icons[k]||'🔗'} ${v} ↗</a>`;
+        }
+        return `<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">${icons[k]||''} ${v}</span>`;
+      });
+    return chips.length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + chips.join('') + '</div>' : '';
+  }
+
+  // ── Shared edit panel builder ─────────────────────────────────────
+  function buildEditPanel(entryId, prefix) {
+    if (!entryId) return '';
+    return `
+      <div id="${prefix}-${entryId}" class="tag-panel" style="display:none;margin-top:12px">
+        <div class="tag-panel-title">✏️ Edit tags & photos</div>
+        <div class="tag-field" style="grid-column:1/-1">
+          <label>🏷️ Title</label>
+          <input type="text" id="${prefix}_${entryId}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
+        </div>
+        <div class="tag-field">
+          <label>📅 Era</label>
+          <select id="${prefix}_${entryId}TagYear" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagYearCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="${prefix}_${entryId}TagYearCustom" placeholder="e.g. 1985..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>📍 Location</label>
+          <select id="${prefix}_${entryId}TagLocation" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagLocationCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="${prefix}_${entryId}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>👥 People</label>
+          <select id="${prefix}_${entryId}TagPeople" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagPeopleCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="${prefix}_${entryId}TagPeopleCustom" placeholder="e.g. Mum, Dad, Uncle Bob..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>📚 Chapter</label>
+          <select id="${prefix}_${entryId}TagChapter" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagChapterCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="${prefix}_${entryId}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
+        </div>
+        <div class="tag-field">
+          <label>🗓️ Date</label>
+          <input type="date" id="${prefix}_${entryId}TagDate" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
+        </div>
+        <div class="tag-field" style="grid-column:1/-1">
+          <label>🔗 Reference</label>
+          <input type="text" id="${prefix}_${entryId}TagRef" placeholder="e.g. World War 2..." style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text);margin-bottom:6px">
+          <input type="url" id="${prefix}_${entryId}TagRefUrl" placeholder="Optional URL..." style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
+        </div>
+        <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
+          <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${entryId}','${prefix}')">Save tags</button>
+          <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('${prefix}-${entryId}').style.display='none'">Cancel</button>
+        </div>
+      </div>`;
   }
 
   function cleanQuestion(q) {
@@ -3672,47 +3784,8 @@
       const safeId  = 'rev-' + (e.id || e.timestamp.replace(/[:.+]/g,'-'));
       const deleteId = e.id ? "'" + e.id + "'" : 'null';
 
-      const tagHtml = hasTags
-        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
-            Object.entries(tags).map(([k,v]) => {
-              const icons = {title:'🏷️',year:'📅',location:'📍',people:'👥',chapter:'📚'};
-              return `<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">${icons[k]||''} ${v}</span>`;
-            }).join('') + '</div>'
-        : '';
-
-      // Inline edit panel
-      const editPanel = e.id ? `
-        <div id="redit-${e.id}" class="tag-panel" style="display:none;margin-top:12px">
-          <div class="tag-panel-title">✏️ Edit tags & photos</div>
-          <div class="tag-field" style="grid-column:1/-1">
-            <label>🏷️ Title</label>
-            <input type="text" id="redit_${e.id}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
-          </div>
-          <div class="tag-field">
-            <label>📅 Era</label>
-            <select id="redit_${e.id}TagYear" onchange="handleNewTagOption(this,'redit_${e.id}TagYearCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="redit_${e.id}TagYearCustom" placeholder="e.g. 1985..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>📍 Location</label>
-            <select id="redit_${e.id}TagLocation" onchange="handleNewTagOption(this,'redit_${e.id}TagLocationCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="redit_${e.id}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>👥 People</label>
-            <select id="redit_${e.id}TagPeople" onchange="handleNewTagOption(this,'redit_${e.id}TagPeopleCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="redit_${e.id}TagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>📚 Chapter</label>
-            <select id="redit_${e.id}TagChapter" onchange="handleNewTagOption(this,'redit_${e.id}TagChapterCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="redit_${e.id}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
-          </div>
-          <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
-            <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${e.id}','redit')">Save tags</button>
-            <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('redit-${e.id}').style.display='none'">Cancel</button>
-          </div>
-        </div>` : '';
+      const tagHtml  = buildTagChips(tags);
+      const editPanel = buildEditPanel(e.id, 'redit');
 
       // Improve panel placeholder
       const improvePanel = e.id
@@ -3730,7 +3803,7 @@
         <p class="entry-text">${e.answer}</p>
         ${tagHtml}
         ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="improve-btn" onclick="improveEntry('${e.id}')">✨ Improve</button>
+          <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
           <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
         </div>` : ''}
         ${improvePanel}
@@ -3929,52 +4002,9 @@
         const deleteId = e.id ? "'" + e.id + "'" : 'null';
 
         // Tag chips
-        const tagHtml = hasTags
-          ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
-              Object.entries(tags).map(([k,v]) => {
-                const icons = {title:'🏷️',year:'📅',location:'📍',people:'👥',chapter:'📚'};
-                return '<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">' + (icons[k]||'') + ' ' + v + '</span>';
-              }).join('') + '</div>'
-          : '';
-
-        // Improve panel
-        const improvePanel = e.id
-          ? '<div id="cdimprove-' + e.id + '" class="improve-panel" style="display:none"></div>'
-          : '';
-
-        // Edit tags panel
-        const editPanel = e.id ? `
-          <div id="cdedit-${e.id}" class="tag-panel" style="display:none;margin-top:12px">
-            <div class="tag-panel-title">✏️ Edit tags & photos</div>
-            <div class="tag-field" style="grid-column:1/-1">
-              <label>🏷️ Title</label>
-              <input type="text" id="cdedit_${e.id}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
-            </div>
-            <div class="tag-field">
-              <label>📅 Era</label>
-              <select id="cdedit_${e.id}TagYear" onchange="handleNewTagOption(this,'cdedit_${e.id}TagYearCustom')"><option value="">Not specified</option></select>
-              <input type="text" id="cdedit_${e.id}TagYearCustom" placeholder="e.g. 1985..." style="margin-top:6px;display:none">
-            </div>
-            <div class="tag-field">
-              <label>📍 Location</label>
-              <select id="cdedit_${e.id}TagLocation" onchange="handleNewTagOption(this,'cdedit_${e.id}TagLocationCustom')"><option value="">Not specified</option></select>
-              <input type="text" id="cdedit_${e.id}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
-            </div>
-            <div class="tag-field">
-              <label>👥 People</label>
-              <select id="cdedit_${e.id}TagPeople" onchange="handleNewTagOption(this,'cdedit_${e.id}TagPeopleCustom')"><option value="">Not specified</option></select>
-              <input type="text" id="cdedit_${e.id}TagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
-            </div>
-            <div class="tag-field">
-              <label>📚 Chapter</label>
-              <select id="cdedit_${e.id}TagChapter" onchange="handleNewTagOption(this,'cdedit_${e.id}TagChapterCustom')"><option value="">Not specified</option></select>
-              <input type="text" id="cdedit_${e.id}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
-            </div>
-            <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
-              <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${e.id}','cdedit')">Save tags</button>
-              <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('cdedit-${e.id}').style.display='none'">Cancel</button>
-            </div>
-          </div>` : '';
+        const tagHtml      = buildTagChips(tags);
+        const improvePanel = e.id ? `<div id="cdimprove-${e.id}" class="improve-panel" style="display:none"></div>` : '';
+        const editPanel    = buildEditPanel(e.id, 'cdedit');
 
         html += '<div class="' + (isParent ? 'thread-parent' : 'thread-child') + '">';
         if (e.title) html += '<p style="font-weight:700;margin-bottom:4px">🏷️ ' + e.title + '</p>';
@@ -3984,7 +4014,7 @@
         html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">';
         html += '<span style="font-size:0.72rem;color:var(--text-light)">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>';
         if (e.id) {
-          html += '<button class="improve-btn" onclick="improveEntryInDetail(\'' + e.id + '\')">✨ Improve</button>';
+          html += '<button class="improve-btn" onclick="improveEntryInDetail(\'' + e.id + '\')">🔍 AI Review</button>';
           html += '<button onclick="toggleEditTagsInDetail(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags':'＋ Add tags') + '</button>';
           html += '<button class="entry-delete-btn" style="position:static;opacity:1" onclick="deleteEntry(' + deleteId + ')" title="Delete">✕</button>';
         }
@@ -4179,39 +4209,8 @@
         : '';
       const safeId   = 'entry-' + e.timestamp.replace(/[:.+]/g, '-');
       const deleteId = e.id ? '\'' + e.id + '\'' : 'null';
-      // Inline edit tags panel (hidden by default)
-      const editPanel = e.id ? `
-        <div id="edit-tags-${e.id}" class="tag-panel" style="display:none;margin-top:12px">
-          <div class="tag-panel-title">✏️ Edit tags & photos</div>
-          <div class="tag-field" style="grid-column:1/-1">
-            <label>🏷️ Title</label>
-            <input type="text" id="edit_${e.id}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
-          </div>
-          <div class="tag-field">
-            <label>📅 Era</label>
-            <select id="edit_${e.id}TagYear" onchange="handleNewTagOption(this,'edit_${e.id}TagYearCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="edit_${e.id}TagYearCustom" placeholder="e.g. 1985 or 1980s..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>📍 Location</label>
-            <select id="edit_${e.id}TagLocation" onchange="handleNewTagOption(this,'edit_${e.id}TagLocationCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="edit_${e.id}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>👥 People</label>
-            <select id="edit_${e.id}TagPeople" onchange="handleNewTagOption(this,'edit_${e.id}TagPeopleCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="edit_${e.id}TagPeopleCustom" placeholder="Type a name..." style="margin-top:6px;display:none">
-          </div>
-          <div class="tag-field">
-            <label>📚 Chapter</label>
-            <select id="edit_${e.id}TagChapter" onchange="handleNewTagOption(this,'edit_${e.id}TagChapterCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="edit_${e.id}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
-          </div>
-          <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
-            <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${e.id}')">Save tags</button>
-            <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('edit-tags-${e.id}').style.display='none'">Cancel</button>
-          </div>
-        </div>` : '';
+      // Edit panel (shared builder)
+      const editPanel = buildEditPanel(e.id, 'edit');
 
       // Child photo entries (other entries with this as parent)
       const childPhotos = e.id ? entries.filter(c => c.parent_entry_id === e.id && c.photo_url) : [];
