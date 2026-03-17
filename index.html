@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v0.96</title>
+  <title>My Life Story v0.97</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v0.96</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v0.97</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1391,7 +1391,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v0.96 — Fix AI Review: tags always show red if missing, with helpful nudge text";
+  const DEPLOY_NOTES = "v0.97 — Harden AI Review JSON parsing: flat keys, 3 parse fallbacks, control char strip";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2060,27 +2060,48 @@
       const hasLocation = !!tags.location;
 
       const prompt =
-        'You are a memoir editor reviewing a personal memory entry. Respond ONLY with valid JSON — no markdown, no backticks.\n\n' +
-        'ENTRY TEXT:\n"' + text + '"\n\n' +
+        'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no backticks, no extra text.\n\n' +
+        'ENTRY TEXT:\n' + text.substring(0, 800) + '\n\n' +
         'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
-        'Return this exact JSON:\n' +
-        '{\n' +
-        '  "spelling": {"ok":true,"fixed":"corrected text if needed, else empty","notes":"description or empty"},\n' +
-        '  "grammar": {"ok":true,"notes":"any grammar issues or empty"},\n' +
-        '  "length": {"ok":true,"notes":"too short / good / rich"},\n' +
-        '  "voice": {"ok":true,"notes":"any issues with clarity, rambling, or speech-to-text artifacts"},\n' +
-        '  "suggestChapter": "best chapter name if missing, else empty",\n' +
-        '  "suggestEra": "decade or year if inferable and missing, else empty",\n' +
-        '  "suggestPeople": "people mentioned if missing from tags, else empty",\n' +
-        '  "suggestLocation": "place mentioned if missing from tags, else empty",\n' +
-        '  "reconstruction": "a clean, coherent rewrite preserving ALL facts and the person\'s voice — fix rambling, repetition, and transcription errors. Keep it warm and personal. If the original is already clean, return empty string."\n' +
-        '}\n\n' +
-        'Rules: only suggest tags you are confident about from the text. reconstruction should feel like the same person wrote it, just tidier.';
+        'Return ONLY this JSON structure (all string values must be properly escaped):\n' +
+        '{"spelling_ok":true,"spelling_fixed":"corrected text or empty","spelling_notes":"description or empty",' +
+        '"grammar_ok":true,"grammar_notes":"issues or empty",' +
+        '"length_ok":true,"length_notes":"too short or good or rich",' +
+        '"voice_ok":true,"voice_notes":"clarity issues or empty",' +
+        '"suggest_chapter":"chapter name or empty","suggest_era":"decade or year or empty",' +
+        '"suggest_people":"people mentioned or empty","suggest_location":"place or empty",' +
+        '"reconstruction":"clean rewrite preserving all facts and voice, or empty if already clean"}\n\n' +
+        'IMPORTANT: escape all apostrophes and quotes inside string values. Keep reconstruction under 200 words.';
 
-      const raw    = await callAI(prompt, { max_tokens: 1000 });
-      const clean  = raw.replace(/```json|```/g,'').trim();
-      const m      = clean.match(/\{[\s\S]*\}/);
-      const r      = JSON.parse(m ? m[0] : clean);
+      const raw   = await callAI(prompt, { max_tokens: 1200 });
+      const clean = raw.replace(/```json|```/g,'').trim();
+      dbg('AI-REVIEW', 'Raw response:', clean.substring(0,200));
+
+      // Robust JSON parsing — try multiple strategies
+      let r = null;
+      const parseAttempts = [
+        () => JSON.parse(clean),
+        () => JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || ''),
+        // Strip any control characters that break JSON
+        () => JSON.parse(clean.replace(/[\x00-\x1F\x7F]/g, ' ').match(/\{[\s\S]*\}/)?.[0] || ''),
+      ];
+      for (const attempt of parseAttempts) {
+        try { r = attempt(); if (r) break; } catch(e) { dbgWarn('AI-REVIEW', 'Parse attempt failed:', e.message); }
+      }
+      if (!r) throw new Error('Could not parse AI response as JSON. Raw: ' + clean.substring(0,100));
+
+      // Normalise flat structure to what the rest of the code expects
+      if (r.spelling_ok !== undefined) {
+        r.spelling = { ok: r.spelling_ok, fixed: r.spelling_fixed || '', notes: r.spelling_notes || '' };
+        r.grammar  = { ok: r.grammar_ok,  notes: r.grammar_notes  || '' };
+        r.length   = { ok: r.length_ok,   notes: r.length_notes   || '' };
+        r.voice    = { ok: r.voice_ok,    notes: r.voice_notes    || '' };
+        r.suggestChapter  = r.suggest_chapter  || '';
+        r.suggestEra      = r.suggest_era      || '';
+        r.suggestPeople   = r.suggest_people   || '';
+        r.suggestLocation = r.suggest_location || '';
+        r.reconstruction  = r.reconstruction   || '';
+      }
 
       // ── Build hygiene checklist ──
       let html = '<div style="margin-bottom:14px">';
