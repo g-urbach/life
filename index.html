@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.01</title>
+  <title>My Life Story v1.03</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -988,7 +988,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.01</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.03</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1070,9 +1070,9 @@
         <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
       </div>
       <div class="tag-field">
-        <label>👥 People</label>
-        <select id="recTagPeople" onchange="handleNewTagOption(this,'recTagPeopleCustom')"><option value="">Not specified</option></select>
-        <input type="text" id="recTagPeopleCustom" placeholder="e.g. Mum, Dad, Uncle Bob..." style="margin-top:6px;display:none">
+        <label>👥 People <span style="font-weight:400;font-size:0.75em;color:var(--text-light)">(comma separated)</span></label>
+        <input type="text" id="recTagPeople" placeholder="e.g. Mum, Dad, Uncle Bob..."
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
       </div>
       <div class="tag-field">
         <label>📚 Chapter</label>
@@ -1117,7 +1117,7 @@
     </div>
 
     <!-- Spell check result -->
-    <div id="memSpellPanel" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:0.9rem;line-height:1.7"></div>
+    <div id="memSpellPanel" class="improve-panel-mem" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:0.9rem;line-height:1.7"></div>
 
     <!-- Buttons -->
     <div id="memButtons" style="margin-top:16px">
@@ -1398,7 +1398,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.01 — AI Review: title suggestion, no empty filler values, chapter must be broad not specific";
+  const DEPLOY_NOTES = "v1.03 — Unified AI Review: same full check in Memories and Review, accepts save directly to DB";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2055,13 +2055,16 @@
     const btn   = document.getElementById('memSpellBtn');
     if (!text) return toast('Nothing to review — write or speak something first');
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
-
     btn.textContent = '⏳ Reviewing...'; btn.disabled = true;
     panel.style.display = 'block';
-    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Running AI review...</span>';
+    await runAIReview(text, readTags('rec'), panel, null);
+    btn.textContent = '🔍 AI Review'; btn.disabled = false;
+  }
 
+  // ── Core AI Review — used by both Memories and Review/Chapter detail ──────
+  async function runAIReview(text, tags, panel, entryId) {
+    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
     try {
-      const tags        = readTags('rec');
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
       const hasTitle    = !!tags.title;
       const hasChapter  = !!tags.chapter;
@@ -2194,7 +2197,7 @@
           html += `<span style="font-size:0.75rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark)">${k}: ${v}</span>`;
         });
         html += '</div>';
-        html += `<button class="btn btn-ghost" style="font-size:0.78rem;padding:6px 14px;margin-bottom:14px" onclick="applyAIReviewTags(${JSON.stringify(sugTags).replace(/"/g,'&quot;')})">＋ Apply suggested tags</button>`;
+        html += `<button class="btn btn-ghost" style="font-size:0.78rem;padding:6px 14px;margin-bottom:14px" onclick="applyAIReviewTags(${JSON.stringify(sugTags).replace(/"/g,'&quot;')}, ${entryId ? '\'' + entryId + '\'' : 'null'})">＋ Apply suggested tags</button>`;
       }
 
       // ── Spelling fix ──
@@ -2203,7 +2206,7 @@
         html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:8px">SPELLING FIX</p>';
         html += '<p style="color:var(--rose);text-decoration:line-through;margin-bottom:6px;font-size:0.88rem">' + text + '</p>';
         html += '<p style="color:#4caf72;margin-bottom:10px;font-size:0.88rem">' + r.spelling.fixed + '</p>';
-        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptSpellFix()">✓ Accept spelling fix</button>';
+        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptSpellFix(' + (entryId ? '\'' + entryId + '\'' : 'null') + ')">✓ Accept spelling fix</button>';
         html += '</div>';
         panel.dataset.fixed = r.spelling.fixed;
       }
@@ -2215,8 +2218,8 @@
         html += '<p style="font-size:0.75rem;color:var(--text-light);margin-bottom:8px">Your entry, cleaned up — all your facts, just tidier</p>';
         html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + r.reconstruction + '</div>';
         html += '<div style="display:flex;gap:8px">';
-        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptReconstruction()">✓ Use this version</button>';
-        html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById(\'memSpellPanel\').style.display=\'none\'">Keep mine</button>';
+        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="acceptReconstruction(' + (entryId ? '\'' + entryId + '\'' : 'null') + ')">✓ Use this version</button>';
+        html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="this.closest(\'.improve-panel,.improve-panel-mem\').style.display=\'none\'">Keep mine</button>';
         html += '</div></div>';
         panel.dataset.reconstruction = r.reconstruction;
       }
@@ -2226,37 +2229,87 @@
     } catch(err) {
       panel.innerHTML = '<span style="color:var(--rose)">Could not review — try again.</span>';
       dbgErr('AI-REVIEW', err.message);
-    } finally {
-      btn.textContent = '🔍 AI Review'; btn.disabled = false;
     }
   }
 
-  function acceptSpellFix() {
-    const panel = document.getElementById('memSpellPanel');
+  async function acceptSpellFix(entryId) {
+    // Find the panel — memSpellPanel for Memories, improve-/cdimprove- for Review
+    const panel = entryId
+      ? (document.getElementById('improve-' + entryId) || document.getElementById('cdimprove-' + entryId))
+      : document.getElementById('memSpellPanel');
     const fixed = panel?.dataset.fixed;
     if (!fixed) return;
-    document.getElementById('memAnswer').value = fixed;
-    panel.style.display = 'none';
-    toast('Spelling fixed ✓');
-    memCheckButtons();
+    if (entryId) {
+      // Save to DB
+      await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer: fixed })
+      });
+      const e = entries.find(e => e.id === entryId);
+      if (e) e.answer = fixed;
+      toast('Spelling fixed & saved ✓');
+      panel.style.display = 'none';
+      if (document.getElementById('panel-review').classList.contains('active')) renderReview();
+    } else {
+      document.getElementById('memAnswer').value = fixed;
+      panel.style.display = 'none';
+      toast('Spelling fixed ✓');
+      memCheckButtons();
+    }
   }
 
-  function acceptReconstruction() {
-    const panel = document.getElementById('memSpellPanel');
-    const text  = panel?.dataset.reconstruction;
+  async function acceptReconstruction(entryId) {
+    const panel = entryId
+      ? (document.getElementById('improve-' + entryId) || document.getElementById('cdimprove-' + entryId))
+      : document.getElementById('memSpellPanel');
+    const text = panel?.dataset.reconstruction;
     if (!text) return;
-    document.getElementById('memAnswer').value = text;
-    panel.style.display = 'none';
-    toast('Entry updated ✓');
-    memCheckButtons();
+    if (entryId) {
+      await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer: text })
+      });
+      const e = entries.find(e => e.id === entryId);
+      if (e) e.answer = text;
+      toast('Entry updated & saved ✓');
+      panel.style.display = 'none';
+      if (document.getElementById('panel-review').classList.contains('active')) renderReview();
+    } else {
+      document.getElementById('memAnswer').value = text;
+      panel.style.display = 'none';
+      toast('Entry updated ✓');
+      memCheckButtons();
+    }
   }
 
-  function applyAIReviewTags(tagsJson) {
+  async function applyAIReviewTags(tagsJson, entryId) {
     let tags;
     try { tags = typeof tagsJson === 'string' ? JSON.parse(tagsJson.replace(/&quot;/g,'"')) : tagsJson; }
     catch(e) { return; }
-    applyTagDefaults('rec', tags);
-    toast('Tags applied ✓');
+    if (entryId) {
+      // Save directly to DB
+      const patch = {};
+      if (tags.title)    patch.title    = tags.title;
+      if (tags.chapter)  patch.chapter  = tags.chapter;
+      if (tags.year)     patch.era      = tags.year;
+      if (tags.people)   patch.people   = tags.people;
+      if (tags.location) patch.location = tags.location;
+      if (tags.reference) patch.reference = tags.reference;
+      await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const e = entries.find(e => e.id === entryId);
+      if (e) Object.assign(e, patch);
+      toast('Tags saved ✓');
+      if (document.getElementById('panel-review').classList.contains('active')) renderReview();
+    } else {
+      applyTagDefaults('rec', tags);
+      toast('Tags applied ✓');
+    }
   }
 
 
@@ -3102,7 +3155,14 @@
     fields.forEach((f, i) => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
-      const val = (inp && inp.style.display !== 'none' && inp.value.trim()) ? inp.value.trim() : (sel ? sel.value : '');
+      // For plain text inputs (no select), sel is the input itself
+      const isPlainInput = sel && sel.tagName === 'INPUT';
+      let val;
+      if (isPlainInput) {
+        val = sel.value.trim();
+      } else {
+        val = (inp && inp.style.display !== 'none' && inp.value.trim()) ? inp.value.trim() : (sel ? sel.value : '');
+      }
       if (val && val !== '__new__') tags[keys[i]] = val;
     });
     return tags;
@@ -3151,6 +3211,9 @@
       if (sel) sel.value = '';
       if (inp) { inp.value = ''; inp.style.display = 'none'; }
     });
+    // Also reset plain text people input if present (no associated Custom element)
+    const plainPeople = document.getElementById(prefix + 'TagPeople');
+    if (plainPeople && plainPeople.tagName === 'INPUT') plainPeople.value = '';
   }
 
   // Pre-fill tag dropdowns from a tags object (carry-forward)
@@ -3169,6 +3232,8 @@
       if (!label) return;
       const sel = document.getElementById(prefix + 'Tag' + label);
       if (!sel) return;
+      // Plain text input (people) — just set value directly
+      if (sel.tagName === 'INPUT') { sel.value = v; return; }
       const exists = [...sel.options].some(o => o.value === v);
       if (exists) {
         sel.value = v;
@@ -3302,9 +3367,9 @@
           <input type="text" id="${prefix}_${entryId}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
         </div>
         <div class="tag-field">
-          <label>👥 People</label>
-          <select id="${prefix}_${entryId}TagPeople" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagPeopleCustom')"><option value="">Not specified</option></select>
-          <input type="text" id="${prefix}_${entryId}TagPeopleCustom" placeholder="e.g. Mum, Dad, Uncle Bob..." style="margin-top:6px;display:none">
+          <label>👥 People <span style="font-weight:400;font-size:0.75em;color:var(--text-light)">(comma separated)</span></label>
+          <input type="text" id="${prefix}_${entryId}TagPeople" placeholder="e.g. Mum, Dad, Uncle Bob..."
+            style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
         </div>
         <div class="tag-field">
           <label>📚 Chapter</label>
@@ -3829,97 +3894,22 @@
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
   }
 
+  // Unified AI Review for any saved entry
   async function improveEntry(entryId) {
     const entry = entries.find(e => e.id === entryId);
     if (!entry) return;
-    const panel = document.getElementById('improve-' + entryId);
+    const panel = document.getElementById('improve-' + entryId)
+               || document.getElementById('cdimprove-' + entryId);
     if (!panel) return;
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
-
     panel.style.display = 'block';
-    panel.innerHTML = '<div style="color:var(--text-light);font-style:italic">✨ Checking for improvements...</div>';
-
-    try {
-      const existingTags = getEntryTags(entry);
-      const missingTags  = [];
-      if (!existingTags.chapter) missingTags.push('chapter');
-      if (!existingTags.year)    missingTags.push('era');
-      if (!existingTags.people)  missingTags.push('people');
-      if (!existingTags.location) missingTags.push('location');
-
-      const prompt =
-        'Respond ONLY with a valid JSON object. No prose, no markdown, no backticks, no explanation.\n\n' +
-        'MEMOIR ENTRY TO REVIEW:\n"' + entry.answer + '"\n\n' +
-        'ALREADY HAS THESE TAGS: ' + (Object.keys(existingTags).length ? JSON.stringify(existingTags) : 'none') + '\n' +
-        'MISSING TAGS: ' + (missingTags.length ? missingTags.join(', ') : 'none') + '\n\n' +
-        'Return exactly this JSON shape:\n' +
-        '{"changed":BOOL,"improved":"corrected text or empty","notes":"one sentence","suggestedTags":{"chapter":"...","era":"...","people":"...","location":"..."}}\n\n' +
-        'Rules:\n' +
-        '- changed: true only if you fixed spelling, grammar or flow\n' +
-        '- improved: the corrected text if changed=true, else empty string\n' +
-        '- suggestedTags: ALWAYS include this object. Only add a key if you can confidently infer a non-empty value from the text. If you cannot determine a value, DO NOT include that key at all — never include keys with empty, uncertain or placeholder values.\n' +
-        '- chapter should be one of: Childhood, Family, Education, Career, Relationships, Adventures, Challenges, Reflections — pick the best fit\n' +
-        '- era: a decade like "1970s" or year like "1985" if inferable\n' +
-        '- people: first names or relationships mentioned e.g. "Mum, Dad"\n' +
-        '- location: city, suburb or place mentioned\n\n' +
-        'Output the JSON object now:';
-
-      const raw    = await callAI(prompt, { max_tokens: 800 });
-      const clean  = raw.replace(/```json|```/g,'').trim();
-      dbg('IMPROVE', 'Raw response:', clean.substring(0, 200));
-      let result;
-      try { result = JSON.parse(clean); }
-      catch(parseErr) {
-        dbgErr('IMPROVE', 'JSON parse failed:', parseErr.message, 'raw:', clean.substring(0,300));
-        // Try extracting JSON from response
-        const match = clean.match(/\{[\s\S]*\}/);
-        if (match) result = JSON.parse(match[0]);
-        else throw new Error('Could not parse AI response as JSON');
-      }
-      // Filter out empty values — only show tags the AI actually determined
-      const allSuggested = result.suggestedTags || {};
-      const suggested = Object.fromEntries(
-        Object.entries(allSuggested).filter(([k,v]) => v && v.toString().trim().length > 0)
-      );
-      const hasSuggested = Object.keys(suggested).length > 0;
-
-      const tagSuggestHtml = hasSuggested
-        ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-            <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);margin-bottom:8px">🏷️ SUGGESTED TAGS</p>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-              ${Object.entries(suggested).map(([k,v]) =>
-                `<span style="font-size:0.78rem;padding:3px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark)">${k}: ${v}</span>`
-              ).join('')}
-            </div>
-            <button class="btn btn-ghost" style="font-size:0.78rem;padding:6px 14px" onclick="applyTagSuggestions('${entryId}',this)">＋ Apply suggested tags</button>
-          </div>`
-        : '';
-
-      if (!result.changed && !hasSuggested) {
-        panel.innerHTML = '<p style="color:var(--text-light);font-style:italic">✅ This entry looks great — no changes needed!</p>';
-        return;
-      }
-
-      panel.innerHTML = `
-        ${result.changed ? `
-          <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);margin-bottom:8px">SUGGESTED IMPROVEMENT</p>
-          <p class="diff-old">${entry.answer}</p>
-          <p class="diff-new">${result.improved}</p>
-          <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px">📝 ${result.notes}</p>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="acceptImprovement('${entryId}',this)">✓ Accept text</button>
-            <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('improve-${entryId}').style.display='none'">Ignore</button>
-          </div>` : '<p style="color:var(--text-light);font-style:italic;margin-bottom:4px">✅ No text changes needed.</p>'}
-        ${tagSuggestHtml}`;
-
-      panel.dataset.improved = result.improved || '';
-      panel.dataset.suggestedTags = JSON.stringify(suggested);
-
-    } catch(err) {
-      panel.innerHTML = '<p style="color:var(--rose)">Could not check — try again.</p>';
-      dbgErr('IMPROVE', err.message);
-    }
+    await runAIReview(entry.answer, getEntryTags(entry), panel, entryId);
   }
+
+  async function improveEntryInDetail(entryId) {
+    await improveEntry(entryId);
+  }
+
 
   async function applyTagSuggestions(entryId, btn) {
     // Walk up from button to find the improve panel (works regardless of panel ID prefix)
