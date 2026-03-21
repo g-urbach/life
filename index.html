@@ -64,7 +64,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.15
+  Current: v1.16
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -178,7 +178,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.15</title>
+  <title>My Life Story v1.16</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1242,7 +1242,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.15</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.16</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1520,16 +1520,23 @@
     <p class="section-sub" id="dashGreeting">Your life story at a glance.</p>
 
     <div class="dash-grid">
-      <!-- Tile: Story Health -->
-      <div class="dash-tile" onclick="showEntriesWithHealth()">
+      <!-- Tile: Story Health (wide, expands to show chapter traffic lights) -->
+      <div class="dash-tile dash-tile-wide" id="dashHealthTile" onclick="toggleHealthDrill()" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
-        <div>
-          <div class="dash-tile-icon">📖</div>
-          <div class="dash-tile-title">Story Health</div>
-          <div class="dash-tile-value" id="dashHealthValue">—</div>
-          <div class="dash-tile-sub" id="dashHealthSub"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div>
+            <div class="dash-tile-icon">📖</div>
+            <div class="dash-tile-title">Story Health</div>
+            <div class="dash-tile-value" id="dashHealthValue">—</div>
+            <div class="dash-tile-sub" id="dashHealthSub"></div>
+          </div>
+          <span id="dashHealthChevron" style="font-size:1rem;color:var(--text-light);margin-top:4px;transition:transform 0.2s">▼</span>
         </div>
-        <div class="dash-score-bar"><div class="dash-score-fill" id="dashHealthBar" style="width:0%;background:var(--sage)"></div></div>
+        <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashHealthBar" style="width:0%;background:var(--sage)"></div></div>
+        <!-- Chapter drill-down (hidden by default) -->
+        <div id="dashHealthDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+          <div id="dashHealthChapterGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px"></div>
+        </div>
       </div>
 
       <!-- Tile: Essentials -->
@@ -1559,15 +1566,6 @@
         <div class="dash-tile-icon">💡</div>
         <div class="dash-tile-title">Today's Prompt</div>
         <div class="dash-tile-value" id="dashPromptValue" style="font-size:0.95rem;font-family:'Lato',sans-serif;line-height:1.4">—</div>
-      </div>
-
-      <!-- Tile: Chapters (wide) -->
-      <div class="dash-tile dash-tile-wide" onclick="openDashDialog('coverage')">
-        <div class="dash-tile-accent" style="background:var(--gold-dark)"></div>
-        <div>
-          <div class="dash-tile-title">📚 Chapters</div>
-          <div class="dash-chapter-pills" id="dashChapterPills"></div>
-        </div>
       </div>
 
       <!-- Tile: Recent -->
@@ -1646,16 +1644,6 @@
   <div class="panel" id="panel-entries">
     <h2 class="section-title">My Entries</h2>
     <p class="section-sub">Browse, search and improve all your memories.</p>
-
-    <!-- Chapter health summary (shown when filtering by chapter, or all-chapters overview) -->
-    <div id="entriesHealthBar" style="display:none;margin-bottom:20px">
-      <div id="entriesHealthSummary" style="margin-bottom:12px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
-        <!-- filled by renderEntriesHealth() -->
-      </div>
-      <div id="entriesChapterGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
-        <!-- chapter cards filled by renderEntriesHealth() -->
-      </div>
-    </div>
 
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:20px">
       <select id="reviewFilterCat" onchange="renderReviewEntries()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;background:var(--surface);color:var(--text);">
@@ -1801,7 +1789,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.15 — Story Health tile now navigates to Entries tab with inline chapter health cards + score bars; removes coverage modal";
+  const DEPLOY_NOTES = "v1.16 — Story Health: in-tile chapter drill-down with traffic lights, click chapter goes to Entries; fix chapter pills showing actual user chapters not hardcoded list";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2294,12 +2282,7 @@
       if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
     }
     if (name === 'dashboard') renderDashboard();
-    if (name === 'entries')   {
-      populateReviewFilter(); renderReviewEntries();
-      // Hide health bar when navigating normally (not from showEntriesWithHealth)
-      const hb = document.getElementById('entriesHealthBar');
-      if (hb) hb.style.display = 'none';
-    }
+    if (name === 'entries')   { populateReviewFilter(); renderReviewEntries(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name === 'help')     document.getElementById('helpInput').focus();
@@ -4069,15 +4052,38 @@
     const promptText = weakChapter ? PROMPTS_SAMPLE[weakChapter] : 'What memory would you most like your grandchildren to know?';
     document.getElementById('dashPromptValue').textContent = promptText;
 
-    // Chapter pills tile
-    const pillsEl = document.getElementById('dashChapterPills');
-    const allCh   = ['Childhood','Family','Education','Career','Relationships','Adventures','Challenges','Reflections'];
-    pillsEl.innerHTML = allCh.map(ch => {
-      const ces   = real.filter(e => e.chapter === ch);
-      const words = ces.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-      const cls   = ces.length === 0 ? 'red' : words < 100 ? 'amber' : 'green';
-      return '<button class="dash-chapter-pill ' + cls + '" onclick="event.stopPropagation();showEntriesWithHealth(\'' + ch + '\')">'+ch+' ('+ces.length+')</button>';
-    }).join('');
+    // Chapter pills in health tile drill-down — use ACTUAL chapters from entries
+    const allCh = [...new Set(real.map(e => e.chapter).filter(Boolean))].sort();
+    const untagged = real.filter(e => !e.chapter).length;
+    const drillGrid = document.getElementById('dashHealthChapterGrid');
+    if (drillGrid) {
+      const chCards = allCh.map(ch => {
+        const ces   = real.filter(e => e.chapter === ch);
+        const words = ces.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
+        const score = scoreChapter(ces);
+        const colour = score >= 65 ? 'var(--sage)' : score >= 30 ? 'var(--gold)' : 'var(--rose)';
+        const label  = score >= 65 ? 'Good' : score >= 30 ? 'Needs more' : 'Just started';
+        return `<div onclick="filterEntriesByChapter('${ch.replace(/'/g,"\\'")}');event.stopPropagation()"
+          style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${colour};border-radius:8px;padding:10px 12px;cursor:pointer;transition:box-shadow 0.15s"
+          onmouseover="this.style.boxShadow='var(--shadow)'" onmouseout="this.style.boxShadow=''">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:2px">${ch}</div>
+          <div style="font-size:0.7rem;color:var(--text-light)">${ces.length} entr${ces.length===1?'y':'ies'} · ${words.toLocaleString()} words</div>
+          <div style="height:3px;border-radius:2px;background:var(--border);margin-top:6px;overflow:hidden">
+            <div style="width:${score}%;height:100%;background:${colour};border-radius:2px"></div>
+          </div>
+          <div style="font-size:0.68rem;color:${colour};margin-top:3px">${label}</div>
+        </div>`;
+      });
+      if (untagged) {
+        chCards.push(`<div onclick="filterEntriesByChapter('');event.stopPropagation()"
+          style="background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--rose);border-radius:8px;padding:10px 12px;cursor:pointer;opacity:0.8"
+          onmouseover="this.style.boxShadow='var(--shadow)'" onmouseout="this.style.boxShadow=''">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--rose);margin-bottom:2px">⚠ Untagged</div>
+          <div style="font-size:0.7rem;color:var(--text-light)">${untagged} missing chapter</div>
+        </div>`);
+      }
+      drillGrid.innerHTML = chCards.join('') || '<p style="font-size:0.82rem;color:var(--text-light)">No chapters tagged yet — add a chapter tag to your entries.</p>';
+    }
 
     // Recent entries tile
     const recent  = [...real].sort((a,b) => new Date(b.timestamp)-new Date(a.timestamp)).slice(0,3);
@@ -4993,109 +4999,30 @@
     toast('Prompt loaded — write or speak your answer!');
   }
 
+  // ── Story Health tile drill-down ─────────────────────────────────
+  function toggleHealthDrill() {
+    const drill   = document.getElementById('dashHealthDrill');
+    const chevron = document.getElementById('dashHealthChevron');
+    if (!drill) return;
+    const open = drill.style.display !== 'none';
+    drill.style.display   = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+  }
+
   // ── Story Health → Entries navigation ────────────────────────────
-  function showEntriesWithHealth(chapter) {
+  function filterEntriesByChapter(chapter) {
+    // Navigate to Entries tab with chapter pre-filtered
     showPanel('entries', null, 3);
-    // Pre-filter to chapter if given
-    if (chapter) {
-      const sel = document.getElementById('reviewFilterCat');
-      if (sel) {
-        // Ensure option exists then set it
+    const sel = document.getElementById('reviewFilterCat');
+    if (sel) {
+      if (chapter) {
         let found = false;
         for (const opt of sel.options) { if (opt.value === chapter) { sel.value = chapter; found = true; break; } }
-        if (!found) {
-          const opt = document.createElement('option');
-          opt.value = opt.textContent = chapter;
-          sel.appendChild(opt);
-          sel.value = chapter;
-        }
+        if (!found) { const opt = document.createElement('option'); opt.value = opt.textContent = chapter; sel.appendChild(opt); sel.value = chapter; }
+      } else {
+        sel.value = '';
       }
     }
-    renderEntriesHealth(chapter || '');
-    renderReviewEntries();
-  }
-
-  function renderEntriesHealth(activeChapter) {
-    const bar = document.getElementById('entriesHealthBar');
-    const summary = document.getElementById('entriesHealthSummary');
-    const grid = document.getElementById('entriesChapterGrid');
-    if (!bar || !summary || !grid) return;
-
-    const real = entries.filter(e => !e.category?.startsWith('_profile') && !e.category?.startsWith('_essentials'));
-    const allCh = [...new Set(real.map(e => e.chapter).filter(Boolean))].sort();
-    const untagged = real.filter(e => !e.chapter).length;
-    const totalWords = real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-
-    // Summary line
-    const overallScore = Math.min(100, Math.round((Math.min(totalWords,3000)/3000)*60 + (allCh.length/8)*30 + (untagged===0?10:0)));
-    const scoreCol   = overallScore >= 70 ? 'var(--sage)' : overallScore >= 40 ? 'var(--gold)' : 'var(--rose)';
-    const scoreLabel = overallScore >= 70 ? 'Great shape' : overallScore >= 40 ? 'Coming along' : 'Just getting started';
-    summary.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
-        '<div>' +
-          '<span style="font-size:0.72rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light)">📖 Story Health</span>' +
-          '<span style="margin-left:10px;font-size:0.88rem;font-weight:700;color:var(--text)">' + scoreLabel + '</span>' +
-          (untagged ? '<span style="margin-left:10px;font-size:0.78rem;color:var(--rose)">' + untagged + ' entries missing chapter</span>' : '') +
-        '</div>' +
-        '<div style="display:flex;align-items:center;gap:8px">' +
-          '<div style="width:120px;height:6px;border-radius:3px;background:var(--border);overflow:hidden">' +
-            '<div style="width:' + overallScore + '%;height:100%;border-radius:3px;background:' + scoreCol + ';transition:width 0.5s"></div>' +
-          '</div>' +
-          '<span style="font-size:0.82rem;color:var(--text-light)">' + overallScore + '/100</span>' +
-          (activeChapter ? '<button onclick="clearHealthFilter()" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif">✕ All chapters</button>' : '') +
-        '</div>' +
-      '</div>';
-
-    // Chapter cards
-    const chapters = activeChapter ? allCh : allCh;
-    grid.innerHTML = chapters.map(ch => {
-      const ces   = real.filter(e => e.chapter === ch);
-      const words = ces.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-      const score = scoreChapter(ces);
-      const colour = score >= 65 ? 'var(--sage)' : score >= 30 ? 'var(--gold)' : 'var(--rose)';
-      const isActive = ch === activeChapter;
-      return '<div class="entries-ch-card' + (isActive ? ' active' : '') + '" ' +
-        'style="border-left-color:' + colour + '" ' +
-        'onclick="filterEntriesByChapter(\'' + ch.replace(/'/g,"\\'") + '\')">' +
-        '<div class="ech-name">' + ch + '</div>' +
-        '<div class="ech-stats">' + ces.length + ' entr' + (ces.length===1?'y':'ies') + ' · ' + words.toLocaleString() + ' words</div>' +
-        '<div class="entries-ch-bar"><div class="entries-ch-bar-fill" style="width:' + score + '%;background:' + colour + '"></div></div>' +
-        '</div>';
-    }).join('');
-
-    // Add Untagged card if any
-    if (untagged) {
-      grid.innerHTML += '<div class="entries-ch-card' + (!activeChapter ? '' : '') + '" ' +
-        'style="border-left-color:var(--rose);opacity:0.8" ' +
-        'onclick="filterEntriesByChapter(\'\')">' +
-        '<div class="ech-name" style="color:var(--rose)">⚠ Untagged</div>' +
-        '<div class="ech-stats">' + untagged + ' missing chapter</div>' +
-        '<div class="entries-ch-bar"><div class="entries-ch-bar-fill" style="width:5%;background:var(--rose)"></div></div>' +
-        '</div>';
-    }
-
-    bar.style.display = 'block';
-  }
-
-  function filterEntriesByChapter(chapter) {
-    const sel = document.getElementById('reviewFilterCat');
-    if (!sel) return;
-    if (chapter === '') {
-      // Untagged — find entries with no chapter
-      sel.value = '';
-    } else {
-      sel.value = chapter;
-    }
-    renderEntriesHealth(chapter);
-    renderReviewEntries();
-    // Scroll to entry list
-    document.getElementById('reviewEntryList')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function clearHealthFilter() {
-    const sel = document.getElementById('reviewFilterCat');
-    if (sel) sel.value = '';
-    renderEntriesHealth('');
     renderReviewEntries();
   }
 
