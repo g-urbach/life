@@ -71,7 +71,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.40
+  Current: v1.41
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -278,8 +278,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.40</title>
+  <title>My Life Story v1.41</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1342,7 +1343,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.40</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.41</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1591,6 +1592,36 @@
     var h=("https:"==document.location.protocol?"https://":"http://");
     p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
     var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
+  </script>
+  <script>
+    // Intercept Peecho's navigation and force it into a new tab
+    // Peecho's script does window.location = configuratorUrl, bypassing target="_blank"
+    // We override window.location setter to catch peecho.com URLs
+    (function() {
+      var _assign = window.location.assign.bind(window.location);
+      var _replace = window.location.replace.bind(window.location);
+      function interceptPeecho(url) {
+        if (url && url.toString().includes('peecho.com')) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return true;
+        }
+        return false;
+      }
+      window.location.assign = function(url) {
+        if (!interceptPeecho(url)) _assign(url);
+      };
+      window.location.replace = function(url) {
+        if (!interceptPeecho(url)) _replace(url);
+      };
+      // Also catch direct href changes via onclick
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest('a');
+        if (a && a.href && a.href.includes('peecho.com/configurator')) {
+          e.preventDefault();
+          window.open(a.href, '_blank', 'noopener,noreferrer');
+        }
+      }, true);
+    })();
   </script>
     <div id="printBookPanel" style="display:none;margin-bottom:24px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px">
@@ -1984,7 +2015,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.40 — Revert to signed URL (no Supabase changes needed); preview needs PDF not HTML; open Peecho in new tab";
+  const DEPLOY_NOTES = "v1.41 — Peecho: generate real PDF via html2pdf for preview; intercept navigation to open in new tab";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5734,38 +5765,44 @@
     setPeechoStatus('📤 Uploading your story for printing…', 'info');
 
     try {
-      // 1. Build story PDF blob (HTML→print, Peecho auto-converts)
+      // 1. Generate real PDF using html2pdf so Peecho can render a preview
+      setPeechoStatus('📄 Generating PDF (this may take a moment)…', 'info');
       const storyHtml  = document.getElementById('storyOutput')?.innerHTML || '';
       const name       = userProfile.name || 'My';
       const title      = currentStory.funny ? name + "\'s Life Story (Comedy Edition)" : name + "\'s Life Story";
       const pageCount  = Math.max(20, Math.ceil((storyHtml.replace(/<[^>]+>/g,'').length / 1800)));
-      const htmlDoc    = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-<style>
-  body{font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 40px;color:#2c2416;line-height:1.9;font-size:11pt}
-  h1{font-size:2rem;text-align:center;margin-bottom:8px}
-  .subtitle{text-align:center;color:#8b7355;font-style:italic;margin-bottom:32px;border-bottom:1px solid #e8dcc8;padding-bottom:24px}
-  p{margin-bottom:1.4em;text-align:justify} h2{font-size:1.3rem;margin:2em 0 0.6em;border-bottom:2px solid #c9a96e;padding-bottom:6px}
-  .footer{text-align:center;margin-top:48px;color:#c9a96e;font-size:0.8rem;border-top:1px solid #e8dcc8;padding-top:16px}
-  img{max-width:100%;height:auto} @media print{body{margin:0}}
-</style></head><body>
-<h1>${title}</h1>
-<div class="subtitle">Generated by My Life Story · ${new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
-${storyHtml}
-<div class="footer">Created with My Life Story ♥</div>
-</body></html>`;
-      const blob = new Blob([htmlDoc], { type: 'text/html' });
 
-      // 2. Upload story file to Supabase storage (private bucket, user's folder)
-      const fileName  = currentUser.id + '/print-story-' + Date.now() + '.html';
+      const el = document.createElement('div');
+      el.style.cssText = 'position:absolute;left:-9999px;top:0;width:148mm;font-family:Georgia,serif;font-size:11pt;line-height:1.9;color:#2c2416;padding:0 10mm';
+      el.innerHTML = '<h1 style="font-size:1.8rem;text-align:center;margin-bottom:8px">' + title + '</h1>'
+        + '<p style="text-align:center;color:#8b7355;font-style:italic;margin-bottom:24px;border-bottom:1px solid #e8dcc8;padding-bottom:16px">'
+        + 'Generated by My Life Story · ' + new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}) + '</p>'
+        + storyHtml
+        + '<p style="text-align:center;margin-top:32px;color:#c9a96e;font-size:0.8rem;border-top:1px solid #e8dcc8;padding-top:12px">Created with My Life Story ♥</p>';
+      document.body.appendChild(el);
+
+      const pdfBlob = await html2pdf().set({
+        margin: [15, 15, 15, 15],
+        filename: title + '.pdf',
+        image: { type: 'jpeg', quality: 0.9 },
+        html2canvas: { scale: 1.5, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
+      }).from(el).outputPdf('blob');
+      document.body.removeChild(el);
+      dbg('PEECHO', 'PDF generated:', Math.round(pdfBlob.size/1024) + 'KB');
+
+      const blob = pdfBlob;
+
+      // 2. Upload PDF to Supabase storage (private bucket, user's folder)
+      const fileName  = currentUser.id + '/print-story-' + Date.now() + '.pdf';
       const uploadRes = await fetch(STORAGE_URL + '/' + fileName, {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': 'text/html', 'x-upsert': 'true' },
+        headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': 'application/pdf', 'x-upsert': 'true' },
         body: blob
       });
       if (!uploadRes.ok) throw new Error('Upload failed: ' + await uploadRes.text());
 
-      // 3. Get signed URL (2 hours) — token is embedded in URL so Peecho can
-      // fetch it as a plain GET with no extra headers. Private bucket, expires in 2hrs.
+      // 3. Get signed URL (2 hours) — token embedded so Peecho fetches as plain GET
       const signRes  = await fetch(SUPABASE_URL + '/storage/v1/object/sign/life-photos/' + fileName, {
         method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ expiresIn: 7200 })
@@ -5773,7 +5810,7 @@ ${storyHtml}
       const signData = await signRes.json();
       if (!signData.signedURL) throw new Error('Could not get signed URL');
       const fileUrl  = SUPABASE_URL + '/storage/v1' + signData.signedURL;
-      dbg('PEECHO', 'Story signed URL ready (2hr expiry):', fileUrl.substring(0, 80) + '…');
+      dbg('PEECHO', 'PDF signed URL ready (2hr):', fileUrl.substring(0, 80) + '…');
 
       // 4. Inject URL into Peecho Button and show it
       const btn = document.getElementById('peechoPrintBtn');
