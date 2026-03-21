@@ -69,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.24
+  Current: v1.25
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -183,7 +183,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.24</title>
+  <title>My Life Story v1.25</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1247,7 +1247,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.24</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.25</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1285,7 +1285,7 @@
   <button class="nav-btn active" onclick="showPanel('memories', this, 0)">🌟 Memories</button>
   <button class="nav-btn" onclick="showPanel('dashboard', this, 1)">🏠 Dashboard</button>
   <button class="nav-btn" onclick="showPanel('story', this, 2)">📖 My Story</button>
-  <button class="nav-btn" onclick="showPanel('entries', this, 3)">📋 Entries</button>
+  <button class="nav-btn" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries', this, 3)">📋 Entries</button>
   <button class="nav-btn" onclick="showPanel('prompts', this, 4)">💡 Prompts</button>
   <button class="nav-btn" onclick="showPanel('help', this, 5)">❓ Help</button>
   <button class="nav-btn danger" onclick="showPanel('delete', this, 6)">🗑️ Delete</button>
@@ -1306,7 +1306,7 @@
       <span class="tab-icon">📖</span>
       <span class="tab-label">Story</span>
     </button>
-    <button class="tab-btn" id="tab-3" onclick="showPanel('entries', null, 3)">
+    <button class="tab-btn" id="tab-3" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries', null, 3)">
       <span class="tab-icon">📋</span>
       <span class="tab-label">Entries</span>
     </button>
@@ -1577,7 +1577,7 @@
       </div>
 
       <!-- Tile: Entries -->
-      <div class="dash-tile" onclick="showPanel('entries',null,3)">
+      <div class="dash-tile" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries',null,3)">
         <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
         <div class="dash-tile-icon">📋</div>
         <div class="dash-tile-title">My Entries</div>
@@ -1838,7 +1838,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.24 — Fix photo display in entries: natural aspect-ratio strip, multi-photo support, suppress pure photo-attachment children from top-level list";
+  const DEPLOY_NOTES = "v1.25 — Fix person filter wiped by showPanel; fix scroll-to-image on async photo load; set filters before showPanel not after";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2331,7 +2331,7 @@
       if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
     }
     if (name === 'dashboard') renderDashboard();
-    if (name === 'entries')   { _entriesTypeFilter = null; _entriesPersonFilter = null; populateReviewFilter(); renderReviewEntries(); }
+    if (name === 'entries')   { populateReviewFilter(); renderReviewEntries(); }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
@@ -4989,8 +4989,10 @@
         if (!thumb) continue;
         const url = await getSignedUrl(entryPhotos[pi].photo_url);
         if (url && document.getElementById('pthumb-' + safeId + '-' + pi)) {
-          thumb.innerHTML = `<img src="${url}" alt="photo" style="width:100%;height:100%;object-fit:cover;display:block">`;
+          // decoding=async + explicit dimensions prevent browser scroll-to-image on load
+          thumb.innerHTML = `<img src="${url}" alt="photo" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0">`;
           thumb.style.fontSize = '';
+          thumb.style.position = 'relative';
         }
       }
     });
@@ -5297,25 +5299,22 @@
     _entriesTypeFilter   = null;
     _entriesPersonFilter = name || null;
     showPanel('entries', null, 3);
-    renderReviewEntries();
+    // renderReviewEntries called by showPanel, but filters already set above
   }
 
   // ── Story Health → Entries navigation ────────────────────────────
   function filterEntriesByType(type) {
     _entriesPersonFilter = null;
+    _entriesTypeFilter   = type;
     showPanel('entries', null, 3);
-    _entriesTypeFilter = type;
-    renderReviewEntries();
   }
 
   let _entriesTypeFilter   = null; // 'photos' | 'people' | null
   let _entriesPersonFilter = null; // person name string | null
 
   function filterEntriesByChapter(chapter) {
-    // Navigate to Entries tab with chapter pre-filtered
     _entriesTypeFilter   = null;
     _entriesPersonFilter = null;
-    showPanel('entries', null, 3);
     const sel = document.getElementById('reviewFilterCat');
     if (sel) {
       if (chapter) {
@@ -5326,7 +5325,7 @@
         sel.value = '';
       }
     }
-    renderReviewEntries();
+    showPanel('entries', null, 3);
   }
 
   function getEntryType(e) {
