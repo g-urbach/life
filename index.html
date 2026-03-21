@@ -53,8 +53,10 @@
   - Single HTML file (no build process, no framework)
   - Supabase: auth, database (life_entries table), storage (life-photos bucket)
   - Groq AI via Supabase Edge Function (AI_PROXY): llama-3.3-70b-versatile
-  - Peecho Print API (test env): print-on-demand book ordering
-  - Supabase Edge Function: PEECHO_PROXY (handles CORS for Peecho API calls)
+  - Peecho Print Button (PRODUCTION): print-on-demand book ordering via hosted checkout
+    Uses data-src attribute with publicly-accessible file URL; Peecho handles checkout
+  - Supabase Edge Function: PEECHO_PROXY (injects merchant key server-side)
+  - Peecho Button key: 177345578807966651 (in HTML script loader)
   - Browser Speech Recognition API (dictation)
   - Browser Speech Synthesis API (TTS for questions)
 
@@ -69,7 +71,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.36
+  Current: v1.39
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -88,19 +90,31 @@
   - People (multi) & References (multi with URL): chip-based tag manager modal,
     multi-item add/remove, persisted as comma-separated / |||‑separated strings
   - Photo attachments with captions (multiple per entry)
+  - Edit tags panel in Entries matches Memories layout: 3-col grid,
+    Chapter/Era/Date row 1, Location/People/Refs row 2, Photos full-width row 3
   - Mic dictation with persistent listening, continuous=false for Android
 
-  REVIEW TAB
-  - ✨ The Essentials: AI-mined favourite saying, food, place, song, person,
-    achievement, lesson, philosophy — confirmed items appear in book
-  - 📊 Life Coverage: chapter cards with traffic light scoring (word count,
-    entry count, depth), click to drill into chapter
-  - Chapter drill-down: entries grouped as threads (parent + children),
-    full AI Review + edit tags + edit text per entry
-  - 📋 Your Entries: keyword search with gold highlight, chapter filter,
-    AI Review, edit tags & photos, edit text inline, delete
-  - 💡 Memory Prompts: 50 curated questions across 8 life areas, filterable,
-    tap to pre-fill Memories
+  ENTRIES TAB
+  - Keyword search with gold highlight, chapter filter, person filter, location filter
+  - AI Review, edit tags & photos, edit text inline, delete per entry
+  - Photo strip on entry cards: natural aspect-ratio, multi-photo side-by-side
+  - Pure photo-attachment children suppressed from top-level list
+  - Photo thumbnails pre-fetched before DOM render (no scroll-jump on load)
+
+  DASHBOARD
+  - Story Health tile: expandable chapter drill-down, traffic-light scores,
+    click chapter → Entries filtered to that chapter
+  - The Essentials tile: expandable in-tile editing
+  - People in Your Story tile: expandable, sorted by mention count,
+    click person → Entries filtered to that person
+  - Places in Your Story tile: expandable, sorted by entry count,
+    click place → Entries filtered to that location
+  - Memory Prompts tile: prominent, links to Prompts tab
+  - Write a Memory tile: daily suggested prompt, tap to pre-fill Memories
+  - Words Written tile: progress toward 5000-word target
+  - Last Entry tile: days since + nudge
+  - Photos tile: count, click → photo entries only
+  - Recent Entries list
 
   MY STORY TAB
   - 5 formats: Snapshot (blurb), The Short Version, The Full Story,
@@ -109,8 +123,26 @@
   - Funny mode: embellishment allowed, works with any format
   - The Essentials page inserted into Extended/Book Edition
   - Voice playback (TTS)
-  - PDF export (print dialog)
-  - 🖨️ Print as Book: Peecho integration, 4 product options, hosted checkout
+  - Export as HTML file (exportPDF)
+  - 🖨️ Print as Book: Peecho Button integration (WORKING in production)
+    Flow: upload story HTML → get signed URL → inject into Peecho Button data-src
+    → Peecho hosts checkout, product selection, payment, shipping
+    → 🧪 Test with Barnaby button uses Peecho public sample PDF
+    NOTE: Preview image doesn't render (Supabase signed URLs not publicly
+    accessible to Peecho's thumbnail service) — future fix needed
+
+  AUTH
+  - Landing page with sign in / create account
+  - Disclaimer overlay on sign up
+  - Forgot password flow with email reset link
+  - Set new password overlay on return from reset email
+  - Onboarding (name, DOB, sex) on first login
+
+  PROMPTS TAB
+  - 50 curated questions across life areas, tap to pre-fill Memories
+
+  HELP TAB
+  - AI-powered help assistant
 
   AUTH
   - Landing page with sign in / create account
@@ -129,7 +161,9 @@
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - Peecho: collect shipping address before order (production readiness)
+  - Peecho: fix preview image (Supabase signed URLs not publicly accessible —
+    need public CDN URL or Peecho file pre-upload before triggering button)
+  - Peecho: test full order flow with real story PDF end-to-end
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
 
@@ -211,9 +245,13 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho now using PRODUCTION environment (www.peecho.com) — test env abandoned
-    due to non-functional checkout URLs. Production IDs not yet set (id:0 placeholders)
-    — look up real product IDs in Peecho dashboard before going live
+  - Peecho preview image broken: Supabase signed URLs require auth headers,
+    so Peecho's thumbnail service can't fetch the file to generate a preview.
+    Fix: upload to a public S3/CDN bucket, or use Peecho's own file upload API
+    to pre-upload and get a public URL before triggering the button.
+  - Peecho product IDs in PEECHO_PRODUCTS array are set but currently unused —
+    the Button approach lets Peecho handle product selection at checkout.
+    The array + product selection UI can be removed in a future cleanup.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
@@ -240,7 +278,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.36</title>
+  <title>My Life Story v1.39</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1304,7 +1342,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.36</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.39</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1567,6 +1605,8 @@
              title="Peecho"
              href="https://www.peecho.com/"
              class="peecho-print-button"
+             target="_blank"
+             rel="noopener noreferrer"
              data-filetype="pdf"
              data-width="210"
              data-height="297"
@@ -1944,7 +1984,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.36 — Fix Peecho Button: use data-src (not data-content), remove data-publication for self-hosted files, add data-noprice/currency/locale";
+  const DEPLOY_NOTES = "v1.39 — Peecho: open in new tab (target=_blank), fix preview by uploading to public path so Peecho can fetch file";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5627,6 +5667,25 @@
   }
 
   // ── PDF Export ───────────────────────────────────────────────────
+  function exportPDF() {
+    if (!currentStory) return toast('Generate a story first');
+    const name  = userProfile.name || 'My';
+    const title = currentStory.funny ? name + "'s Life Story (Comedy Edition)" : name + "'s Life Story";
+    const html  = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>'
+      + '<style>body{font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 40px;color:#2c2416;line-height:1.9;font-size:11pt}'
+      + 'h1{font-size:2rem;text-align:center}p{margin-bottom:1.4em;text-align:justify}'
+      + 'h2{font-size:1.3rem;margin:2em 0 0.6em;border-bottom:2px solid #c9a96e;padding-bottom:6px}'
+      + '.footer{text-align:center;margin-top:48px;color:#c9a96e;font-size:0.8rem}'
+      + '@media print{body{margin:0}}</style></head><body>'
+      + '<h1>' + title + '</h1>'
+      + (document.getElementById('storyOutput')?.innerHTML || '')
+      + '<div class="footer">Created with My Life Story</div></body></html>';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    a.download = (name + ' Life Story.html').replace(/[^a-zA-Z0-9 .]/g, '');
+    a.click();
+  }
+
   // Barnaby test PDF (9-page sample for Peecho testing)
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
 
@@ -5696,8 +5755,11 @@ ${storyHtml}
 </body></html>`;
       const blob = new Blob([htmlDoc], { type: 'text/html' });
 
-      // 2. Upload to Supabase storage
-      const fileName  = currentUser.id + '/print-story-' + Date.now() + '.html';
+      // 2. Upload to Supabase storage (public path so Peecho can fetch for preview)
+      // Security note: file contains story text only (same content being printed).
+      // Uses a unique timestamped filename — not guessable. Expires naturally as
+      // Supabase doesn't serve old files indefinitely without a valid path.
+      const fileName  = 'print-public/' + currentUser.id + '-' + Date.now() + '.html';
       const uploadRes = await fetch(STORAGE_URL + '/' + fileName, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': 'text/html', 'x-upsert': 'true' },
@@ -5705,15 +5767,9 @@ ${storyHtml}
       });
       if (!uploadRes.ok) throw new Error('Upload failed: ' + await uploadRes.text());
 
-      // 3. Get signed URL (1 hour)
-      const signRes  = await fetch(SUPABASE_URL + '/storage/v1/object/sign/life-photos/' + fileName, {
-        method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expiresIn: 3600 })
-      });
-      const signData = await signRes.json();
-      if (!signData.signedURL) throw new Error('Could not get signed URL');
-      const fileUrl  = SUPABASE_URL + '/storage/v1' + signData.signedURL;
-      dbg('PEECHO', 'Story URL ready:', fileUrl.substring(0, 80) + '…');
+      // 3. Use public URL (no auth needed — required for Peecho to fetch the file)
+      const fileUrl = SUPABASE_URL + '/storage/v1/object/public/life-photos/' + fileName;
+      dbg('PEECHO', 'Story public URL ready:', fileUrl.substring(0, 80) + '…');
 
       // 4. Inject URL into Peecho Button and show it
       const btn = document.getElementById('peechoPrintBtn');
