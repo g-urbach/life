@@ -69,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.22
+  Current: v1.23
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -183,7 +183,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.22</title>
+  <title>My Life Story v1.23</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1247,7 +1247,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.22</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.23</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1622,13 +1622,23 @@
         <div class="dash-tile-sub" id="dashPhotosSub"></div>
       </div>
 
-      <!-- Tile: People mentioned -->
-      <div class="dash-tile" onclick="filterEntriesByType('people')">
+      <!-- Tile: People in Your Story (wide, expands to person list) -->
+      <div class="dash-tile dash-tile-wide" onclick="togglePeopleDrill()" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--rose)"></div>
-        <div class="dash-tile-icon">👥</div>
-        <div class="dash-tile-title">People in Your Story</div>
-        <div class="dash-tile-value" id="dashPeopleValue">—</div>
-        <div class="dash-tile-sub" id="dashPeopleSub"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="flex:1">
+            <div class="dash-tile-icon">👥</div>
+            <div class="dash-tile-title">People in Your Story</div>
+            <div class="dash-tile-value" id="dashPeopleValue">—</div>
+            <div class="dash-tile-sub" id="dashPeopleSub"></div>
+          </div>
+          <span id="dashPeopleChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ view all</span>
+        </div>
+        <!-- People drill-down -->
+        <div id="dashPeopleDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a person to see all their entries</p>
+          <div id="dashPeopleGrid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
       </div>
 
       <!-- Tile: Recent -->
@@ -1828,7 +1838,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.22 — Edit tags panel: 3-col layout matching Memories, photos row with existing thumbs + add new photos; saveEntryTags uploads queued photos";
+  const DEPLOY_NOTES = "v1.23 — People tile: expandable drill-down with person chips sorted by mention count; click person filters Entries to their entries";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2321,7 +2331,7 @@
       if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
     }
     if (name === 'dashboard') renderDashboard();
-    if (name === 'entries')   { _entriesTypeFilter = null; populateReviewFilter(); renderReviewEntries(); }
+    if (name === 'entries')   { _entriesTypeFilter = null; _entriesPersonFilter = null; populateReviewFilter(); renderReviewEntries(); }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
@@ -4221,9 +4231,28 @@
     const peopleCounts = {};
     allPeople.forEach(p => { peopleCounts[p] = (peopleCounts[p] || 0) + 1; });
     const uniquePeople = Object.keys(peopleCounts).length;
-    const topPerson = Object.entries(peopleCounts).sort((a,b) => b[1]-a[1])[0];
-    document.getElementById('dashPeopleValue').textContent = uniquePeople + ' person' + (uniquePeople === 1 ? '' : ' people') + ' tagged';
-    document.getElementById('dashPeopleSub').textContent   = topPerson ? 'Most mentioned: ' + topPerson[0] + ' (' + topPerson[1] + 'x)' : 'Tag people in your entries';
+    const peopleSorted = Object.entries(peopleCounts).sort((a,b) => b[1]-a[1]);
+    const topPerson = peopleSorted[0];
+    document.getElementById('dashPeopleValue').textContent = uniquePeople + ' ' + (uniquePeople === 1 ? 'person' : 'people') + ' tagged';
+    document.getElementById('dashPeopleSub').textContent   = topPerson ? 'Most mentioned: ' + topPerson[0] + ' (' + topPerson[1] + (topPerson[1]===1?' entry':' entries') + ')' : 'Tag people in your entries';
+    // Populate people drill-down chips
+    const peopleGrid = document.getElementById('dashPeopleGrid');
+    if (peopleGrid) {
+      if (!peopleSorted.length) {
+        peopleGrid.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light)">No people tagged yet — add people tags to your entries.</p>';
+      } else {
+        peopleGrid.innerHTML = peopleSorted.map(([name, count]) => {
+          const entryWord = count === 1 ? 'entry' : 'entries';
+          return `<button onclick="filterEntriesByPerson('${name.replace(/'/g,"\\'")}');event.stopPropagation()"
+            style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s"
+            onmouseover="this.style.borderColor='var(--rose)';this.style.color='var(--rose)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)'">
+            👤 ${name}
+            <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
+          </button>`;
+        }).join('');
+      }
+    }
 
     // Chapter pills in health tile drill-down — use ACTUAL chapters from entries
     const allCh = [...new Set(real.map(e => e.chapter).filter(Boolean))].sort();
@@ -4853,6 +4882,13 @@
       filtered = filtered.filter(e => e.people && e.people.trim());
     }
 
+    // Apply person filter
+    if (_entriesPersonFilter) {
+      filtered = filtered.filter(e =>
+        e.people && e.people.split(',').map(p => p.trim()).includes(_entriesPersonFilter)
+      );
+    }
+
     // Apply keyword search
     if (search) {
       filtered = filtered.filter(e => {
@@ -4866,9 +4902,12 @@
 
     // Show type filter badge if active
     const countEl = document.getElementById('reviewEntryCount');
-    const typeLabel = _entriesTypeFilter === 'photos' ? ' · 📷 Photos only' : _entriesTypeFilter === 'people' ? ' · 👥 People tagged' : '';
-    const clearType = _entriesTypeFilter ? ' <button onclick="_entriesTypeFilter=null;renderReviewEntries()" style="font-size:0.72rem;padding:1px 6px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;margin-left:4px">✕ clear</button>' : '';
-    countEl.innerHTML = filtered.length + ' entr' + (filtered.length===1?'y':'ies') + typeLabel + clearType;
+    const typeLabel   = _entriesTypeFilter === 'photos' ? ' · 📷 Photos only' : _entriesTypeFilter === 'people' ? ' · 👥 People tagged' : '';
+    const personLabel = _entriesPersonFilter ? ' · 👤 ' + _entriesPersonFilter : '';
+    const clearType   = (_entriesTypeFilter || _entriesPersonFilter)
+      ? ' <button onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;renderReviewEntries()" style="font-size:0.72rem;padding:1px 6px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;margin-left:4px">✕ clear</button>'
+      : '';
+    countEl.innerHTML = filtered.length + ' entr' + (filtered.length===1?'y':'ies') + typeLabel + personLabel + clearType;
 
     const list = document.getElementById('reviewEntryList');
     if (!filtered.length) {
@@ -5224,18 +5263,37 @@
     if (drill.style.display !== 'none') renderEssentials();
   }
 
+  function togglePeopleDrill() {
+    const drill   = document.getElementById('dashPeopleDrill');
+    const chevron = document.getElementById('dashPeopleChevron');
+    if (!drill) return;
+    const open = drill.style.display !== 'none';
+    drill.style.display   = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+  }
+
+  function filterEntriesByPerson(name) {
+    _entriesTypeFilter   = null;
+    _entriesPersonFilter = name || null;
+    showPanel('entries', null, 3);
+    renderReviewEntries();
+  }
+
   // ── Story Health → Entries navigation ────────────────────────────
   function filterEntriesByType(type) {
+    _entriesPersonFilter = null;
     showPanel('entries', null, 3);
     _entriesTypeFilter = type;
     renderReviewEntries();
   }
 
-  let _entriesTypeFilter = null; // 'photos' | 'people' | null
+  let _entriesTypeFilter   = null; // 'photos' | 'people' | null
+  let _entriesPersonFilter = null; // person name string | null
 
   function filterEntriesByChapter(chapter) {
     // Navigate to Entries tab with chapter pre-filtered
-    _entriesTypeFilter = null;
+    _entriesTypeFilter   = null;
+    _entriesPersonFilter = null;
     showPanel('entries', null, 3);
     const sel = document.getElementById('reviewFilterCat');
     if (sel) {
