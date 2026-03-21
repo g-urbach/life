@@ -61,7 +61,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.08
+  Current: v1.10
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -76,8 +76,9 @@
     title, chapter, era, people, location, reference), suggested tags,
     spelling fix, AI reconstruction of rambling entries
   - Native browser spell/grammar underlines (spellcheck=true, lang=en-AU)
-  - Tags: Title, Era, Location, People (multi), Chapter, Date (journal mode),
-    Reference + URL (collapsed toggle)
+  - Tags: Title, Era, Location, Chapter, Date (journal mode)
+  - People (multi) & References (multi with URL): chip-based tag manager modal,
+    multi-item add/remove, persisted as comma-separated / |||‑separated strings
   - Photo attachments with captions (multiple per entry)
   - Mic dictation with persistent listening, continuous=false for Android
 
@@ -120,7 +121,6 @@
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - People & References as multi-item managers (like photos) [IN PROGRESS]
   - Peecho: collect shipping address before order (production readiness)
   - Peecho: swap test product IDs for production IDs at go-live
   - Onboarding tour (tooltips, skippable, version-aware)
@@ -161,7 +161,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.08</title>
+  <title>My Life Story v1.10</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1210,7 +1210,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.08</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.10</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1751,7 +1751,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.08 — No scroll on tag accept, Keep mine removed";
+  const DEPLOY_NOTES = "v1.10 — Fix duplicate photo functions, fix applyAIReviewTags chip selector, fix People dropdown vs chip-manager conflict";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2662,10 +2662,24 @@
       const e = entries.find(e => e.id === entryId);
       if (e) Object.assign(e, patch);
       toast('Tags saved ✓');
-      // Update tag chips in-place — don't re-render (would scroll the page)
-      const updatedTags = getEntryTags(e);
-      const chipsEl = document.querySelector('#rev-' + entryId.replace(/[:.+]/g,'-') + ' .entry-tag-chips');
-      if (chipsEl) chipsEl.outerHTML = '<div class="entry-tag-chips">' + buildTagChips(updatedTags).replace(/^<div[^>]*>|<\/div>$/g,'') + '</div>';
+      // Update tag chips in-place — find the entry card across both tab prefixes
+      if (e) {
+        const updatedTags = getEntryTags(e);
+        const newChipsHtml = buildTagChips(updatedTags);
+        for (const pfx of ['rev-', 'dcd-']) {
+          const card = document.getElementById(pfx + entryId.replace(/[:.+]/g,'-'));
+          if (card) {
+            const existingChips = card.querySelector('.tag-chips-container');
+            if (existingChips) {
+              existingChips.outerHTML = newChipsHtml || '';
+            } else if (newChipsHtml) {
+              const textEl = card.querySelector('.entry-text');
+              if (textEl) textEl.insertAdjacentHTML('afterend', newChipsHtml);
+            }
+            break;
+          }
+        }
+      }
       if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
     } else {
       applyTagDefaults('rec', tags);
@@ -2935,40 +2949,6 @@
     recPhotos.splice(idx, 1);
     renderRecPhotoStrip();
     memCheckButtons();
-  }
-
-    // ── Photos ────────────────────────────────────────────────────────
-  function handleRecPhotos(input) {
-    Array.from(input.files).forEach(file => {
-      if (file.size > 10 * 1024 * 1024) { toast(file.name + ' too large — max 10MB'); return; }
-      recPhotos.push({ file, preview: URL.createObjectURL(file) });
-    });
-    input.value = '';
-    renderRecPhotoStrip();
-  }
-
-  function renderRecPhotoStrip() {
-    const strip = document.getElementById('recPhotoStrip');
-    const count = document.getElementById('recPhotoCount');
-    if (!strip) return;
-    count.textContent = recPhotos.length ? recPhotos.length + ' photo' + (recPhotos.length > 1 ? 's' : '') + ' queued' : '';
-    strip.innerHTML = recPhotos.map((p, i) =>
-      '<div style="display:flex;flex-direction:column;gap:4px;max-width:120px">' +
-        '<div style="position:relative;display:inline-block">' +
-          '<img src="' + p.preview + '" style="width:100px;height:80px;object-fit:cover;border-radius:8px;border:2px solid var(--gold);display:block">' +
-          '<button onclick="removeRecPhoto(' + i + ')" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:11px;cursor:pointer;line-height:20px;text-align:center">✕</button>' +
-        '</div>' +
-        '<input type="text" placeholder="Caption..." value="' + (p.caption || '') + '" ' +
-          'oninput="recPhotos[' + i + '].caption = this.value" ' +
-          'style="font-size:0.72rem;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:100px">' +
-      '</div>'
-    ).join('');
-  }
-
-  function removeRecPhoto(idx) {
-    URL.revokeObjectURL(recPhotos[idx].preview);
-    recPhotos.splice(idx, 1);
-    renderRecPhotoStrip();
   }
 
   // ── Photos ───────────────────────────────────────────────────────
@@ -3477,7 +3457,7 @@
 
   function populateTagDropdowns(prefix) {
     const vals = getTagValues();
-    [['Year','year'],['Location','location'],['People','people'],['Chapter','chapter']].forEach(([label, key]) => {
+    [['Year','year'],['Location','location'],['Chapter','chapter']].forEach(([label, key]) => {
       const sel = document.getElementById(prefix + 'Tag' + label);
       if (!sel) return;
       const cur = sel.value;
@@ -3848,7 +3828,7 @@
         }
         return `<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">${icons[k]||''} ${v}</span>`;
       });
-    return chips.length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + chips.join('') + '</div>' : '';
+    return chips.length ? '<div class="tag-chips-container" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + chips.join('') + '</div>' : '';
   }
 
   // ── Shared edit panel builder ─────────────────────────────────────
@@ -4087,23 +4067,64 @@
     document.getElementById('dashCoverageGrid').style.display = 'none';
     document.getElementById('dashChapterDetail').style.display = 'block';
 
-    const real    = entries.filter(e => !e.category?.startsWith('_profile'));
-    const ces     = chapter === 'Untagged' ? real.filter(e=>!e.chapter) : real.filter(e=>e.chapter===chapter);
-    const words   = ces.reduce((n,e)=>n+(e.answer||'').split(/\s+/).filter(Boolean).length,0);
-    document.getElementById('dashChapterDetailTitle').textContent = chapter;
-    document.getElementById('dashChapterDetailStats').textContent = ces.length + ' entries · ' + words + ' words';
+    const real = entries.filter(e => !e.category?.startsWith('_profile') && !e.category?.startsWith('_essentials'));
+    const ces  = chapter === 'Untagged'
+      ? real.filter(e => !e.chapter)
+      : real.filter(e => e.chapter === chapter);
+    const words = ces.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
 
-    // Reuse openChapterDetail rendering
+    document.getElementById('dashChapterDetailTitle').textContent = chapter;
+    document.getElementById('dashChapterDetailStats').textContent = ces.length + ' entr' + (ces.length===1?'y':'ies') + ' · ' + words + ' words';
+
     const list = document.getElementById('dashChapterDetailList');
-    list.innerHTML = '<div style="color:var(--text-light);font-style:italic;font-size:0.85rem">Loading...</div>';
-    // Use the existing renderChapterEntries logic by temporarily using the hidden chapterDetail
-    _currentDashChapter = chapter;
-    openChapterDetail(chapter);
-    // Move the rendered content
-    setTimeout(() => {
-      const src = document.getElementById('chapterDetailList');
-      if (src) list.innerHTML = src.innerHTML;
-    }, 100);
+    if (!ces.length) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>No entries in this chapter yet.</p></div>';
+      return;
+    }
+
+    // Render entries directly — same card style as Entries tab
+    const sorted = [...ces].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    list.innerHTML = sorted.map(e => {
+      const tags    = getEntryTags(e);
+      const hasTags = Object.keys(tags).length > 0;
+      const cleanQ  = cleanQuestion(e.question);
+      const safeId  = 'dcd-' + (e.id || e.timestamp.replace(/[:.+]/g,'-'));
+      const deleteId = e.id ? "'" + e.id + "'" : 'null';
+      const tagHtml   = buildTagChips(tags);
+      const editPanel = buildEditPanel(e.id, 'cdedit');
+      const improvePanel = e.id ? `<div id="cdimprove-${e.id}" class="improve-panel" style="display:none"></div>` : '';
+      const textEdit  = e.id ? `<div id="textedit-${e.id}" style="display:none;margin-top:10px">
+        <textarea id="texteditarea-${e.id}" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">${e.answer}</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="saveEntryText('${e.id}')">💾 Save</button>
+          <button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById('textedit-${e.id}').style.display='none'">Cancel</button>
+        </div>
+      </div>` : '';
+
+      return `<div class="entry-card" id="${safeId}" style="margin-bottom:12px">
+        <div class="entry-meta">
+          <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
+          <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}</span>
+          ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
+        </div>
+        ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
+        ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
+        <p class="entry-text">${e.answer}</p>
+        ${tagHtml}
+        ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
+          <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags':'＋ Add tags'}</button>
+          <button onclick="editEntryText('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>
+        </div>` : ''}
+        ${improvePanel}${editPanel}${textEdit}
+      </div>`;
+    }).join('');
+
+    // Register tags and populate dropdowns
+    sorted.filter(e => e.id).forEach(e => {
+      registerEntryTags(e.id, getEntryTags(e));
+      populateTagDropdowns('cdedit_' + e.id, getEntryTags(e));
+    });
   }
 
   function closeDashChapterDetail() {
