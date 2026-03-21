@@ -18,6 +18,11 @@
   6. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
      the specific risk. Primary dev is on laptop; mobile is tested separately.
      See MOBILE TESTING NOTES section for known concerns.
+  7. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
+     function (e.g. "function foo() {"), ALWAYS include the full function body
+     in old_str — never just the opening line. Partial matches silently drop
+     the body, causing "Unexpected token '}'" or "Unexpected end of input".
+     ALWAYS run node --check after every edit before shipping.
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
@@ -64,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.21
+  Current: v1.22
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -178,7 +183,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.21</title>
+  <title>My Life Story v1.22</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1242,7 +1247,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.21</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.22</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1823,7 +1828,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.21 — Fix Photos+People tiles filter entries; add photo thumbnails to entry cards; fix recurring missing-function-keyword syntax bug";
+  const DEPLOY_NOTES = "v1.22 — Edit tags panel: 3-col layout matching Memories, photos row with existing thumbs + add new photos; saveEntryTags uploads queued photos";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3851,6 +3856,19 @@
         entries[idx].reference_url = tags.reference_url || null;
       }
       toast('Tags saved ✓');
+      // Upload any queued photos from the edit panel
+      const queued = _editPanelPhotos[entryId] || [];
+      if (queued.length) {
+        toast('Uploading ' + queued.length + ' photo' + (queued.length>1?'s':'') + '...');
+        const entry = entries.find(e => e.id === entryId);
+        for (const p of queued) {
+          const up = await uploadPhotoFile(p.file);
+          if (up) await addEntry(entry?.chapter || 'Unspecified', p.caption || 'Photo', null, up.path, up.desc, getEntryTags(entry) || {}, entryId);
+        }
+        _editPanelPhotos[entryId] = [];
+        await loadEntries();
+        toast('Photos saved ✓');
+      }
       const panel = document.getElementById('edit-' + entryId) || document.getElementById('redit-' + entryId) || document.getElementById('cdedit-' + entryId);
       if (panel) panel.style.display = 'none';
       // Refresh whichever panel is active
@@ -3877,6 +3895,8 @@
       populateTagDropdowns(prefix);
       applyTagDefaults(prefix, currentTags);
       panel.style.display = 'grid';
+      panel.style.gridTemplateColumns = '1fr 1fr 1fr';
+      loadEditPanelPhotoThumbs(entryId);
     } else {
       panel.style.display = 'none';
     }
@@ -3935,12 +3955,35 @@
   // ── Shared edit panel builder ─────────────────────────────────────
   function buildEditPanel(entryId, prefix) {
     if (!entryId) return '';
+    // Find existing photo children for this entry
+    const photoChildren = entries.filter(e => e.parent_entry_id === entryId && e.photo_url);
+    const photosHtml = photoChildren.length
+      ? photoChildren.map((p, i) =>
+          `<div style="display:flex;flex-direction:column;gap:4px;align-items:center" id="ephoto-${entryId}-${i}">
+            <div style="position:relative;display:inline-block">
+              <div id="ephoto-thumb-${entryId}-${i}" style="width:56px;height:56px;border-radius:6px;border:2px solid var(--gold);background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:1.2rem">📷</div>
+            </div>
+            <span style="font-size:0.68rem;color:var(--text-light);width:56px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.answer?.substring(0,12)||'Photo'}</span>
+          </div>`
+        ).join('')
+      : '';
+
     return `
-      <div id="${prefix}-${entryId}" class="tag-panel" style="display:none;margin-top:12px">
-        <div class="tag-panel-title">✏️ Edit tags & photos</div>
+      <div id="${prefix}-${entryId}" class="tag-panel" style="display:none;margin-top:12px;grid-template-columns:1fr 1fr 1fr">
+        <div class="tag-panel-title" style="grid-column:1/-1">✏️ Edit tags & photos</div>
+
+        <!-- Title (full width) -->
         <div class="tag-field" style="grid-column:1/-1">
           <label>🏷️ Title</label>
-          <input type="text" id="${prefix}_${entryId}TagTitle" placeholder="e.g. Dad's workshop..." style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
+          <input type="text" id="${prefix}_${entryId}TagTitle" placeholder="e.g. Dad's workshop..."
+            style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
+        </div>
+
+        <!-- Row 1: Chapter | Era | Date -->
+        <div class="tag-field">
+          <label>📚 Chapter</label>
+          <select id="${prefix}_${entryId}TagChapter" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagChapterCustom')"><option value="">Not specified</option></select>
+          <input type="text" id="${prefix}_${entryId}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
         </div>
         <div class="tag-field">
           <label>📅 Era</label>
@@ -3948,46 +3991,108 @@
           <input type="text" id="${prefix}_${entryId}TagYearCustom" placeholder="e.g. 1985..." style="margin-top:6px;display:none">
         </div>
         <div class="tag-field">
+          <label>🗓️ Date</label>
+          <input type="date" id="${prefix}_${entryId}TagDate"
+            style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
+        </div>
+
+        <!-- Row 2: Location | People | References -->
+        <div class="tag-field">
           <label>📍 Location</label>
           <select id="${prefix}_${entryId}TagLocation" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagLocationCustom')"><option value="">Not specified</option></select>
           <input type="text" id="${prefix}_${entryId}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
         </div>
         <div class="tag-field">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <label style="margin-bottom:0">👥 People</label>
+          <label>👥 People</label>
+          <div id="${prefix}PeopleChips${entryId}" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
             <button type="button" onclick="openTagManager('people','${prefix}','${entryId}')"
-              style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
-              ＋ Tag person
-            </button>
+              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Tag person</button>
           </div>
-          <div id="${prefix}PeopleChips${entryId}" style="display:flex;gap:6px;flex-wrap:wrap;min-height:20px"></div>
           <input type="hidden" id="${prefix}_${entryId}TagPeople">
         </div>
         <div class="tag-field">
-          <label>📚 Chapter</label>
-          <select id="${prefix}_${entryId}TagChapter" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagChapterCustom')"><option value="">Not specified</option></select>
-          <input type="text" id="${prefix}_${entryId}TagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
-        </div>
-        <div class="tag-field">
-          <label>🗓️ Date</label>
-          <input type="date" id="${prefix}_${entryId}TagDate" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface);color:var(--text)">
-        </div>
-        <div style="grid-column:1/-1;margin-top:4px">
-          <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:6px">🔗 References</label>
-          <div id="${prefix}RefChips${entryId}" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:20px">
+          <label>🔗 References</label>
+          <div id="${prefix}RefChips${entryId}" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
             <button type="button" onclick="openTagManager('ref','${prefix}','${entryId}')"
-              style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">
-              ＋ Add reference
-            </button>
+              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato\',sans-serif;white-space:nowrap">＋ Add reference</button>
           </div>
           <input type="hidden" id="${prefix}_${entryId}TagRef">
           <input type="hidden" id="${prefix}_${entryId}TagRefUrl">
         </div>
+
+        <!-- Row 3: Photos (full width) -->
+        <div class="tag-field" style="grid-column:1/-1">
+          <label>📷 Photos</label>
+          <div id="${prefix}PhotoStrip${entryId}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
+            ${photosHtml}
+            <button type="button" onclick="document.getElementById('${prefix}PhotoInput${entryId}').click()"
+              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add photo</button>
+          </div>
+          <input type="file" id="${prefix}PhotoInput${entryId}" accept="image/*" multiple style="display:none"
+            onchange="handleEditPanelPhotos(this,'${entryId}','${prefix}')">
+        </div>
+
+        <!-- Save / Cancel -->
         <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
           <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${entryId}','${prefix}')">Save tags</button>
           <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('${prefix}-${entryId}').style.display='none'">Cancel</button>
         </div>
       </div>`;
+  }
+
+  // ── Edit panel photo handling ─────────────────────────────────────
+  const _editPanelPhotos = {}; // entryId -> [{file, preview, caption}]
+
+  function handleEditPanelPhotos(input, entryId, prefix) {
+    if (!_editPanelPhotos[entryId]) _editPanelPhotos[entryId] = [];
+    Array.from(input.files).forEach(file => {
+      if (file.size > 10 * 1024 * 1024) { toast(file.name + ' too large — max 10MB'); return; }
+      _editPanelPhotos[entryId].push({ file, preview: URL.createObjectURL(file), caption: '' });
+    });
+    input.value = '';
+    renderEditPanelPhotoStrip(entryId, prefix);
+  }
+
+  function renderEditPanelPhotoStrip(entryId, prefix) {
+    const strip = document.getElementById(prefix + 'PhotoStrip' + entryId);
+    if (!strip) return;
+    const queued = _editPanelPhotos[entryId] || [];
+    // Keep existing photo children (already rendered as static thumbs with id ephoto-*)
+    // Just re-render queued new ones + add button at end
+    const existingThumbs = [...strip.querySelectorAll('[id^="ephoto-"]')].map(el => el.outerHTML).join('');
+    const newThumbs = queued.map((p, i) =>
+      `<div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+        <div style="position:relative">
+          <img src="${p.preview}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:2px solid var(--gold)">
+          <button onclick="removeEditPanelPhoto('${entryId}',${i},'${prefix}')" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:9px;cursor:pointer;line-height:16px;text-align:center">✕</button>
+        </div>
+        <input type="text" placeholder="Caption..." oninput="_editPanelPhotos['${entryId}'][${i}].caption=this.value"
+          style="font-size:0.68rem;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:56px">
+      </div>`
+    ).join('');
+    const addBtn = `<button type="button" onclick="document.getElementById('${prefix}PhotoInput${entryId}').click()"
+      style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add photo</button>`;
+    strip.innerHTML = existingThumbs + newThumbs + addBtn;
+  }
+
+  function removeEditPanelPhoto(entryId, idx, prefix) {
+    if (_editPanelPhotos[entryId]) {
+      URL.revokeObjectURL(_editPanelPhotos[entryId][idx]?.preview);
+      _editPanelPhotos[entryId].splice(idx, 1);
+    }
+    renderEditPanelPhotoStrip(entryId, prefix);
+  }
+
+  async function loadEditPanelPhotoThumbs(entryId) {
+    const photoChildren = entries.filter(e => e.parent_entry_id === entryId && e.photo_url);
+    for (let i = 0; i < photoChildren.length; i++) {
+      const el = document.getElementById('ephoto-thumb-' + entryId + '-' + i);
+      if (!el) continue;
+      const url = await getSignedUrl(photoChildren[i].photo_url);
+      if (url && document.getElementById('ephoto-thumb-' + entryId + '-' + i)) {
+        el.innerHTML = `<img src="${url}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;display:block">`;
+      }
+    }
   }
 
   function cleanQuestion(q) {
@@ -4998,6 +5103,8 @@
       populateTagDropdowns('cdedit_' + entryId);
       applyTagDefaults('cdedit_' + entryId, _entryTagsRegistry[entryId] || {});
       panel.style.display = 'grid';
+      panel.style.gridTemplateColumns = '1fr 1fr 1fr';
+      loadEditPanelPhotoThumbs(entryId);
     } else {
       panel.style.display = 'none';
     }
