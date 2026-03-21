@@ -71,7 +71,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.39
+  Current: v1.40
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -161,9 +161,9 @@
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - Peecho: fix preview image (Supabase signed URLs not publicly accessible —
-    need public CDN URL or Peecho file pre-upload before triggering button)
-  - Peecho: test full order flow with real story PDF end-to-end
+  - Peecho: convert story to PDF before upload (currently HTML — Peecho can't
+    preview HTML, only PDF). Use browser print API or jsPDF library.
+  - Peecho: test full order flow with real story end-to-end
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
 
@@ -245,10 +245,10 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho preview image broken: Supabase signed URLs require auth headers,
-    so Peecho's thumbnail service can't fetch the file to generate a preview.
-    Fix: upload to a public S3/CDN bucket, or use Peecho's own file upload API
-    to pre-upload and get a public URL before triggering the button.
+  - Peecho preview image: story is uploaded as HTML, Peecho may not render HTML
+    previews (only PDFs). To get a proper preview, story needs to be converted
+    to PDF before upload. Future fix: use browser print-to-PDF or a PDF library.
+    The signed URL itself works fine — Peecho can fetch it as a plain GET.
   - Peecho product IDs in PEECHO_PRODUCTS array are set but currently unused —
     the Button approach lets Peecho handle product selection at checkout.
     The array + product selection UI can be removed in a future cleanup.
@@ -278,7 +278,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.39</title>
+  <title>My Life Story v1.40</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1342,7 +1342,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.39</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.40</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1984,7 +1984,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.39 — Peecho: open in new tab (target=_blank), fix preview by uploading to public path so Peecho can fetch file";
+  const DEPLOY_NOTES = "v1.40 — Revert to signed URL (no Supabase changes needed); preview needs PDF not HTML; open Peecho in new tab";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5755,11 +5755,8 @@ ${storyHtml}
 </body></html>`;
       const blob = new Blob([htmlDoc], { type: 'text/html' });
 
-      // 2. Upload to Supabase storage (public path so Peecho can fetch for preview)
-      // Security note: file contains story text only (same content being printed).
-      // Uses a unique timestamped filename — not guessable. Expires naturally as
-      // Supabase doesn't serve old files indefinitely without a valid path.
-      const fileName  = 'print-public/' + currentUser.id + '-' + Date.now() + '.html';
+      // 2. Upload story file to Supabase storage (private bucket, user's folder)
+      const fileName  = currentUser.id + '/print-story-' + Date.now() + '.html';
       const uploadRes = await fetch(STORAGE_URL + '/' + fileName, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': 'text/html', 'x-upsert': 'true' },
@@ -5767,9 +5764,16 @@ ${storyHtml}
       });
       if (!uploadRes.ok) throw new Error('Upload failed: ' + await uploadRes.text());
 
-      // 3. Use public URL (no auth needed — required for Peecho to fetch the file)
-      const fileUrl = SUPABASE_URL + '/storage/v1/object/public/life-photos/' + fileName;
-      dbg('PEECHO', 'Story public URL ready:', fileUrl.substring(0, 80) + '…');
+      // 3. Get signed URL (2 hours) — token is embedded in URL so Peecho can
+      // fetch it as a plain GET with no extra headers. Private bucket, expires in 2hrs.
+      const signRes  = await fetch(SUPABASE_URL + '/storage/v1/object/sign/life-photos/' + fileName, {
+        method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresIn: 7200 })
+      });
+      const signData = await signRes.json();
+      if (!signData.signedURL) throw new Error('Could not get signed URL');
+      const fileUrl  = SUPABASE_URL + '/storage/v1' + signData.signedURL;
+      dbg('PEECHO', 'Story signed URL ready (2hr expiry):', fileUrl.substring(0, 80) + '…');
 
       // 4. Inject URL into Peecho Button and show it
       const btn = document.getElementById('peechoPrintBtn');
