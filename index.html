@@ -69,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.25
+  Current: v1.27
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -129,8 +129,8 @@
   BACKLOG (prioritised)
   ---------------------
   HIGH
+  - Peecho: get production product IDs from dashboard and fill in PEECHO_PRODUCTS
   - Peecho: collect shipping address before order (production readiness)
-  - Peecho: swap test product IDs for production IDs at go-live
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
 
@@ -155,8 +155,9 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho test checkout URL (test.www.peecho.com/checkout/ID) returns
-    error — Peecho support contacted, awaiting response
+  - Peecho now using PRODUCTION environment (www.peecho.com) — test env abandoned
+    due to non-functional checkout URLs. Production IDs not yet set (id:0 placeholders)
+    — look up real product IDs in Peecho dashboard before going live
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
@@ -183,7 +184,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.25</title>
+  <title>My Life Story v1.27</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1247,7 +1248,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.25</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.27</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1838,7 +1839,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.25 — Fix person filter wiped by showPanel; fix scroll-to-image on async photo load; set filters before showPanel not after";
+  const DEPLOY_NOTES = "v1.27 — Fix photo scroll: render img tags immediately with empty src, set src directly on load (no DOM insertion = no scroll jump)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -1846,17 +1847,18 @@
   const NOTIFY_URL    = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
 
-  // ── Peecho ──────────────────────────────────────────────────────
-  const PEECHO_TEST_URL    = 'https://test.www.peecho.com/rest/v3/order/';
+  // ── Peecho (PRODUCTION environment) ────────────────────────────
+  const PEECHO_URL         = 'https://www.peecho.com/rest/v3/order/';
   const PEECHO_PROXY_URL   = SUPABASE_URL + '/functions/v1/PEECHO_PROXY';
   const PEECHO_MERCHANT_KEY = '84d9c9e2402c3e872c2a212b31290ea51898190a';
   const PEECHO_SECRET       = '895975a30047881290450d68177a8c8fc65077b3';
-  // TEST environment IDs (test.www.peecho.com) — swap for production IDs (696xxxx) at go-live
+  // ⚠️  PRODUCTION product IDs — look these up in your Peecho dashboard (Products tab)
+  // IDs are typically in the 696xxxx range. Replace the 0s below before going live.
   const PEECHO_PRODUCTS = [
-    { id: 348287, name: 'Softcover',         desc: 'A4 Portrait · Matte 150gsm · 20–300 pages · €4.11 + €0.18/pg', icon: '📄' },
-    { id: 348283, name: 'Hardcover Luxury',  desc: 'A5 Portrait · Mohawk 160gsm · 20–300 pages · €7.10 + €0.20/pg', icon: '📙' },
-    { id: 348274, name: 'Hardcover',         desc: 'A4 Portrait · Uncoated 300gsm · 299–800 pages · €6.00 + €0.20/pg', icon: '📘' },
-    { id: 348271, name: 'Hardcover Large',   desc: 'A4 Portrait · Uncoated 300gsm · 299–1100 pages · €5.00 + €0.20/pg', icon: '📒' },
+    { id: 0, name: 'Softcover',         desc: 'A4 Portrait · Matte 150gsm · 20–300 pages', icon: '📄' },
+    { id: 0, name: 'Hardcover Luxury',  desc: 'A5 Portrait · Mohawk 160gsm · 20–300 pages', icon: '📙' },
+    { id: 0, name: 'Hardcover',         desc: 'A4 Portrait · Uncoated 300gsm · 299–800 pages', icon: '📘' },
+    { id: 0, name: 'Hardcover Large',   desc: 'A4 Portrait · Uncoated 300gsm · 299–1100 pages', icon: '📒' },
   ];
   const STORAGE_SIGN  = SUPABASE_URL + '/storage/v1/object/sign/life-photos';
 
@@ -4939,7 +4941,8 @@
       const photoStripHtml = hasPhotos
         ? `<div id="photostrip-${safeId}" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${
             entryPhotos.map((p, pi) =>
-              `<div id="pthumb-${safeId}-${pi}" style="flex:1;min-width:120px;max-width:${entryPhotos.length===1?'100%':'calc(50% - 3px)'};border-radius:8px;overflow:hidden;background:var(--surface2);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;font-size:1.5rem">📷</div>`
+              `<div style="flex:1;min-width:120px;max-width:${entryPhotos.length===1?'100%':'calc(50% - 3px)'};border-radius:8px;overflow:hidden;background:var(--surface2);aspect-ratio:4/3">` +
+              `<img id="pthumb-${safeId}-${pi}" src="" alt="photo" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.2s"></div>`
             ).join('')
           }</div>`
         : '';
@@ -4989,10 +4992,9 @@
         if (!thumb) continue;
         const url = await getSignedUrl(entryPhotos[pi].photo_url);
         if (url && document.getElementById('pthumb-' + safeId + '-' + pi)) {
-          // decoding=async + explicit dimensions prevent browser scroll-to-image on load
-          thumb.innerHTML = `<img src="${url}" alt="photo" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0">`;
-          thumb.style.fontSize = '';
-          thumb.style.position = 'relative';
+          // Set src directly — no DOM insertion means no browser scroll-to-element
+          thumb.src = url;
+          thumb.style.opacity = '1';
         }
       }
     });
@@ -5589,7 +5591,7 @@ ${storyHtml}
         item_details: [{ item_reference: 'barnaby-' + Date.now(), offering_id: product.id, quantity: 1, file_details: { content_url: fileUrl } }],
         address_details: { email_address: currentUser.email, shipping_address: { first_name: 'Barnaby', last_name: 'Fictitious', address_line_1: '47 Eureka Street', zip_code: '3350', city: 'Ballarat', state: 'VIC', country_code: 'AUS' } }
       };
-      const orderRes  = await fetch(PEECHO_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON }, body: JSON.stringify({ endpoint: PEECHO_TEST_URL, payload: orderBody }) });
+      const orderRes  = await fetch(PEECHO_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON }, body: JSON.stringify({ endpoint: PEECHO_URL, payload: orderBody }) });
       const orderText = await orderRes.text();
       dbg('PEECHO-TEST', 'Response', orderRes.status, orderText.substring(0,300));
       let orderData;
@@ -5597,7 +5599,7 @@ ${storyHtml}
       if (!orderRes.ok) throw new Error((orderData.message || orderData.error || 'HTTP ' + orderRes.status) + ': ' + orderText.substring(0,150));
       const orderId = orderData.orderId || orderData.order_id || orderData.id;
       if (!orderId) throw new Error('No order ID returned: ' + orderText.substring(0,150));
-      const checkoutUrl = 'https://test.www.peecho.com/checkout/' + orderId;
+      const checkoutUrl = 'https://www.peecho.com/checkout/' + orderId;
       setPeechoStatus('✅ Order created! Redirecting you to complete payment...', 'success');
       toast('Order created — opening Peecho checkout 👽');
       setTimeout(() => window.open(checkoutUrl, '_blank'), 800);
@@ -5689,7 +5691,7 @@ ${storyHtml}
       const orderRes = await fetch(PEECHO_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON },
-        body: JSON.stringify({ endpoint: PEECHO_TEST_URL, payload: orderBody })
+        body: JSON.stringify({ endpoint: PEECHO_URL, payload: orderBody })
       });
 
       const orderData = await orderRes.json();
@@ -5699,7 +5701,7 @@ ${storyHtml}
 
       const orderId = orderData.orderId || orderData.order_id || orderData.id;
       if (!orderId) throw new Error('No order ID returned');
-      const checkoutUrl = 'https://test.www.peecho.com/checkout/' + orderId;
+      const checkoutUrl = 'https://www.peecho.com/checkout/' + orderId;
       setPeechoStatus('✅ Order created! Redirecting you to complete payment...', 'success');
       dbg('PEECHO', 'Order created, id:', orderId, 'checkout:', checkoutUrl);
       setTimeout(() => window.open(checkoutUrl, '_blank'), 800);
