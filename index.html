@@ -69,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.23
+  Current: v1.24
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -183,7 +183,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.23</title>
+  <title>My Life Story v1.24</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1247,7 +1247,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.23</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.24</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1838,7 +1838,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.23 — People tile: expandable drill-down with person chips sorted by mention count; click person filters Entries to their entries";
+  const DEPLOY_NOTES = "v1.24 — Fix photo display in entries: natural aspect-ratio strip, multi-photo support, suppress pure photo-attachment children from top-level list";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -4863,7 +4863,6 @@
   function renderReviewEntries() {
     const filter = document.getElementById('reviewFilterCat').value;
     const search = (document.getElementById('reviewSearch')?.value || '').toLowerCase().trim();
-    // Show/hide clear button
     const clearBtn = document.getElementById('reviewSearchClear');
     if (clearBtn) clearBtn.style.display = search ? 'block' : 'none';
 
@@ -4871,36 +4870,37 @@
       .filter(e => !e.category.startsWith('_profile') && !e.category.startsWith('_essentials'))
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-    let filtered = filter
-      ? real.filter(e => (e.chapter || e.category || 'Uncategorised') === filter)
-      : real;
+    // Pure photo-attachment children (short answer, has photo_url, has a parent)
+    // — suppress these from top-level list; they render as strips on their parent
+    const PHOTO_STUBS = new Set(['photo', 'additional photo', '(see title)']);
+    const isPhotoAttachment = e => !!e.parent_entry_id && !!e.photo_url &&
+      (!e.answer || PHOTO_STUBS.has(e.answer.toLowerCase().trim()) || e.answer.trim().length < 25);
 
-    // Apply type filter (photos / people)
+    let filtered = (filter
+      ? real.filter(e => (e.chapter || e.category || 'Uncategorised') === filter)
+      : real
+    ).filter(e => !isPhotoAttachment(e));
+
     if (_entriesTypeFilter === 'photos') {
-      filtered = filtered.filter(e => e.photo_url);
+      filtered = filtered.filter(e =>
+        e.photo_url || real.some(c => c.parent_entry_id === e.id && c.photo_url)
+      );
     } else if (_entriesTypeFilter === 'people') {
       filtered = filtered.filter(e => e.people && e.people.trim());
     }
-
-    // Apply person filter
     if (_entriesPersonFilter) {
       filtered = filtered.filter(e =>
         e.people && e.people.split(',').map(p => p.trim()).includes(_entriesPersonFilter)
       );
     }
-
-    // Apply keyword search
     if (search) {
       filtered = filtered.filter(e => {
-        const haystack = [
-          e.answer, e.title, e.question,
-          e.chapter, e.era, e.location, e.people
-        ].filter(Boolean).join(' ').toLowerCase();
+        const haystack = [e.answer, e.title, e.question, e.chapter, e.era, e.location, e.people]
+          .filter(Boolean).join(' ').toLowerCase();
         return haystack.includes(search);
       });
     }
 
-    // Show type filter badge if active
     const countEl = document.getElementById('reviewEntryCount');
     const typeLabel   = _entriesTypeFilter === 'photos' ? ' · 📷 Photos only' : _entriesTypeFilter === 'people' ? ' · 👥 People tagged' : '';
     const personLabel = _entriesPersonFilter ? ' · 👤 ' + _entriesPersonFilter : '';
@@ -4930,13 +4930,27 @@
         ? `<div id="improve-${e.id}" class="improve-panel" style="display:none"></div>`
         : '';
 
-      return `<div class="entry-card ${e.photo_url ? 'type-photo' : ''}" id="${safeId}">
+      // Gather all photos for this entry (own + photo-attachment children)
+      const entryPhotos = [
+        ...(e.photo_url ? [e] : []),
+        ...real.filter(c => c.parent_entry_id === e.id && c.photo_url)
+      ];
+      const hasPhotos = entryPhotos.length > 0;
+      const photoStripHtml = hasPhotos
+        ? `<div id="photostrip-${safeId}" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${
+            entryPhotos.map((p, pi) =>
+              `<div id="pthumb-${safeId}-${pi}" style="flex:1;min-width:120px;max-width:${entryPhotos.length===1?'100%':'calc(50% - 3px)'};border-radius:8px;overflow:hidden;background:var(--surface2);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;font-size:1.5rem">📷</div>`
+            ).join('')
+          }</div>`
+        : '';
+
+      return `<div class="entry-card ${hasPhotos ? 'type-photo' : ''}" id="${safeId}">
         <div class="entry-meta">
           <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
           <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}</span>
           ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
         </div>
-        ${e.photo_url ? `<div id="thumb-${safeId}" style="width:100%;height:160px;background:var(--surface2);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;font-size:2rem;overflow:hidden">📷</div>` : ''}
+        ${photoStripHtml}
         ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
         ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
         <p class="entry-text">${e.answer}</p>
@@ -4963,14 +4977,21 @@
     // Populate tag dropdowns for edit panels
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
 
-    // Load photo thumbnails async (non-blocking)
-    filtered.filter(e => e.photo_url).forEach(async e => {
+    // Load photo thumbnails async (non-blocking) — handles multi-photo strips
+    filtered.forEach(async e => {
       const safeId = 'rev-' + (e.id || e.timestamp.replace(/[:.+]/g,'-'));
-      const thumb = document.getElementById('thumb-' + safeId);
-      if (!thumb) return;
-      const url = await getSignedUrl(e.photo_url);
-      if (url && document.getElementById('thumb-' + safeId)) {
-        thumb.innerHTML = `<img src="${url}" alt="photo" style="width:100%;height:160px;object-fit:cover;border-radius:8px;display:block">`;
+      const entryPhotos = [
+        ...(e.photo_url ? [e] : []),
+        ...real.filter(c => c.parent_entry_id === e.id && c.photo_url)
+      ];
+      for (let pi = 0; pi < entryPhotos.length; pi++) {
+        const thumb = document.getElementById('pthumb-' + safeId + '-' + pi);
+        if (!thumb) continue;
+        const url = await getSignedUrl(entryPhotos[pi].photo_url);
+        if (url && document.getElementById('pthumb-' + safeId + '-' + pi)) {
+          thumb.innerHTML = `<img src="${url}" alt="photo" style="width:100%;height:100%;object-fit:cover;display:block">`;
+          thumb.style.fontSize = '';
+        }
       }
     });
   }
