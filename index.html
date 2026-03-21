@@ -69,7 +69,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.32
+  Current: v1.33
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -240,7 +240,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.32</title>
+  <title>My Life Story v1.33</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1304,7 +1304,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.32</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.33</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1920,7 +1920,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.32 — Peecho production IDs: Softcover A5/A4 + Hardcover Luxury A5/A4; merchant key stays in edge function";
+  const DEPLOY_NOTES = "v1.33 — Peecho: log full API response on screen and console for debugging checkout issue";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5719,10 +5719,13 @@ ${storyHtml}
       try { orderData = JSON.parse(orderText); } catch(e) { orderData = {}; }
       if (!orderRes.ok) throw new Error((orderData.message || orderData.error || 'HTTP ' + orderRes.status) + ': ' + orderText.substring(0,150));
       const orderId = orderData.orderId || orderData.order_id || orderData.id;
-      if (!orderId) throw new Error('No order ID returned: ' + orderText.substring(0,150));
+      // Log full response for debugging
+      dbg('PEECHO-TEST', 'Full response:', orderText);
+      setPeechoStatus('✅ Order created! Full API response: ' + orderText, 'success');
+      if (!orderId) throw new Error('No order ID returned. Full response: ' + orderText);
       const checkoutUrl = 'https://www.peecho.com/checkout/' + orderId;
-      setPeechoStatus('✅ Order created! Redirecting you to complete payment...', 'success');
-      toast('Order created — opening Peecho checkout 👽');
+      dbg('PEECHO-TEST', 'Checkout URL:', checkoutUrl);
+      toast('Order ' + orderId + ' created — opening checkout');
       setTimeout(() => window.open(checkoutUrl, '_blank'), 800);
     } catch(err) {
       dbgErr('PEECHO-TEST', err.message);
@@ -5821,12 +5824,14 @@ ${storyHtml}
       if (!orderRes.ok) throw new Error(orderData.message || orderData.error || 'Order failed: ' + orderRes.status);
 
       const orderId = orderData.orderId || orderData.order_id || orderData.id;
-      if (!orderId) throw new Error('No order ID returned');
+      // Log full response for debugging
+      dbg('PEECHO', 'Full response:', JSON.stringify(orderData));
+      setPeechoStatus('✅ Order ' + (orderId||'?') + ' created! Full response: ' + JSON.stringify(orderData), 'success');
+      if (!orderId) throw new Error('No order ID returned. Full response: ' + JSON.stringify(orderData));
       const checkoutUrl = 'https://www.peecho.com/checkout/' + orderId;
-      setPeechoStatus('✅ Order created! Redirecting you to complete payment...', 'success');
       dbg('PEECHO', 'Order created, id:', orderId, 'checkout:', checkoutUrl);
       setTimeout(() => window.open(checkoutUrl, '_blank'), 800);
-      toast('Order placed with Peecho ✓ — check your email!');
+      toast('Order ' + orderId + ' created — opening checkout');
 
     } catch(err) {
       dbgErr('PEECHO', err.message);
