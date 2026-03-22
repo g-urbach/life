@@ -153,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.62
+  Current: v1.64
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -292,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.62 → next review at v1.70.
+  Build counter: currently at v1.64 → next review at v1.70.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -394,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.62</title>
+  <title>My Life Story v1.64</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1459,7 +1459,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.62</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.64</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2134,7 +2134,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.62 — Fix thumbnail: use html2pdf worker .get(canvas) chain correctly";
+  const DEPLOY_NOTES = "v1.64 — Add storyOutput debug logging to diagnose 3KB empty PDF";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5954,6 +5954,8 @@
       setPeechoStatus('📄 Generating PDF (this may take a moment)…', 'info');
       const storyHtml  = document.getElementById('storyOutput')?.innerHTML || '';
       const storyText  = storyHtml.replace(/<[^>]+>/g, '').trim();
+      dbg('PEECHO', 'storyOutput text length:', storyText.length, 'HTML length:', storyHtml.length);
+      dbg('PEECHO', 'storyOutput preview:', storyText.substring(0, 100));
       if (!storyText || storyText.length < 50) throw new Error('Story is empty or still loading — please wait for the story to finish generating, then try again');
       const name       = userProfile.name || 'My';
       const title      = currentStory.funny ? name + "\'s Life Story (Comedy Edition)" : name + "\'s Life Story";
@@ -5981,7 +5983,7 @@
         const canvas = await worker.get('canvas');
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
-        // Upload thumbnail to public path so Peecho can fetch it without auth
+        // Upload thumbnail to private storage
         const thumbRes = await fetch(STORAGE_URL + '/' + thumbName, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON,
@@ -5989,14 +5991,19 @@
           body: thumbBlob
         });
         if (thumbRes.ok) {
-          // Get a long-lived signed URL for the thumbnail (7 days)
-          const signRes = await fetch(SUPABASE_URL + '/storage/v1/object/sign/life-photos/' + thumbName, {
-            method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ expiresIn: 604800 })  // 7 days
+          // Register thumbnail through PEECHO_PROXY — same approach as the PDF.
+          // Signed URLs are blocked by Peecho's image fetcher; the proxy serves
+          // the file publicly using the service role key (no auth token in URL).
+          const thumbRegRes = await fetch(PEECHO_PROXY_URL, {
+            method: 'POST',
+            headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'registerPrintFile', storagePath: thumbName, ttlSeconds: 604800 })
           });
-          const signData = await signRes.json();
-          if (signData.signedURL) thumbnailUrl = SUPABASE_URL + '/storage/v1' + signData.signedURL;
-          dbg('PEECHO', 'Thumbnail ready:', thumbnailUrl?.substring(0, 60) + '…');
+          if (thumbRegRes.ok) {
+            const thumbRegData = await thumbRegRes.json();
+            thumbnailUrl = thumbRegData.proxyUrl;
+            dbg('PEECHO', 'Thumbnail ready:', thumbnailUrl?.substring(0, 60) + '…');
+          }
         }
       } catch(thumbErr) {
         // Thumbnail failure is non-fatal — order can proceed without preview
