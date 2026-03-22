@@ -82,8 +82,9 @@
     approximated in-app. Users need certainty before spending money.
   - PDF generated client-side via html2pdf, uploaded to private Supabase
     storage, served publicly via PEECHO_PROXY edge function with DB-backed token.
-  - Peecho Button script (cloudfront CDN) is NOT used — it does not support
-    dynamic PDF generation. The async flow replaces it entirely.
+  - Peecho Button script (cloudfront CDN) IS used — it reads data-reference
+    from the <a class="peecho-print-button"> tag and handles checkout navigation.
+    No manual window.open needed. The script does NOT need data-src for async flow.
   - Pingback URL (set in Peecho dashboard → Settings → Async Button):
     https://zygetlpgjkpyiyjquhfp.supabase.co/functions/v1/PEECHO_PROXY?pingback=true
 
@@ -152,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.56
+  Current: v1.57
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -291,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.56 → next review at v1.60.
+  Build counter: currently at v1.57 → next review at v1.60.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -393,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.56</title>
+  <title>My Life Story v1.57</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1458,7 +1459,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.56</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.57</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1701,8 +1702,36 @@
       <button class="btn btn-secondary" id="printBookBtn" onclick="showPrintBookPanel()" style="display:none">🖨️ Print as Book</button>
     </div>
 
-    <!-- No Peecho Button script needed for async flow —
-         we open the configurator directly via window.open after PDF upload -->
+    <!-- Peecho Button script — handles checkout navigation for the <a> tag below -->
+  <script type="text/javascript">
+    var p=document.createElement("script");p.type="text/javascript";p.async=true;
+    var h=("https:"==document.location.protocol?"https://":"http://");
+    p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
+    var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
+  </script>
+  <script>
+    // Peecho script navigates window.location — intercept and force new tab
+    (function() {
+      var _assign  = window.location.assign.bind(window.location);
+      var _replace = window.location.replace.bind(window.location);
+      function interceptPeecho(url) {
+        if (url && url.toString().includes('peecho.com')) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return true;
+        }
+        return false;
+      }
+      window.location.assign  = function(url) { if (!interceptPeecho(url)) _assign(url); };
+      window.location.replace = function(url) { if (!interceptPeecho(url)) _replace(url); };
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest('a');
+        if (a && a.href && a.href.includes('peecho.com/configurator')) {
+          e.preventDefault();
+          window.open(a.href, '_blank', 'noopener,noreferrer');
+        }
+      }, true);
+    })();
+  </script>
     <div id="printBookPanel" style="display:none;margin-bottom:24px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px">
         <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;margin-bottom:4px">🖨️ Print Your Life Story as a Book</h3>
@@ -1710,16 +1739,29 @@
         <div id="peechoStatus" style="padding:12px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;background:var(--surface2);color:var(--text-light)">
           Preparing your book…
         </div>
-        <!-- Async Peecho flow: button opens configurator via window.open
-             after PDF is uploaded and token registered. No Peecho script needed. -->
+        <!-- Async Peecho Button: data-reference is our merchantRef.
+             No data-src or data-publication — Peecho script handles checkout.
+             After payment Peecho pings PEECHO_PROXY?pingback=true with merchantId=data-reference -->
         <div id="peechoButtonWrap" style="margin-bottom:16px;display:none">
-          <button id="peechoPrintBtn" onclick="openPeechoConfigurator()"
-                  class="btn btn-primary" style="font-size:1rem;padding:14px 28px">
-            🛒 Order This Book — Powered by Peecho
-          </button>
+          <a id="peechoPrintBtn"
+             title="Peecho"
+             href="https://www.peecho.com/"
+             class="peecho-print-button"
+             target="_blank"
+             rel="noopener noreferrer"
+             data-filetype="pdf"
+             data-width="148"
+             data-height="210"
+             data-pages="50"
+             data-noprice="false"
+             data-currency="AUD"
+             data-locale="en_EN"
+             data-reference="">
+            🛒 Order This Book
+          </a>
           <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px">
-            Opens Peecho’s checkout in a new tab — choose your format, enter your
-            address and pay there. Your book is printed and shipped by Peecho.
+            Opens Peecho’s checkout — choose your format, address and pay there.
+            Your book is printed and shipped by Peecho.
           </p>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -2088,7 +2130,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.56 — Fix async Peecho flow: correct set_source_url endpoint, correct checkout URL with data-reference";
+  const DEPLOY_NOTES = "v1.57 — Async Peecho Button: restore Button script + <a> tag with data-reference, no manual window.open";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5820,60 +5862,31 @@
   // Barnaby test PDF (public Peecho sample — for testing async flow)
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
 
-  // Opens Peecho checkout using the async Button approach.
-  // The Button script reads data-reference (our merchant ref) and data-pages
-  // from the <a> element, then navigates to Peecho's hosted checkout.
-  // After payment Peecho pings PEECHO_PROXY?pingback=true with merchantId=data-reference.
-  // For Barnaby test: uses the public sample PDF directly (not async).
-  function openPeechoConfigurator() {
-    const btn         = document.getElementById('peechoPrintBtn');
-    const merchantRef = btn.dataset.merchantReference;
-    const isBarnaby   = btn.dataset.barnaby === 'true';
-
-    if (!merchantRef && !isBarnaby) return toast('Please wait — story not ready yet');
-
-    if (isBarnaby) {
-      // Barnaby: register with Peecho button API directly then open configurator
-      // Uses the public sample PDF — no upload or proxy needed for testing
-      const newTab = window.open(
-        'https://secure.print.peecho.com/button/publication' +
-        '?buttonKey=177345578807966651' +
-        '&contentUrl=' + encodeURIComponent(BARNABY_PDF_URL) +
-        '&fileType=pdf&width=148&height=210&numberOfPages=24&currency=AUD&locale=en_EN',
-        '_blank'
-      );
-      if (!newTab) toast('Please allow popups to open Peecho checkout');
-      dbg('PEECHO-TEST', 'Barnaby configurator opened');
-      return;
-    }
-
-    // Real story async flow — open Peecho checkout with our merchant reference.
-    // Peecho handles product selection, shipping and payment.
-    // After payment, Peecho pings us back at the Webhooks URL set in the dashboard
-    // with merchantId=merchantRef so we can supply the PDF URL.
-    const checkoutUrl = 'https://www.peecho.com/checkout/order'
-      + '?buttonKey=177345578807966651'
-      + '&reference=' + encodeURIComponent(merchantRef)
-      + '&pages=' + (btn.dataset.pages || '50')
-      + '&width=148&height=210'
-      + '&currency=AUD&locale=en_EN';
-
-    const newTab = window.open(checkoutUrl, '_blank');
-    if (!newTab) toast('Please allow popups to open Peecho checkout');
-    dbg('PEECHO', 'Async checkout opened, ref:', merchantRef);
-  }
+  // For the real story async flow, the Peecho Button script handles checkout
+  // navigation automatically by reading data-reference from the <a> tag.
+  // This function is only needed for the Barnaby test which uses a public PDF
+  // directly (not async, since there's no pingback needed for a pre-existing file).
 
   async function sendBarnabyTest() {
     if (!currentUser) return toast('Please sign in first');
     document.getElementById('printBookPanel').style.display = 'block';
     document.getElementById('peechoButtonWrap').style.display = 'none';
-    setPeechoStatus('🧪 Barnaby test ready — click Order to test Peecho checkout.', 'success');
-    const btn = document.getElementById('peechoPrintBtn');
-    btn.dataset.barnaby = 'true';
-    btn.dataset.pages   = '24';
-    delete btn.dataset.merchantReference;
-    document.getElementById('peechoButtonWrap').style.display = 'block';
-    dbg('PEECHO-TEST', 'Barnaby button ready');
+    setPeechoStatus('🧪 Loading Barnaby test…', 'info');
+    try {
+      // Barnaby uses a public Peecho sample PDF.
+      // Set data-src (not data-reference) so Button script serves it directly.
+      const btn = document.getElementById('peechoPrintBtn');
+      btn.setAttribute('data-src', BARNABY_PDF_URL);
+      btn.setAttribute('data-pages', '24');
+      btn.removeAttribute('data-reference');  // not async for Barnaby
+      document.getElementById('peechoButtonWrap').style.display = 'block';
+      if (window.peecho && window.peecho.init) window.peecho.init();
+      setPeechoStatus('🧪 Barnaby test ready! Click “Order This Book” to test Peecho checkout.', 'success');
+      dbg('PEECHO-TEST', 'Barnaby button ready, URL:', BARNABY_PDF_URL);
+    } catch(err) {
+      dbgErr('PEECHO-TEST', err.message);
+      setPeechoStatus('❌ ' + err.message, 'error');
+    }
   }
 
   // ── Peecho Print as Book (Button approach) ─────────────────────────────
@@ -5978,15 +5991,18 @@
       const fileUrl = regData.proxyUrl;
       dbg('PEECHO', 'Proxy URL ready (2hr):', fileUrl.substring(0, 80) + '…');
 
-      // 4. Store merchantReference on the button and show it.
-      //    The async flow: user clicks → configurator opens → they pay on Peecho
-      //    → Peecho pings us back → we supply the PDF URL to complete the order.
+      // 4. Set data-reference on the Peecho button and show it.
+      //    The Peecho Button script reads data-reference and passes it to Peecho
+      //    as the merchantId. After payment Peecho pings our proxy with that ID
+      //    so we can look up the PDF URL and supply it to complete the order.
       const btn = document.getElementById('peechoPrintBtn');
-      btn.dataset.merchantReference = regData.merchantReference;
-      btn.dataset.pages             = String(pageCount);
+      btn.setAttribute('data-reference', regData.merchantReference);
+      btn.setAttribute('data-pages', String(pageCount));
+      btn.removeAttribute('data-src');  // must be absent for async flow
       document.getElementById('peechoButtonWrap').style.display = 'block';
+      if (window.peecho && window.peecho.init) window.peecho.init();
 
-      setPeechoStatus('✅ Your story is ready! Click “Order This Book” to choose your format and complete your order through Peecho.', 'success');
+      setPeechoStatus('✅ Your story is ready! Click “Order This Book” to choose your format, enter your address and pay — all handled by Peecho.', 'success');
       dbg('PEECHO', 'Async button ready, merchantRef:', regData.merchantReference);
 
     } catch(err) {
