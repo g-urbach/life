@@ -92,7 +92,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.51
+  Current: v1.52
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -231,7 +231,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.51 → next review at v1.60.
+  Build counter: currently at v1.52 → next review at v1.60.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -303,9 +303,7 @@
   - Peecho preview image: FIXED in v1.45. PDF served via PEECHO_PROXY edge
     function with DB-backed token. Peecho fetches via proxy with no auth headers
     required — preview should now render in the configurator.
-  - Peecho product IDs in PEECHO_PRODUCTS array are set but currently unused —
-    the Button approach lets Peecho handle product selection at checkout.
-    The array + product selection UI can be removed in a future cleanup.
+  - Peecho product IDs (PEECHO_PRODUCTS): CLEANED UP in v1.52 — dead code removed.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
@@ -335,7 +333,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.51</title>
+  <title>My Life Story v1.52</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1400,7 +1398,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.51</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.52</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2066,7 +2064,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.51 — Fix 401: force token refresh on init and before proxy call; inline improvement reviews in memory";
+  const DEPLOY_NOTES = "v1.52 — Print button loading state; remove PEECHO_PRODUCTS dead code; update regression tests";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2080,12 +2078,8 @@
   // ⚠️  PEECHO_MERCHANT_KEY and PEECHO_SECRET moved to PEECHO_PROXY edge function
   // — they should never live in client-side HTML. The proxy injects them server-side.
   // Production product IDs (www.peecho.com) — updated from Peecho dashboard
-  const PEECHO_PRODUCTS = [
-    { id: 6960859, name: 'Softcover A5',        desc: 'A5 Portrait · Matte 150gsm · 20–300 pages · €4.00 + €0.15/pg', icon: '📄' },
-    { id: 6960857, name: 'Softcover A4',         desc: 'A4 Portrait · Matte 150gsm · 20–300 pages · €4.20 + €0.16/pg', icon: '📋' },
-    { id: 6960853, name: 'Hardcover Luxury A5',  desc: 'A5 Portrait · Mohawk 160gsm · 20–480 pages · €5.20 + €0.20/pg', icon: '📙' },
-    { id: 6960851, name: 'Hardcover Luxury A4',  desc: 'A4 Portrait · Mohawk 160gsm · 20–480 pages · €6.20 + €0.25/pg', icon: '📘' },
-  ];
+  // PEECHO_PRODUCTS removed in v1.52 — was dead code since v1.31.
+  // The Peecho Button approach lets Peecho handle product selection at checkout.
   const STORAGE_SIGN  = SUPABASE_URL + '/storage/v1/object/sign/life-photos';
 
   let sb           = null;
@@ -5846,6 +5840,10 @@
     document.getElementById('peechoButtonWrap').style.display = 'none';
     setPeechoStatus('📤 Uploading your story for printing…', 'info');
 
+    // Disable Print button for duration to prevent double-clicks
+    const printBookBtn = document.getElementById('printBookBtn');
+    if (printBookBtn) { printBookBtn.disabled = true; printBookBtn.textContent = '⏳ Preparing…'; }
+
     // Always force a token refresh before calling the proxy edge function.
     // The cached sessionToken may be expired — refreshSession() guarantees
     // a valid JWT that auth.getUser() in the edge function will accept.
@@ -5856,6 +5854,7 @@
       dbg('PEECHO', 'Session token refreshed before print');
     } catch (refreshErr) {
       setPeechoStatus('❌ Session expired — please sign out and back in', 'error');
+      if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
       return;
     }
 
@@ -5933,6 +5932,9 @@
     } catch(err) {
       dbgErr('PEECHO', err.message);
       setPeechoStatus('❌ ' + err.message, 'error');
+    } finally {
+      // Always restore Print button regardless of success or failure
+      if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
     }
   }
 
