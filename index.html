@@ -153,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.65
+  Current: v1.66
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -292,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.65 → next review at v1.70.
+  Build counter: currently at v1.66 → next review at v1.70.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -394,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.65</title>
+  <title>My Life Story v1.66</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1459,7 +1459,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.65</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.66</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2134,7 +2134,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.65 — Fix 3KB PDF: use position:fixed visibility:hidden instead of left:-9999px";
+  const DEPLOY_NOTES = "v1.66 — Fix 3KB PDF: thumbnail was mutating el before PDF generation; clone el for thumbnail";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5973,16 +5973,20 @@
         + '<p style="text-align:center;margin-top:32px;color:#c9a96e;font-size:0.8rem;border-top:1px solid #e8dcc8;padding-top:12px">Created with My Life Story ♥</p>';
       document.body.appendChild(el);
 
-      // Generate thumbnail using html2pdf's worker chain.
-      // Must call toContainer() before toCanvas(), then use .get('canvas') to extract it.
-      // html2canvas is bundled inside html2pdf — not available as a global.
+      // Generate thumbnail from a CLONE of el — html2pdf mutates the element
+      // during its pipeline, so we must clone before generating the PDF.
+      // If we generate thumbnail after PDF, el has already been mutated/emptied.
       setPeechoStatus('🖼️ Generating cover preview…', 'info');
       let thumbnailUrl = null;
       try {
+        const thumbEl = el.cloneNode(true);
+        thumbEl.style.cssText = el.style.cssText;
+        document.body.appendChild(thumbEl);
         const worker = html2pdf().set({
           html2canvas: { scale: 1, useCORS: true, logging: false, width: 420, windowWidth: 420 }
-        }).from(el).toContainer().toCanvas();
+        }).from(thumbEl).toContainer().toCanvas();
         const canvas = await worker.get('canvas');
+        document.body.removeChild(thumbEl);
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
         // Upload thumbnail to private storage
