@@ -91,7 +91,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.48
+  Current: v1.49
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -230,7 +230,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.48 → next review at v1.50.
+  Build counter: currently at v1.49 → next review at v1.50.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -334,7 +334,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.48</title>
+  <title>My Life Story v1.49</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1399,7 +1399,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.48</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.49</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2065,7 +2065,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.48 — Fix 401 on print proxy: guard against anon key being sent instead of session JWT";
+  const DEPLOY_NOTES = "v1.49 — Fix 401: explicitly restore sessionToken via getSession() on init, not just onAuthStateChange";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2141,6 +2141,15 @@
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
       auth: { persistSession: true, autoRefreshToken: true }
     });
+
+    // Explicitly restore session on init — onAuthStateChange alone can have a
+    // timing gap where the user is logged in but sessionToken is still null.
+    const { data: { session: initSession } } = await sb.auth.getSession();
+    if (initSession) {
+      currentUser  = initSession.user;
+      sessionToken = initSession.access_token;
+      dbg('AUTH', 'Session restored on init:', currentUser.email);
+    }
 
     sb.auth.onAuthStateChange(async (event, session) => {
       dbg('AUTH','Event:', event, session ? session.user.email : 'no session');
