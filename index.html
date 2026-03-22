@@ -153,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.60
+  Current: v1.62
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -292,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.60 → next review at v1.70.
+  Build counter: currently at v1.62 → next review at v1.70.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -394,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.60</title>
+  <title>My Life Story v1.62</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1459,7 +1459,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.60</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.62</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1696,6 +1696,10 @@
         <span class="story-mode-title">Book Edition</span>
         <span class="story-mode-desc">Organised by chapter with headings — print-ready</span>
       </button>
+    </div>
+    <!-- Nudge shown when no story has been generated yet -->
+    <div id="storyNudge" style="padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:0.85rem;color:var(--text-light);margin-bottom:16px">
+      👆 Choose a format above to generate your story, then you can export or print it.
     </div>
     <div style="display:flex;gap:10px;margin-bottom:16px">
       <button class="btn btn-ghost" id="exportPdfBtn" onclick="exportPDF()" style="display:none">📄 Export PDF</button>
@@ -2130,7 +2134,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.60 — Fix thumbnail: use html2pdf toCanvas() not html2canvas global; better empty story guard";
+  const DEPLOY_NOTES = "v1.62 — Fix thumbnail: use html2pdf worker .get(canvas) chain correctly";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2425,6 +2429,13 @@
   const DB_URL = SUPABASE_URL + '/rest/v1/life_entries';
 
   function getAuthHeaders() {
+    // Warn if sessionToken is null — callers get anon key which will be
+    // rejected by edge functions requiring authenticated users.
+    // Root cause is usually a timing issue; refreshSession() before sensitive calls.
+    if (!sessionToken) {
+      dbgWarn('AUTH', 'getAuthHeaders called with no sessionToken — using anon key. '
+        + 'Edge function calls will fail. Call sb.auth.refreshSession() first.');
+    }
     const token = sessionToken ?? SUPABASE_ANON;
     return {
       'Content-Type': 'application/json',
@@ -2652,7 +2663,7 @@
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name === 'help')     document.getElementById('helpInput').focus();
-    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);
+    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);  // intentionally not awaited here — tab switch is fire-and-forget
     if (name === 'memories') populateTagDropdowns('rec');
   }
 
@@ -3710,9 +3721,14 @@
 
       currentStory = { text: story, mode, funny, funnyCaptions };
       skeleton.style.display = 'none';
-      renderStory(story, photoEntries, mode, funnyCaptions, funny);
+      // await renderStory so storyOutput is fully populated before Print as Book
+      // is enabled — previously renderStory was called without await, causing
+      // storyOutput to be empty if the user clicked Print immediately after generation
+      await renderStory(story, photoEntries, mode, funnyCaptions, funny);
       document.getElementById('exportPdfBtn').style.display  = 'inline-block';
       document.getElementById('printBookBtn').style.display  = 'inline-block';
+      const nudge = document.getElementById('storyNudge');
+      if (nudge) nudge.style.display = 'none';
     } catch (err) {
       dbgErr('STORY', err);
       skeleton.style.display = 'none';
@@ -5953,14 +5969,16 @@
         + '<p style="text-align:center;margin-top:32px;color:#c9a96e;font-size:0.8rem;border-top:1px solid #e8dcc8;padding-top:12px">Created with My Life Story ♥</p>';
       document.body.appendChild(el);
 
-      // Generate thumbnail using html2pdf's built-in toCanvas() method.
-      // html2canvas is NOT available as a global — it's bundled inside html2pdf's closure.
+      // Generate thumbnail using html2pdf's worker chain.
+      // Must call toContainer() before toCanvas(), then use .get('canvas') to extract it.
+      // html2canvas is bundled inside html2pdf — not available as a global.
       setPeechoStatus('🖼️ Generating cover preview…', 'info');
       let thumbnailUrl = null;
       try {
-        const canvas = await html2pdf().set({
+        const worker = html2pdf().set({
           html2canvas: { scale: 1, useCORS: true, logging: false, width: 420, windowWidth: 420 }
-        }).from(el).toCanvas();
+        }).from(el).toContainer().toCanvas();
+        const canvas = await worker.get('canvas');
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
         // Upload thumbnail to public path so Peecho can fetch it without auth
