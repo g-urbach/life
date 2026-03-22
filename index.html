@@ -153,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.59
+  Current: v1.60
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -292,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.59 → next review at v1.60.
+  Build counter: currently at v1.60 → next review at v1.70.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -394,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.59</title>
+  <title>My Life Story v1.60</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1459,7 +1459,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.59</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.60</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2130,7 +2130,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.59 — Generate thumbnail cover image, supply as data-thumbnail to Peecho button for preview";
+  const DEPLOY_NOTES = "v1.60 — Fix thumbnail: use html2pdf toCanvas() not html2canvas global; better empty story guard";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5937,7 +5937,8 @@
       //    without needing to fetch and render our PDF (which it can't do in async mode).
       setPeechoStatus('📄 Generating PDF (this may take a moment)…', 'info');
       const storyHtml  = document.getElementById('storyOutput')?.innerHTML || '';
-      if (!storyHtml.trim()) throw new Error('Story is empty — please generate a story first');
+      const storyText  = storyHtml.replace(/<[^>]+>/g, '').trim();
+      if (!storyText || storyText.length < 50) throw new Error('Story is empty or still loading — please wait for the story to finish generating, then try again');
       const name       = userProfile.name || 'My';
       const title      = currentStory.funny ? name + "\'s Life Story (Comedy Edition)" : name + "\'s Life Story";
       const pageCount  = Math.max(20, Math.ceil((storyHtml.replace(/<[^>]+>/g,'').length / 1800)));
@@ -5952,16 +5953,14 @@
         + '<p style="text-align:center;margin-top:32px;color:#c9a96e;font-size:0.8rem;border-top:1px solid #e8dcc8;padding-top:12px">Created with My Life Story ♥</p>';
       document.body.appendChild(el);
 
-      // Generate thumbnail from the cover (first ~200px of the element)
-      // html2canvas is bundled with html2pdf so it's available as window.html2canvas
+      // Generate thumbnail using html2pdf's built-in toCanvas() method.
+      // html2canvas is NOT available as a global — it's bundled inside html2pdf's closure.
       setPeechoStatus('🖼️ Generating cover preview…', 'info');
       let thumbnailUrl = null;
       try {
-        const canvas = await html2canvas(el, {
-          scale: 1, useCORS: true, logging: false,
-          width: 420, height: 594,  // A5 proportions in px at 72dpi
-          windowWidth: 420
-        });
+        const canvas = await html2pdf().set({
+          html2canvas: { scale: 1, useCORS: true, logging: false, width: 420, windowWidth: 420 }
+        }).from(el).toCanvas();
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
         // Upload thumbnail to public path so Peecho can fetch it without auth
