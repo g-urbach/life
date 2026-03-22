@@ -4,9 +4,15 @@
   MY LIFE STORY — Single-File Web Application
 ================================================================================
 
+  PROJECT MEMORY
+  --------------
+  This comment block is the single source of truth for this project.
+  When a new Claude session starts, the developer uploads this file and Claude
+  reads this block first to understand the full project context. If it is
+  stale, Claude will have wrong information and make mistakes. Keep it honest.
+
   ⚠️  CLAUDE INSTRUCTION — MANDATORY ON EVERY SINGLE BUILD
   ------------------------------------------------------------
-  This comment block is the ONLY source of truth for this project.
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
@@ -14,25 +20,39 @@
   2. Move completed backlog items into FEATURES IMPLEMENTED.
   3. Add any new backlog items or ideas raised during the session.
   4. Fix any KNOWN LIMITATIONS that were resolved.
-  5. Always tell the user the new version number in chat (e.g. "v1.07 ready").
-  6. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
+  5. Update KNOWN ISSUES if new risks or edge cases are identified.
+  6. Always tell the user the new version number in chat (e.g. "v1.07 ready").
+  7. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
      the specific risk. Primary dev is on laptop; mobile is tested separately.
      See MOBILE TESTING NOTES section for known concerns.
-  7. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
+  8. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
      function (e.g. "function foo() {"), ALWAYS include the full function body
      in old_str — never just the opening line. Partial matches silently drop
      the body, causing "Unexpected token '}'" or "Unexpected end of input".
      ALWAYS run node --check after every edit before shipping.
 
+  ENGINEERING PHILOSOPHY
+  ----------------------
+  This project prioritises quality over speed. Claude should always:
+  - Propose the robust, architecturally correct solution first — even if it
+    requires more steps or infrastructure. The developer is willing to put in
+    the time and energy to do things properly.
+  - Flag quick fixes explicitly as such and explain the tradeoff, so the
+    developer can make an informed choice. Never silently apply a shortcut.
+  - Low cost is a real constraint: prefer free tiers and serverless where
+    possible, but not at the expense of correctness or security.
+  - Treat code hygiene as a first-class concern: comments, backlog, known
+    issues, regression tests, and this PROJECT MEMORY block should be kept
+    accurate and up to date on every single build — not just when asked.
+  - Every 10 builds (v1.50, v1.60, etc.), before writing any code, review
+    the full file and suggest 5 improvements not already on the backlog.
+    These can cover code hygiene, usability, architecture, security, or
+    features. Present them to the developer for prioritisation before proceeding.
+
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
   - Major bump (e.g. v1.06 → v2.00): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
-
-  WHY THIS MATTERS: When the context window fills up and a new Claude session
-  starts, the developer uploads this file and the new Claude reads this block
-  to understand the entire project. If it is stale, the new Claude will have
-  wrong information and make mistakes.
   ------------------------------------------------------------
 
   DESCRIPTION
@@ -71,7 +91,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.41
+  Current: v1.46
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -161,11 +181,26 @@
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - Peecho: convert story to PDF before upload (currently HTML — Peecho can't
-    preview HTML, only PDF). Use browser print API or jsPDF library.
-  - Peecho: test full order flow with real story end-to-end
+  - Peecho: test full order flow with real story end-to-end (preview fix in v1.45)
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
+  - PEECHO_PROXY rate limiting: add per-user request count check in edge function
+    to prevent abuse once app has more users
+  - Supabase RLS audit: confirm life_entries and life-photos are scoped to
+    user_id; verify a user cannot access another user's data via direct API call
+
+  - Error notification system: alert Geoff immediately when runtime errors occur
+    (storage quota, AI token exhaustion, auth failures, edge fn errors) so issues
+    during testing/use can be responded to quickly. Recommended stack:
+      · Resend (resend.com) — 3,000 emails/month free, simple API, best for
+        detailed error reports and non-urgent alerts
+      · Telegram bot — free forever, instant phone push notification, best for
+        "something just broke" critical alerts; set up via @BotFather in ~5 mins
+      · Implementation: thin notifyDev(level, context, detail) helper in the
+        edge functions; client-side errors POST to a new NOTIFY_PROXY edge fn
+        which calls Resend + Telegram. Never expose API keys in HTML.
+      · Suggested triggers: Supabase storage quota >80%, AI 429/rate-limit errors,
+        edge function 5xx, auth failures spike, Peecho API errors
 
   MEDIUM
   - Era/decade dashboard tile — drill-down by decade (1970s, 1980s etc.)
@@ -175,6 +210,9 @@
   - Memory prompts: filter by what's uncovered
   - Untagged entries nudge tile (only shown when entries missing chapter tags)
   - Conversation threads tile (count of AI conversation chains)
+  - Data export / right to deletion flow (GDPR / Aus Privacy Act)
+  - pg_cron scheduled cleanup for life_print_tokens (daily delete of expired rows)
+    — currently handled opportunistically in edge function, fine for low volume
 
   LOWER / FUTURE
   - Family Tree tab: people registry with relationships, entry counts,
@@ -184,6 +222,15 @@
   - Shareable read-only story link
   - Chapter-by-chapter story generation (already has chapter tag)
   - Audio version — TTS personal audiobook export
+  - Move AI prompt logic + story generation into edge functions (less in HTML,
+    harder to copy, stronger moat)
+
+  CONTINUOUS IMPROVEMENT
+  ----------------------
+  Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
+  suggest 5 improvements not already on the backlog — covering code hygiene,
+  usability, architecture, security, or features — for Geoff to prioritise.
+  Build counter: currently at v1.46 → next review at v1.50.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -200,10 +247,17 @@
   SECURITY — make sure data is secure
   - SUPABASE_ANON key in HTML is FINE — designed to be public, protected by RLS
   - PEECHO_MERCHANT_KEY and PEECHO_SECRET removed from HTML (v1.31) — now in edge fn
+  - SUPABASE_SERVICE_ROLE_KEY: set as Supabase secret via `supabase secrets set`,
+    never in HTML. Used by PEECHO_PROXY to fetch PDFs from private storage.
+  - Print tokens (life_print_tokens): 32-byte crypto-random, 2hr TTL, max 20 uses,
+    user_id ownership enforced on creation (v1.45+)
+  - Notification API keys (Resend, Telegram): must live in edge function secrets
+    only — never in HTML. Add when notification system is implemented.
   - TODO: Review Supabase RLS policies on life_entries — confirm user_id scoping
   - TODO: Confirm storage bucket (life-photos) has per-user access policies
   - TODO: Audit — can a user access another user's data via direct API?
   - TODO: Data export / right to deletion flow for GDPR / Aus Privacy Act
+  - TODO: Add rate limiting to PEECHO_PROXY once multi-user (see BACKLOG HIGH)
   - FUTURE: Move AI prompt logic, story generation into edge functions (less in HTML)
 
   PROMOTE — enable/encourage others to use
@@ -245,10 +299,9 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho preview image: story is uploaded as HTML, Peecho may not render HTML
-    previews (only PDFs). To get a proper preview, story needs to be converted
-    to PDF before upload. Future fix: use browser print-to-PDF or a PDF library.
-    The signed URL itself works fine — Peecho can fetch it as a plain GET.
+  - Peecho preview image: FIXED in v1.45. PDF served via PEECHO_PROXY edge
+    function with DB-backed token. Peecho fetches via proxy with no auth headers
+    required — preview should now render in the configurator.
   - Peecho product IDs in PEECHO_PRODUCTS array are set but currently unused —
     the Button approach lets Peecho handle product selection at checkout.
     The array + product selection UI can be removed in a future cleanup.
@@ -256,6 +309,9 @@
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
   - iOS TTS: must prime speechSynthesis on user gesture tap
+  - No runtime error alerting yet: if storage fills up or AI tokens are exhausted
+    during a user session, Geoff won't know until manually checking. Notification
+    system is in BACKLOG HIGH.
 
   MOBILE TESTING NOTES (primary dev is on laptop — phone testing is secondary)
   -----------------------------------------------------------------------------
@@ -278,7 +334,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.41</title>
+  <title>My Life Story v1.46</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1343,7 +1399,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.41</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.46</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1586,43 +1642,7 @@
       <button class="btn btn-secondary" id="printBookBtn" onclick="showPrintBookPanel()" style="display:none">🖨️ Print as Book</button>
     </div>
 
-    <!-- Peecho Print Button -->
-  <script type="text/javascript">
-    var p=document.createElement("script");p.type="text/javascript";p.async=true;
-    var h=("https:"==document.location.protocol?"https://":"http://");
-    p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
-    var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
-  </script>
-  <script>
-    // Intercept Peecho's navigation and force it into a new tab
-    // Peecho's script does window.location = configuratorUrl, bypassing target="_blank"
-    // We override window.location setter to catch peecho.com URLs
-    (function() {
-      var _assign = window.location.assign.bind(window.location);
-      var _replace = window.location.replace.bind(window.location);
-      function interceptPeecho(url) {
-        if (url && url.toString().includes('peecho.com')) {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return true;
-        }
-        return false;
-      }
-      window.location.assign = function(url) {
-        if (!interceptPeecho(url)) _assign(url);
-      };
-      window.location.replace = function(url) {
-        if (!interceptPeecho(url)) _replace(url);
-      };
-      // Also catch direct href changes via onclick
-      document.addEventListener('click', function(e) {
-        var a = e.target.closest('a');
-        if (a && a.href && a.href.includes('peecho.com/configurator')) {
-          e.preventDefault();
-          window.open(a.href, '_blank', 'noopener,noreferrer');
-        }
-      }, true);
-    })();
-  </script>
+    <!-- Peecho: button script not needed — we call their API directly and window.open the configurator -->
     <div id="printBookPanel" style="display:none;margin-bottom:24px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px">
         <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;margin-bottom:4px">🖨️ Print Your Life Story as a Book</h3>
@@ -1630,24 +1650,12 @@
         <div id="peechoStatus" style="padding:12px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;background:var(--surface2);color:var(--text-light)">
           Preparing your book…
         </div>
-        <!-- Peecho Button renders here once PDF is ready -->
+        <!-- Our own Order button — opens Peecho configurator in new tab -->
         <div id="peechoButtonWrap" style="margin-bottom:16px;display:none">
-          <a id="peechoPrintBtn"
-             title="Peecho"
-             href="https://www.peecho.com/"
-             class="peecho-print-button"
-             target="_blank"
-             rel="noopener noreferrer"
-             data-filetype="pdf"
-             data-width="210"
-             data-height="297"
-             data-pages="50"
-             data-noprice="false"
-             data-currency="AUD"
-             data-locale="en_EN"
-             data-src="">
+          <button id="peechoPrintBtn" onclick="openPeechoConfigurator()" class="btn btn-primary" style="font-size:1rem;padding:14px 28px">
             🛒 Order This Book
-          </a>
+          </button>
+          <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px">Opens Peecho checkout in a new tab — choose your format, enter address and pay there.</p>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn btn-ghost" onclick="document.getElementById('printBookPanel').style.display='none'">Cancel</button>
@@ -2015,7 +2023,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.41 — Peecho: generate real PDF via html2pdf for preview; intercept navigation to open in new tab";
+  const DEPLOY_NOTES = "v1.46 — Project Memory: add engineering philosophy, continuous improvement cycle, notification system backlog, security notes";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5717,6 +5725,53 @@
     a.click();
   }
 
+  // Opens Peecho configurator in a new tab using the publicationId returned
+  // from the button API. We open the tab IMMEDIATELY on click (before any async)
+  // to avoid browser popup blockers which block window.open after await.
+  async function openPeechoConfigurator() {
+    const btn = document.getElementById('peechoPrintBtn');
+    const fileUrl = btn.dataset.src;
+    if (!fileUrl) return toast('Please wait — file not ready yet');
+
+    // Open blank tab immediately while we're still in the click handler
+    const newTab = window.open('', '_blank', 'noopener,noreferrer');
+    if (!newTab) return toast('Please allow popups for this site to open Peecho checkout');
+
+    btn.disabled = true;
+    btn.textContent = 'Opening Peecho…';
+    try {
+      // POST to Peecho's button API to register the file and get a publicationId
+      const res = await fetch('https://secure.print.peecho.com/button/publication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buttonKey: '177345578807966651',
+          contentUrl: fileUrl,
+          fileType: 'pdf',
+          width: 148,
+          height: 210,
+          numberOfPages: parseInt(btn.dataset.pages || '50'),
+          currency: 'AUD',
+          locale: 'en_EN'
+        })
+      });
+      if (!res.ok) throw new Error('Peecho API error: ' + res.status);
+      const data = await res.json();
+      const pubId = data.publicationId || data.id || data.publication_id;
+      if (!pubId) throw new Error('No publicationId returned: ' + JSON.stringify(data));
+      dbg('PEECHO', 'publicationId:', pubId);
+      // Navigate the already-opened tab to the configurator
+      newTab.location.href = 'https://peecho.com/configurator?publicationId=' + pubId;
+    } catch(err) {
+      newTab.close();
+      dbgErr('PEECHO', 'openPeechoConfigurator:', err.message);
+      toast('❌ ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🛒 Order This Book';
+    }
+  }
+
   // Barnaby test PDF (9-page sample for Peecho testing)
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
 
@@ -5724,20 +5779,13 @@
     if (!currentUser) return toast('Please sign in first');
     document.getElementById('printBookPanel').style.display = 'block';
     document.getElementById('peechoButtonWrap').style.display = 'none';
-    setPeechoStatus('🧪 Loading Barnaby test file…', 'info');
-    try {
-      // Use Peecho's own public sample PDF directly — no upload needed
-      const btn = document.getElementById('peechoPrintBtn');
-      btn.setAttribute('data-src', BARNABY_PDF_URL);
-      btn.setAttribute('data-pages', '24');
-      document.getElementById('peechoButtonWrap').style.display = 'block';
-      if (window.peecho && window.peecho.init) window.peecho.init();
-      setPeechoStatus('🧪 Barnaby test ready! Click the button to test Peecho checkout.', 'success');
-      dbg('PEECHO-TEST', 'Barnaby button ready, URL:', BARNABY_PDF_URL);
-    } catch(err) {
-      dbgErr('PEECHO-TEST', err.message);
-      setPeechoStatus('❌ ' + err.message, 'error');
-    }
+    setPeechoStatus('🧪 Barnaby test ready — click Order This Book to test Peecho checkout.', 'success');
+    // Set the Barnaby PDF URL on the button so openPeechoConfigurator picks it up
+    const btn = document.getElementById('peechoPrintBtn');
+    btn.setAttribute('data-src', BARNABY_PDF_URL);
+    btn.setAttribute('data-pages', '24');
+    document.getElementById('peechoButtonWrap').style.display = 'block';
+    dbg('PEECHO-TEST', 'Barnaby ready, URL:', BARNABY_PDF_URL);
   }
 
   // ── Peecho Print as Book (Button approach) ─────────────────────────────
@@ -5819,7 +5867,6 @@
       document.getElementById('peechoButtonWrap').style.display = 'block';
 
       // Re-trigger Peecho Button script to pick up the new element
-      if (window.peecho && window.peecho.init) window.peecho.init();
 
       setPeechoStatus('✅ Your story is ready! Click the button below to choose your book format and complete your order through Peecho.', 'success');
       dbg('PEECHO', 'Button ready, pages:', pageCount);
