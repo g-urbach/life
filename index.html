@@ -33,22 +33,82 @@
 
   ENGINEERING PHILOSOPHY
   ----------------------
-  This project prioritises quality over speed. Claude should always:
+
+  ON SOLUTIONS — NO WORKAROUNDS:
+  - There are only two acceptable solution types: the correct solution, or an
+    explicitly flagged temporary measure with a clear plan to replace it.
+  - Workarounds are not acceptable. They solve one problem while introducing
+    second-order effects that compound and become harder to unpick later.
+  - Before proposing anything, ask: is this the right way, or am I patching
+    around a problem? If it is a patch, say so and stop — diagnose the root
+    cause instead. Never silently apply a shortcut.
   - Propose the robust, architecturally correct solution first — even if it
-    requires more steps or infrastructure. The developer is willing to put in
-    the time and energy to do things properly.
-  - Flag quick fixes explicitly as such and explain the tradeoff, so the
-    developer can make an informed choice. Never silently apply a shortcut.
+    requires more steps or infrastructure. Geoff is willing to put in the time.
   - Low cost is a real constraint: prefer free tiers and serverless where
     possible, but not at the expense of correctness or security.
+
+  ON DECISIONS — OPEN TO IMPROVEMENT:
+  - All decisions in PRODUCT DECISIONS are current best choices given
+    constraints, not permanent commitments. If a better approach exists, or a
+    limitation is found, raise it and discuss. Never work around a bad decision
+    — revisit it. This applies to everything: AI provider, print vendor,
+    auth, hosting, database. Geoff is open to improvements on any front.
+  - Before suggesting solutions, verify consistency with PRODUCT DECISIONS.
+    Never contradict an established decision without flagging the conflict first.
+  - When a question implies a constraint, treat it as a product decision and
+    record it. Clarify constraints BEFORE presenting options — wrong options
+    waste time and erode trust.
+
+  ON HYGIENE — CONTINUOUS IMPROVEMENT:
   - Treat code hygiene as a first-class concern: comments, backlog, known
-    issues, regression tests, and this PROJECT MEMORY block should be kept
-    accurate and up to date on every single build — not just when asked.
-  - Every 10 builds (v1.60, v1.70, etc.), suggest 5 improvements not already
-    on the backlog — INLINE after delivering the build, never as a blocker.
-    Cover code hygiene, usability, architecture, security, or features.
-    Do not wait for a good time — there never is one. Just include it.
-    v1.50 review already delivered in chat.
+    issues, regression tests, and PROJECT MEMORY must be kept accurate on
+    every build — not just when asked.
+  - Every 10 builds (v1.60, v1.70, etc.), suggest 5 improvements not on the
+    backlog — INLINE after the build, never as a blocker. Do not wait for a
+    good time — there never is one. v1.50 review already delivered in chat.
+
+  PRODUCT DECISIONS
+  -----------------
+  Current best choices given constraints. All open to revision if a better
+  way is found — raise it, do not work around it.
+
+  PRINT / PEECHO
+  - Print-on-demand vendor: Peecho (peecho.com). Open to alternatives if
+    a better solution is found — raise and discuss.
+  - Integration method: Async Button flow (v1.55+). NOT the Button script.
+    Flow: PDF uploaded → token registered → user opens Peecho configurator
+    → pays on Peecho → Peecho pings back → we supply PDF URL → Peecho prints.
+  - The book preview MUST come from Peecho's own configurator — never
+    approximated in-app. Users need certainty before spending money.
+  - PDF generated client-side via html2pdf, uploaded to private Supabase
+    storage, served publicly via PEECHO_PROXY edge function with DB-backed token.
+  - Peecho Button script (cloudfront CDN) is NOT used — it does not support
+    dynamic PDF generation. The async flow replaces it entirely.
+  - Pingback URL (set in Peecho dashboard → Settings → Async Button):
+    https://zygetlpgjkpyiyjquhfp.supabase.co/functions/v1/PEECHO_PROXY?pingback=true
+
+  AI / STORY GENERATION
+  - AI provider: Groq (llama-3.3-70b-versatile) via Supabase edge function
+    AI_PROXY. Current choice is cost-driven — Geoff is open to switching
+    when budget allows or a clearly better option is found. If a limitation
+    is discovered (quality, rate limits, context window, cost at scale),
+    raise it and discuss rather than working around it.
+  - Story generation is client-triggered, not scheduled or automatic.
+
+  PRINT / VENDOR
+  - Current vendor: Peecho. Chosen for print-on-demand simplicity and
+    hosted checkout. Open to alternatives if a better solution exists —
+    raise and discuss rather than treating Peecho as fixed.
+
+  AUTH
+  - Supabase Auth with email/password. No social login planned currently.
+  - Session tokens must always be refreshed before edge function calls —
+    cached tokens can be expired (root cause of the v1.51 401 bug).
+
+  DATA
+  - All user data stays in Supabase (AU region). No third-party data storage
+    except: Peecho receives the PDF for printing (per their terms), and Groq
+    receives story text for AI generation (per their terms).
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
@@ -92,7 +152,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.52
+  Current: v1.56
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -231,7 +291,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.52 → next review at v1.60.
+  Build counter: currently at v1.56 → next review at v1.60.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -333,7 +393,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.52</title>
+  <title>My Life Story v1.56</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1398,7 +1458,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.52</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.56</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1641,37 +1701,8 @@
       <button class="btn btn-secondary" id="printBookBtn" onclick="showPrintBookPanel()" style="display:none">🖨️ Print as Book</button>
     </div>
 
-    <!-- Peecho Print Button script — Peecho's own JS activates the <a> tag below -->
-  <script type="text/javascript">
-    var p=document.createElement("script");p.type="text/javascript";p.async=true;
-    var h=("https:"==document.location.protocol?"https://":"http://");
-    p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
-    var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
-  </script>
-  <script>
-    // Peecho's script navigates window.location to the configurator URL.
-    // We intercept that and force it into a new tab instead.
-    (function() {
-      var _assign  = window.location.assign.bind(window.location);
-      var _replace = window.location.replace.bind(window.location);
-      function interceptPeecho(url) {
-        if (url && url.toString().includes('peecho.com')) {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return true;
-        }
-        return false;
-      }
-      window.location.assign  = function(url) { if (!interceptPeecho(url)) _assign(url); };
-      window.location.replace = function(url) { if (!interceptPeecho(url)) _replace(url); };
-      document.addEventListener('click', function(e) {
-        var a = e.target.closest('a');
-        if (a && a.href && a.href.includes('peecho.com/configurator')) {
-          e.preventDefault();
-          window.open(a.href, '_blank', 'noopener,noreferrer');
-        }
-      }, true);
-    })();
-  </script>
+    <!-- No Peecho Button script needed for async flow —
+         we open the configurator directly via window.open after PDF upload -->
     <div id="printBookPanel" style="display:none;margin-bottom:24px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px">
         <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;margin-bottom:4px">🖨️ Print Your Life Story as a Book</h3>
@@ -1679,24 +1710,17 @@
         <div id="peechoStatus" style="padding:12px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;background:var(--surface2);color:var(--text-light)">
           Preparing your book…
         </div>
-        <!-- Peecho Button — activated by Peecho's script once data-src is set -->
+        <!-- Async Peecho flow: button opens configurator via window.open
+             after PDF is uploaded and token registered. No Peecho script needed. -->
         <div id="peechoButtonWrap" style="margin-bottom:16px;display:none">
-          <a id="peechoPrintBtn"
-             title="Peecho"
-             href="https://www.peecho.com/"
-             class="peecho-print-button"
-             target="_blank"
-             rel="noopener noreferrer"
-             data-filetype="pdf"
-             data-width="148"
-             data-height="210"
-             data-pages="50"
-             data-noprice="false"
-             data-currency="AUD"
-             data-locale="en_EN"
-             data-src="">
-            🛒 Order This Book
-          </a>
+          <button id="peechoPrintBtn" onclick="openPeechoConfigurator()"
+                  class="btn btn-primary" style="font-size:1rem;padding:14px 28px">
+            🛒 Order This Book — Powered by Peecho
+          </button>
+          <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px">
+            Opens Peecho’s checkout in a new tab — choose your format, enter your
+            address and pay there. Your book is printed and shipped by Peecho.
+          </p>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn btn-ghost" onclick="document.getElementById('printBookPanel').style.display='none'">Cancel</button>
@@ -2064,7 +2088,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.52 — Print button loading state; remove PEECHO_PRODUCTS dead code; update regression tests";
+  const DEPLOY_NOTES = "v1.56 — Fix async Peecho flow: correct set_source_url endpoint, correct checkout URL with data-reference";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5793,27 +5817,63 @@
   // Opens Peecho configurator in a new tab using the publicationId returned
   // from the button API. We open the tab IMMEDIATELY on click (before any async)
   // to avoid browser popup blockers which block window.open after await.
-  // Barnaby test PDF (9-page sample for Peecho testing)
+  // Barnaby test PDF (public Peecho sample — for testing async flow)
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
+
+  // Opens Peecho checkout using the async Button approach.
+  // The Button script reads data-reference (our merchant ref) and data-pages
+  // from the <a> element, then navigates to Peecho's hosted checkout.
+  // After payment Peecho pings PEECHO_PROXY?pingback=true with merchantId=data-reference.
+  // For Barnaby test: uses the public sample PDF directly (not async).
+  function openPeechoConfigurator() {
+    const btn         = document.getElementById('peechoPrintBtn');
+    const merchantRef = btn.dataset.merchantReference;
+    const isBarnaby   = btn.dataset.barnaby === 'true';
+
+    if (!merchantRef && !isBarnaby) return toast('Please wait — story not ready yet');
+
+    if (isBarnaby) {
+      // Barnaby: register with Peecho button API directly then open configurator
+      // Uses the public sample PDF — no upload or proxy needed for testing
+      const newTab = window.open(
+        'https://secure.print.peecho.com/button/publication' +
+        '?buttonKey=177345578807966651' +
+        '&contentUrl=' + encodeURIComponent(BARNABY_PDF_URL) +
+        '&fileType=pdf&width=148&height=210&numberOfPages=24&currency=AUD&locale=en_EN',
+        '_blank'
+      );
+      if (!newTab) toast('Please allow popups to open Peecho checkout');
+      dbg('PEECHO-TEST', 'Barnaby configurator opened');
+      return;
+    }
+
+    // Real story async flow — open Peecho checkout with our merchant reference.
+    // Peecho handles product selection, shipping and payment.
+    // After payment, Peecho pings us back at the Webhooks URL set in the dashboard
+    // with merchantId=merchantRef so we can supply the PDF URL.
+    const checkoutUrl = 'https://www.peecho.com/checkout/order'
+      + '?buttonKey=177345578807966651'
+      + '&reference=' + encodeURIComponent(merchantRef)
+      + '&pages=' + (btn.dataset.pages || '50')
+      + '&width=148&height=210'
+      + '&currency=AUD&locale=en_EN';
+
+    const newTab = window.open(checkoutUrl, '_blank');
+    if (!newTab) toast('Please allow popups to open Peecho checkout');
+    dbg('PEECHO', 'Async checkout opened, ref:', merchantRef);
+  }
 
   async function sendBarnabyTest() {
     if (!currentUser) return toast('Please sign in first');
     document.getElementById('printBookPanel').style.display = 'block';
     document.getElementById('peechoButtonWrap').style.display = 'none';
-    setPeechoStatus('🧪 Loading Barnaby test file…', 'info');
-    try {
-      // Barnaby uses a public Peecho sample PDF — no upload or proxy needed
-      const btn = document.getElementById('peechoPrintBtn');
-      btn.setAttribute('data-src', BARNABY_PDF_URL);
-      btn.setAttribute('data-pages', '24');
-      document.getElementById('peechoButtonWrap').style.display = 'block';
-      if (window.peecho && window.peecho.init) window.peecho.init();
-      setPeechoStatus('🧪 Barnaby test ready! Click the button to test Peecho checkout.', 'success');
-      dbg('PEECHO-TEST', 'Barnaby button ready, URL:', BARNABY_PDF_URL);
-    } catch(err) {
-      dbgErr('PEECHO-TEST', err.message);
-      setPeechoStatus('❌ ' + err.message, 'error');
-    }
+    setPeechoStatus('🧪 Barnaby test ready — click Order to test Peecho checkout.', 'success');
+    const btn = document.getElementById('peechoPrintBtn');
+    btn.dataset.barnaby = 'true';
+    btn.dataset.pages   = '24';
+    delete btn.dataset.merchantReference;
+    document.getElementById('peechoButtonWrap').style.display = 'block';
+    dbg('PEECHO-TEST', 'Barnaby button ready');
   }
 
   // ── Peecho Print as Book (Button approach) ─────────────────────────────
@@ -5918,16 +5978,16 @@
       const fileUrl = regData.proxyUrl;
       dbg('PEECHO', 'Proxy URL ready (2hr):', fileUrl.substring(0, 80) + '…');
 
-      // 4. Inject proxy URL into Peecho Button and show it.
-      //    Peecho fetches this URL to generate the preview thumbnail.
+      // 4. Store merchantReference on the button and show it.
+      //    The async flow: user clicks → configurator opens → they pay on Peecho
+      //    → Peecho pings us back → we supply the PDF URL to complete the order.
       const btn = document.getElementById('peechoPrintBtn');
-      btn.setAttribute('data-src', fileUrl);
-      btn.setAttribute('data-pages', String(pageCount));
+      btn.dataset.merchantReference = regData.merchantReference;
+      btn.dataset.pages             = String(pageCount);
       document.getElementById('peechoButtonWrap').style.display = 'block';
-      if (window.peecho && window.peecho.init) window.peecho.init();
 
-      setPeechoStatus('✅ Your story is ready! Click the button below to choose your book format and complete your order through Peecho.', 'success');
-      dbg('PEECHO', 'Button ready, pages:', pageCount);
+      setPeechoStatus('✅ Your story is ready! Click “Order This Book” to choose your format and complete your order through Peecho.', 'success');
+      dbg('PEECHO', 'Async button ready, merchantRef:', regData.merchantReference);
 
     } catch(err) {
       dbgErr('PEECHO', err.message);
