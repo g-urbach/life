@@ -154,7 +154,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.81
+  Current: v1.82
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -395,7 +395,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.81</title>
+  <title>My Life Story v1.82</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1461,7 +1461,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.81</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.82</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1718,16 +1718,15 @@
     p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
     var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
   </script>
-    <!-- Hidden Peecho anchor. printBook() sets data-src + data-pages then calls
-         window.peecho.attach(btn) to register it, then btn.click() to navigate.
-         Never shown to user — the visible "Print as Book" button drives the flow. -->
-    <!-- position:absolute + opacity:0 hides the button visually without display:none.
-         The Peecho Button script checks element visibility before navigating —
-         display:none causes it to silently do nothing on click (v1.80 lesson). -->
+    <!-- Peecho anchor — hidden until printBook() finishes preparing the PDF.
+         The Peecho Button script requires a real user gesture to navigate.
+         Programmatic .click() is ignored (v1.81 lesson: synthetic clicks don't trigger
+         Peecho's redirect). Solution: show this button after prep, user clicks it once.
+         Two interactions total: "Print as Book" to prepare, then this to go to Peecho. -->
     <a id="peechoPrintBtn"
        href="https://www.peecho.com/"
        class="peecho-print-button"
-       style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden"
+       style="display:none;margin-top:12px"
        data-filetype="pdf"
        data-width="148"
        data-height="210"
@@ -1735,7 +1734,7 @@
        data-noprice="false"
        data-currency="AUD"
        data-locale="en_EN"
-       data-src=""></a>
+       data-src="">🛒 Order This Book</a>
     </div>
     <div id="storySkeletonLoader" style="display:none">
       <div class="ai-thinking">
@@ -2096,7 +2095,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.81 — Fix Peecho click: replace display:none with opacity:0/position:absolute — Button script ignores clicks on display:none elements";
+  const DEPLOY_NOTES = "v1.82 — Peecho real-gesture fix: reveal Order This Book button after prep, user clicks it (programmatic .click() silently ignored by Button script)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2186,7 +2185,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.81 starting...');
+    dbg('INIT','v1.82 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -5878,29 +5877,26 @@
   //   2. PDF generated client-side (jsPDF), uploaded to private Supabase storage
   //   3. Token registered with PEECHO_PROXY → proxyUrl returned & saved in DB
   //   4. Cleanup runs AFTER token is saved (fixes race condition from v1.78/v1.79)
-  //   5. data-src set on hidden <a class="peecho-print-button">, peecho.attach(btn)
-  //      called to register it with the Button script, then btn.click() triggers
-  //      Peecho's own navigation to peecho.com/configurator?publicationId=xxx
-  // The Button script MUST be on the page — it creates the publicationId that the
-  // configurator needs. We cannot construct that URL ourselves (v1.79 lesson).
+  //   5. data-src set on <a id="peechoPrintBtn">, peecho.attach(btn) called,
+  //      button revealed — user clicks it to navigate (real gesture required).
+  //      Programmatic .click() silently ignored by Button script (v1.81 lesson).
+  // Two clicks total: "Print as Book" prepares, "Order This Book" navigates.
   //
-  // Barnaby test (debug only): call window.peechoBarnabyTest() in console.
+  // Barnaby test (debug only): call window.peechoBarnabyTest() in console
+  //   — sets data-src to sample PDF and reveals the Order button for clicking.
 
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
 
-  // Debug helper — call from browser console to test Peecho flow with sample PDF
+  // Debug helper — reveals the Peecho button with the Barnaby sample PDF.
+  // After running this, click the "Order This Book" button that appears.
   window.peechoBarnabyTest = function() {
     const btn = document.getElementById('peechoPrintBtn');
     if (!btn) return console.error('peechoPrintBtn not found');
     btn.setAttribute('data-src', BARNABY_PDF_URL);
     btn.setAttribute('data-pages', '24');
-    if (window.peecho && window.peecho.attach) {
-      window.peecho.attach(btn);
-      btn.click();
-      dbg('PEECHO-TEST', 'Barnaby: attach + click fired');
-    } else {
-      console.error('window.peecho.attach not available — Button script not loaded yet?');
-    }
+    if (window.peecho && window.peecho.attach) window.peecho.attach(btn);
+    btn.style.display = 'inline-block';
+    dbg('PEECHO-TEST', 'Barnaby: button revealed — click "Order This Book" to proceed');
   };
 
   async function printBook() {
@@ -6115,40 +6111,33 @@
       }).then(() => dbg('PEECHO', 'Old print files cleaned up'))
         .catch(e => dbgWarn('PEECHO', 'Cleanup failed (non-fatal):', e.message));
 
-      // 5. Hand off to the Peecho Button script.
-      //    The script requires data-src to be set on the <a> tag, then attach()
-      //    registers the publication with Peecho and btn.click() navigates to
-      //    peecho.com/configurator?publicationId=xxx (created by Peecho's script).
-      //    We cannot construct this URL ourselves — publicationId comes from Peecho.
+      // 5. Set data-src on the Peecho anchor and reveal it for the user to click.
+      //    The Button script requires a real user gesture — programmatic .click()
+      //    is silently ignored (v1.81 confirmed). Two clicks total: "Print as Book"
+      //    to prepare, then "Order This Book" to navigate to Peecho.
       const btn = document.getElementById('peechoPrintBtn');
       btn.setAttribute('data-src', regData.proxyUrl);
       btn.setAttribute('data-pages', String(pageCount));
 
       if (window.peecho && window.peecho.attach) {
         window.peecho.attach(btn);
-        dbg('PEECHO', 'peecho.attach() called, triggering click…');
-        btn.click();
+        dbg('PEECHO', 'peecho.attach() called, button revealed for user click');
       } else {
-        // Button script not loaded yet — wait briefly and retry once
-        dbgWarn('PEECHO', 'window.peecho not ready, retrying in 500ms…');
-        setTimeout(() => {
-          if (window.peecho && window.peecho.attach) {
-            window.peecho.attach(btn);
-            btn.click();
-            dbg('PEECHO', 'peecho.attach() called on retry');
-          } else {
-            dbgErr('PEECHO', 'Button script failed to load — cannot open configurator');
-            toast('❌ Print service unavailable — please refresh and try again');
-            if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
-          }
-        }, 500);
+        dbgWarn('PEECHO', 'window.peecho not ready — button shown anyway, script may load before click');
       }
+
+      // Show the Peecho anchor — user clicks it to navigate to configurator
+      btn.style.display = 'inline-block';
+      // Restore Print as Book button so user can regenerate if needed
+      if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
 
     } catch(err) {
       dbgErr('PEECHO', err.message);
       toast('❌ ' + err.message);
-    } finally {
+      // Only restore on error — success path handles its own button state
       if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
+    } finally {
+      // No-op — button state managed by success and catch paths above
     }
   }
 
