@@ -75,19 +75,19 @@
   PRINT / PEECHO
   - Print-on-demand vendor: Peecho (peecho.com). Open to alternatives if
     a better solution is found — raise and discuss.
-  - Integration method: Single-button direct-URL flow (v1.79+).
-    NO Peecho Button script. Flow: click "Print as Book" → PDF generated →
-    uploaded → token registered → window.location navigates same-tab to
-    peecho.com/configurator with data-src (proxy URL) + redirect params.
-  - data-redirect-thankyou: APP_URL?printed=true → success toast on return.
-  - data-redirect-cancel: APP_URL → silent return to app.
-  - Same-tab navigation works on mobile; avoids popup blockers on desktop.
-  - PDF generated client-side via jsPDF, uploaded to private Supabase
-    storage, served via PEECHO_PROXY edge function with DB-backed token.
-  - CRITICAL: cleanup (cleanupUserPrintFiles) must run AFTER token registration,
-    not before — fire-and-forget before registration causes a race condition
-    where cleanup deletes the token Peecho needs to fetch the PDF (v1.78 bug).
-  - Peecho Button script removed in v1.79 — no longer needed.
+  - Integration method: Single-button flow (v1.80+).
+    Flow: click "Print as Book" → PDF generated → uploaded → token registered
+    → cleanup (with keepToken) → peecho.attach(btn) + btn.click() → Peecho
+    Button script navigates to configurator with a valid publicationId.
+  - The Peecho Button script (CloudFront CDN) MUST remain on the page.
+    The publicationId in the configurator URL is created by the Button script
+    after it registers the PDF with Peecho. We cannot construct this URL
+    ourselves — v1.79 lesson: passing data-src as a URL param gives error 604.
+  - Hidden <a id="peechoPrintBtn" class="peecho-print-button"> is on the page.
+    printBook() sets data-src=proxyUrl, calls window.peecho.attach(btn),
+    then btn.click() — the Button script handles navigation.
+  - CRITICAL: cleanup must run AFTER token registration (keepToken param)
+    to avoid race condition where cleanup deletes the fresh token (v1.78 bug).
 
   AI / STORY GENERATION
   - AI provider: Groq (llama-3.3-70b-versatile) via Supabase edge function
@@ -154,7 +154,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.79
+  Current: v1.80
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -293,7 +293,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.79 → next review at v1.80.
+  Build counter: currently at v1.80 → next review at v1.90.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -395,7 +395,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.79</title>
+  <title>My Life Story v1.80</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1461,7 +1461,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.79</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.80</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1708,9 +1708,31 @@
       <button class="btn btn-secondary" id="printBookBtn" onclick="printBook()" style="display:none">🖨️ Print as Book</button>
     </div>
 
-    <!-- Peecho: PDF generated and uploaded, then window.location navigates same-tab
-         to peecho.com/configurator with data-src (proxy URL). data-redirect-thankyou
-         and data-redirect-cancel return user to this app. -->
+    <!-- Peecho Button script — must be on page so it can process the hidden <a> tag
+         below and navigate to the configurator with a valid publicationId.
+         The script reads data-src + other data-* attrs, registers the PDF with Peecho,
+         then navigates to peecho.com/configurator?publicationId=xxx. -->
+  <script type="text/javascript">
+    var p=document.createElement("script");p.type="text/javascript";p.async=true;
+    var h=("https:"==document.location.protocol?"https://":"http://");
+    p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
+    var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
+  </script>
+    <!-- Hidden Peecho anchor. printBook() sets data-src + data-pages then calls
+         window.peecho.attach(btn) to register it, then btn.click() to navigate.
+         Never shown to user — the visible "Print as Book" button drives the flow. -->
+    <a id="peechoPrintBtn"
+       href="https://www.peecho.com/"
+       class="peecho-print-button"
+       style="display:none"
+       data-filetype="pdf"
+       data-width="148"
+       data-height="210"
+       data-pages="50"
+       data-noprice="false"
+       data-currency="AUD"
+       data-locale="en_EN"
+       data-src=""></a>
     </div>
     <div id="storySkeletonLoader" style="display:none">
       <div class="ai-thinking">
@@ -2071,7 +2093,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.79 — Single-button Peecho flow: same-tab navigation, race condition fix (cleanup after registration), ?printed=true success message";
+  const DEPLOY_NOTES = "v1.80 — Peecho Button script restored: attach()+click() triggers configurator navigation (publicationId created by script, not constructable manually)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2161,7 +2183,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.79 starting...');
+    dbg('INIT','v1.80 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -5852,39 +5874,30 @@
   //   1. User clicks "Print as Book" → button shows inline loading state
   //   2. PDF generated client-side (jsPDF), uploaded to private Supabase storage
   //   3. Token registered with PEECHO_PROXY → proxyUrl returned & saved in DB
-  //   4. Cleanup runs AFTER token is saved (fixes race condition from v1.78)
-  //   5. window.location navigates same-tab to Peecho configurator
-  //      - data-redirect-thankyou → ?printed=true (success message on return)
-  //      - data-redirect-cancel   → back to app
-  // Works on mobile (same-tab navigation, no popups).
+  //   4. Cleanup runs AFTER token is saved (fixes race condition from v1.78/v1.79)
+  //   5. data-src set on hidden <a class="peecho-print-button">, peecho.attach(btn)
+  //      called to register it with the Button script, then btn.click() triggers
+  //      Peecho's own navigation to peecho.com/configurator?publicationId=xxx
+  // The Button script MUST be on the page — it creates the publicationId that the
+  // configurator needs. We cannot construct that URL ourselves (v1.79 lesson).
   //
   // Barnaby test (debug only): call window.peechoBarnabyTest() in console.
 
   const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
-  const APP_URL         = 'https://g-urbach.github.io/life/';
-
-  // Build the Peecho configurator URL directly from PDF proxy URL + book dimensions.
-  // No Peecho Button script needed — we construct the URL and navigate same-tab.
-  function buildPeechoUrl({ src, pages }) {
-    const params = new URLSearchParams({
-      'data-src':               src,
-      'data-filetype':          'pdf',
-      'data-width':             '148',
-      'data-height':            '210',
-      'data-pages':             String(pages),
-      'data-currency':          'AUD',
-      'data-locale':            'en_EN',
-      'data-redirect-thankyou': APP_URL + '?printed=true',
-      'data-redirect-cancel':   APP_URL,
-    });
-    return 'https://www.peecho.com/configurator?' + params.toString();
-  }
 
   // Debug helper — call from browser console to test Peecho flow with sample PDF
   window.peechoBarnabyTest = function() {
-    const url = buildPeechoUrl({ src: BARNABY_PDF_URL, pages: 24 });
-    dbg('PEECHO-TEST', 'Navigating to Barnaby URL:', url.substring(0, 80) + '…');
-    window.location.href = url;
+    const btn = document.getElementById('peechoPrintBtn');
+    if (!btn) return console.error('peechoPrintBtn not found');
+    btn.setAttribute('data-src', BARNABY_PDF_URL);
+    btn.setAttribute('data-pages', '24');
+    if (window.peecho && window.peecho.attach) {
+      window.peecho.attach(btn);
+      btn.click();
+      dbg('PEECHO-TEST', 'Barnaby: attach + click fired');
+    } else {
+      console.error('window.peecho.attach not available — Button script not loaded yet?');
+    }
   };
 
   async function printBook() {
@@ -6099,15 +6112,34 @@
       }).then(() => dbg('PEECHO', 'Old print files cleaned up'))
         .catch(e => dbgWarn('PEECHO', 'Cleanup failed (non-fatal):', e.message));
 
-      // 5. Navigate same-tab to Peecho configurator.
-      //    On completion Peecho redirects to APP_URL?printed=true.
-      //    On cancel Peecho redirects to APP_URL.
-      const configuratorUrl = buildPeechoUrl({ src: regData.proxyUrl, pages: pageCount });
-      dbg('PEECHO', 'Navigating to Peecho configurator…');
-      window.location.href = configuratorUrl;
+      // 5. Hand off to the Peecho Button script.
+      //    The script requires data-src to be set on the <a> tag, then attach()
+      //    registers the publication with Peecho and btn.click() navigates to
+      //    peecho.com/configurator?publicationId=xxx (created by Peecho's script).
+      //    We cannot construct this URL ourselves — publicationId comes from Peecho.
+      const btn = document.getElementById('peechoPrintBtn');
+      btn.setAttribute('data-src', regData.proxyUrl);
+      btn.setAttribute('data-pages', String(pageCount));
 
-      // Note: code below this point won't run — page is navigating away.
-      // finally block still fires and restores the button as a safety net.
+      if (window.peecho && window.peecho.attach) {
+        window.peecho.attach(btn);
+        dbg('PEECHO', 'peecho.attach() called, triggering click…');
+        btn.click();
+      } else {
+        // Button script not loaded yet — wait briefly and retry once
+        dbgWarn('PEECHO', 'window.peecho not ready, retrying in 500ms…');
+        setTimeout(() => {
+          if (window.peecho && window.peecho.attach) {
+            window.peecho.attach(btn);
+            btn.click();
+            dbg('PEECHO', 'peecho.attach() called on retry');
+          } else {
+            dbgErr('PEECHO', 'Button script failed to load — cannot open configurator');
+            toast('❌ Print service unavailable — please refresh and try again');
+            if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
+          }
+        }, 500);
+      }
 
     } catch(err) {
       dbgErr('PEECHO', err.message);
