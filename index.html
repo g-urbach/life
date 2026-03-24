@@ -153,7 +153,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.76
+  Current: v1.78
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -292,7 +292,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.76 → next review at v1.80.
+  Build counter: currently at v1.78 → next review at v1.80.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -394,7 +394,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.76</title>
+  <title>My Life Story v1.78</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1460,7 +1460,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.76</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.78</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2135,7 +2135,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.76 — Use window.peecho.attach(btn) to activate button with dynamic attributes (init does not exist)";
+  const DEPLOY_NOTES = "v1.78 — Use actual jsPDF page count for data-pages (not character estimate)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -5998,7 +5998,8 @@
       if (!storyText || storyText.length < 50) throw new Error('Story is empty — please generate a story first');
       const name      = userProfile.name || 'My';
       const title     = currentStory.funny ? name + "\'s Life Story (Comedy Edition)" : name + "\'s Life Story";
-      const pageCount = Math.max(20, Math.ceil(storyText.length / 1800));
+      // pageCount will be updated with actual jsPDF page count after generation
+      let pageCount = Math.max(20, Math.ceil(storyText.length / 1800));
 
       // Build PDF with jsPDF
       const { jsPDF } = window.jspdf;
@@ -6076,7 +6077,8 @@
       doc.text('Created with My Life Story ♥', pageW/2, y, { align: 'center' });
 
       const blob = doc.output('blob');
-      dbg('PEECHO', 'PDF generated:', Math.round(blob.size/1024) + 'KB', (doc.internal.pages.length - 1), 'pages');
+      pageCount = doc.internal.pages.length - 1;  // actual page count from jsPDF
+      dbg('PEECHO', 'PDF generated:', Math.round(blob.size/1024) + 'KB', pageCount, 'pages');
       if (blob.size < 5000) throw new Error('PDF generation failed — output too small (' + blob.size + ' bytes)');
 
       // Generate thumbnail using native Canvas API (no html2canvas needed)
@@ -6180,28 +6182,27 @@
       //    data-reference: Peecho sends this back as merchantId in the pingback
       //    data-thumbnail: our own cover image so Peecho can show a preview
       //                    without needing to fetch and render the PDF itself
-      // Update attributes on the existing button element.
-      // Replacing the element breaks the Button script activation.
-      // The script reads data-reference and data-thumbnail at click time.
+      // Synchronous flow: set data-src to the proxy URL so Peecho fetches the PDF
+      // upfront, renders its own thumbnail preview, and opens the configurator
+      // with the user's actual content visible on the left.
+      // data-src works here because the PDF is already generated and uploaded.
+      // The async (data-reference) flow is not needed since PDF exists at click time.
       const btn = document.getElementById('peechoPrintBtn');
-      btn.setAttribute('data-reference', regData.merchantReference);
+      btn.setAttribute('data-src', regData.proxyUrl);
       btn.setAttribute('data-pages', String(pageCount));
-      btn.removeAttribute('data-src');
-      if (thumbnailUrl) btn.setAttribute('data-thumbnail', thumbnailUrl);
-      // Use window.peecho.attach(btn) to activate the button with current attributes.
-      // peecho.init() does not exist — the API exposes only attach() and send().
-      // attach() registers the element and reads all data-* attributes at that moment.
+      btn.removeAttribute('data-reference');  // sync flow — no pingback needed
+      btn.removeAttribute('data-thumbnail');  // Peecho will generate from PDF
       document.getElementById('peechoButtonWrap').style.display = 'block';
       if (window.peecho && window.peecho.attach) {
         window.peecho.attach(btn);
-        dbg('PEECHO', 'peecho.attach() called on button');
+        dbg('PEECHO', 'peecho.attach() called with data-src (sync flow)');
       } else {
-        dbgWarn('PEECHO', 'window.peecho.attach not available:', window.peecho ? Object.keys(window.peecho).join(',') : 'undefined');
+        dbgWarn('PEECHO', 'window.peecho.attach not available');
       }
 
-      const previewMsg = thumbnailUrl ? '' : ' (cover preview unavailable)';
-      setPeechoStatus('✅ Your story is ready! Click “Order This Book” to choose your format, enter your address and pay — all handled by Peecho.' + previewMsg, 'success');
-      dbg('PEECHO', 'Async button ready, merchantRef:', regData.merchantReference, 'thumbnail:', thumbnailUrl ? 'yes' : 'no');
+      setPeechoStatus('✅ Your story is ready! Click “Order This Book” to choose your format, enter your address and pay — all handled by Peecho.', 'success');
+      dbg('PEECHO', 'Sync button ready, proxyUrl:', regData.proxyUrl.substring(0, 60) + '…');
+
 
     } catch(err) {
       dbgErr('PEECHO', err.message);
