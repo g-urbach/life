@@ -160,7 +160,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.86
+  Current: v1.87
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -251,7 +251,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.86 → next review at v1.90.
+  Build counter: currently at v1.87 → next review at v1.90.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -370,9 +370,9 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho preview image: FIXED in v1.86. data-thumbnail uses a 7-day Supabase
-    signed URL (plain HTTPS, no auth headers needed). Proxy URL failed because
-    Peecho's servers cannot pass auth tokens when fetching the thumbnail.
+  - Peecho preview image: FIXED in v1.87. Thumbnail uploaded to public
+    life-thumbnails bucket, served via plain public URL — no signing, no expiry,
+    no auth headers needed. Peecho fetches it cleanly as a standard HTTPS image.
   - Peecho product IDs (PEECHO_PRODUCTS): CLEANED UP in v1.52 — dead code removed.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
@@ -431,7 +431,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.86</title>
+  <title>My Life Story v1.87</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1497,7 +1497,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.86</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.87</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2131,13 +2131,15 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.86 — Fix Peecho thumbnail: use Supabase signed URL instead of proxy for data-thumbnail (Peecho fetches with no auth headers; proxy was rejecting the request).";
+  const DEPLOY_NOTES = "v1.87 — Fix Peecho thumbnail: upload to public life-thumbnails bucket, use plain public URL (no signing/expiry) so Peecho can fetch without auth";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
   const AI_ENDPOINT   = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const NOTIFY_URL    = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
+  const THUMB_STORAGE_URL = SUPABASE_URL + '/storage/v1/object/life-thumbnails'; // public bucket
+  const THUMB_PUBLIC_URL  = SUPABASE_URL + '/storage/v1/object/public/life-thumbnails'; // no auth needed
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -2221,7 +2223,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.86 starting...');
+    dbg('INIT','v1.87 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -6083,30 +6085,23 @@
         ctx.fillStyle = '#c9a96e';
         ctx.fillText('My Life Story', 210, 560);
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+        // Upload to public life-thumbnails bucket — plain public URL, no signing needed.
+        // Peecho fetches data-thumbnail with no auth headers, so it must be a truly
+        // public URL. The thumbnail is a non-sensitive cover image (title + first words),
+        // appropriate for public access. Private story PDF stays in life-photos.
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
-        const thumbRes = await fetch(STORAGE_URL + '/' + thumbName, {
+        const thumbRes = await fetch(THUMB_STORAGE_URL + '/' + thumbName, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON,
                      'Content-Type': 'image/jpeg', 'x-upsert': 'true' },
           body: thumbBlob
         });
         if (thumbRes.ok) {
-          // Get a 7-day signed URL directly — Peecho fetches data-thumbnail with no
-          // auth headers, so we can't use our token proxy here. Supabase signed URLs
-          // are plain HTTPS that any server can fetch without auth. Non-sensitive
-          // content (just a cover image) so signed URL exposure is acceptable.
-          const signRes = await fetch(STORAGE_SIGN + '/' + thumbName, {
-            method: 'POST',
-            headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ expiresIn: 604800 }) // 7 days
-          });
-          if (signRes.ok) {
-            const signData = await signRes.json();
-            if (signData.signedURL) {
-              thumbnailUrl = SUPABASE_URL + '/storage/v1' + signData.signedURL;
-              dbg('PEECHO', 'Thumbnail signed URL ready:', thumbnailUrl.substring(0, 60) + '…');
-            }
-          }
+          // Plain public URL — no token, no expiry, works from any server including Peecho
+          thumbnailUrl = THUMB_PUBLIC_URL + '/' + thumbName;
+          dbg('PEECHO', 'Thumbnail public URL ready:', thumbnailUrl.substring(0, 60) + '…');
+        } else {
+          dbgWarn('PEECHO', 'Thumbnail upload failed:', await thumbRes.text());
         }
       } catch(thumbErr) {
         dbgWarn('PEECHO', 'Thumbnail generation failed (non-fatal):', thumbErr.message);
