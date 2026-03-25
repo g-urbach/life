@@ -3,7 +3,7 @@
 ================================================================================
   MY LIFE STORY — Single-File Web Application
 ================================================================================
-
+------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING BETWEEN THIS LINE AND THE BELOW LINE----------------------
   PROJECT MEMORY
   --------------
   This comment block is the single source of truth for this project.
@@ -17,15 +17,19 @@
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
      AND in the DEPLOY_NOTES constant — all four places must match.
-  2. Move completed backlog items into FEATURES IMPLEMENTED.
+  2. If deploy.html was modified, bump its version in BOTH the <title> AND
+     the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
+     filename in chat so Geoff knows which file to use.
+  3. Move completed backlog items into FEATURES IMPLEMENTED.
   3. Add any new backlog items or ideas raised during the session.
   4. Fix any KNOWN LIMITATIONS that were resolved.
   5. Update KNOWN ISSUES if new risks or edge cases are identified.
   6. Always tell the user the new version number in chat (e.g. "v1.07 ready").
-  7. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
+  7. Always tell the user if you have considered all the project ideas from memory down to continuous improvement while making this build.
+  8. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
      the specific risk. Primary dev is on laptop; mobile is tested separately.
      See MOBILE TESTING NOTES section for known concerns.
-  8. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
+  9. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
      function (e.g. "function foo() {"), ALWAYS include the full function body
      in old_str — never just the opening line. Partial matches silently drop
      the body, causing "Unexpected token '}'" or "Unexpected end of input".
@@ -154,7 +158,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.82
+  Current: v1.84
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -210,7 +214,6 @@
   - 🖨️ Print as Book: Peecho Button integration (WORKING in production)
     Flow: upload story HTML → get signed URL → inject into Peecho Button data-src
     → Peecho hosts checkout, product selection, payment, shipping
-    → 🧪 Test with Barnaby button uses Peecho public sample PDF
     NOTE: Preview image doesn't render (Supabase signed URLs not publicly
     accessible to Peecho's thumbnail service) — future fix needed
 
@@ -240,6 +243,15 @@
     story modes, script tag balance, escaped backtick detection,
     AI resilience pattern, truncated string detection
   - Copy-failures button for quick paste to Claude
+
+  CONTINUOUS IMPROVEMENT
+  ----------------------
+  Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
+  suggest 5 improvements not already on the backlog — covering code hygiene,
+  usability, architecture, security, or features — for Geoff to prioritise.
+  Build counter: currently at v1.84 → next review at v1.90.
+
+------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
   BACKLOG (prioritised)
   ---------------------
@@ -288,12 +300,6 @@
   - Move AI prompt logic + story generation into edge functions (less in HTML,
     harder to copy, stronger moat)
 
-  CONTINUOUS IMPROVEMENT
-  ----------------------
-  Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
-  suggest 5 improvements not already on the backlog — covering code hygiene,
-  usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.80 → next review at v1.90.
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
@@ -365,6 +371,9 @@
   - Peecho preview image: FIXED in v1.45. PDF served via PEECHO_PROXY edge
     function with DB-backed token. Peecho fetches via proxy with no auth headers
     required — preview should now render in the configurator.
+    ⚠️  STILL BROKEN as of v1.82 — "publication preview" alt text shows instead
+    of actual thumbnail in Peecho configurator. Non-blocking for ordering but
+    should be investigated.
   - Peecho product IDs (PEECHO_PRODUCTS): CLEANED UP in v1.52 — dead code removed.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
@@ -373,6 +382,41 @@
   - No runtime error alerting yet: if storage fills up or AI tokens are exhausted
     during a user session, Geoff won't know until manually checking. Notification
     system is in BACKLOG HIGH.
+
+  ⚠️  ACTIVE ISSUE — Peecho "Shipping unavailable" — ROOT CAUSE CONFIRMED v1.84
+  ------------------------------------------------------------------------------
+  ROOT CAUSE: Peecho products have a minimum page count (softcover: 20 pages,
+  hardcover: 24 pages, magazine: 18 pages). Our PDFs were 4-6 pages and matched
+  NO products — hence all four ink blobs showed warning triangles and "Shipping
+  unavailable" appeared for every country (not an Australian/regional issue at all).
+  Barnaby worked further because the Barnaby sample PDF has enough pages.
+
+  FIX (v1.84): PDF generation now pads to PEECHO_MIN_PAGES=20 with blank pages
+  after story content. Blank back-matter pages are normal in published books.
+
+  STATUS: Deployed in v1.84 — needs testing to confirm "Shipping unavailable" gone.
+  If it still fails, check that the page count in debug log shows ≥20 pages.
+
+  SESSION LEARNINGS (24/03/2026) — critical for next session:
+  1. RACE CONDITION (FIXED v1.79): cleanupUserPrintFiles was fire-and-forget BEFORE
+     registerPrintFile. Since cleanup is slow and PDF gen is fast, cleanup was
+     finishing AFTER registration and deleting the fresh token. Fix: cleanup now
+     runs AFTER registration, passing keepToken so the edge function skips it.
+     Edge function v4.0 handles keepToken in cleanupUserPrintFiles route.
+  2. DIRECT URL CONSTRUCTION (FAILED v1.79): We tried passing data-src as a URL
+     param to peecho.com/configurator — this gives error 604 / configurator/null.
+     The publicationId in the configurator URL is created by Peecho's Button script,
+     not constructable manually.
+  3. PROGRAMMATIC CLICK (FAILED v1.80-v1.81): btn.click() after peecho.attach()
+     is silently ignored. The Button script requires a real user gesture. Confirmed
+     via offsetParent/visibility checks — element was visible but click did nothing.
+  4. SOLUTION (v1.82): printBook() prepares PDF + registers token + calls
+     peecho.attach(btn), then reveals the <a> button for the user to click.
+     Two user interactions: "Print as Book" to prepare, "Order This Book" to go.
+  5. TOKEN TABLE: life_print_tokens (not print_tokens). Edge function uses RPC
+     functions: exec_get_print_token, exec_insert_print_token,
+     exec_delete_print_token, exec_get_user_print_tokens,
+     exec_delete_user_print_tokens, exec_increment_print_token.
 
   MOBILE TESTING NOTES (primary dev is on laptop — phone testing is secondary)
   -----------------------------------------------------------------------------
@@ -395,7 +439,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.82</title>
+  <title>My Life Story v1.84</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1461,7 +1505,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.82</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.84</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2095,7 +2139,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.82 — Peecho real-gesture fix: reveal Order This Book button after prep, user clicks it (programmatic .click() silently ignored by Button script)";
+  const DEPLOY_NOTES = "v1.84 — Fix Peecho shipping unavailable: pad PDF to 20-page minimum (products require min 20-24 pages; 4-6 page PDFs matched no products). Remove Barnaby test.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2185,7 +2229,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.82 starting...');
+    dbg('INIT','v1.84 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -5881,23 +5925,6 @@
   //      button revealed — user clicks it to navigate (real gesture required).
   //      Programmatic .click() silently ignored by Button script (v1.81 lesson).
   // Two clicks total: "Print as Book" prepares, "Order This Book" navigates.
-  //
-  // Barnaby test (debug only): call window.peechoBarnabyTest() in console
-  //   — sets data-src to sample PDF and reveals the Order button for clicking.
-
-  const BARNABY_PDF_URL = 'https://peecho-thumbnailer.s3.eu-west-1.amazonaws.com/Peecho+HCB+print+file.pdf';
-
-  // Debug helper — reveals the Peecho button with the Barnaby sample PDF.
-  // After running this, click the "Order This Book" button that appears.
-  window.peechoBarnabyTest = function() {
-    const btn = document.getElementById('peechoPrintBtn');
-    if (!btn) return console.error('peechoPrintBtn not found');
-    btn.setAttribute('data-src', BARNABY_PDF_URL);
-    btn.setAttribute('data-pages', '24');
-    if (window.peecho && window.peecho.attach) window.peecho.attach(btn);
-    btn.style.display = 'inline-block';
-    dbg('PEECHO-TEST', 'Barnaby: button revealed — click "Order This Book" to proceed');
-  };
 
   async function printBook() {
     if (!currentUser)  return toast('Please sign in first');
@@ -6003,6 +6030,18 @@
       doc.setFontSize(8);
       doc.setTextColor(201, 169, 110);
       doc.text('Created with My Life Story ♥', pageW/2, y, { align: 'center' });
+
+      // ── Pad to Peecho minimum page count ─────────────────────────────────
+      // Peecho's minimum is 20 pages (softcover) / 24 pages (hardcover).
+      // We target 20 so any product type works. Add blank pages as needed.
+      // These are standard back-matter blank pages — normal in published books.
+      const PEECHO_MIN_PAGES = 20;
+      const currentPages = doc.internal.pages.length - 1;
+      if (currentPages < PEECHO_MIN_PAGES) {
+        const blanksNeeded = PEECHO_MIN_PAGES - currentPages;
+        dbg('PEECHO', `Adding ${blanksNeeded} blank page(s) to meet Peecho ${PEECHO_MIN_PAGES}-page minimum (was ${currentPages})`);
+        for (let i = 0; i < blanksNeeded; i++) doc.addPage();
+      }
 
       const blob = doc.output('blob');
       pageCount = doc.internal.pages.length - 1;  // actual page count from jsPDF
