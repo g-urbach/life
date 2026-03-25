@@ -19,7 +19,9 @@
      AND in the DEPLOY_NOTES constant — all four places must match.
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
-     filename in chat so Geoff knows which file to use.
+     filename in chat so Geoff knows which file to use. Also explicitly state
+     WHAT changed in the deployer (e.g. "added test for X" or "removed stale
+     check for Y") so Geoff understands why a new deploy file is needed.
   3. Move completed backlog items into FEATURES IMPLEMENTED.
   3. Add any new backlog items or ideas raised during the session.
   4. Fix any KNOWN LIMITATIONS that were resolved.
@@ -158,7 +160,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.85
+  Current: v1.86
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -249,7 +251,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.85 → next review at v1.90.
+  Build counter: currently at v1.86 → next review at v1.90.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -368,9 +370,9 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho preview image: FIXED in v1.85. data-thumbnail set on the Peecho button
-    from our canvas-generated cover image proxy URL. Peecho fetches it without
-    auth headers via the token-based proxy. Should now render in configurator.
+  - Peecho preview image: FIXED in v1.86. data-thumbnail uses a 7-day Supabase
+    signed URL (plain HTTPS, no auth headers needed). Proxy URL failed because
+    Peecho's servers cannot pass auth tokens when fetching the thumbnail.
   - Peecho product IDs (PEECHO_PRODUCTS): CLEANED UP in v1.52 — dead code removed.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
@@ -429,7 +431,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.85</title>
+  <title>My Life Story v1.86</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1495,7 +1497,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.85</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.86</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2129,7 +2131,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.85 — Fix Peecho configurator thumbnail: set data-thumbnail on button from proxy URL. Remove duplicate uploadRes check.";
+  const DEPLOY_NOTES = "v1.86 — Fix Peecho thumbnail: use Supabase signed URL instead of proxy for data-thumbnail (Peecho fetches with no auth headers; proxy was rejecting the request).";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2219,7 +2221,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.85 starting...');
+    dbg('INIT','v1.86 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -6089,15 +6091,21 @@
           body: thumbBlob
         });
         if (thumbRes.ok) {
-          const thumbRegRes = await fetch(PEECHO_PROXY_URL, {
+          // Get a 7-day signed URL directly — Peecho fetches data-thumbnail with no
+          // auth headers, so we can't use our token proxy here. Supabase signed URLs
+          // are plain HTTPS that any server can fetch without auth. Non-sensitive
+          // content (just a cover image) so signed URL exposure is acceptable.
+          const signRes = await fetch(STORAGE_SIGN + '/' + thumbName, {
             method: 'POST',
             headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'registerPrintFile', storagePath: thumbName, ttlSeconds: 604800 })
+            body: JSON.stringify({ expiresIn: 604800 }) // 7 days
           });
-          if (thumbRegRes.ok) {
-            const thumbRegData = await thumbRegRes.json();
-            thumbnailUrl = thumbRegData.proxyUrl;
-            dbg('PEECHO', 'Thumbnail ready:', thumbnailUrl?.substring(0, 60) + '…');
+          if (signRes.ok) {
+            const signData = await signRes.json();
+            if (signData.signedURL) {
+              thumbnailUrl = SUPABASE_URL + '/storage/v1' + signData.signedURL;
+              dbg('PEECHO', 'Thumbnail signed URL ready:', thumbnailUrl.substring(0, 60) + '…');
+            }
           }
         }
       } catch(thumbErr) {
