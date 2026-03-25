@@ -166,7 +166,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.91
+  Current: v1.92
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -257,7 +257,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.91 → next review at v2.00.
+  Build counter: currently at v1.92 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -423,7 +423,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.91</title>
+  <title>My Life Story v1.92</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1787,7 +1787,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.91</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.92</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2088,7 +2088,8 @@
         <span class="ppo-page-count" id="ppoPageCount"></span>
         <button class="btn btn-ghost" style="font-size:0.8rem" onclick="closePrintPreview()">✕ Close</button>
         <button class="btn btn-primary" id="ppoOrderBtn" onclick="orderViaPeecho()"
-                style="font-size:0.85rem;padding:10px 20px" disabled>
+                style="font-size:0.85rem;padding:10px 20px" disabled
+                title="Print &amp; ship my book via Peecho">
           ⏳ Preparing…
         </button>
       </div>
@@ -2118,17 +2119,17 @@
           <h3>Cover Style</h3>
           <div class="cover-styles">
             <button class="cover-style-btn classic-style active" id="styleBtnClassic"
-                    onclick="setCoverStyle('classic')">
+                    data-style="classic" onclick="setCoverStyle('classic')">
               <span style="font-size:1.2rem">📜</span>
               <span>Classic</span>
             </button>
             <button class="cover-style-btn modern-style" id="styleBtnModern"
-                    onclick="setCoverStyle('modern')">
+                    data-style="modern" onclick="setCoverStyle('modern')">
               <span style="font-size:1.2rem">⬜</span>
               <span>Modern</span>
             </button>
             <button class="cover-style-btn dark-style" id="styleBtnDark"
-                    onclick="setCoverStyle('dark')">
+                    data-style="dark" onclick="setCoverStyle('dark')">
               <span style="font-size:1.2rem">🌙</span>
               <span>Dark</span>
             </button>
@@ -2136,8 +2137,7 @@
         </div>
         <div id="ppoMinNotice" class="ppo-min-notice" style="display:none">
           ⚠️ Your story needs at least 20 pages to order as a printed book.
-          Try generating a longer format like <strong>The Full Story</strong> or
-          <strong>Book Edition</strong>. The more memories you add, the richer your book!
+          Add more memories to grow your story — the more you add, the richer your book!
         </div>
       </div>
       <!-- Right: paginated book preview -->
@@ -2490,7 +2490,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.91 — v1.90 review: book milestone on dashboard, page-count warning improved, Order button styled, token expiry check, template literal safety rule, memory trimmed";
+  const DEPLOY_NOTES = "v1.92 — Print preview: fix dashboard bug on close, rename Order button, disable+tooltip for <20 pages, save print prefs to localStorage";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2580,7 +2580,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.91 starting...');
+    dbg('INIT','v1.92 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -6290,14 +6290,20 @@
     ppoStoryText = ppoStoryHtml.replace(/<[^>]+>/g, '').trim();
     if (!ppoStoryText || ppoStoryText.length < 50) return toast('Please generate a story first');
 
-    // Pre-fill fields with sensible defaults
+    // Restore saved print preferences, falling back to sensible defaults
     const name  = userProfile.name || 'My';
     const defaultTitle = currentStory.funny
       ? name + "'s Life Story (Comedy Edition)"
       : name + "'s Life Story";
-    document.getElementById('ppoBookTitle').value   = defaultTitle;
-    document.getElementById('ppoAuthorName').value  = name;
-    document.getElementById('ppoDedication').value  = '';
+    const saved = JSON.parse(localStorage.getItem('life_print_prefs') || '{}');
+    document.getElementById('ppoBookTitle').value  = saved.title      || defaultTitle;
+    document.getElementById('ppoAuthorName').value = saved.author     || name;
+    document.getElementById('ppoDedication').value = saved.dedication || '';
+    ppoCoverStyle = saved.coverStyle || 'classic';
+    // Reflect restored cover style in the style buttons
+    document.querySelectorAll('.cover-style-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.style === ppoCoverStyle);
+    });
 
     // Show overlay
     const overlay = document.getElementById('printPreviewOverlay');
@@ -6310,15 +6316,25 @@
   }
 
   function closePrintPreview() {
-    document.getElementById('printPreviewOverlay').classList.remove('visible');
+    const overlay = document.getElementById('printPreviewOverlay');
+    overlay.classList.remove('visible');
     document.body.style.overflow = '';
     // Reset order state
-    ppoOrderReady = false;
-    ppoProxyUrl   = null;
-    ppoPdfBlob    = null;
+    ppoOrderReady  = false;
+    ppoTokenExpiry = 0;
+    ppoProxyUrl    = null;
+    ppoPdfBlob     = null;
     const btn = document.getElementById('ppoOrderBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Preparing…';
+    // Re-activate the panel that was active before the overlay opened.
+    // Without this, closing the overlay can leave the story panel visible
+    // underneath when the user navigates to dashboard (showPanel re-renders
+    // storyOutput but doesn't re-hide other panels correctly).
+    const activePanel = document.querySelector('.panel.active');
+    const activePanelId = activePanel ? activePanel.id.replace('panel-', '') : 'story';
+    showPanel(activePanelId, null,
+      ['memories','dashboard','story','entries','prompts','help','delete'].indexOf(activePanelId));
   }
 
   function setCoverStyle(style) {
@@ -6339,6 +6355,11 @@
     const author     = document.getElementById('ppoAuthorName').value || '';
     const dedication = document.getElementById('ppoDedication').value || '';
     const style      = ppoCoverStyle;
+
+    // Persist preferences so they're restored next time the preview is opened
+    localStorage.setItem('life_print_prefs', JSON.stringify({
+      title, author, dedication, coverStyle: style
+    }));
     const preview    = document.getElementById('ppoPreview');
 
     // Parse story into paragraphs and chapters
@@ -6460,10 +6481,17 @@
     document.getElementById('ppoMinNotice').style.display = canOrder ? 'none' : 'block';
 
     // Update order button if preparation is already done
-    if (ppoOrderReady && canOrder) {
+    if (ppoOrderReady) {
       const btn = document.getElementById('ppoOrderBtn');
-      btn.disabled = false;
-      btn.textContent = '🛒 Order via Peecho';
+      if (canOrder) {
+        btn.disabled = false;
+        btn.textContent = '🖨️ Print & Ship My Book';
+        btn.title = 'Order your printed book via Peecho — choose format, enter address and pay on their site';
+      } else {
+        btn.disabled = true;
+        btn.textContent = '🖨️ Print & Ship My Book';
+        btn.title = 'Your story needs at least 20 pages to print. Add more memories to grow it!';
+      }
     }
   }
 
@@ -6707,13 +6735,12 @@
       ppoOrderReady   = true;
       ppoTokenExpiry  = Date.now() + (regData.expiresIn * 1000); // token TTL from proxy response
       const storyPages = doc.internal.pages.length - 1;
-      if (storyPages >= 18) {
-        btn.disabled = false;
-        btn.textContent = '🛒 Order via Peecho';
-      } else {
-        btn.textContent = '🛒 Order via Peecho';
-        btn.disabled = true; // page count check in updatePreview will show notice
-      }
+      const canOrderNow = storyPages >= 18;
+      btn.textContent = '🖨️ Print & Ship My Book';
+      btn.disabled    = !canOrderNow;
+      btn.title       = canOrderNow
+        ? 'Order your printed book via Peecho — choose format, enter address and pay on their site'
+        : 'Your story needs at least 20 pages to print. Add more memories to grow it!';
       dbg('PEECHO', 'Preparation complete — order button ready');
 
     } catch(err) {
