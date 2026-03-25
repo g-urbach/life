@@ -36,6 +36,11 @@
      in old_str — never just the opening line. Partial matches silently drop
      the body, causing "Unexpected token '}'" or "Unexpected end of input".
      ALWAYS run node --check after every edit before shipping.
+ 10. ⚠️  TEMPLATE LITERAL SAFETY: Never write new functions containing template
+     literals (backticks / ${} interpolations) via str_replace — the escaping
+     mangling causes \`..\` and \${} to appear as literal text at runtime.
+     Instead write them via Python heredoc (cat << 'PYEOF' pattern). This has
+     caused 3 build failures (v1.88-v1.90). Non-negotiable.
 
   ENGINEERING PHILOSOPHY
   ----------------------
@@ -161,7 +166,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.89
+  Current: v1.91
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -252,7 +257,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.89 → next review at v1.90.
+  Build counter: currently at v1.91 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -389,26 +394,13 @@
   FIX: PDF now padded to PEECHO_MIN_PAGES=20 with blank back-matter pages.
   Peecho thumbnail (left panel preview) fixed in v1.85 via data-thumbnail attribute.
 
-  SESSION LEARNINGS (24/03/2026) — critical for next session:
-  1. RACE CONDITION (FIXED v1.79): cleanupUserPrintFiles was fire-and-forget BEFORE
-     registerPrintFile. Since cleanup is slow and PDF gen is fast, cleanup was
-     finishing AFTER registration and deleting the fresh token. Fix: cleanup now
-     runs AFTER registration, passing keepToken so the edge function skips it.
-     Edge function v4.0 handles keepToken in cleanupUserPrintFiles route.
-  2. DIRECT URL CONSTRUCTION (FAILED v1.79): We tried passing data-src as a URL
-     param to peecho.com/configurator — this gives error 604 / configurator/null.
-     The publicationId in the configurator URL is created by Peecho's Button script,
-     not constructable manually.
-  3. PROGRAMMATIC CLICK (FAILED v1.80-v1.81): btn.click() after peecho.attach()
-     is silently ignored. The Button script requires a real user gesture. Confirmed
-     via offsetParent/visibility checks — element was visible but click did nothing.
-  4. SOLUTION (v1.82): printBook() prepares PDF + registers token + calls
-     peecho.attach(btn), then reveals the <a> button for the user to click.
-     Two user interactions: "Print as Book" to prepare, "Order This Book" to go.
-  5. TOKEN TABLE: life_print_tokens (not print_tokens). Edge function uses RPC
-     functions: exec_get_print_token, exec_insert_print_token,
-     exec_delete_print_token, exec_get_user_print_tokens,
-     exec_delete_user_print_tokens, exec_increment_print_token.
+  PEECHO KEY FACTS (for future sessions):
+  - Token table: life_print_tokens. Edge fn RPCs: exec_get/insert/delete/increment_print_token,
+    exec_get/delete_user_print_tokens.
+  - Cleanup must pass keepToken — race condition if run before registration.
+  - Button script requires real user gesture — programmatic .click() ignored.
+  - Peecho min pages: softcover 20, hardcover 24, magazine 18.
+  - data-thumbnail needs plain signed URL (not proxy) — Peecho fetches with no auth.
 
   MOBILE TESTING NOTES (primary dev is on laptop — phone testing is secondary)
   -----------------------------------------------------------------------------
@@ -431,7 +423,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.89</title>
+  <title>My Life Story v1.91</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1795,7 +1787,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.89</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.91</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2059,8 +2051,8 @@
          Two interactions total: "Print as Book" to prepare, then this to go to Peecho. -->
     <a id="peechoPrintBtn"
        href="https://www.peecho.com/"
-       class="peecho-print-button"
-       style="display:none;margin-top:12px"
+       class="peecho-print-button btn btn-secondary"
+       style="display:none;margin-top:12px;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:0.95rem"
        data-filetype="pdf"
        data-width="148"
        data-height="210"
@@ -2145,7 +2137,7 @@
         <div id="ppoMinNotice" class="ppo-min-notice" style="display:none">
           ⚠️ Your story needs at least 20 pages to order as a printed book.
           Try generating a longer format like <strong>The Full Story</strong> or
-          <strong>Book Edition</strong>.
+          <strong>Book Edition</strong>. The more memories you add, the richer your book!
         </div>
       </div>
       <!-- Right: paginated book preview -->
@@ -2244,6 +2236,7 @@
         <div class="dash-tile-value" id="dashWordsValue">—</div>
         <div class="dash-tile-sub" id="dashWordsSub"></div>
         <div class="dash-score-bar" style="margin-top:8px"><div class="dash-score-fill" id="dashWordsBar" style="width:0%;background:var(--sage)"></div></div>
+        <div id="dashBookMilestone" style="display:none;margin-top:8px;font-size:0.75rem;color:var(--sage)">📚 Long enough to print as a book!</div>
       </div>
 
       <!-- Tile: Last entry -->
@@ -2497,7 +2490,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.89 — Fix syntax error: escaped backticks in template literals (\\` → `) in print preview overlay code";
+  const DEPLOY_NOTES = "v1.91 — v1.90 review: book milestone on dashboard, page-count warning improved, Order button styled, token expiry check, template literal safety rule, memory trimmed";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2587,7 +2580,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.89 starting...');
+    dbg('INIT','v1.91 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -4072,7 +4065,7 @@
           out.innerHTML = `<div style="text-align:center;padding:40px 20px">
             <div style="font-size:2.5rem;margin-bottom:16px">📖</div>
             <p style="font-family:\'Playfair Display\',serif;font-size:1.2rem;margin-bottom:12px">More memories needed for The Full Story</p>
-            <p style="color:var(--text-light);font-size:0.92rem;max-width:400px;margin:0 auto 20px">The Full Story covers every memory in depth — you currently have ~\${wordCount} words of memories. Aim for at least 150 words across your entries for a satisfying read. Keep adding to the Memories tab!</p>
+            <p style="color:var(--text-light);font-size:0.92rem;max-width:400px;margin:0 auto 20px">The Full Story covers every memory in depth — you currently have ~${wordCount} words of memories. Aim for at least 150 words across your entries for a satisfying read. Keep adding to the Memories tab!</p>
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">
               <button class="btn btn-ghost" onclick="showPanel('memories',null,0)">➕ Add more memories</button>
               <button class="btn btn-ghost" onclick="toggleFunny();generateStory('short')">😄 Try a Funny Short Version</button>
@@ -4942,6 +4935,10 @@
     document.getElementById('dashWordsSub').textContent   = wordPct >= 100 ? 'Book-ready length ✓' : (WORD_TARGET - totalWords).toLocaleString() + ' words to go for a full book';
     document.getElementById('dashWordsBar').style.width      = wordPct + '%';
     document.getElementById('dashWordsBar').style.background = wordPct >= 100 ? 'var(--sage)' : wordPct >= 50 ? 'var(--gold)' : 'var(--rose)';
+    // Show book milestone badge when story is long enough to generate 20+ pages
+    // (~1800 chars per page × 20 pages ≈ 36000 chars ≈ 6000 words — use 1500 words as practical threshold)
+    const bookMilestone = document.getElementById('dashBookMilestone');
+    if (bookMilestone) bookMilestone.style.display = totalWords >= 1500 ? 'block' : 'none';
 
     // Last entry tile
     const sorted = [...real].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -6282,6 +6279,7 @@
   let ppoOrderReady   = false;  // true once PDF is uploaded and token registered
   let ppoProxyUrl     = null;
   let ppoPdfBlob      = null;
+  let ppoTokenExpiry  = 0;      // ms timestamp when the print token expires (2hr TTL)
 
   function openPrintPreview() {
     if (!currentUser)  return toast('Please sign in first');
@@ -6373,11 +6371,11 @@
     pages.push(`
       <div class="ppo-page-label">Front Cover</div>
       <div class="book-page">
-        <div class="book-cover \${style}">
-          <div class="cover-title">\${escHtml(title)}</div>
+        <div class="book-cover ${style}">
+          <div class="cover-title">${escHtml(title)}</div>
           <div class="cover-accent"></div>
           <div class="cover-subtitle">A Personal Memoir</div>
-          <div class="cover-author">\${escHtml(author)}</div>
+          <div class="cover-author">${escHtml(author)}</div>
           <div class="cover-branding">My Life Story</div>
         </div>
       </div>
@@ -6389,7 +6387,7 @@
         <div class="ppo-page-label">Dedication</div>
         <div class="book-page">
           <div class="book-dedication">
-            <div class="dedication-text">\${escHtml(dedication)}</div>
+            <div class="dedication-text">${escHtml(dedication)}</div>
           </div>
         </div>
       `);
@@ -6405,14 +6403,14 @@
       if (currentPage.length === 0) return;
       const inner = currentPage.map(seg =>
         seg.type === 'h2'
-          ? `<h2>\${escHtml(seg.text)}</h2>`
-          : `<p>\${escHtml(seg.text)}</p>`
+          ? `<h2>${escHtml(seg.text)}</h2>`
+          : `<p>${escHtml(seg.text)}</p>`
       ).join('');
       pages.push(`
-        <div class="ppo-page-label">Page \${pageNum}</div>
+        <div class="ppo-page-label">Page ${pageNum}</div>
         <div class="book-page" style="position:relative">
-          <div class="book-interior">\${inner}
-            <div class="page-num">\${pageNum}</div>
+          <div class="book-interior">${inner}
+            <div class="page-num">${pageNum}</div>
           </div>
         </div>
       `);
@@ -6440,10 +6438,10 @@
     pages.push(`
       <div class="ppo-page-label">Back Cover</div>
       <div class="book-page">
-        <div class="book-back-cover \${style}">
-          <div class="back-blurb \${style}">\${escHtml(blurb)}</div>
+        <div class="book-back-cover ${style}">
+          <div class="back-blurb ${style}">${escHtml(blurb)}</div>
           <div style="margin-top:12mm;font-size:0.65rem;letter-spacing:0.15em;
-               text-transform:uppercase;color:\${style==='dark'?'rgba(201,169,110,0.4)':'#c9a96e'}">
+               text-transform:uppercase;color:${style==='dark'?'rgba(201,169,110,0.4)':'#c9a96e'}">
             My Life Story
           </div>
         </div>
@@ -6660,7 +6658,7 @@
 
         const thumbBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
         const thumbName = currentUser.id + '/print-thumb-' + Date.now() + '.jpg';
-        const thumbRes  = await fetch(THUMB_STORAGE_URL + '/' + thumbName, {
+        const thumbRes  = await fetch(STORAGE_URL + '/' + thumbName, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON,
                      'Content-Type': 'image/jpeg', 'x-upsert': 'true' },
@@ -6706,7 +6704,8 @@
       }).catch(e => dbgWarn('PEECHO', 'Cleanup failed (non-fatal):', e.message));
 
       // Enable Order button if story is long enough
-      ppoOrderReady = true;
+      ppoOrderReady   = true;
+      ppoTokenExpiry  = Date.now() + (regData.expiresIn * 1000); // token TTL from proxy response
       const storyPages = doc.internal.pages.length - 1;
       if (storyPages >= 18) {
         btn.disabled = false;
@@ -6733,6 +6732,14 @@
   // and same-tab navigation doesn't need a new window.open() at all.
   function orderViaPeecho() {
     if (!ppoOrderReady) return toast('Still preparing — please wait');
+    // Check token hasn't expired — 2hr TTL. If expired, ask user to regenerate.
+    if (ppoTokenExpiry && Date.now() > ppoTokenExpiry) {
+      toast('⏱️ Print link expired — click "Print as Book" again to generate a fresh one');
+      ppoOrderReady = false;
+      const btn = document.getElementById('ppoOrderBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏱️ Link expired — regenerate'; }
+      return;
+    }
     const peechoBtn = document.getElementById('peechoPrintBtn');
     if (!peechoBtn.getAttribute('data-src')) return toast('Print link not ready — please try again');
     dbg('PEECHO', 'Navigating to Peecho configurator…');
