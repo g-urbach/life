@@ -166,7 +166,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.93
+  Current: v1.94
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -257,7 +257,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.93 → next review at v2.00.
+  Build counter: currently at v1.94 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -423,7 +423,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.93</title>
+  <title>My Life Story v1.94</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1787,7 +1787,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.93</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.94</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2490,7 +2490,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.93 — Fix dashboard-under-story bug: revert closePrintPreview to not call showPanel (overlay is fixed-position, panels already correct)";
+  const DEPLOY_NOTES = "v1.94 — Fix grey button timing (show correct state before prepareForPrint completes); fix all-tabs scroll bug (scroll to top on showPanel)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2580,7 +2580,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.93 starting...');
+    dbg('INIT','v1.94 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3051,6 +3051,9 @@
       const navBtns = document.querySelectorAll('.nav-btn');
       if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
     }
+    // Scroll to top of content area on every panel switch — prevents story content
+    // appearing above the new panel when user navigates after closing print preview
+    window.scrollTo({ top: 0, behavior: 'instant' });
     if (name === 'dashboard') renderDashboard();
     if (name === 'entries')   { populateReviewFilter(); renderReviewEntries(); }
     if (name === 'prompts')   { renderPrompts(); }
@@ -6476,18 +6479,21 @@
     const canOrder = storyPageCount + 2 >= 18; // 18 interior + 2 covers = 20 min
     document.getElementById('ppoMinNotice').style.display = canOrder ? 'none' : 'block';
 
-    // Update order button if preparation is already done
-    if (ppoOrderReady) {
-      const btn = document.getElementById('ppoOrderBtn');
-      if (canOrder) {
-        btn.disabled = false;
-        btn.textContent = '🖨️ Print & Ship My Book';
-        btn.title = 'Order your printed book via Peecho — choose format, enter address and pay on their site';
-      } else {
-        btn.disabled = true;
-        btn.textContent = '🖨️ Print & Ship My Book';
-        btn.title = 'Your story needs at least 20 pages to print. Add more memories to grow it!';
-      }
+    // Always update button label and tooltip based on current page count,
+    // even while preparation is running. Button stays disabled until ppoOrderReady
+    // AND canOrder — but the label/tooltip should reflect the page count immediately.
+    const btn = document.getElementById('ppoOrderBtn');
+    btn.textContent = '🖨️ Print & Ship My Book';
+    if (!canOrder) {
+      btn.disabled = true;
+      btn.title = 'Your story needs at least 20 pages to print. Add more memories to grow it!';
+    } else if (ppoOrderReady) {
+      btn.disabled = false;
+      btn.title = 'Order your printed book via Peecho — choose format, enter address and pay on their site';
+    } else {
+      // Preparation still running — keep disabled but show correct label
+      btn.disabled = true;
+      btn.title = 'Getting your book ready — just a moment…';
     }
   }
 
