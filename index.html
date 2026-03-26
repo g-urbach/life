@@ -38,7 +38,7 @@
      ALWAYS run node --check after every edit before shipping.
  10. ⚠️  TEMPLATE LITERAL SAFETY: Never write new functions containing template
      literals (backticks / ${} interpolations) via str_replace — the escaping
-     mangling causes \`..\` and \${} to appear as literal text at runtime.
+     mangling causes backtick..backtick and ${} to appear as literal text at runtime.
      Instead write them via Python heredoc (cat << 'PYEOF' pattern). This has
      caused 3 build failures (v1.88-v1.90). Non-negotiable.
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.95
+  Current: v1.97
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -267,7 +267,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.95 → next review at v2.00.
+  Build counter: currently at v1.97 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -425,7 +425,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.95</title>
+  <title>My Life Story v1.97</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1789,7 +1789,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.95</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.97</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2109,7 +2109,6 @@
        data-currency="AUD"
        data-locale="en_EN"
        data-src="">🛒 Order This Book</a>
-    </div>
     <div id="storySkeletonLoader" style="display:none">
       <div class="ai-thinking">
         <div class="ai-thinking-label">Crafting your story</div>
@@ -2547,7 +2546,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.95 — Book Details: persistent title/author/blurb/dedication/cover in Supabase life_settings; Book Details section in My Story tab; dashboard nudge tile; panel-bug deep debug logging";
+  const DEPLOY_NOTES = "v1.97 — ROOT CAUSE FIX: stray </div> after Peecho anchor was closing panel-story prematurely, leaving storySkeletonLoader and storyOutput outside any .panel div so they were always visible regardless of active panel";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2637,7 +2636,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.95 starting...');
+    dbg('INIT','v1.97 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3097,7 +3096,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v1.95 — log full state before switching
+    // PANEL BUG DEBUG v1.97 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -6925,8 +6924,20 @@
           body: thumbBlob
         });
         if (thumbRes.ok) {
-          thumbnailUrl = THUMB_PUBLIC_URL + '/' + thumbName;
-          dbg('PEECHO', 'Thumbnail ready:', thumbnailUrl.substring(0, 60) + '…');
+          // Get a 7-day signed URL — Peecho fetches thumbnail with no auth headers,
+          // signed URL is plain HTTPS accessible without auth (non-sensitive cover image)
+          const signRes = await fetch(STORAGE_SIGN + '/' + thumbName, {
+            method: 'POST',
+            headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expiresIn: 604800 }) // 7 days
+          });
+          if (signRes.ok) {
+            const signData = await signRes.json();
+            if (signData.signedURL) {
+              thumbnailUrl = SUPABASE_URL + '/storage/v1' + signData.signedURL;
+              dbg('PEECHO', 'Thumbnail signed URL ready:', thumbnailUrl.substring(0, 60) + '…');
+            }
+          }
         }
       } catch(thumbErr) {
         dbgWarn('PEECHO', 'Thumbnail failed (non-fatal):', thumbErr.message);
