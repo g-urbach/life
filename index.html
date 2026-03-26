@@ -163,10 +163,15 @@
            photo_ai_description, parent_entry_id, title, era, location,
            people, chapter, date, reference, reference_url
 
+  DB Table: life_settings (added v1.95)
+  Columns: user_id, key, value, updated_at
+  RLS: users manage own rows only
+  Used for: book_title, book_author, book_blurb, book_dedication, book_cover_style
+
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.94
+  Current: v1.95
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -224,6 +229,11 @@
     → Peecho hosts checkout, product selection, payment, shipping
     NOTE: Preview image doesn't render (Supabase signed URLs not publicly
     accessible to Peecho's thumbnail service) — future fix needed
+  - Book Details section: collapsible panel with title/author/blurb/dedication
+    Persisted in life_settings Supabase table (upsert on key)
+    ✨ Suggest button: AI generates blurb from entries
+    Auto-populates print preview fields when opening print overlay
+    Dashboard nudge tile shown when details are missing, links to My Story
 
   AUTH
   - Landing page with sign in / create account
@@ -257,7 +267,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.94 → next review at v2.00.
+  Build counter: currently at v1.95 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -376,9 +386,6 @@
 
   KNOWN LIMITATIONS
   -----------------
-  - Peecho preview image: FIXED in v1.87. Thumbnail uploaded to public life-thumbnails
-    bucket, served via plain public URL — no signing needed. Peecho fetches cleanly.
-  - Peecho product IDs (PEECHO_PRODUCTS): CLEANED UP in v1.52 — dead code removed.
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
@@ -386,14 +393,9 @@
   - No runtime error alerting yet: if storage fills up or AI tokens are exhausted
     during a user session, Geoff won't know until manually checking. Notification
     system is in BACKLOG HIGH.
-
-  ✅ RESOLVED — Peecho "Shipping unavailable" (session 24/03/2026, fixed v1.84)
-  ------------------------------------------------------------------------------
-  ROOT CAUSE: Peecho products have minimum page counts (softcover: 20, hardcover:
-  24, magazine: 18). Our PDFs were 4-6 pages — matching no products for any country.
-  FIX: PDF now padded to PEECHO_MIN_PAGES=20 with blank back-matter pages.
-  Peecho thumbnail (left panel preview) fixed in v1.85 via data-thumbnail attribute.
-
+  - Panel scroll bug (post-print-preview): deep debug logging added v1.95 with
+    triple-redundant scroll reset + rAF in closePrintPreview. Root cause still
+    under investigation — check console PANEL logs after reproducing.
   PEECHO KEY FACTS (for future sessions):
   - Token table: life_print_tokens. Edge fn RPCs: exec_get/insert/delete/increment_print_token,
     exec_get/delete_user_print_tokens.
@@ -423,7 +425,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.94</title>
+  <title>My Life Story v1.95</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1787,7 +1789,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.94</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.95</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1994,6 +1996,52 @@
   <div class="panel" id="panel-story">
     <h2 class="section-title">My Story</h2>
     <p class="section-sub">Choose a format, then generate. Toggle 😄 Funny for a warm roast of any format.</p>
+
+    <!-- ── Book Details section ─────────────────────────────────────── -->
+    <div id="bookDetailsSection" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;cursor:pointer" onclick="toggleBookDetails()">
+        <div>
+          <span style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--text)">📖 Book Details</span>
+          <span style="font-size:0.78rem;color:var(--text-light);margin-left:10px">Title, author, blurb &amp; more — used when printing</span>
+        </div>
+        <span id="bookDetailsChevron" style="font-size:0.85rem;color:var(--text-light);transition:transform 0.25s">▼</span>
+      </div>
+      <div id="bookDetailsBody" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Book Title</label>
+            <input type="text" id="bdTitle" placeholder="e.g. My Life Story"
+              oninput="bookDetailsChanged()"
+              style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface2);color:var(--text)">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Author Name</label>
+            <input type="text" id="bdAuthor" placeholder="Your name"
+              oninput="bookDetailsChanged()"
+              style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.88rem;background:var(--surface2);color:var(--text)">
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light)">Blurb / Back Cover</label>
+            <button onclick="suggestBlurb(this)" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif">✨ Suggest</button>
+          </div>
+          <textarea id="bdBlurb" rows="3" placeholder="A short description of your life story — appears on the back cover…"
+            oninput="bookDetailsChanged()"
+            style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface2);color:var(--text);resize:vertical"></textarea>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Dedication (optional)</label>
+          <textarea id="bdDedication" rows="2" placeholder="e.g. For my family, with love…"
+            oninput="bookDetailsChanged()"
+            style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface2);color:var(--text);resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span id="bdSaveStatus" style="font-size:0.78rem;color:var(--text-light)"></span>
+          <button onclick="saveBookDetails()" class="btn btn-primary" style="font-size:0.82rem;padding:7px 18px">💾 Save Book Details</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Funny toggle -->
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -2257,6 +2305,15 @@
         <div class="dash-tile-sub" id="dashPhotosSub"></div>
       </div>
 
+      <!-- Tile: Book Details nudge (hidden when details are complete) -->
+      <div class="dash-tile" id="dashBookDetailsTile" onclick="showPanel('story',null,2);setTimeout(function(){var bd=document.getElementById('bookDetailsBody');if(bd&&bd.style.display==='none')toggleBookDetails();},150)" style="display:none;cursor:pointer">
+        <div class="dash-tile-accent" style="background:var(--gold)"></div>
+        <div class="dash-tile-icon">📖</div>
+        <div class="dash-tile-title">Book Details</div>
+        <div class="dash-tile-value" id="dashBookDetailsValue" style="font-size:0.92rem">—</div>
+        <div class="dash-tile-sub" id="dashBookDetailsSub">Click to set your book title, author &amp; blurb</div>
+      </div>
+
       <!-- Tile: People in Your Story (wide, expands to person list) -->
       <div class="dash-tile dash-tile-wide" onclick="togglePeopleDrill()" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--rose)"></div>
@@ -2490,7 +2547,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.94 — Fix grey button timing (show correct state before prepareForPrint completes); fix all-tabs scroll bug (scroll to top on showPanel)";
+  const DEPLOY_NOTES = "v1.95 — Book Details: persistent title/author/blurb/dedication/cover in Supabase life_settings; Book Details section in My Story tab; dashboard nudge tile; panel-bug deep debug logging";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2580,7 +2637,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.94 starting...');
+    dbg('INIT','v1.95 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -2641,7 +2698,7 @@
       currentUser  = session?.user ?? null;
       sessionToken = session?.access_token ?? null;
       updateAuthUI();
-      if (currentUser) { await loadEntries(); showReminder(); renderDashboard(); }
+      if (currentUser) { await loadEntries(); await loadBookSettings(); showReminder(); renderDashboard(); }
     });
   }
 
@@ -2820,7 +2877,8 @@
   }
 
   // ── Database ──────────────────────────────────────────────────────
-  const DB_URL = SUPABASE_URL + '/rest/v1/life_entries';
+  const DB_URL          = SUPABASE_URL + '/rest/v1/life_entries';
+  const DB_SETTINGS_URL = SUPABASE_URL + '/rest/v1/life_settings';
 
   function getAuthHeaders() {
     // Warn if sessionToken is null — callers get anon key which will be
@@ -3039,29 +3097,40 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('panel-' + name).classList.add('active');
+    // PANEL BUG DEBUG v1.95 — log full state before switching
+    var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
+    var scrollBefore   = window.scrollY;
+    var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
+    dbg('PANEL', 'showPanel(' + name + ') scrollY=' + scrollBefore + ' overlayVisible=' + overlayVisible + ' activePanels=[' + activePanels.join(',') + ']');
+
+    document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+    document.querySelectorAll('.nav-btn').forEach(function(b){ b.classList.remove('active'); });
+    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+    var targetPanel = document.getElementById('panel-' + name);
+    if (!targetPanel) { dbgErr('PANEL', 'panel-' + name + ' not found in DOM!'); return; }
+    targetPanel.classList.add('active');
     if (btn) btn.classList.add('active');
     if (tabIndex !== undefined) {
-      const tab = document.getElementById('tab-' + tabIndex);
+      var tab = document.getElementById('tab-' + tabIndex);
       if (tab) tab.classList.add('active');
-      // Also highlight desktop nav
-      const navBtns = document.querySelectorAll('.nav-btn');
+      var navBtns = document.querySelectorAll('.nav-btn');
       if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
     }
-    // Scroll to top of content area on every panel switch — prevents story content
-    // appearing above the new panel when user navigates after closing print preview
+    // Scroll to top — belt AND braces: scroll window, docEl, body
     window.scrollTo({ top: 0, behavior: 'instant' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    dbg('PANEL', 'After scrollTo: scrollY=' + window.scrollY + ' docEl.scrollTop=' + document.documentElement.scrollTop + ' body.scrollTop=' + document.body.scrollTop);
+
     if (name === 'dashboard') renderDashboard();
     if (name === 'entries')   { populateReviewFilter(); renderReviewEntries(); }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name === 'help')     document.getElementById('helpInput').focus();
-    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(e => e.photo_url), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);  // intentionally not awaited here — tab switch is fire-and-forget
+    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);
     if (name === 'memories') populateTagDropdowns('rec');
+    if (name === 'story')    renderBookDetails();
   }
 
   // ── Memories tab ─────────────────────────────────────────────────
@@ -3954,6 +4023,138 @@
         '<div class="photo-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</div>' +
       '</div>';
     }).join('');
+  }
+
+  // ── Book Details (life_settings) ─────────────────────────────────
+
+  // In-memory cache of book settings
+  var _bookSettings = { title: '', author: '', blurb: '', dedication: '', coverStyle: 'classic' };
+  var _bookDetailsDirty = false;
+  var _bookDetailsSaveTimer = null;
+
+  async function loadBookSettings() {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=in.(book_title,book_author,book_blurb,book_dedication,book_cover_style)', {
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) { dbgWarn('BOOKSETTINGS', 'Load failed:', res.status); return; }
+      var rows = await res.json();
+      rows.forEach(function(row) {
+        if (row.key === 'book_title')      _bookSettings.title       = row.value || '';
+        if (row.key === 'book_author')     _bookSettings.author      = row.value || '';
+        if (row.key === 'book_blurb')      _bookSettings.blurb       = row.value || '';
+        if (row.key === 'book_dedication') _bookSettings.dedication  = row.value || '';
+        if (row.key === 'book_cover_style')_bookSettings.coverStyle  = row.value || 'classic';
+      });
+      dbg('BOOKSETTINGS', 'Loaded:', JSON.stringify(_bookSettings));
+    } catch(err) { dbgWarn('BOOKSETTINGS', 'Load error:', err.message); }
+  }
+
+  async function saveBookSettingKey(key, value) {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(DB_SETTINGS_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, key: key, value: value, updated_at: new Date().toISOString() })
+      });
+      if (!res.ok) { dbgWarn('BOOKSETTINGS', 'Save failed for', key, res.status); }
+    } catch(err) { dbgWarn('BOOKSETTINGS', 'Save error:', err.message); }
+  }
+
+  async function saveBookDetails() {
+    var title      = (document.getElementById('bdTitle')?.value || '').trim();
+    var author     = (document.getElementById('bdAuthor')?.value || '').trim();
+    var blurb      = (document.getElementById('bdBlurb')?.value || '').trim();
+    var dedication = (document.getElementById('bdDedication')?.value || '').trim();
+
+    _bookSettings.title      = title;
+    _bookSettings.author     = author;
+    _bookSettings.blurb      = blurb;
+    _bookSettings.dedication = dedication;
+
+    var status = document.getElementById('bdSaveStatus');
+    if (status) { status.textContent = '⏳ Saving…'; }
+    await Promise.all([
+      saveBookSettingKey('book_title',      title),
+      saveBookSettingKey('book_author',     author),
+      saveBookSettingKey('book_blurb',      blurb),
+      saveBookSettingKey('book_dedication', dedication),
+      saveBookSettingKey('book_cover_style',_bookSettings.coverStyle)
+    ]);
+    _bookDetailsDirty = false;
+    if (status) { status.textContent = '✓ Saved'; setTimeout(function(){ if (status) status.textContent = ''; }, 2500); }
+    dbg('BOOKSETTINGS', 'Saved all book details');
+    // Sync print preview fields if overlay is open
+    syncBookDetailsToPreview();
+  }
+
+  function bookDetailsChanged() {
+    _bookDetailsDirty = true;
+    var status = document.getElementById('bdSaveStatus');
+    if (status) status.textContent = 'Unsaved changes';
+  }
+
+  function renderBookDetails() {
+    var titleEl      = document.getElementById('bdTitle');
+    var authorEl     = document.getElementById('bdAuthor');
+    var blurbEl      = document.getElementById('bdBlurb');
+    var dedicationEl = document.getElementById('bdDedication');
+    if (!titleEl) return;
+
+    // If fields are empty, populate from settings; otherwise leave user edits alone
+    if (!titleEl.value)      titleEl.value      = _bookSettings.title      || (userProfile.name ? userProfile.name + "'s Life Story" : '');
+    if (!authorEl.value)     authorEl.value     = _bookSettings.author     || userProfile.name || '';
+    if (!blurbEl.value)      blurbEl.value      = _bookSettings.blurb      || '';
+    if (!dedicationEl.value) dedicationEl.value = _bookSettings.dedication || '';
+  }
+
+  function toggleBookDetails() {
+    var body    = document.getElementById('bookDetailsBody');
+    var chevron = document.getElementById('bookDetailsChevron');
+    if (!body) return;
+    var open = body.style.display !== 'none';
+    body.style.display    = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+    if (!open) renderBookDetails();
+  }
+
+  function syncBookDetailsToPreview() {
+    // If print preview is open, sync book detail fields into it
+    var overlay = document.getElementById('printPreviewOverlay');
+    if (!overlay || !overlay.classList.contains('visible')) return;
+    var ppoTitle = document.getElementById('ppoBookTitle');
+    var ppoAuthor = document.getElementById('ppoAuthorName');
+    var ppoDedic  = document.getElementById('ppoDedication');
+    var bdTitle = document.getElementById('bdTitle');
+    var bdAuthor = document.getElementById('bdAuthor');
+    var bdDedic  = document.getElementById('bdDedication');
+    if (ppoTitle && bdTitle && bdTitle.value)  ppoTitle.value  = bdTitle.value;
+    if (ppoAuthor && bdAuthor && bdAuthor.value) ppoAuthor.value = bdAuthor.value;
+    if (ppoDedic && bdDedic && bdDedic.value)  ppoDedic.value  = bdDedic.value;
+  }
+
+  async function suggestBlurb(btn) {
+    var real = entries.filter(function(e){ return !e.category.startsWith('_profile'); });
+    if (real.length < 3) return toast('Add more memories first — AI needs at least 3 entries to suggest a blurb');
+    if (btn) { btn.textContent = '⏳ Thinking…'; btn.disabled = true; }
+    var sample = real.slice(0, 20).map(function(e){ return e.answer; }).join(' ').substring(0, 3000);
+    var name   = userProfile.name || 'the author';
+    var prompt = 'Write a compelling back-cover blurb (2-3 sentences, max 60 words) for a personal memoir by ' + name + '. '
+      + 'Draw on these memoir entries to make it specific and warm. '
+      + 'Write in third person. Return only the blurb text, no quotes or preamble. '
+      + 'MEMOIR ENTRIES: ' + sample;
+    try {
+      var blurb = await callAI(prompt, { max_tokens: 200 });
+      var el = document.getElementById('bdBlurb');
+      if (el) { el.value = blurb.trim(); bookDetailsChanged(); }
+      toast('✨ Blurb suggested — edit to taste, then Save');
+    } catch(err) {
+      toast('Could not suggest blurb — try again');
+    } finally {
+      if (btn) { btn.textContent = '✨ Suggest'; btn.disabled = false; }
+    }
   }
 
   // ── Story ────────────────────────────────────────────────────────
@@ -4958,6 +5159,27 @@
     const photoEntries = real.filter(e => e.photo_url);
     document.getElementById('dashPhotosValue').textContent = photoEntries.length + ' photo' + (photoEntries.length === 1 ? '' : 's');
     document.getElementById('dashPhotosSub').textContent   = photoEntries.length ? 'Photos bring your story to life' : 'Add photos to bring your story to life';
+
+    // Book Details nudge tile — show when title or blurb is missing
+    var bdTitle = _bookSettings.title || '';
+    var bdBlurb = _bookSettings.blurb || '';
+    var bdAuthor = _bookSettings.author || '';
+    var bdTile = document.getElementById('dashBookDetailsTile');
+    var bdValue = document.getElementById('dashBookDetailsValue');
+    var bdSub   = document.getElementById('dashBookDetailsSub');
+    if (bdTile) {
+      var missing = [];
+      if (!bdTitle)  missing.push('title');
+      if (!bdBlurb)  missing.push('blurb');
+      if (!bdAuthor) missing.push('author name');
+      if (missing.length > 0) {
+        bdTile.style.display = '';
+        if (bdValue) bdValue.textContent = missing.length + ' detail' + (missing.length > 1 ? 's' : '') + ' missing';
+        if (bdSub)   bdSub.textContent   = 'Set your ' + missing.join(', ') + ' for printing';
+      } else {
+        bdTile.style.display = 'none';
+      }
+    }
 
     // People tile
     const allPeople = real.flatMap(e => e.people ? e.people.split(',').map(p => p.trim()).filter(Boolean) : []);
@@ -6293,16 +6515,17 @@
     ppoStoryText = ppoStoryHtml.replace(/<[^>]+>/g, '').trim();
     if (!ppoStoryText || ppoStoryText.length < 50) return toast('Please generate a story first');
 
-    // Restore saved print preferences, falling back to sensible defaults
+    // Restore from Supabase book settings (persistent), falling back to localStorage then defaults
     const name  = userProfile.name || 'My';
     const defaultTitle = currentStory.funny
       ? name + "'s Life Story (Comedy Edition)"
       : name + "'s Life Story";
     const saved = JSON.parse(localStorage.getItem('life_print_prefs') || '{}');
-    document.getElementById('ppoBookTitle').value  = saved.title      || defaultTitle;
-    document.getElementById('ppoAuthorName').value = saved.author     || name;
-    document.getElementById('ppoDedication').value = saved.dedication || '';
-    ppoCoverStyle = saved.coverStyle || 'classic';
+    // Priority: Supabase settings > localStorage > defaults
+    document.getElementById('ppoBookTitle').value  = _bookSettings.title      || saved.title      || defaultTitle;
+    document.getElementById('ppoAuthorName').value = _bookSettings.author     || saved.author     || name;
+    document.getElementById('ppoDedication').value = _bookSettings.dedication || saved.dedication || '';
+    ppoCoverStyle = _bookSettings.coverStyle || saved.coverStyle || 'classic';
     // Reflect restored cover style in the style buttons
     document.querySelectorAll('.cover-style-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.style === ppoCoverStyle);
@@ -6319,7 +6542,8 @@
   }
 
   function closePrintPreview() {
-    const overlay = document.getElementById('printPreviewOverlay');
+    var overlay = document.getElementById('printPreviewOverlay');
+    dbg('PANEL', 'closePrintPreview — scrollY=' + window.scrollY + ' body.scrollTop=' + document.body.scrollTop + ' docEl.scrollTop=' + document.documentElement.scrollTop);
     overlay.classList.remove('visible');
     document.body.style.overflow = '';
     // Reset order state
@@ -6327,13 +6551,19 @@
     ppoTokenExpiry = 0;
     ppoProxyUrl    = null;
     ppoPdfBlob     = null;
-    const btn = document.getElementById('ppoOrderBtn');
+    var btn = document.getElementById('ppoOrderBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Preparing…';
-    // Note: do NOT call showPanel here — the overlay is position:fixed and the
-    // panels beneath are already in the correct state. Calling showPanel would
-    // re-activate whatever panel was last active when the preview opened (usually
-    // story), overriding any panel navigation the user did while the overlay was open.
+    // Force scroll reset after overlay closes — the overlay is position:fixed
+    // but on some browsers closing it leaves the underlying page scrolled.
+    // Use rAF to ensure the browser has repainted before we read/write scrollY.
+    requestAnimationFrame(function() {
+      dbg('PANEL', 'closePrintPreview rAF — scrollY=' + window.scrollY);
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      dbg('PANEL', 'closePrintPreview after scroll reset — scrollY=' + window.scrollY);
+    });
   }
 
   function setCoverStyle(style) {
