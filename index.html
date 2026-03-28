@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.99
+  Current: v2.00
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,6 +198,9 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
+  - Mic stop fix (v2.00): tapping Stop no longer blanks the textarea. onend
+    only overwrites el.value during active mid-session restarts; on user stop
+    the textarea retains exactly what was visible when stop was tapped.
 
   ENTRIES TAB
   - Keyword search with gold highlight, chapter filter, person filter, location filter
@@ -274,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.99 → next review at v2.00.
+  Build counter: currently at v2.00 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -302,6 +305,40 @@
       · Suggested triggers: Supabase storage quota >80%, AI 429/rate-limit errors,
         edge function 5xx, auth failures spike, Peecho API errors
 
+  - Autosave draft (localStorage): fire every few seconds while user is typing in
+    memAnswer; restore silently on return. Prevents data loss on accidental tab
+    close/refresh. Low build cost, real consequence if skipped.
+  - Export data (JSON/CSV): one-click download of all entries. Required under
+    Australian Privacy Act (right to access own data). Data already in memory —
+    trivial build. Do before user base grows.
+  - Undo last delete: 10-second toast before Supabase delete fires. Very low
+    build cost, meaningful safety net against accidental entry loss.
+
+  STORY HYGIENE (new category — v2.x milestone)
+  - Story Hygiene Dashboard tile: shell tile that runs cross-entry hygiene checks
+    and surfaces a score with actionable items. Build shell first, add checks over time.
+  - Consolidate topic (merge entries): AI clusters entries covering same event/theme,
+    drafts merged version, user approves/edits, originals archived or deleted.
+    Most unique feature — value grows with entry count. Moderately complex UI needed.
+  - Near-duplicate detector: flag entries sharing >70% facts/phrases (likely written
+    twice). Simpler precursor to Consolidate. These two belong together.
+  - Missing people detector: person mentioned frequently across entries but no
+    dedicated memory written *about* them. Surfaces gaps in the people narrative.
+  - Shallow entry expander (improved): rather than just flagging short entries,
+    show a visual depth meter per entry + single-tap "Help me expand this" that
+    opens AI conversation pre-loaded with that entry. Flag exists; the action UX doesn't.
+  - Unresolved threads detector: AI scans for "I'll write more about…", "that's
+    another story", "I never found out…" — surfaces them as open threads inviting follow-up.
+  - Chronological contradiction check: cross-entry timeline check (e.g. Entry A says
+    moved to Sydney 1995, Entry B says still in Melbourne 1997). Extends existing
+    single-entry date/era mismatch warning to work across entries.
+  - Decade/chapter gap detection: temporal lens on coverage — flags if user has
+    entries for ages 5–12 but nothing from ages 13–25. Different from chapter-count
+    check (Story Health tile); this needs a time-based view.
+  - Print readiness score: unified view combining word count, page estimate,
+    per-chapter coverage, and photo coverage. "Your story is ~14 pages. Typical
+    memoir is 80–120 pages. You're 17% there." Raw data exists; synthesis doesn't.
+
   MEDIUM
   - Era/decade dashboard tile — drill-down by decade (1970s, 1980s etc.)
   - Voice playback in My Story (TTS audiobook read-through)
@@ -313,6 +350,14 @@
   - Data export / right to deletion flow (GDPR / Aus Privacy Act)
   - pg_cron scheduled cleanup for life_print_tokens (daily delete of expired rows)
     — currently handled opportunistically in edge function, fine for low volume
+  - Progressive onboarding: 3-step first-run experience (name → first memory →
+    what AI can do). Track first-run state in life_settings.
+  - Per-chapter word count / page estimate: extend Words Written or Story Health
+    tile to show "Childhood: ~800 words / ~6 pages" per chapter.
+  - Global search: top-level search across entries, people, locations, dates.
+    Useful at 50+ entries, essential at 100+.
+  - Mobile PWA install prompt: one-time "Add to Home Screen" nudge.
+    Android: beforeinstallprompt event. iOS: manual instruction overlay.
 
   LOWER / FUTURE
   - Family Tree tab: people registry with relationships, entry counts,
@@ -324,6 +369,8 @@
   - Audio version — TTS personal audiobook export
   - Move AI prompt logic + story generation into edge functions (less in HTML,
     harder to copy, stronger moat)
+  - Entry linking (related entries): "see also" link between entries referencing
+    same event from different angles. Low urgency but improves printed book flow.
 
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
@@ -432,7 +479,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.99</title>
+  <title>My Life Story v2.00</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1797,7 +1844,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.99</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.00</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2567,7 +2614,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.99 — Fix mic dictation: interim text now flows directly into main textarea (no duplicate preview box); add Journal Style mode: entries in date order, author's exact words, no AI";
+  const DEPLOY_NOTES = "v2.00 — Fix mic stop blanking textarea: onend no longer overwrites el.value when user taps stop; only snaps to finals during active mid-session restarts";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2657,7 +2704,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.99 starting...');
+    dbg('INIT','v2.00 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3117,7 +3164,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v1.99 — log full state before switching
+    // PANEL BUG DEBUG v2.00 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -3234,10 +3281,16 @@
       };
 
       rec.onend = function() {
-        // On each session end, snap textarea back to finals-only (drop trailing interim)
-        el.value = accumulated;
-        memCheckButtons();
-        if (memMicActive && listeningActive) setTimeout(createAndStart, gotResult ? 300 : 150);
+        // Only snap textarea back to finals when still actively recording (mid-session restart).
+        // If the user tapped Stop, memMicActive is already false — do NOT overwrite el.value.
+        // Overwriting with accumulated (which excludes the last interim chunk) would blank
+        // or truncate whatever the user saw just before they tapped stop.
+        if (memMicActive && listeningActive) {
+          el.value = accumulated;
+          memCheckButtons();
+          setTimeout(createAndStart, gotResult ? 300 : 150);
+        }
+        // On stop: leave textarea as-is. The last onresult already wrote accumulated+interim.
       };
 
       rec.onerror = function(e) {
