@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v1.98
+  Current: v1.99
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -195,9 +195,9 @@
   - Edit tags panel in Entries matches Memories layout: 3-col grid,
     Chapter/Era/Date row 1, Location/People/Refs row 2, Photos full-width row 3
   - Mic dictation with persistent listening, continuous=false for Android
-  - Mic: prominent full-width button (not hidden in textarea corner), live
-    interim transcript shown as user speaks (interimResults=true), blinking
-    cursor confirms recording is active. Button label/colour changes clearly.
+  - Mic: prominent full-width button, live interim transcript flows directly
+    into the main textarea (no separate preview box), rose border on textarea
+    while recording confirms active state. Button label/colour changes clearly.
 
   ENTRIES TAB
   - Keyword search with gold highlight, chapter filter, person filter, location filter
@@ -222,8 +222,10 @@
   - Recent Entries list
 
   MY STORY TAB
-  - 5 formats: Snapshot (blurb), The Short Version, The Full Story,
-    Book Edition (chapters with ##headings), + 😄 Funny toggle
+  - 6 formats: Snapshot (blurb), The Short Version, The Full Story,
+    Book Edition (chapters with ##headings), Journal Style, + 😄 Funny toggle
+  - Journal Style: no AI — entries in date order (date field → era → timestamp),
+    grouped by chapter headings, author's exact words, date/era/title/body/tags
   - Factual modes: strictly fact-based, content gates (50/150 word minimums)
   - Funny mode: embellishment allowed, works with any format
   - The Essentials page inserted into Extended/Book Edition
@@ -272,7 +274,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v1.98 → next review at v2.00.
+  Build counter: currently at v1.99 → next review at v2.00.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -430,7 +432,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Life Story v1.98</title>
+  <title>My Life Story v1.99</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1795,7 +1797,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v1.98</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v1.99</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1973,10 +1975,7 @@
         <span id="memMicIcon" style="font-size:1.3rem">🎙️</span>
         <span id="memMicLabel">Tap to speak your memory</span>
       </button>
-      <!-- Live interim transcript shown while mic is active -->
-      <div id="memMicInterim" style="display:none;margin-top:6px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:0.85rem;color:var(--text-light);font-style:italic;min-height:32px;line-height:1.5">
-        <span id="memMicInterimText"></span><span id="memMicCursor" style="display:inline-block;width:2px;height:0.9em;background:var(--gold);margin-left:2px;vertical-align:middle;animation:blink 1s step-end infinite"></span>
-      </div>
+      <!-- Interim transcript rendered live in the main textarea below -->
     </div>
 
     <!-- Memory text -->
@@ -2088,6 +2087,11 @@
         <span class="story-mode-icon">📚</span>
         <span class="story-mode-title">Book Edition</span>
         <span class="story-mode-desc">Organised by chapter with headings — print-ready</span>
+      </button>
+      <button class="story-mode-btn" onclick="generateStory('journal')">
+        <span class="story-mode-icon">📓</span>
+        <span class="story-mode-title">Journal Style</span>
+        <span class="story-mode-desc">Your exact words, in date order — no AI, just you</span>
       </button>
     </div>
     <!-- Nudge shown when no story has been generated yet -->
@@ -2563,7 +2567,7 @@
 <div id="toast"></div>
 
 <script>
-  const DEPLOY_NOTES = "v1.98 — Mic: prominent full-width button + live interim transcript while speaking; fix Saving... hang on empty save; Date label: journal->when it happened; date warning on era mismatch or recent date for childhood topic; date hygiene in AI Review";
+  const DEPLOY_NOTES = "v1.99 — Fix mic dictation: interim text now flows directly into main textarea (no duplicate preview box); add Journal Style mode: entries in date order, author's exact words, no AI";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2653,7 +2657,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v1.98 starting...');
+    dbg('INIT','v1.99 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3113,7 +3117,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v1.98 — log full state before switching
+    // PANEL BUG DEBUG v1.99 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -3167,10 +3171,10 @@
 
   // ── Mic dictation into textarea ───────────────────────────────────
   function setMicUI(active) {
-    var btn   = document.getElementById('memMicBtn');
-    var icon  = document.getElementById('memMicIcon');
-    var label = document.getElementById('memMicLabel');
-    var interim = document.getElementById('memMicInterim');
+    var btn      = document.getElementById('memMicBtn');
+    var icon     = document.getElementById('memMicIcon');
+    var label    = document.getElementById('memMicLabel');
+    var textarea = document.getElementById('memAnswer');
     if (!btn) return;
     if (active) {
       btn.style.background   = 'var(--rose)';
@@ -3178,16 +3182,15 @@
       btn.style.color        = 'white';
       if (icon)  icon.textContent  = '⏹';
       if (label) label.textContent = 'Tap to stop recording';
-      if (interim) interim.style.display = 'block';
+      // Highlight the textarea so user sees dictation flowing in
+      if (textarea) textarea.style.borderColor = 'var(--rose)';
     } else {
       btn.style.background   = 'var(--surface)';
       btn.style.borderColor  = 'var(--border)';
       btn.style.color        = 'var(--text)';
       if (icon)  icon.textContent  = '🎙️';
       if (label) label.textContent = 'Tap to speak your memory';
-      if (interim) { interim.style.display = 'none'; }
-      var interimText = document.getElementById('memMicInterimText');
-      if (interimText) interimText.textContent = '';
+      if (textarea) textarea.style.borderColor = 'var(--border)';
     }
   }
 
@@ -3199,7 +3202,6 @@
     setMicUI(true);
     setMemStatus('listening', 'Listening...');
     var el = document.getElementById('memAnswer');
-    var interimEl = document.getElementById('memMicInterimText');
     listeningActive = true;
     var accumulated = ''; // finals committed across restarts
 
@@ -3225,14 +3227,16 @@
         }
         if (newFinals) {
           accumulated += (accumulated ? ' ' : '') + newFinals;
-          el.value = accumulated;
-          memCheckButtons();
         }
-        // Show interim in the live preview box — user sees words as they speak
-        if (interimEl) interimEl.textContent = accumulated + (interim ? ' ' + interim : '');
+        // Show live text (finals + interim) directly in the main textarea
+        el.value = accumulated + (interim ? ' ' + interim : '');
+        memCheckButtons();
       };
 
       rec.onend = function() {
+        // On each session end, snap textarea back to finals-only (drop trailing interim)
+        el.value = accumulated;
+        memCheckButtons();
         if (memMicActive && listeningActive) setTimeout(createAndStart, gotResult ? 300 : 150);
       };
 
@@ -4374,6 +4378,45 @@
           'Within each chapter, flowing prose covering every entry — facts only, nothing invented. No bullet points. Third person. ' +
           'Return only the story.\n\nENTRIES BY CHAPTER:\n' + chapterText;
         maxTok = 8000;
+      } else if (mode === 'journal') {
+        // Journal mode: no AI — render entries as written, sorted by date
+        skeleton.style.display = 'none';
+        const sorted = realEntries.slice().sort((a, b) => {
+          // Sort by entry date field if set, else by timestamp
+          const da = a.date ? new Date(a.date) : new Date(a.timestamp);
+          const db = b.date ? new Date(b.date) : new Date(b.timestamp);
+          return da - db;
+        });
+        let html = '<div class="story-book" style="font-family:\'Lato\',sans-serif;font-size:0.97rem;line-height:1.75">';
+        let lastChapter = null;
+        sorted.forEach(e => {
+          const ch = e.chapter || '';
+          if (ch && ch !== lastChapter) {
+            html += '<h2 style="font-family:\'Playfair Display\',serif;font-size:1.25rem;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:6px;margin:32px 0 18px">' + escHtml(ch) + '</h2>';
+            lastChapter = ch;
+          }
+          html += '<div style="margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid var(--surface2)">';
+          // Entry date / era
+          const dateLabel = e.date ? (function(d){ try { return new Date(d).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}); } catch(x){ return d; } })(e.date) : (e.era || null);
+          if (dateLabel) html += '<div style="font-size:0.78rem;color:var(--gold);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px">' + escHtml(dateLabel) + '</div>';
+          // Title
+          if (e.title) html += '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:8px">' + escHtml(e.title) + '</div>';
+          // Body — exact words, respect line breaks
+          html += '<p style="margin:0;white-space:pre-wrap;color:var(--text)">' + escHtml(e.answer || '') + '</p>';
+          // Tags row
+          const tags = [e.location, e.people].filter(Boolean).join(' · ');
+          if (tags) html += '<div style="font-size:0.78rem;color:var(--text-light);margin-top:8px">📍 ' + escHtml(tags) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        out.style.display = 'block'; out.className = '';
+        out.innerHTML = html;
+        currentStory = { text: sorted.map(e => (e.title ? e.title + '\n' : '') + e.answer).join('\n\n---\n\n'), mode: 'journal', funny: false, funnyCaptions: {} };
+        document.getElementById('exportPdfBtn').style.display  = 'inline-block';
+        document.getElementById('printBookBtn').style.display  = 'inline-block';
+        const nudge = document.getElementById('storyNudge');
+        if (nudge) nudge.style.display = 'none';
+        return;
       }
 
       const story = await callAI(prompt, { max_tokens: maxTok });
