@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.05 — Consolidate Topic: AI clusters duplicate entries, drafts a merged memory, user edits + approves, originals deleted — triggered from Story Hygiene tile";
+  const DEPLOY_NOTES = "v2.06 — Story Hygiene rebuild: content-based TF-IDF clustering replaces title-word matching; 5 checks (topic clusters, chapter gaps, print readiness, missing people dedications, orphaned entries); Consolidate modal runs fresh clustering every open";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.05): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.06): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.05
+  Current: v2.06
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.05): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.06): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.05 → next review at v2.05.
+  Build counter: currently at v2.06 → next review at v2.06.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.05</title>
+  <title>My Life Story v2.06</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1849,7 +1849,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.05</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.06</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2712,7 +2712,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.05 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.06 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2802,7 +2802,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.05 starting...');
+    dbg('INIT','v2.06 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3262,7 +3262,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.05 — log full state before switching
+    // PANEL BUG DEBUG v2.06 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -6727,44 +6727,73 @@
 
     const checks = [];
 
-    // ── Check 1: Near-duplicate detector ─────────────────────────────
-    // Normalise titles: lowercase, strip punctuation, split to word set
-    function normTitle(t) { return (t||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').trim(); }
-    function wordSet(s) { return new Set(s.split(/\s+/).filter(w => w.length > 3)); }
+    // ── Check 1: Content-based topic clustering (TF-IDF cosine similarity) ──
+    // Tokenise entry body into meaningful words (strip stopwords)
+    const STOPWORDS = new Set(['the','and','was','for','that','with','this','his','her','our','they','them','their','have','had','but','not','are','were','from','has','been','one','all','would','could','when','what','which','who','into','out','him','she','its','than','then','some','more','will','about','just','been','also','like','said','your','after','before','there','these','those','very','over','such','much','many','even','back','time','year','years','day','days','life','well','knew','got','get','went','come','came','made','make','know','way','think','felt','feel','told','took','still','never','always','little','much','good','long','hand','home','old','too','can','did','how','why','him']);
+    function tokenise(text) {
+      return (text||'').toLowerCase()
+        .replace(/[^a-z\s]/g,' ')
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !STOPWORDS.has(w));
+    }
+    // Build TF vectors per entry
+    function tfVector(tokens) {
+      const freq = {};
+      tokens.forEach(t => { freq[t] = (freq[t]||0) + 1; });
+      const total = tokens.length || 1;
+      Object.keys(freq).forEach(k => freq[k] /= total);
+      return freq;
+    }
+    // Cosine similarity between two TF vectors
+    function cosineSim(a, b) {
+      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+      let dot = 0, magA = 0, magB = 0;
+      keys.forEach(k => {
+        const av = a[k]||0, bv = b[k]||0;
+        dot += av * bv; magA += av*av; magB += bv*bv;
+      });
+      return (magA && magB) ? dot / (Math.sqrt(magA) * Math.sqrt(magB)) : 0;
+    }
+
+    // Only cluster entries with enough content (>20 words)
+    const richEntries = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length > 20);
+    const vectors = richEntries.map(e => tfVector(tokenise(e.title + ' ' + e.title + ' ' + e.answer)));
+
+    // Group entries with cosine similarity > 0.18 (meaningful topic overlap)
+    const THRESHOLD = 0.18;
+    const assigned  = new Set();
     const dupGroups = [];
-    const flagged   = new Set();
-    for (let i = 0; i < real.length; i++) {
-      if (flagged.has(i)) continue;
-      const ws1 = wordSet(normTitle(real[i].title));
-      if (!ws1.size) continue;
+    for (let i = 0; i < richEntries.length; i++) {
+      if (assigned.has(i)) continue;
       const group = [i];
-      for (let j = i + 1; j < real.length; j++) {
-        if (flagged.has(j)) continue;
-        const ws2 = wordSet(normTitle(real[j].title));
-        if (!ws2.size) continue;
-        const shared = [...ws1].filter(w => ws2.has(w));
-        if (shared.length >= 2 || (ws1.size <= 2 && shared.length >= 1 && ws2.size <= 2)) {
+      for (let j = i+1; j < richEntries.length; j++) {
+        if (assigned.has(j)) continue;
+        if (cosineSim(vectors[i], vectors[j]) >= THRESHOLD) {
           group.push(j);
-          flagged.add(j);
+          assigned.add(j);
         }
       }
-      if (group.length > 1) { dupGroups.push(group); flagged.add(i); }
+      if (group.length > 1) { dupGroups.push(group); assigned.add(i); }
     }
+
+    // Map back to entry IDs using richEntries index
+    window._hygienceDupGroups = dupGroups.map(g => g.map(i => richEntries[i].id));
+
     if (dupGroups.length === 0) {
-      checks.push({ ok: true, label: 'No near-duplicate entries detected ✓' });
+      checks.push({ ok: true, label: 'No closely related topic groups detected ✓' });
     } else {
       const total = dupGroups.reduce((n,g) => n + g.length, 0);
-      // Store group entry IDs on window so openConsolidate can read them
-      window._hygienceDupGroups = dupGroups.map(g => g.map(i => real[i].id));
       checks.push({
         ok: false,
-        label: total + ' possible duplicate' + (total > 1 ? 's' : '') + ' found',
-        detail: dupGroups.map(g => g.map(i => '\u201C' + (real[i].title||'Untitled') + '\u201D').join(' · ')).join('<br>'),
-        action: { label: '🔀 Consolidate duplicates', fn: 'openConsolidate()' }
+        label: total + ' entries across ' + dupGroups.length + ' topic group' + (dupGroups.length > 1 ? 's' : '') + ' could be consolidated',
+        detail: dupGroups.map(g =>
+          '<em>' + g.map(i => '\u201C' + (richEntries[i].title||'Untitled').slice(0,45) + '\u201D').join(' · ') + '</em>'
+        ).join('<br>'),
+        action: { label: '\uD83D\uDD00 Consolidate topics', fn: 'openConsolidate()' }
       });
     }
 
-    // ── Check 2: Chapter gap detection ───────────────────────────────
+    // ── Check 2: Chapter gap detection ───────────────────────────────────
     const allChapters = ['Childhood','Family','Education','Career','Relationships','Adventures','Challenges','Reflections'];
     const chapterCounts = {};
     real.forEach(e => { if (e.chapter) chapterCounts[e.chapter] = (chapterCounts[e.chapter]||0) + 1; });
@@ -6783,48 +6812,72 @@
       });
     }
 
-    // ── Check 3: Print readiness — avg words per entry ────────────────
-    const avgWords = Math.round(real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) / real.length);
-    const shallow  = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length < 50);
-    if (shallow.length === 0) {
-      checks.push({ ok: true, label: 'All entries are print-ready length ✓' });
+    // ── Check 3: Print readiness — flag short entries ─────────────────────
+    const totalWords = real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
+    const totalPages = Math.round(totalWords / 250);
+    const shallow    = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length < 50);
+    const printPct   = Math.min(100, Math.round((totalPages / 150) * 100));
+    if (shallow.length === 0 && totalPages >= 10) {
+      checks.push({ ok: true, label: 'Print readiness: ~' + totalPages + ' pages · no short entries ✓' });
+    } else {
+      const parts = [];
+      parts.push('~' + totalPages + ' pages (typical memoir: 150–250 pages, ' + printPct + '% there)');
+      if (shallow.length) parts.push(shallow.length + ' entr' + (shallow.length > 1 ? 'ies' : 'y') + ' under 50 words — consider expanding: ' +
+        shallow.slice(0,3).map(e => '\u201C' + (e.title||'Untitled').slice(0,40) + '\u201D').join(', ') + (shallow.length > 3 ? '\u2026' : ''));
+      checks.push({ ok: false, label: 'Print readiness needs work', detail: parts.join('<br>') });
+    }
+
+    // ── Check 4: Missing people — person mentioned often but no dedicated entry ──
+    const peopleFreq = {};
+    real.forEach(e => {
+      (e.people||[]).forEach(p => { peopleFreq[p] = (peopleFreq[p]||0) + 1; });
+    });
+    // Person mentioned 3+ times but never has a dedicated entry (title contains their name)
+    const missingPeople = Object.entries(peopleFreq)
+      .filter(([name, count]) => count >= 3)
+      .filter(([name]) => !real.some(e => (e.title||'').toLowerCase().includes(name.toLowerCase()) ||
+                                          (e.answer||'').toLowerCase().startsWith(name.toLowerCase())))
+      .sort((a,b) => b[1] - a[1])
+      .slice(0, 5);
+    if (missingPeople.length === 0) {
+      checks.push({ ok: true, label: 'No frequently-mentioned people are missing their own memory ✓' });
     } else {
       checks.push({
         ok: false,
-        label: shallow.length + ' short entr' + (shallow.length > 1 ? 'ies' : 'y') + ' (under 50 words)',
-        detail: shallow.slice(0,5).map(e => '\u201C' + (e.title||'Untitled').slice(0,50) + '\u201D').join('<br>') + (shallow.length > 5 ? '<br>… and ' + (shallow.length-5) + ' more' : '')
+        label: missingPeople.length + ' person' + (missingPeople.length > 1 ? 's' : '') + ' mentioned often with no dedicated memory',
+        detail: missingPeople.map(([n,c]) => '<strong>' + n + '</strong> — mentioned in ' + c + ' entries, no dedicated memory about them').join('<br>'),
       });
     }
 
-    // ── Check 4: Missing people tags ──────────────────────────────────
-    const noPeople = real.filter(e => !e.people || !e.people.length);
-    if (noPeople.length === 0) {
-      checks.push({ ok: true, label: 'All entries have people tagged ✓' });
+    // ── Check 5: Orphaned entries (no chapter tag) ────────────────────────
+    const orphaned = real.filter(e => !e.chapter);
+    if (orphaned.length === 0) {
+      checks.push({ ok: true, label: 'All entries have a chapter tag ✓' });
     } else {
       checks.push({
         ok: false,
-        label: noPeople.length + ' entr' + (noPeople.length > 1 ? 'ies' : 'y') + ' missing people tags',
-        detail: 'Tagging people helps generate the People chapter and index'
+        label: orphaned.length + ' entr' + (orphaned.length > 1 ? 'ies' : 'y') + ' missing a chapter tag',
+        detail: 'Untagged entries won\u2019t appear in chapter-based print layouts'
       });
     }
 
-    // ── Score ─────────────────────────────────────────────────────────
-    const passCount  = checks.filter(c => c.ok).length;
+    // ── Score ──────────────────────────────────────────────────────────────
+    const passCount    = checks.filter(c => c.ok).length;
     const hygieneScore = Math.round((passCount / checks.length) * 100);
-    const scoreCol   = hygieneScore >= 75 ? 'var(--sage)' : hygieneScore >= 50 ? 'var(--gold)' : 'var(--rose)';
-    const scoreEmoji = hygieneScore >= 75 ? '✨' : hygieneScore >= 50 ? '⚠️' : '🔴';
-    valueEl.textContent = scoreEmoji + ' ' + hygieneScore + ' / 100 — ' + passCount + ' of ' + checks.length + ' checks passed';
-    subEl.textContent   = hygieneScore >= 75 ? 'Your story is in great shape' : hygieneScore >= 50 ? 'A few things need attention — click for details' : 'Click below to see what needs fixing';
+    const scoreCol     = hygieneScore >= 75 ? 'var(--sage)' : hygieneScore >= 50 ? 'var(--gold)' : 'var(--rose)';
+    const scoreEmoji   = hygieneScore >= 75 ? '\u2728' : hygieneScore >= 50 ? '\u26A0\uFE0F' : '\uD83D\uDD34';
+    valueEl.textContent = scoreEmoji + '\u00A0' + hygieneScore + ' / 100 \u2014 ' + passCount + ' of ' + checks.length + ' checks passed';
+    subEl.textContent   = hygieneScore >= 75 ? 'Your story is in great shape' : hygieneScore >= 50 ? 'A few things need attention \u2014 click for details' : 'Several things need fixing \u2014 click to see';
     barEl.style.width      = hygieneScore + '%';
     barEl.style.background = scoreCol;
 
-    // ── Render check cards ────────────────────────────────────────────
+    // ── Render check cards ─────────────────────────────────────────────────
     checksEl.innerHTML = checks.map(c => {
-      const icon = c.ok ? '✅' : '⚠️';
+      const icon = c.ok ? '\u2705' : '\u26A0\uFE0F';
       const col  = c.ok ? 'var(--sage)' : 'var(--gold)';
       return '<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:var(--surface);border-left:3px solid ' + col + '">' +
         '<div style="font-size:0.82rem;font-weight:600;color:var(--text)">' + icon + ' ' + c.label + '</div>' +
-        (c.detail ? '<div style="font-size:0.75rem;color:var(--text-light);margin-top:5px;line-height:1.5">' + c.detail + '</div>' : '') +
+        (c.detail ? '<div style="font-size:0.75rem;color:var(--text-light);margin-top:5px;line-height:1.6">' + c.detail + '</div>' : '') +
         (c.action ? '<button onclick="' + c.action.fn + '" style="margin-top:8px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.78rem;cursor:pointer;color:var(--text)">' + c.action.label + '</button>' : '') +
         '</div>';
     }).join('');
@@ -6838,33 +6891,73 @@
   function openConsolidate() {
     const overlay = document.getElementById('consolidateOverlay');
     if (!overlay) return;
-    // Use clusters from hygiene tile if available, else recompute
-    const groups = window._hygienceDupGroups || [];
-    _consolidateGroups = groups;
-    const listEl  = document.getElementById('consolidateClusterList');
-    const noneEl  = document.getElementById('consolidateNoClusters');
-    const step1   = document.getElementById('consolidateStep1');
-    const step2   = document.getElementById('consolidateStep2');
+    const step1 = document.getElementById('consolidateStep1');
+    const step2 = document.getElementById('consolidateStep2');
     step1.style.display = 'block';
     step2.style.display = 'none';
-    if (!groups.length) {
+    overlay.classList.add('open');
+    // Re-run content clustering fresh each time (picks up any new entries)
+    consolidateRunClustering();
+  }
+
+  function consolidateRunClustering() {
+    const real = entries.filter(e => !e.category?.startsWith('_profile'));
+    const listEl = document.getElementById('consolidateClusterList');
+    const noneEl = document.getElementById('consolidateNoClusters');
+
+    // Content-based TF-IDF cosine similarity (same logic as hygiene tile)
+    const STOPWORDS = new Set(['the','and','was','for','that','with','this','his','her','our','they','them','their','have','had','but','not','are','were','from','has','been','one','all','would','could','when','what','which','who','into','out','him','she','its','than','then','some','more','will','about','just','been','also','like','said','your','after','before','there','these','those','very','over','such','much','many','even','back','time','year','years','day','days','life','well','knew','got','get','went','come','came','made','make','know','way','think','felt','feel','told','took','still','never','always','little','much','good','long','hand','home','old','too','can','did','how','why','him']);
+    function tokenise(text) {
+      return (text||'').toLowerCase().replace(/[^a-z\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !STOPWORDS.has(w));
+    }
+    function tfVec(tokens) {
+      const freq = {}; tokens.forEach(t => { freq[t] = (freq[t]||0)+1; });
+      const total = tokens.length||1;
+      Object.keys(freq).forEach(k => freq[k] /= total);
+      return freq;
+    }
+    function cosSim(a,b) {
+      const keys = new Set([...Object.keys(a),...Object.keys(b)]);
+      let dot=0,mA=0,mB=0;
+      keys.forEach(k => { const av=a[k]||0,bv=b[k]||0; dot+=av*bv; mA+=av*av; mB+=bv*bv; });
+      return (mA&&mB) ? dot/(Math.sqrt(mA)*Math.sqrt(mB)) : 0;
+    }
+    const rich = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length > 15);
+    const vecs  = rich.map(e => tfVec(tokenise(e.title+' '+e.title+' '+e.answer)));
+    const THRESHOLD = 0.16;
+    const assigned = new Set();
+    const groups   = [];
+    for (let i=0; i<rich.length; i++) {
+      if (assigned.has(i)) continue;
+      const group = [i];
+      for (let j=i+1; j<rich.length; j++) {
+        if (assigned.has(j)) continue;
+        if (cosSim(vecs[i],vecs[j]) >= THRESHOLD) { group.push(j); assigned.add(j); }
+      }
+      if (group.length > 1) { groups.push(group); assigned.add(i); }
+    }
+    // Map to IDs
+    _consolidateGroups = groups.map(g => g.map(i => rich[i].id));
+    window._hygienceDupGroups = _consolidateGroups;
+
+    if (!_consolidateGroups.length) {
       listEl.innerHTML = '';
       noneEl.style.display = 'block';
     } else {
       noneEl.style.display = 'none';
-      listEl.innerHTML = groups.map((group, gi) => {
-        const titles = group.map(id => {
-          const e = entries.find(x => x.id === id);
-          return e ? ('"' + (e.title||'Untitled').slice(0,60) + '"') : id;
-        });
-        return '<div style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer" onclick="consolidateSelectGroup(' + gi + ')">' +
-          '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.07em">' + group.length + ' related entries</div>' +
-          titles.map(t => '<div style="font-size:0.85rem;color:var(--text);margin-bottom:3px">📄 ' + t + '</div>').join('') +
-          '<div style="margin-top:8px;font-size:0.75rem;color:var(--sage);font-weight:600">Tap to merge →</div>' +
-          '</div>';
-      }).join('');
+      listEl.innerHTML = '<p style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px">Found ' + _consolidateGroups.length + ' topic group' + (_consolidateGroups.length>1?'s':'') + ' — tap one to merge:</p>' +
+        _consolidateGroups.map((group, gi) => {
+          const groupEntries = group.map(id => entries.find(e => e.id===id)).filter(Boolean);
+          const totalWc = groupEntries.reduce((n,e) => n+(e.answer||'').split(/\s+/).filter(Boolean).length, 0);
+          return '<div style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer" onclick="consolidateSelectGroup(' + gi + ')">' +
+            '<div style="font-size:0.75rem;color:var(--text-light);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.07em">' + group.length + ' related entries · ' + totalWc.toLocaleString() + ' words total</div>' +
+            groupEntries.map(e => '<div style="font-size:0.85rem;color:var(--text);margin-bottom:3px">\uD83D\uDCC4 \u201C' + (e.title||'Untitled').slice(0,55) + '\u201D</div>').join('') +
+            '<div style="margin-top:8px;font-size:0.75rem;color:var(--sage);font-weight:600">Tap to merge into one rich memory \u2192</div>' +
+            '</div>';
+        }).join('');
     }
-    overlay.classList.add('open');
+    // Re-render hygiene tile score with updated clusters
+    if (document.getElementById('panel-dashboard')?.classList.contains('active')) renderDashboard();
   }
 
   function closeConsolidate() {
