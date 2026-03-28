@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-     AND in the DEPLOY_NOTES constant — all four places must match.
+  const DEPLOY_NOTES = "v2.05 — Consolidate Topic: AI clusters duplicate entries, drafts a merged memory, user edits + approves, originals deleted — triggered from Story Hygiene tile";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.02): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.05): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.02
+  Current: v2.05
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.02): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.05): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.02 → next review at v2.02.
+  Build counter: currently at v2.05 → next review at v2.05.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.02</title>
+  <title>My Life Story v2.05</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1849,7 +1849,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.02</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.05</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2348,15 +2348,25 @@
         <div class="dash-tile-sub" style="margin-top:4px">Tap to answer this now →</div>
       </div>
 
-      <!-- Tile: Words toward goal -->
-      <div class="dash-tile" onclick="showPanel('story',null,2)">
+      <!-- Tile: Words toward goal (expandable chapter breakdown) -->
+      <div class="dash-tile dash-tile-wide" id="dashWordsTile" onclick="toggleWordsDrill()" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
-        <div class="dash-tile-icon">🎯</div>
-        <div class="dash-tile-title">Words Written</div>
-        <div class="dash-tile-value" id="dashWordsValue">—</div>
-        <div class="dash-tile-sub" id="dashWordsSub"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="flex:1">
+            <div class="dash-tile-icon">🎯</div>
+            <div class="dash-tile-title">Words Written</div>
+            <div class="dash-tile-value" id="dashWordsValue">—</div>
+            <div class="dash-tile-sub" id="dashWordsSub"></div>
+          </div>
+          <span id="dashWordsChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ by chapter</span>
+        </div>
         <div class="dash-score-bar" style="margin-top:8px"><div class="dash-score-fill" id="dashWordsBar" style="width:0%;background:var(--sage)"></div></div>
         <div id="dashBookMilestone" style="display:none;margin-top:8px;font-size:0.75rem;color:var(--sage)">📚 Long enough to print as a book!</div>
+        <div id="dashWordsDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Word count and estimated pages per chapter (~250 words/page)</p>
+          <div id="dashWordsChapterList"></div>
+          <div id="dashWordsTotalPages" style="margin-top:10px;font-size:0.78rem;color:var(--text-light);font-style:italic"></div>
+        </div>
       </div>
 
       <!-- Tile: Last entry -->
@@ -2422,6 +2432,24 @@
         </div>
       </div>
 
+      <!-- Tile: Story Hygiene -->
+      <div class="dash-tile dash-tile-wide" id="dashHygieneTile" onclick="toggleHygieneDrill()" style="cursor:pointer">
+        <div class="dash-tile-accent" style="background:var(--rose)"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="flex:1">
+            <div class="dash-tile-icon">🩺</div>
+            <div class="dash-tile-title">Story Hygiene</div>
+            <div class="dash-tile-value" id="dashHygieneValue">—</div>
+            <div class="dash-tile-sub" id="dashHygieneSub">Click to see what needs attention</div>
+          </div>
+          <span id="dashHygieneChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ details</span>
+        </div>
+        <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashHygieneBar" style="width:0%;background:var(--sage)"></div></div>
+        <div id="dashHygieneDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+          <div id="dashHygieneChecks"></div>
+        </div>
+      </div>
+
       <!-- Tile: Recent Entries -->
       <div class="dash-tile dash-tile-wide" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
         <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
@@ -2429,6 +2457,44 @@
           <div class="dash-tile-title">🕐 Recent Entries</div>
           <div id="dashRecentList" style="margin-top:8px"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONSOLIDATE TOPIC MODAL -->
+  <div class="dash-dialog-overlay" id="consolidateOverlay">
+    <div class="dash-dialog" style="max-width:680px" onclick="event.stopPropagation()">
+      <div class="dash-dialog-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🔀 Consolidate Topic</span>
+        <button class="dash-dialog-close" onclick="closeConsolidate()">✕</button>
+      </div>
+
+      <!-- Step 1: cluster list -->
+      <div id="consolidateStep1">
+        <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">AI has found related entries that might tell the same story. Select a group to merge into one rich memory.</p>
+        <div id="consolidateClusterList"></div>
+        <p id="consolidateNoClusters" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">No closely related entries found yet — add more memories and check back!</p>
+      </div>
+
+      <!-- Step 2: review + edit merged draft -->
+      <div id="consolidateStep2" style="display:none">
+        <button onclick="consolidateBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;margin-bottom:12px;padding:0">← Back to groups</button>
+        <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:8px">Merging these entries:</p>
+        <div id="consolidateSourceList" style="margin-bottom:14px"></div>
+        <div id="consolidateDraftArea" style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Merged Title</label>
+          </div>
+          <input id="consolidateMergeTitle" type="text" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:10px" placeholder="Title for merged memory…">
+          <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Merged Memory</label>
+          <textarea id="consolidateMergeText" rows="10" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;line-height:1.6" placeholder="AI-drafted merged memory will appear here…"></textarea>
+        </div>
+        <div id="consolidateAiStatus" style="font-size:0.8rem;color:var(--text-light);margin-bottom:10px;min-height:1.2em"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button id="consolidateRegenerateBtn" onclick="consolidateRegenerate()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.82rem;cursor:pointer;color:var(--text)">↺ Regenerate</button>
+          <button id="consolidateApproveBtn" onclick="consolidateApprove()" style="padding:8px 20px;border:none;border-radius:8px;background:var(--sage);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">✓ Save Merged Entry &amp; Delete Originals</button>
+        </div>
+        <p style="font-size:0.72rem;color:var(--text-light);margin-top:8px">The original entries will be deleted and replaced with this merged version.</p>
       </div>
     </div>
   </div>
@@ -2646,7 +2712,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.02 — PWA install prompt: Android native banner via beforeinstallprompt, iOS manual Add to Home Screen overlay after 30s, one-time show, dismissible";
+  const DEPLOY_NOTES = "v2.05 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2736,7 +2802,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.02 starting...');
+    dbg('INIT','v2.05 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3196,7 +3262,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.02 — log full state before switching
+    // PANEL BUG DEBUG v2.05 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -5495,9 +5561,51 @@
     document.getElementById('dashWordsBar').style.width      = wordPct + '%';
     document.getElementById('dashWordsBar').style.background = wordPct >= 100 ? 'var(--sage)' : wordPct >= 50 ? 'var(--gold)' : 'var(--rose)';
     // Show book milestone badge when story is long enough to generate 20+ pages
-    // (~1800 chars per page × 20 pages ≈ 36000 chars ≈ 6000 words — use 1500 words as practical threshold)
     const bookMilestone = document.getElementById('dashBookMilestone');
     if (bookMilestone) bookMilestone.style.display = totalWords >= 1500 ? 'block' : 'none';
+
+    // Per-chapter word count breakdown (for expandable drill-down)
+    const WORDS_PER_PAGE = 250;
+    const allChapterOrder = ['Childhood','Family','Education','Career','Relationships','Adventures','Challenges','Reflections'];
+    // Build map: chapter → word count
+    const chapterWordMap = {};
+    real.forEach(e => {
+      const ch = e.chapter || '(Untagged)';
+      const wc = (e.answer||'').split(/\s+/).filter(Boolean).length;
+      chapterWordMap[ch] = (chapterWordMap[ch] || 0) + wc;
+    });
+    // Sort: known chapters in order, then any extras, untagged last
+    const sortedChapters = [
+      ...allChapterOrder.filter(c => chapterWordMap[c]),
+      ...Object.keys(chapterWordMap).filter(c => !allChapterOrder.includes(c) && c !== '(Untagged)'),
+      ...(chapterWordMap['(Untagged)'] ? ['(Untagged)'] : [])
+    ];
+    const maxChWc = Math.max(...sortedChapters.map(c => chapterWordMap[c]), 1);
+    const totalPages = Math.round(totalWords / WORDS_PER_PAGE);
+    const chapterListEl = document.getElementById('dashWordsChapterList');
+    if (chapterListEl) {
+      chapterListEl.innerHTML = sortedChapters.map(ch => {
+        const wc = chapterWordMap[ch];
+        const pgs = Math.round(wc / WORDS_PER_PAGE);
+        const pct = Math.round((wc / maxChWc) * 100);
+        const col = wc >= 500 ? 'var(--sage)' : wc >= 200 ? 'var(--gold)' : 'var(--rose)';
+        return '<div style="margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:3px">' +
+          '<span style="color:var(--text)">' + ch + '</span>' +
+          '<span style="color:var(--text-light)">' + wc.toLocaleString() + ' words · ~' + (pgs||'<1') + ' page' + (pgs===1?'':'s') + '</span>' +
+          '</div>' +
+          '<div style="height:5px;border-radius:3px;background:var(--border)">' +
+          '<div style="height:100%;border-radius:3px;background:' + col + ';width:' + pct + '%;transition:width 0.5s ease"></div>' +
+          '</div></div>';
+      }).join('');
+    }
+    const totalPagesEl = document.getElementById('dashWordsTotalPages');
+    if (totalPagesEl) {
+      totalPagesEl.textContent = '~' + totalPages + ' pages total — a typical memoir is 150–250 pages' + (totalPages < 50 ? '; keep going!' : totalPages < 150 ? '; great progress!' : ' — you\'re there!');
+    }
+
+    // ── Story Hygiene tile ────────────────────────────────────────────
+    renderHygieneTile(real);
 
     // Last entry tile
     const sorted = [...real].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -6602,6 +6710,307 @@
   function toggleHealthDrill() {
     const drill   = document.getElementById('dashHealthDrill');
     const chevron = document.getElementById('dashHealthChevron');
+    if (!drill) return;
+    const open = drill.style.display !== 'none';
+    drill.style.display   = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+  }
+
+  // ── Story Hygiene tile ────────────────────────────────────────────
+  function renderHygieneTile(real) {
+    if (!real || !real.length) return;
+    const checksEl  = document.getElementById('dashHygieneChecks');
+    const valueEl   = document.getElementById('dashHygieneValue');
+    const subEl     = document.getElementById('dashHygieneSub');
+    const barEl     = document.getElementById('dashHygieneBar');
+    if (!checksEl) return;
+
+    const checks = [];
+
+    // ── Check 1: Near-duplicate detector ─────────────────────────────
+    // Normalise titles: lowercase, strip punctuation, split to word set
+    function normTitle(t) { return (t||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').trim(); }
+    function wordSet(s) { return new Set(s.split(/\s+/).filter(w => w.length > 3)); }
+    const dupGroups = [];
+    const flagged   = new Set();
+    for (let i = 0; i < real.length; i++) {
+      if (flagged.has(i)) continue;
+      const ws1 = wordSet(normTitle(real[i].title));
+      if (!ws1.size) continue;
+      const group = [i];
+      for (let j = i + 1; j < real.length; j++) {
+        if (flagged.has(j)) continue;
+        const ws2 = wordSet(normTitle(real[j].title));
+        if (!ws2.size) continue;
+        const shared = [...ws1].filter(w => ws2.has(w));
+        if (shared.length >= 2 || (ws1.size <= 2 && shared.length >= 1 && ws2.size <= 2)) {
+          group.push(j);
+          flagged.add(j);
+        }
+      }
+      if (group.length > 1) { dupGroups.push(group); flagged.add(i); }
+    }
+    if (dupGroups.length === 0) {
+      checks.push({ ok: true, label: 'No near-duplicate entries detected ✓' });
+    } else {
+      const total = dupGroups.reduce((n,g) => n + g.length, 0);
+      // Store group entry IDs on window so openConsolidate can read them
+      window._hygienceDupGroups = dupGroups.map(g => g.map(i => real[i].id));
+      checks.push({
+        ok: false,
+        label: total + ' possible duplicate' + (total > 1 ? 's' : '') + ' found',
+        detail: dupGroups.map(g => g.map(i => '\u201C' + (real[i].title||'Untitled') + '\u201D').join(' · ')).join('<br>'),
+        action: { label: '🔀 Consolidate duplicates', fn: 'openConsolidate()' }
+      });
+    }
+
+    // ── Check 2: Chapter gap detection ───────────────────────────────
+    const allChapters = ['Childhood','Family','Education','Career','Relationships','Adventures','Challenges','Reflections'];
+    const chapterCounts = {};
+    real.forEach(e => { if (e.chapter) chapterCounts[e.chapter] = (chapterCounts[e.chapter]||0) + 1; });
+    const missingChapters  = allChapters.filter(c => !chapterCounts[c]);
+    const shallowChapters  = allChapters.filter(c => chapterCounts[c] === 1);
+    if (missingChapters.length === 0 && shallowChapters.length === 0) {
+      checks.push({ ok: true, label: 'All chapters have 2+ entries ✓' });
+    } else {
+      const parts = [];
+      if (missingChapters.length) parts.push('<strong>Missing:</strong> ' + missingChapters.join(', '));
+      if (shallowChapters.length) parts.push('<strong>Only 1 entry:</strong> ' + shallowChapters.join(', '));
+      checks.push({
+        ok: false,
+        label: (missingChapters.length + shallowChapters.length) + ' chapter' + (missingChapters.length + shallowChapters.length > 1 ? 's' : '') + ' need more entries',
+        detail: parts.join('<br>')
+      });
+    }
+
+    // ── Check 3: Print readiness — avg words per entry ────────────────
+    const avgWords = Math.round(real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) / real.length);
+    const shallow  = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length < 50);
+    if (shallow.length === 0) {
+      checks.push({ ok: true, label: 'All entries are print-ready length ✓' });
+    } else {
+      checks.push({
+        ok: false,
+        label: shallow.length + ' short entr' + (shallow.length > 1 ? 'ies' : 'y') + ' (under 50 words)',
+        detail: shallow.slice(0,5).map(e => '\u201C' + (e.title||'Untitled').slice(0,50) + '\u201D').join('<br>') + (shallow.length > 5 ? '<br>… and ' + (shallow.length-5) + ' more' : '')
+      });
+    }
+
+    // ── Check 4: Missing people tags ──────────────────────────────────
+    const noPeople = real.filter(e => !e.people || !e.people.length);
+    if (noPeople.length === 0) {
+      checks.push({ ok: true, label: 'All entries have people tagged ✓' });
+    } else {
+      checks.push({
+        ok: false,
+        label: noPeople.length + ' entr' + (noPeople.length > 1 ? 'ies' : 'y') + ' missing people tags',
+        detail: 'Tagging people helps generate the People chapter and index'
+      });
+    }
+
+    // ── Score ─────────────────────────────────────────────────────────
+    const passCount  = checks.filter(c => c.ok).length;
+    const hygieneScore = Math.round((passCount / checks.length) * 100);
+    const scoreCol   = hygieneScore >= 75 ? 'var(--sage)' : hygieneScore >= 50 ? 'var(--gold)' : 'var(--rose)';
+    const scoreEmoji = hygieneScore >= 75 ? '✨' : hygieneScore >= 50 ? '⚠️' : '🔴';
+    valueEl.textContent = scoreEmoji + ' ' + hygieneScore + ' / 100 — ' + passCount + ' of ' + checks.length + ' checks passed';
+    subEl.textContent   = hygieneScore >= 75 ? 'Your story is in great shape' : hygieneScore >= 50 ? 'A few things need attention — click for details' : 'Click below to see what needs fixing';
+    barEl.style.width      = hygieneScore + '%';
+    barEl.style.background = scoreCol;
+
+    // ── Render check cards ────────────────────────────────────────────
+    checksEl.innerHTML = checks.map(c => {
+      const icon = c.ok ? '✅' : '⚠️';
+      const col  = c.ok ? 'var(--sage)' : 'var(--gold)';
+      return '<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:var(--surface);border-left:3px solid ' + col + '">' +
+        '<div style="font-size:0.82rem;font-weight:600;color:var(--text)">' + icon + ' ' + c.label + '</div>' +
+        (c.detail ? '<div style="font-size:0.75rem;color:var(--text-light);margin-top:5px;line-height:1.5">' + c.detail + '</div>' : '') +
+        (c.action ? '<button onclick="' + c.action.fn + '" style="margin-top:8px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.78rem;cursor:pointer;color:var(--text)">' + c.action.label + '</button>' : '') +
+        '</div>';
+    }).join('');
+  }
+
+
+  // ── Consolidate Topic ─────────────────────────────────────────────
+  let _consolidateGroups = []; // array of arrays of entry IDs
+  let _consolidateActiveGroup = null; // array of entry IDs for current merge
+
+  function openConsolidate() {
+    const overlay = document.getElementById('consolidateOverlay');
+    if (!overlay) return;
+    // Use clusters from hygiene tile if available, else recompute
+    const groups = window._hygienceDupGroups || [];
+    _consolidateGroups = groups;
+    const listEl  = document.getElementById('consolidateClusterList');
+    const noneEl  = document.getElementById('consolidateNoClusters');
+    const step1   = document.getElementById('consolidateStep1');
+    const step2   = document.getElementById('consolidateStep2');
+    step1.style.display = 'block';
+    step2.style.display = 'none';
+    if (!groups.length) {
+      listEl.innerHTML = '';
+      noneEl.style.display = 'block';
+    } else {
+      noneEl.style.display = 'none';
+      listEl.innerHTML = groups.map((group, gi) => {
+        const titles = group.map(id => {
+          const e = entries.find(x => x.id === id);
+          return e ? ('"' + (e.title||'Untitled').slice(0,60) + '"') : id;
+        });
+        return '<div style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer" onclick="consolidateSelectGroup(' + gi + ')">' +
+          '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.07em">' + group.length + ' related entries</div>' +
+          titles.map(t => '<div style="font-size:0.85rem;color:var(--text);margin-bottom:3px">📄 ' + t + '</div>').join('') +
+          '<div style="margin-top:8px;font-size:0.75rem;color:var(--sage);font-weight:600">Tap to merge →</div>' +
+          '</div>';
+      }).join('');
+    }
+    overlay.classList.add('open');
+  }
+
+  function closeConsolidate() {
+    const overlay = document.getElementById('consolidateOverlay');
+    if (overlay) overlay.classList.remove('open');
+    _consolidateActiveGroup = null;
+  }
+
+  function consolidateBack() {
+    document.getElementById('consolidateStep1').style.display = 'block';
+    document.getElementById('consolidateStep2').style.display = 'none';
+    _consolidateActiveGroup = null;
+  }
+
+  async function consolidateSelectGroup(gi) {
+    const group = _consolidateGroups[gi];
+    if (!group) return;
+    _consolidateActiveGroup = group;
+    const groupEntries = group.map(id => entries.find(e => e.id === id)).filter(Boolean);
+
+    document.getElementById('consolidateStep1').style.display = 'none';
+    document.getElementById('consolidateStep2').style.display = 'block';
+
+    // Render source list
+    document.getElementById('consolidateSourceList').innerHTML = groupEntries.map(e =>
+      '<div style="font-size:0.82rem;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:6px;color:var(--text)">' +
+      '📄 <strong>' + (e.title||'Untitled') + '</strong>' +
+      (e.answer ? ' <span style="color:var(--text-light)">· ' + (e.answer||'').split(/\s+/).filter(Boolean).length + ' words</span>' : '') +
+      '</div>'
+    ).join('');
+
+    // Prefill title with first entry title
+    document.getElementById('consolidateMergeTitle').value = groupEntries[0]?.title || '';
+    document.getElementById('consolidateMergeText').value = '';
+    document.getElementById('consolidateAiStatus').textContent = '✨ Drafting merged memory…';
+    document.getElementById('consolidateApproveBtn').disabled = true;
+    document.getElementById('consolidateRegenerateBtn').disabled = true;
+
+    await consolidateDraft(groupEntries);
+  }
+
+  async function consolidateDraft(groupEntries) {
+    const statusEl  = document.getElementById('consolidateAiStatus');
+    const textEl    = document.getElementById('consolidateMergeText');
+    const approveBtn = document.getElementById('consolidateApproveBtn');
+    const regenBtn  = document.getElementById('consolidateRegenerateBtn');
+    try {
+      const combined = groupEntries.map((e,i) =>
+        'Entry ' + (i+1) + ': ' + (e.title||'Untitled') + '\n' + (e.answer||'').trim()
+      ).join('\n\n---\n\n');
+      const prompt =
+        'You are a warm, skilled biographer helping someone write their memoir.\n\n' +
+        'Below are ' + groupEntries.length + ' separate journal entries about closely related memories or the same event.\n\n' +
+        combined + '\n\n' +
+        'Your task: Write a single, unified memoir entry that:\n' +
+        '- Combines all the detail and texture from each entry\n' +
+        '- Reads as one cohesive, first-person narrative\n' +
+        '- Keeps all specific names, dates, places and feelings\n' +
+        '- Is warm, vivid and personal in tone\n' +
+        '- Is roughly ' + Math.min(600, groupEntries.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) + 80) + ' words\n\n' +
+        'Return ONLY the merged memoir text. No preamble, no title, no explanation.';
+      const merged = await callAI(prompt);
+      textEl.value = merged;
+      statusEl.textContent = '✓ Draft ready — edit freely before saving';
+      approveBtn.disabled = false;
+      regenBtn.disabled = false;
+    } catch(err) {
+      statusEl.textContent = '⚠️ ' + (err.message||'AI draft failed — you can type the merged text manually');
+      approveBtn.disabled = false;
+      regenBtn.disabled = false;
+    }
+  }
+
+  async function consolidateRegenerate() {
+    if (!_consolidateActiveGroup) return;
+    const groupEntries = _consolidateActiveGroup.map(id => entries.find(e => e.id === id)).filter(Boolean);
+    document.getElementById('consolidateAiStatus').textContent = '✨ Regenerating…';
+    document.getElementById('consolidateApproveBtn').disabled = true;
+    document.getElementById('consolidateRegenerateBtn').disabled = true;
+    document.getElementById('consolidateMergeText').value = '';
+    await consolidateDraft(groupEntries);
+  }
+
+  async function consolidateApprove() {
+    if (!_consolidateActiveGroup) return;
+    const mergedTitle = document.getElementById('consolidateMergeTitle').value.trim();
+    const mergedText  = document.getElementById('consolidateMergeText').value.trim();
+    if (!mergedText) { toast('Please add some text before saving'); return; }
+    const approveBtn = document.getElementById('consolidateApproveBtn');
+    approveBtn.disabled = true;
+    approveBtn.textContent = 'Saving…';
+
+    try {
+      // Use first source entry's metadata for the merged entry (chapter, era, date, people, etc.)
+      const sourceEntries = _consolidateActiveGroup.map(id => entries.find(e => e.id === id)).filter(Boolean);
+      const base = sourceEntries[0] || {};
+      // Collect all people from all source entries
+      const allPeople = [...new Set(sourceEntries.flatMap(e => e.people||[]))];
+
+      // Save merged entry
+      const { data, error } = await _supabase
+        .from('memories')
+        .insert([{
+          user_id:  currentUser.id,
+          title:    mergedTitle || (base.title||'Merged Memory'),
+          answer:   mergedText,
+          chapter:  base.chapter  || null,
+          era:      base.era      || null,
+          date_tag: base.date_tag || null,
+          location: base.location || null,
+          people:   allPeople.length ? allPeople : null,
+          category: base.category || null,
+          source:   'consolidated'
+        }])
+        .select();
+      if (error) throw error;
+
+      // Delete originals
+      for (const id of _consolidateActiveGroup) {
+        await _supabase.from('memories').delete().eq('id', id).eq('user_id', currentUser.id);
+      }
+
+      // Refresh local entries
+      await loadEntries();
+      renderDashboard();
+      closeConsolidate();
+      toast('✓ Entries merged and saved!');
+    } catch(err) {
+      toast('Error saving: ' + (err.message||'unknown'));
+      approveBtn.disabled = false;
+      approveBtn.textContent = '✓ Save Merged Entry & Delete Originals';
+    }
+  }
+
+  function toggleHygieneDrill() {
+    const drill   = document.getElementById('dashHygieneDrill');
+    const chevron = document.getElementById('dashHygieneChevron');
+    if (!drill) return;
+    const open = drill.style.display !== 'none';
+    drill.style.display   = open ? 'none' : 'block';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+  }
+
+  function toggleWordsDrill() {
+    const drill   = document.getElementById('dashWordsDrill');
+    const chevron = document.getElementById('dashWordsChevron');
     if (!drill) return;
     const open = drill.style.display !== 'none';
     drill.style.display   = open ? 'none' : 'block';
