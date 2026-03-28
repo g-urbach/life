@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.06 — Story Hygiene rebuild: content-based TF-IDF clustering replaces title-word matching; 5 checks (topic clusters, chapter gaps, print readiness, missing people dedications, orphaned entries); Consolidate modal runs fresh clustering every open";
+  const DEPLOY_NOTES = "v2.08 — Dashboard redesign: 13 tiles → 5 logical super-tiles (Your Story, Story Health+Hygiene, Write Today, Your Book, Recent Entries); hygiene+health now one combined expandable tile; hygiene click bug fixed; journal photos+people bug fixed";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.06): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.08): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.06
+  Current: v2.08
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.06): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.08): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.06 → next review at v2.06.
+  Build counter: currently at v2.08 → next review at v2.08.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.06</title>
+  <title>My Life Story v2.08</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1605,7 +1605,20 @@
       background: none; border: none; color: var(--text-light);
       font-size: 1.4rem; cursor: pointer; line-height: 1; padding: 0;
     }
-    @media (max-width: 500px) { .dash-grid { grid-template-columns: 1fr; } .dash-tile-wide { grid-column: 1; } }
+    /* ── Super-tile system ─────────────────────────────── */
+    .dash-super { min-height: 90px; }
+    .dash-super-hd { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .dash-stat-row { display: flex; align-items: stretch; flex-wrap: wrap; margin-top: 8px; gap: 0; }
+    .dash-stat { flex: 1; min-width: 70px; padding-right: 8px; }
+    .dash-stat-val { font-family: 'Playfair Display', serif; font-size: 1.0rem; color: var(--text); line-height: 1.25; }
+    .dash-stat-lbl { font-size: 0.7rem; color: var(--text-light); margin-top: 2px; line-height: 1.35; }
+    .dash-stat-sep { width: 1px; background: var(--border); margin: 2px 10px 2px 2px; flex-shrink: 0; align-self: stretch; }
+    .dash-chevron { font-size: 0.85rem; color: var(--text-light); margin-top: 4px; transition: transform 0.25s; flex-shrink: 0; }
+    .dash-drill { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .dash-btn { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: 0.8rem; cursor: pointer; color: var(--text); font-family: 'Lato', sans-serif; text-align: center; transition: background 0.15s; width: 100%; }
+    .dash-btn:hover { background: var(--surface2); }
+    .dash-section-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-light); margin-bottom: 8px; }
+    @media (max-width: 500px) { .dash-grid { grid-template-columns: 1fr; } .dash-tile-wide { grid-column: 1; } .dash-stat-row { gap: 2px; } }
 
     .review-section-head h3 {
       font-family: 'Playfair Display', serif; font-size: 1.15rem;
@@ -1849,7 +1862,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.06</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.08</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2277,188 +2290,174 @@
 
     <div class="dash-grid">
 
-      <!-- Tile: Story Health (wide, expands to show chapter traffic lights) -->
-      <div class="dash-tile dash-tile-wide" id="dashHealthTile" onclick="toggleHealthDrill()" style="cursor:pointer">
+      <!-- ① YOUR STORY -->
+      <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('story')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">📖</div>
-            <div class="dash-tile-title">Story Health</div>
-            <div class="dash-tile-value" id="dashHealthValue" style="font-size:1rem;font-family:'Lato',sans-serif">—</div>
-            <div class="dash-tile-sub" id="dashHealthSub" style="font-size:0.78rem;margin-top:2px">Find gaps in your entries — click to see chapters</div>
+        <div class="dash-super-hd">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+              <span style="font-size:1.3rem">📋</span>
+              <span class="dash-tile-title" style="margin:0">Your Story</span>
+            </div>
+            <div class="dash-stat-row">
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashEntriesValue">—</div>
+                <div class="dash-stat-lbl" id="dashEntriesSub"></div>
+              </div>
+              <div class="dash-stat-sep"></div>
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashWordsValue">—</div>
+                <div class="dash-stat-lbl" id="dashWordsSub"></div>
+              </div>
+              <div class="dash-stat-sep"></div>
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashLastEntryValue">—</div>
+                <div class="dash-stat-lbl" id="dashLastEntrySub"></div>
+              </div>
+            </div>
+            <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashWordsBar" style="width:0%;background:var(--sage)"></div></div>
+            <div id="dashBookMilestone" style="display:none;margin-top:6px;font-size:0.75rem;color:var(--sage)">📚 Long enough to print as a book!</div>
           </div>
-          <span id="dashHealthChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ chapters</span>
+          <span id="dashStoryChevron" class="dash-chevron">▼</span>
         </div>
-        <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashHealthBar" style="width:0%;background:var(--sage)"></div></div>
-        <div id="dashHealthDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
-          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a chapter to see its entries and add more</p>
-          <div id="dashHealthChapterGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px"></div>
-        </div>
-      </div>
-
-      <!-- Tile: Essentials (wide, expands in-tile) -->
-      <div class="dash-tile dash-tile-wide" onclick="toggleEssentialsDrill()" style="cursor:pointer">
-        <div class="dash-tile-accent" style="background:var(--gold)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">✨</div>
-            <div class="dash-tile-title">The Essentials</div>
-            <div class="dash-tile-value" id="dashEssentialsValue">—</div>
-            <div class="dash-tile-sub" id="dashEssentialsSub">Answer some defining questions about your life — your favourite song, food, saying & more. Appears as a special page in your book.</div>
+        <div id="dashStoryDrill" class="dash-drill" onclick="event.stopPropagation()">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+            <button class="dash-btn" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">📋 View all entries</button>
+            <button class="dash-btn" onclick="filterEntriesByType('photos')">📷 <span id="dashPhotosValue">—</span></button>
           </div>
-          <span id="dashEssentialsChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ view & edit</span>
-        </div>
-        <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashEssentialsBar" style="width:0%;background:var(--gold)"></div></div>
-        <div id="dashEssentialsDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <p style="font-size:0.78rem;color:var(--text-light)">Confirm items to include them in your book's Essentials page.</p>
-            <button onclick="mineEssentials()" id="mineEssentialsBtn"
-              style="font-size:0.78rem;padding:6px 14px;border-radius:8px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap;flex-shrink:0;margin-left:12px">
-              🔍 Mine from entries
-            </button>
-          </div>
-          <div id="essentialsGrid" class="essentials-grid"></div>
-        </div>
-      </div>
-
-      <!-- Tile: My Entries -->
-      <div class="dash-tile" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
-        <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
-        <div class="dash-tile-icon">📋</div>
-        <div class="dash-tile-title">My Entries</div>
-        <div class="dash-tile-value" id="dashEntriesValue">—</div>
-        <div class="dash-tile-sub" id="dashEntriesSub"></div>
-      </div>
-
-      <!-- Tile: Memory Prompts — prominent, goes to Prompts tab -->
-      <div class="dash-tile" onclick="showPanel('prompts',null,4)" style="border:2px solid rgba(201,169,110,0.3)">
-        <div class="dash-tile-accent" style="background:var(--gold)"></div>
-        <div class="dash-tile-icon">💡</div>
-        <div class="dash-tile-title">Memory Prompts</div>
-        <div class="dash-tile-value" style="font-size:0.88rem;font-family:'Lato',sans-serif;line-height:1.4;color:var(--text-light)">50 questions to spark a memory</div>
-        <div class="dash-tile-sub" style="margin-top:4px;color:var(--gold-dark);font-weight:700">Browse all prompts →</div>
-      </div>
-
-      <!-- Tile: Write a Memory (today's suggested prompt) -->
-      <div class="dash-tile" onclick="useDashPrompt()">
-        <div class="dash-tile-accent" style="background:var(--rose)"></div>
-        <div class="dash-tile-icon">✍️</div>
-        <div class="dash-tile-title">Write a Memory</div>
-        <div class="dash-tile-value" id="dashPromptValue" style="font-size:0.88rem;font-family:'Lato',sans-serif;line-height:1.5">—</div>
-        <div class="dash-tile-sub" style="margin-top:4px">Tap to answer this now →</div>
-      </div>
-
-      <!-- Tile: Words toward goal (expandable chapter breakdown) -->
-      <div class="dash-tile dash-tile-wide" id="dashWordsTile" onclick="toggleWordsDrill()" style="cursor:pointer">
-        <div class="dash-tile-accent" style="background:var(--sage)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">🎯</div>
-            <div class="dash-tile-title">Words Written</div>
-            <div class="dash-tile-value" id="dashWordsValue">—</div>
-            <div class="dash-tile-sub" id="dashWordsSub"></div>
-          </div>
-          <span id="dashWordsChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ by chapter</span>
-        </div>
-        <div class="dash-score-bar" style="margin-top:8px"><div class="dash-score-fill" id="dashWordsBar" style="width:0%;background:var(--sage)"></div></div>
-        <div id="dashBookMilestone" style="display:none;margin-top:8px;font-size:0.75rem;color:var(--sage)">📚 Long enough to print as a book!</div>
-        <div id="dashWordsDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
-          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Word count and estimated pages per chapter (~250 words/page)</p>
+          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-light);margin-bottom:8px">Words by chapter</div>
           <div id="dashWordsChapterList"></div>
-          <div id="dashWordsTotalPages" style="margin-top:10px;font-size:0.78rem;color:var(--text-light);font-style:italic"></div>
+          <div id="dashWordsTotalPages" style="margin-top:8px;font-size:0.78rem;color:var(--text-light);font-style:italic"></div>
         </div>
       </div>
 
-      <!-- Tile: Last entry -->
-      <div class="dash-tile" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
-        <div class="dash-tile-accent" style="background:var(--gold)"></div>
-        <div class="dash-tile-icon">🕐</div>
-        <div class="dash-tile-title">Last Entry</div>
-        <div class="dash-tile-value" id="dashLastEntryValue">—</div>
-        <div class="dash-tile-sub" id="dashLastEntrySub"></div>
-      </div>
-
-      <!-- Tile: Photos -->
-      <div class="dash-tile" onclick="filterEntriesByType('photos')">
-        <div class="dash-tile-accent" style="background:var(--gold-dark)"></div>
-        <div class="dash-tile-icon">📷</div>
-        <div class="dash-tile-title">Photos</div>
-        <div class="dash-tile-value" id="dashPhotosValue">—</div>
-        <div class="dash-tile-sub" id="dashPhotosSub"></div>
-      </div>
-
-      <!-- Tile: Book Details nudge (hidden when details are complete) -->
-      <div class="dash-tile" id="dashBookDetailsTile" onclick="showPanel('story',null,2);setTimeout(function(){var bd=document.getElementById('bookDetailsBody');if(bd&&bd.style.display==='none')toggleBookDetails();},150)" style="display:none;cursor:pointer">
-        <div class="dash-tile-accent" style="background:var(--gold)"></div>
-        <div class="dash-tile-icon">📖</div>
-        <div class="dash-tile-title">Book Details</div>
-        <div class="dash-tile-value" id="dashBookDetailsValue" style="font-size:0.92rem">—</div>
-        <div class="dash-tile-sub" id="dashBookDetailsSub">Click to set your book title, author &amp; blurb</div>
-      </div>
-
-      <!-- Tile: People in Your Story (wide, expands to person list) -->
-      <div class="dash-tile dash-tile-wide" onclick="togglePeopleDrill()" style="cursor:pointer">
+      <!-- ② STORY HEALTH + HYGIENE -->
+      <div class="dash-tile dash-tile-wide dash-super" id="dashHealthTile" onclick="toggleSuper('health')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--rose)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">👥</div>
-            <div class="dash-tile-title">People in Your Story</div>
-            <div class="dash-tile-value" id="dashPeopleValue">—</div>
-            <div class="dash-tile-sub" id="dashPeopleSub"></div>
+        <div class="dash-super-hd">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+              <span style="font-size:1.3rem">🩺</span>
+              <span class="dash-tile-title" style="margin:0">Story Health &amp; Hygiene</span>
+            </div>
+            <div class="dash-stat-row">
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashHealthValue" style="font-size:0.9rem;font-family:'Lato',sans-serif">—</div>
+                <div class="dash-stat-lbl" id="dashHealthSub">Coverage</div>
+              </div>
+              <div class="dash-stat-sep"></div>
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashHygieneValue" style="font-size:0.9rem">—</div>
+                <div class="dash-stat-lbl" id="dashHygieneSub">Hygiene</div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+              <div class="dash-score-bar" style="margin:0"><div class="dash-score-fill" id="dashHealthBar" style="width:0%;background:var(--sage)"></div></div>
+              <div class="dash-score-bar" style="margin:0"><div class="dash-score-fill" id="dashHygieneBar" style="width:0%;background:var(--gold)"></div></div>
+            </div>
           </div>
-          <span id="dashPeopleChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ view all</span>
+          <span id="dashHealthChevron" class="dash-chevron">▼</span>
         </div>
-        <div id="dashPeopleDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
-          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a person to see all their entries</p>
-          <div id="dashPeopleGrid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
-        </div>
-      </div>
-
-      <!-- Tile: Locations (wide, expands to location list) -->
-      <div class="dash-tile dash-tile-wide" onclick="toggleLocationsDrill()" style="cursor:pointer">
-        <div class="dash-tile-accent" style="background:var(--sage)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">📍</div>
-            <div class="dash-tile-title">Places in Your Story</div>
-            <div class="dash-tile-value" id="dashLocationsValue">—</div>
-            <div class="dash-tile-sub" id="dashLocationsSub"></div>
-          </div>
-          <span id="dashLocationsChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ view all</span>
-        </div>
-        <div id="dashLocationsDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
-          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a place to see all entries from there</p>
-          <div id="dashLocationsGrid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
-        </div>
-      </div>
-
-      <!-- Tile: Story Hygiene -->
-      <div class="dash-tile dash-tile-wide" id="dashHygieneTile" onclick="toggleHygieneDrill()" style="cursor:pointer">
-        <div class="dash-tile-accent" style="background:var(--rose)"></div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="flex:1">
-            <div class="dash-tile-icon">🩺</div>
-            <div class="dash-tile-title">Story Hygiene</div>
-            <div class="dash-tile-value" id="dashHygieneValue">—</div>
-            <div class="dash-tile-sub" id="dashHygieneSub">Click to see what needs attention</div>
-          </div>
-          <span id="dashHygieneChevron" style="font-size:0.9rem;color:var(--text-light);margin-top:6px;transition:transform 0.25s;flex-shrink:0">▼ details</span>
-        </div>
-        <div class="dash-score-bar" style="margin-top:10px"><div class="dash-score-fill" id="dashHygieneBar" style="width:0%;background:var(--sage)"></div></div>
-        <div id="dashHygieneDrill" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+        <div id="dashHealthDrill" class="dash-drill" onclick="event.stopPropagation()">
+          <div class="dash-section-label">📖 Chapter Coverage</div>
+          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a chapter to see its entries and add more</p>
+          <div id="dashHealthChapterGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:20px"></div>
+          <div class="dash-section-label" style="padding-top:14px;border-top:1px solid var(--border)">🩺 Hygiene Checks</div>
           <div id="dashHygieneChecks"></div>
         </div>
       </div>
 
-      <!-- Tile: Recent Entries -->
-      <div class="dash-tile dash-tile-wide" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
-        <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
-        <div>
-          <div class="dash-tile-title">🕐 Recent Entries</div>
-          <div id="dashRecentList" style="margin-top:8px"></div>
+      <!-- ③ WRITE TODAY -->
+      <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('write')" style="cursor:pointer">
+        <div class="dash-tile-accent" style="background:var(--gold)"></div>
+        <div class="dash-super-hd">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:1.3rem">✍️</span>
+              <span class="dash-tile-title" style="margin:0">Write Today</span>
+            </div>
+            <div id="dashPromptValue" style="font-size:0.9rem;font-family:'Lato',sans-serif;line-height:1.5;color:var(--text)">—</div>
+            <div style="font-size:0.75rem;color:var(--gold-dark);font-weight:600;margin-top:4px">Tap to answer · or browse all prompts ↓</div>
+          </div>
+          <span id="dashWriteChevron" class="dash-chevron">▼</span>
+        </div>
+        <div id="dashWriteDrill" class="dash-drill" onclick="event.stopPropagation()">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+            <button class="dash-btn" style="background:var(--gold);color:#fff;border-color:var(--gold);font-weight:600" onclick="useDashPrompt()">✍️ Write this memory</button>
+            <button class="dash-btn" onclick="showPanel('prompts',null,4)">💡 Browse all prompts</button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:10px 0" onclick="event.stopPropagation();toggleEssentialsDrill()">
+            <div style="flex:1">
+              <div class="dash-section-label" style="margin-bottom:4px">✨ The Essentials</div>
+              <div style="font-size:0.82rem;color:var(--text)"><span id="dashEssentialsValue">—</span> &nbsp;<span style="color:var(--text-light);font-size:0.75rem" id="dashEssentialsSub"></span></div>
+              <div class="dash-score-bar" style="margin-top:6px;max-width:200px"><div class="dash-score-fill" id="dashEssentialsBar" style="width:0%;background:var(--gold)"></div></div>
+            </div>
+            <span id="dashEssentialsChevron" style="font-size:0.85rem;color:var(--text-light);transition:transform 0.25s;flex-shrink:0;margin-left:12px">▼</span>
+          </div>
+          <div id="dashEssentialsDrill" style="display:none;padding-top:10px;border-top:1px solid var(--border)" onclick="event.stopPropagation()">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <p style="font-size:0.78rem;color:var(--text-light);margin:0">Confirm items to include in your book's Essentials page.</p>
+              <button onclick="mineEssentials()" id="mineEssentialsBtn" style="font-size:0.78rem;padding:6px 12px;border-radius:8px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap;margin-left:10px">🔍 Mine from entries</button>
+            </div>
+            <div id="essentialsGrid" class="essentials-grid"></div>
+          </div>
         </div>
       </div>
+
+      <!-- ④ YOUR BOOK -->
+      <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('book')" style="cursor:pointer">
+        <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
+        <div class="dash-super-hd">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+              <span style="font-size:1.3rem">📚</span>
+              <span class="dash-tile-title" style="margin:0">Your Book</span>
+            </div>
+            <div class="dash-stat-row">
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashPeopleValue">—</div>
+                <div class="dash-stat-lbl" id="dashPeopleSub"></div>
+              </div>
+              <div class="dash-stat-sep"></div>
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashLocationsValue">—</div>
+                <div class="dash-stat-lbl" id="dashLocationsSub"></div>
+              </div>
+              <div class="dash-stat-sep"></div>
+              <div class="dash-stat">
+                <div class="dash-stat-val" id="dashPhotosCount">—</div>
+                <div class="dash-stat-lbl">photos</div>
+              </div>
+            </div>
+          </div>
+          <span id="dashBookChevron" class="dash-chevron">▼</span>
+        </div>
+        <div id="dashBookDrill" class="dash-drill" onclick="event.stopPropagation()">
+          <div id="dashBookDetailsTile" style="display:none;margin-bottom:14px;padding:10px 12px;background:rgba(212,169,110,0.1);border-radius:8px;border:1px dashed var(--gold);cursor:pointer"
+            onclick="showPanel('story',null,2);setTimeout(function(){var bd=document.getElementById('bookDetailsBody');if(bd&&bd.style.display==='none')toggleBookDetails();},150)">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--gold-dark)">📖 Book Details — action needed</div>
+            <div style="font-size:0.82rem;color:var(--text);margin-top:2px" id="dashBookDetailsValue">—</div>
+            <div style="font-size:0.75rem;color:var(--text-light);margin-top:2px" id="dashBookDetailsSub"></div>
+          </div>
+          <div class="dash-section-label">👥 People</div>
+          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a person to filter their entries</p>
+          <div id="dashPeopleGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px"></div>
+          <div class="dash-section-label" style="padding-top:14px;border-top:1px solid var(--border)">📍 Places</div>
+          <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a place to filter its entries</p>
+          <div id="dashLocationsGrid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+      </div>
+
+      <!-- ⑤ RECENT ENTRIES -->
+      <div class="dash-tile dash-tile-wide" style="min-height:auto;padding:14px 20px;cursor:pointer"
+        onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
+        <div class="dash-tile-accent" style="background:var(--border)"></div>
+        <div class="dash-tile-title" style="margin-bottom:8px">🕐 Recent Entries</div>
+        <div id="dashRecentList"></div>
+      </div>
+
     </div>
+  </div>
   </div>
 
   <!-- CONSOLIDATE TOPIC MODAL -->
@@ -2712,7 +2711,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.06 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.08 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2802,7 +2801,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.06 starting...');
+    dbg('INIT','v2.08 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3262,7 +3261,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.06 — log full state before switching
+    // PANEL BUG DEBUG v2.08 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -4651,16 +4650,21 @@
             lastChapter = ch;
           }
           html += '<div style="margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid var(--surface2)">';
-          // Entry date / era
+          // Date / era label
           const dateLabel = e.date ? (function(d){ try { return new Date(d).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}); } catch(x){ return d; } })(e.date) : (e.era || null);
           if (dateLabel) html += '<div style="font-size:0.78rem;color:var(--gold);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px">' + escHtml(dateLabel) + '</div>';
           // Title
           if (e.title) html += '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:8px">' + escHtml(e.title) + '</div>';
-          // Body — exact words, respect line breaks
+          // Photo
+          if (e.photo_url) html += '<div style="margin:10px 0 14px"><img src="' + e.photo_url + '" alt="' + escHtml(e.title||'') + '" style="max-width:100%;max-height:340px;border-radius:8px;object-fit:cover;display:block" loading="lazy"></div>';
+          // Body
           html += '<p style="margin:0;white-space:pre-wrap;color:var(--text)">' + escHtml(e.answer || '') + '</p>';
-          // Tags row
-          const tags = [e.location, e.people].filter(Boolean).join(' · ');
-          if (tags) html += '<div style="font-size:0.78rem;color:var(--text-light);margin-top:8px">📍 ' + escHtml(tags) + '</div>';
+          // Tags — people is an array; location a string
+          const peopleTxt = Array.isArray(e.people) ? e.people.join(', ') : (e.people || '');
+          const tagParts  = [];
+          if (e.location) tagParts.push('📍\u00a0' + escHtml(e.location));
+          if (peopleTxt)  tagParts.push('👥\u00a0' + escHtml(peopleTxt));
+          if (tagParts.length) html += '<div style="font-size:0.75rem;color:var(--text-light);margin-top:10px;display:flex;flex-wrap:wrap;gap:12px">' + tagParts.map(t => '<span>' + t + '</span>').join('') + '</div>';
           html += '</div>';
         });
         html += '</div>';
@@ -5605,7 +5609,7 @@
     }
 
     // ── Story Hygiene tile ────────────────────────────────────────────
-    renderHygieneTile(real);
+    try { renderHygieneTile(real); } catch(hyErr) { console.warn('Hygiene tile:', hyErr); }
 
     // Last entry tile
     const sorted = [...real].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -5618,10 +5622,11 @@
       document.getElementById('dashLastEntrySub').textContent   = nudge;
     }
 
-    // Photos tile
+    // Photos — populate both the story-drill button and book-tile stat
     const photoEntries = real.filter(e => e.photo_url);
-    document.getElementById('dashPhotosValue').textContent = photoEntries.length + ' photo' + (photoEntries.length === 1 ? '' : 's');
-    document.getElementById('dashPhotosSub').textContent   = photoEntries.length ? 'Photos bring your story to life' : 'Add photos to bring your story to life';
+    const photoTxt = photoEntries.length + ' photo' + (photoEntries.length === 1 ? '' : 's');
+    const _pvEl = document.getElementById('dashPhotosValue');   if (_pvEl) _pvEl.textContent = photoTxt;
+    const _pcEl = document.getElementById('dashPhotosCount');   if (_pcEl) _pcEl.textContent = photoTxt;
 
     // Book Details nudge tile — show when title or blurb is missing
     var bdTitle = _bookSettings.title || '';
@@ -6707,14 +6712,29 @@
     else showPanel('prompts', null, 4);
   }
 
-  function toggleHealthDrill() {
-    const drill   = document.getElementById('dashHealthDrill');
-    const chevron = document.getElementById('dashHealthChevron');
+  // ── Super-tile expand / collapse ──────────────────────────────────
+  function toggleSuper(name) {
+    const map = {
+      story:  ['dashStoryDrill',  'dashStoryChevron'],
+      health: ['dashHealthDrill', 'dashHealthChevron'],
+      write:  ['dashWriteDrill',  'dashWriteChevron'],
+      book:   ['dashBookDrill',   'dashBookChevron'],
+    };
+    const [drillId, chevId] = map[name] || [];
+    if (!drillId) return;
+    const drill   = document.getElementById(drillId);
+    const chevron = document.getElementById(chevId);
     if (!drill) return;
     const open = drill.style.display !== 'none';
-    drill.style.display   = open ? 'none' : 'block';
+    drill.style.display = open ? 'none' : 'block';
     if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
   }
+  // Back-compat shims for any old calls still in code
+  function toggleHealthDrill()   { toggleSuper('health'); }
+  function toggleHygieneDrill()  { toggleSuper('health'); }
+  function toggleWordsDrill()    { toggleSuper('story');  }
+  function togglePeopleDrill()   { toggleSuper('book');   }
+  function toggleLocationsDrill(){ toggleSuper('book');   }
 
   // ── Story Hygiene tile ────────────────────────────────────────────
   function renderHygieneTile(real) {
@@ -7092,25 +7112,10 @@
     }
   }
 
-  function toggleHygieneDrill() {
-    const drill   = document.getElementById('dashHygieneDrill');
-    const chevron = document.getElementById('dashHygieneChevron');
-    if (!drill) return;
-    const open = drill.style.display !== 'none';
-    drill.style.display   = open ? 'none' : 'block';
-    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
-  }
-
-  function toggleWordsDrill() {
-    const drill   = document.getElementById('dashWordsDrill');
-    const chevron = document.getElementById('dashWordsChevron');
-    if (!drill) return;
-    const open = drill.style.display !== 'none';
-    drill.style.display   = open ? 'none' : 'block';
-    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
-  }
-
   function toggleEssentialsDrill() {
+    // First make sure the Write Today drill is open (essentials lives inside it)
+    const writeDrill = document.getElementById('dashWriteDrill');
+    if (writeDrill && writeDrill.style.display === 'none') toggleSuper('write');
     const drill   = document.getElementById('dashEssentialsDrill');
     const chevron = document.getElementById('dashEssentialsChevron');
     if (!drill) return;
@@ -7118,24 +7123,6 @@
     drill.style.display   = open ? 'none' : 'block';
     if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
     if (drill.style.display !== 'none') renderEssentials();
-  }
-
-  function togglePeopleDrill() {
-    const drill   = document.getElementById('dashPeopleDrill');
-    const chevron = document.getElementById('dashPeopleChevron');
-    if (!drill) return;
-    const open = drill.style.display !== 'none';
-    drill.style.display   = open ? 'none' : 'block';
-    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
-  }
-
-  function toggleLocationsDrill() {
-    const drill   = document.getElementById('dashLocationsDrill');
-    const chevron = document.getElementById('dashLocationsChevron');
-    if (!drill) return;
-    const open = drill.style.display !== 'none';
-    drill.style.display   = open ? 'none' : 'block';
-    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
   }
 
   function filterEntriesByLocation(loc) {
