@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.13 — Clustering: exclude untitled/blank title from similarity boost so missing titles do not create false groupings";
+  const DEPLOY_NOTES = "v2.14 — Clustering overhaul: union-find with threshold 0.20, skips stubs (<4 tokens), prevents bridge entries pulling unrelated topics together";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.13): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.14): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.13
+  Current: v2.14
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.13): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.14): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.13 → next review at v2.13.
+  Build counter: currently at v2.14 → next review at v2.14.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.13</title>
+  <title>My Life Story v2.14</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1862,7 +1862,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.13</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.14</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2714,7 +2714,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.13 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.14 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2804,7 +2804,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.13 starting...');
+    dbg('INIT','v2.14 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3264,7 +3264,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.13 — log full state before switching
+    // PANEL BUG DEBUG v2.14 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -6789,20 +6789,34 @@
     const richEntries = real.slice(); // include all entries regardless of length — short entries are candidates for consolidation too
     const vectors = richEntries.map(e => { const t = (e.title||'').toLowerCase().trim(); const titleBoost = (t && t !== 'untitled') ? t + ' ' + t + ' ' : ''; return tfVector(tokenise(titleBoost + (e.answer||''))); });
 
-    // Group entries using any-member linkage: join if similar to ANY existing member of the group
-    const THRESHOLD = 0.12;
-    const assigned  = new Set();
-    const dupGroups = [];
-    for (let i = 0; i < richEntries.length; i++) {
-      if (assigned.has(i)) continue;
-      const group = [i];
-      for (let j = i+1; j < richEntries.length; j++) {
-        if (assigned.has(j)) continue;
-        const simToGroup = group.some(gi => cosineSim(vectors[gi], vectors[j]) >= THRESHOLD);
-        if (simToGroup) { group.push(j); assigned.add(j); }
+
+    // Union-Find clustering — finds all similar pairs first, then merges transitively
+    // Excludes stubs (< 4 meaningful tokens) to avoid noise groupings
+    const THRESHOLD = 0.20;
+    function clusterEntries(entryList, vecList) {
+      const n = entryList.length;
+      const parent = Array.from({length:n}, (_,i) => i);
+      function find(x) { while (parent[x]!==x) { parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+      function union(a,b) { parent[find(a)] = find(b); }
+      // Count meaningful tokens per entry to skip stubs
+      function tokenCount(v) { return Object.keys(v).length; }
+      for (let i=0; i<n; i++) {
+        if (tokenCount(vecList[i]) < 4) continue; // skip stubs
+        for (let j=i+1; j<n; j++) {
+          if (tokenCount(vecList[j]) < 4) continue;
+          if (cosineSim(vecList[i], vecList[j]) >= THRESHOLD) union(i, j);
+        }
       }
-      if (group.length > 1) { dupGroups.push(group); assigned.add(i); }
+      const groupMap = {};
+      for (let i=0; i<n; i++) {
+        if (tokenCount(vecList[i]) < 4) continue;
+        const root = find(i);
+        if (!groupMap[root]) groupMap[root] = [];
+        groupMap[root].push(i);
+      }
+      return Object.values(groupMap).filter(g => g.length > 1);
     }
+    const dupGroups = clusterEntries(richEntries, vectors);
 
     // Map back to entry IDs using richEntries index
     window._hygienceDupGroups = dupGroups.map(g => g.map(i => richEntries[i].id));
@@ -6952,18 +6966,35 @@
     }
     const rich = real.slice();
     const vecs  = rich.map(e => { const t = (e.title||'').toLowerCase().trim(); const titleBoost = (t && t !== 'untitled') ? t + ' ' + t + ' ' : ''; return tfVec(tokenise(titleBoost + (e.answer||''))); });
-    const assigned = new Set();
-    const groups   = [];
-    for (let i=0; i<rich.length; i++) {
-      if (assigned.has(i)) continue;
-      const group = [i];
-      for (let j=i+1; j<rich.length; j++) {
-        if (assigned.has(j)) continue;
-        const simToGroup = group.some(gi => cosSim(vecs[gi],vecs[j]) >= 0.12);
-        if (simToGroup) { group.push(j); assigned.add(j); }
+    function cosineSim(a,b) { return cosSim(a,b); } // alias for shared clustering fn
+
+    // Union-Find clustering — finds all similar pairs first, then merges transitively
+    // Excludes stubs (< 4 meaningful tokens) to avoid noise groupings
+    const THRESHOLD = 0.20;
+    function clusterEntries(entryList, vecList) {
+      const n = entryList.length;
+      const parent = Array.from({length:n}, (_,i) => i);
+      function find(x) { while (parent[x]!==x) { parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+      function union(a,b) { parent[find(a)] = find(b); }
+      // Count meaningful tokens per entry to skip stubs
+      function tokenCount(v) { return Object.keys(v).length; }
+      for (let i=0; i<n; i++) {
+        if (tokenCount(vecList[i]) < 4) continue; // skip stubs
+        for (let j=i+1; j<n; j++) {
+          if (tokenCount(vecList[j]) < 4) continue;
+          if (cosineSim(vecList[i], vecList[j]) >= THRESHOLD) union(i, j);
+        }
       }
-      if (group.length > 1) { groups.push(group); assigned.add(i); }
+      const groupMap = {};
+      for (let i=0; i<n; i++) {
+        if (tokenCount(vecList[i]) < 4) continue;
+        const root = find(i);
+        if (!groupMap[root]) groupMap[root] = [];
+        groupMap[root].push(i);
+      }
+      return Object.values(groupMap).filter(g => g.length > 1);
     }
+    const groups = clusterEntries(rich, vecs);
     _consolidateGroups = groups.map(g => g.map(i => rich[i].id));
     window._hygienceDupGroups = _consolidateGroups;
 
