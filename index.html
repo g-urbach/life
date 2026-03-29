@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.14 — Clustering overhaul: union-find with threshold 0.20, skips stubs (<4 tokens), prevents bridge entries pulling unrelated topics together";
+  const DEPLOY_NOTES = "v2.15 — Duplicates & Overlaps: pairwise detector replaces consolidate. Near-identical: 3-col editable layout (Entry A, B, Merged Draft) with full chip tag UI + photos. Partial-overlap: 2-col with sentence-level highlights. Accept Merge archives both originals with confirm. Archive-not-delete throughout. Fixes consolidateApprove table name bug.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -201,13 +201,13 @@
   - Mic stop fix (v2.14): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
-  - Duplicates & Overlaps (v2.15): pairwise cosine similarity detector replaces
-    consolidate grouping flow. Near-identical pairs (score ≥0.45 or both entries short)
-    show AI merge draft + Keep A / Keep B / Save Merged actions. Partial-overlap pairs
-    (score 0.22–0.45, confirmed sentence-level Jaccard overlap ≥0.55) show highlighted
-    overlap sentences + Edit Entry A / Edit Entry B actions. Unified UX — same
-    side-by-side layout, same action row; label/badge/hint differs per type.
-    Archive-instead-of-delete: originals set to category:'_archived' not hard deleted.
+  - Duplicates & Overlaps (v2.15): pairwise detector. Near-identical pairs show
+    3 editable columns: Entry A, Entry B, Merged Draft. Entry A/B use full chip
+    tag UI + photo strip (buildEditPanel). Merged Draft uses simple inputs.
+    Accept Merge saves merged + archives both with confirm warning. Partial-overlap
+    pairs show 2 columns with sentence-level overlap highlighted; user edits and
+    saves to resolve. Archive-not-delete on all paths. Fixed consolidateApprove
+    table name bug (memories → life_entries) and array people field.
 
   ENTRIES TAB
   - Keyword search with gold highlight, chapter filter, person filter, location filter
@@ -324,12 +324,12 @@
   STORY HYGIENE (new category — v2.x milestone)
   - Story Hygiene Dashboard tile: shell tile that runs cross-entry hygiene checks
     and surfaces a score with actionable items. Build shell first, add checks over time.
-  - Consolidate topic (merge entries): SUPERSEDED by Duplicates & Overlaps (v2.15).
-    Legacy consolidate modal kept for reference but hygiene tile now routes to openDuplicates().
-  - Near-duplicate detector: DONE in v2.15 as part of Duplicates & Overlaps.
-  - Thematic entries prompt (backlog): "you've mentioned X in 6 entries — want to write a
-    dedicated memory about them?" Would generate a new entry, not consolidate. Sits in AI
-    conversation flow rather than hygiene. NOT the same as Duplicates & Overlaps.
+  - Consolidate topic (merge entries): AI clusters entries covering same event/theme,
+    drafts merged version, user approves/edits, originals archived or deleted.
+    Most unique feature — value grows with entry count. Moderately complex UI needed.
+  - Near-duplicate detector: DONE (v2.15) as Duplicates & Overlaps.
+  - Thematic entries (backlog): detect subject appearing across many entries and
+    offer to write a new dedicated memory. AI conversation flow, not hygiene tile.
   - Missing people detector: person mentioned frequently across entries but no
     dedicated memory written *about* them. Surfaces gaps in the people narrative.
   - Shallow entry expander (improved): rather than just flagging short entries,
@@ -1529,8 +1529,7 @@
       main { padding: 20px 16px; }
       #storyOutput { padding: 24px 20px; }
     }
-    /* ── Duplicates & Overlaps — stack side-by-side on mobile ── */
-    @media (max-width: 600px) {
+    @media (max-width: 700px) {
       #dupSideBySide { grid-template-columns: 1fr !important; }
     }
     /* ── Review tab ─────────────────────────────────────── */
@@ -2474,72 +2473,60 @@
 
   <!-- DUPLICATES & OVERLAPS MODAL -->
   <div class="dash-dialog-overlay" id="duplicatesOverlay">
-    <div class="dash-dialog" style="max-width:760px" onclick="event.stopPropagation()">
+    <div class="dash-dialog" style="max-width:1100px;width:95vw" onclick="event.stopPropagation()">
       <div class="dash-dialog-title" style="display:flex;align-items:center;justify-content:space-between">
-        <span id="dupDialogTitle">🔍 Duplicates &amp; Overlaps</span>
-        <button class="dash-dialog-close" onclick="closeDuplicates()">✕</button>
+        <span>&#128269; Duplicates &amp; Overlaps</span>
+        <button class="dash-dialog-close" onclick="closeDuplicates()">&#10005;</button>
       </div>
-
-      <!-- List view: all pairs -->
+      <!-- Step 1: pair list -->
       <div id="dupStep1">
-        <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">Entries that may share content are listed below — one pair at a time. Fix each one to keep your story clean. Pairs stay listed until you resolve them.</p>
+        <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">Entries that may share content are listed below. Fix each one to keep your story clean. Pairs stay listed until you resolve them.</p>
         <div id="dupPairList"></div>
-        <p id="dupNoPairs" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">✨ No duplicate or overlapping entries found — your story is clean!</p>
+        <p id="dupNoPairs" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">&#10024; No duplicate or overlapping entries found &#8212; your story is clean!</p>
       </div>
-
-      <!-- Detail view: one pair side by side -->
+      <!-- Step 2: editable columns -->
       <div id="dupStep2" style="display:none">
-        <button onclick="dupBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;margin-bottom:4px;padding:0">← Back to all pairs</button>
-        <!-- Badge + description -->
-        <div id="dupPairBadge" style="display:inline-block;font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:6px"></div>
-        <p id="dupPairDesc" style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px"></p>
-
-        <!-- Side-by-side entries -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px" id="dupSideBySide">
-          <div>
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Entry A</div>
-            <div id="dupEntryA" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:0.83rem;line-height:1.6;max-height:300px;overflow-y:auto"></div>
-          </div>
-          <div>
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Entry B</div>
-            <div id="dupEntryB" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:0.83rem;line-height:1.6;max-height:300px;overflow-y:auto"></div>
-          </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+          <button onclick="dupBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;padding:0;white-space:nowrap">&#8592; Back</button>
+          <div id="dupPairBadge" style="display:inline-block;font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px"></div>
+          <p id="dupPairDesc" style="font-size:0.82rem;color:var(--text-light);margin:0;flex:1;min-width:0"></p>
         </div>
-
-        <!-- Merge draft area (shown for near-identical only) -->
-        <div id="dupMergeArea" style="display:none;margin-bottom:14px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Suggested Merged Entry</label>
-            <button id="dupRegenBtn" onclick="dupRegenerate()" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.78rem;cursor:pointer;color:var(--text)">↺ Regenerate</button>
-          </div>
-          <input id="dupMergeTitle" type="text" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:10px" placeholder="Title for merged memory…">
-          <textarea id="dupMergeText" rows="7" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;line-height:1.6" placeholder="AI-drafted merged memory will appear here…"></textarea>
-          <div id="dupMergeStatus" style="font-size:0.8rem;color:var(--text-light);margin-top:6px;min-height:1.2em"></div>
+        <div id="dupDetailContainer" style="overflow-y:auto;max-height:62vh"></div>
+        <!-- Bottom bar -->
+        <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)">
+          <div id="dupMergeStatus" style="font-size:0.8rem;color:var(--text-light);flex:1;min-height:1.2em"></div>
+          <button id="dupRegenBtn" onclick="dupRegenerate()" style="display:none;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text)">&#8635; Regenerate</button>
+          <button id="dupAcceptMergeBtn" onclick="dupAcceptMerge()" style="display:none;padding:8px 20px;border:none;border-radius:8px;background:var(--sage);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer">&#10003; Accept Merge</button>
         </div>
-
-        <!-- Action buttons — same row for both pair types -->
-        <div id="dupActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
-        <p id="dupActionHint" style="font-size:0.72rem;color:var(--text-light);margin-top:8px"></p>
+        <p id="dupActionHint" style="font-size:0.72rem;color:var(--text-light);margin-top:6px"></p>
       </div>
     </div>
   </div>
 
-  <!-- CONSOLIDATE TOPIC MODAL (legacy — kept for compatibility) -->
+  <!-- CONSOLIDATE TOPIC MODAL (legacy) -->
   <div class="dash-dialog-overlay" id="consolidateOverlay">
     <div class="dash-dialog" style="max-width:680px" onclick="event.stopPropagation()">
       <div class="dash-dialog-title" style="display:flex;align-items:center;justify-content:space-between">
         <span>🔀 Consolidate Topic</span>
         <button class="dash-dialog-close" onclick="closeConsolidate()">✕</button>
       </div>
+
+      <!-- Step 1: cluster list -->
       <div id="consolidateStep1">
         <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">AI has found related entries that might tell the same story. Select a group to merge into one rich memory.</p>
         <div id="consolidateClusterList"></div>
         <p id="consolidateNoClusters" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">No closely related entries found yet — add more memories and check back!</p>
       </div>
+
+      <!-- Step 2: review + edit merged draft -->
       <div id="consolidateStep2" style="display:none">
         <button onclick="consolidateBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;margin-bottom:12px;padding:0">← Back to groups</button>
+
+        <!-- Source entries with full detail + exclude + inline edit -->
         <div style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Entries in this group</div>
         <div id="consolidateSourceList" style="margin-bottom:16px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
+
+        <!-- Suggested consolidation -->
         <div id="consolidateDraftArea" style="margin-bottom:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Suggested Consolidation</label>
@@ -2770,7 +2757,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.15 — Duplicates & Overlaps: replaces consolidate flow with pairwise detector. Near-identical pairs get side-by-side + AI merge draft + Keep A/B/Merge actions. Partial-overlap pairs get sentence-level highlight + Edit A/B actions. Unified UX — same layout, different label/badge per type. Archive instead of delete.";
+  const DEPLOY_NOTES = "v2.14 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -6883,7 +6870,7 @@
       const total = dupGroups.reduce((n,g) => n + g.length, 0);
       checks.push({
         ok: false,
-        label: total + ' entries across ' + dupGroups.length + ' possible duplicate or overlap pair' + (dupGroups.length > 1 ? 's' : '') + ' detected',
+        label: total + ' entries across ' + dupGroups.length + ' topic group' + (dupGroups.length > 1 ? 's' : '') + ' could be consolidated',
         detail: dupGroups.map(g =>
           '<em>' + g.map(i => '\u201C' + (richEntries[i].title||'Untitled').slice(0,45) + '\u201D').join(' · ') + '</em>'
         ).join('<br>'),
@@ -6982,341 +6969,374 @@
   }
 
 
-
   // ── Duplicates & Overlaps ─────────────────────────────────────────
-  // Pairwise cosine similarity — surfaces near-identical and partial-overlap pairs.
-  // No dismiss: pairs stay listed until the user resolves them by editing.
+  // Pairwise detector. Near-identical: 3-col (A, B, Merged Draft).
+  // Partial-overlap: 2-col (A, B). Entry A/B use full buildEditPanel chip UI.
+  // Merged Draft uses simple inputs. Archive-not-delete. No dismiss.
 
-  let _dupPairs       = [];   // [{idA, idB, score, type, overlapSentences}]
-  let _dupActivePair  = null; // current pair in detail view
-  let _dupMerging     = false;
+  let _dupPairs      = [];
+  let _dupActivePair = null;
+  // _dupMergedEdits: tracks edits to the merged draft column (no entry ID yet)
+  let _dupMergedEdits = {};
 
   // ── Sentence-level overlap detection ─────────────────────────────
-  // Splits text into sentences, fuzzy-matches across both entries.
-  // Returns array of sentence strings that appear in both (normalised match).
   function _dupFindOverlap(textA, textB) {
     function sentences(t) {
-      return (t||'').split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 20);
+      var parts = (t||'').replace(/([.!?])\s+/g, '$1\n').split('\n');
+      return parts.map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 20; });
     }
-    function normalise(s) {
+    function norm(s) {
       return s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
     }
-    function wordJaccard(a, b) {
-      const wa = new Set(a.split(' ').filter(w => w.length > 3));
-      const wb = new Set(b.split(' ').filter(w => w.length > 3));
-      let inter = 0;
-      wa.forEach(w => { if (wb.has(w)) inter++; });
-      const union = wa.size + wb.size - inter;
+    function jaccard(a, b) {
+      var wa = a.split(' ').filter(function(w){ return w.length > 3; });
+      var wb = new Set(b.split(' ').filter(function(w){ return w.length > 3; }));
+      var inter = wa.filter(function(w){ return wb.has(w); }).length;
+      var union  = new Set(wa.concat(Array.from(wb))).size;
       return union ? inter / union : 0;
     }
-    const sa = sentences(textA);
-    const sb = sentences(textB);
-    const matched = [];
-    sa.forEach(sentA => {
-      const na = normalise(sentA);
-      sb.forEach(sentB => {
-        if (wordJaccard(na, normalise(sentB)) >= 0.55) {
-          if (!matched.includes(sentA)) matched.push(sentA);
-        }
+    var sa = sentences(textA), sb = sentences(textB), matched = [];
+    sa.forEach(function(sA) {
+      var nA = norm(sA);
+      sb.forEach(function(sB) {
+        if (jaccard(nA, norm(sB)) >= 0.55 && matched.indexOf(sA) === -1) matched.push(sA);
       });
     });
     return matched;
   }
 
-  // ── Highlight overlap sentences inside entry text ─────────────────
-  function _dupHighlightText(text, overlapSentences) {
-    if (!overlapSentences || !overlapSentences.length) {
-      return text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-    // Escape for HTML display, then wrap overlapping sentences in a highlight span
-    let escaped = text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    overlapSentences.forEach(sent => {
-      const escapedSent = sent.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      // Replace all occurrences
-      escaped = escaped.split(escapedSent).join(
-        '<mark style="background:rgba(255,179,71,0.25);border-radius:3px;padding:1px 2px">' + escapedSent + '</mark>'
-      );
+  function _dupHighlightText(text, overlap) {
+    if (!overlap || !overlap.length) return text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    var out = text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    overlap.forEach(function(sent) {
+      var esc = sent.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      out = out.split(esc).join('<mark style="background:rgba(255,179,71,0.28);border-radius:3px;padding:1px 2px">' + esc + '</mark>');
     });
-    return escaped;
+    return out;
   }
 
-  // ── Build all pairwise pairs above threshold ──────────────────────
+  // ── Build all pairwise pairs ──────────────────────────────────────
   function _dupBuildPairs() {
-    const STOPWORDS = new Set(['the','and','was','for','that','with','this','his','her','our','they','them','their','have','had','but','not','are','were','from','has','been','one','all','would','could','when','what','which','who','into','out','him','she','its','than','then','some','more','will','about','just','been','also','like','said','your','after','before','there','these','those','very','over','such','much','many','even','back','time','year','years','day','days','life','well','knew','got','get','went','come','came','made','make','know','way','think','felt','feel','told','took','still','never','always','little','much','good','long','hand','home','old','too','can','did','how','why','him']);
-    function tokenise(text) {
-      return (text||'').toLowerCase().replace(/[^a-z\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !STOPWORDS.has(w));
-    }
-    function tfVector(tokens) {
-      const freq = {};
-      tokens.forEach(t => { freq[t] = (freq[t]||0) + 1; });
-      const total = tokens.length || 1;
-      Object.keys(freq).forEach(k => freq[k] /= total);
-      return freq;
-    }
-    function cosSim(a, b) {
-      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-      let dot = 0, magA = 0, magB = 0;
-      keys.forEach(k => { const av=a[k]||0,bv=b[k]||0; dot+=av*bv; magA+=av*av; magB+=bv*bv; });
-      return (magA && magB) ? dot / (Math.sqrt(magA) * Math.sqrt(magB)) : 0;
-    }
-
-    const real = (entries||[]).filter(e => e.category !== '_archived' && !e.parent_entry_id && (e.answer||'').trim().length > 10);
-    const vecs = real.map(e => tfVector(tokenise((e.title||'') + ' ' + (e.answer||''))));
-    const pairs = [];
-    const NEAR_THRESH    = 0.45;  // high similarity → near-identical candidate
-    const OVERLAP_THRESH = 0.22;  // moderate → check sentence-level overlap
-
-    for (let i = 0; i < real.length; i++) {
-      if (Object.keys(vecs[i]).length < 4) continue;
-      for (let j = i + 1; j < real.length; j++) {
-        if (Object.keys(vecs[j]).length < 4) continue;
-        const score = cosSim(vecs[i], vecs[j]);
-        if (score < OVERLAP_THRESH) continue;
-
-        const wcA = (real[i].answer||'').split(/\s+/).filter(Boolean).length;
-        const wcB = (real[j].answer||'').split(/\s+/).filter(Boolean).length;
-        const bothShort = wcA < 80 && wcB < 80;
-
-        let type, overlapSentences = [];
-        if (score >= NEAR_THRESH || bothShort) {
-          type = 'near-identical';
-        } else {
-          overlapSentences = _dupFindOverlap(real[i].answer, real[j].answer);
-          if (overlapSentences.length === 0) continue; // no actual sentence overlap — skip
-          type = 'partial-overlap';
-        }
-
-        pairs.push({ idA: real[i].id, idB: real[j].id, score, type, overlapSentences });
+    var SW = new Set(['the','and','was','for','that','with','this','his','her','our','they','them','their','have','had','but','not','are','were','from','has','been','one','all','would','could','when','what','which','who','into','out','him','she','its','than','then','some','more','will','about','just','also','like','said','your','after','before','there','these','those','very','over','such','much','many','even','back','time','year','years','day','days','life','well','knew','got','get','went','come','came','made','make','know','way','think','felt','feel','told','took','still','never','always','little','good','long','home','old','too','can','did','how','why']);
+    function tok(t) { return (t||'').toLowerCase().replace(/[^a-z\s]/g,' ').split(/\s+/).filter(function(w){ return w.length>3 && !SW.has(w); }); }
+    function tfv(ts) { var f={},n=ts.length||1; ts.forEach(function(t){ f[t]=(f[t]||0)+1; }); Object.keys(f).forEach(function(k){ f[k]/=n; }); return f; }
+    function cos(a,b) { var ks=new Set(Object.keys(a).concat(Object.keys(b))),d=0,ma=0,mb=0; ks.forEach(function(k){ var av=a[k]||0,bv=b[k]||0; d+=av*bv; ma+=av*av; mb+=bv*bv; }); return (ma&&mb)?d/(Math.sqrt(ma)*Math.sqrt(mb)):0; }
+    var real=(entries||[]).filter(function(e){ return e.category!=='_archived'&&!e.parent_entry_id&&(e.answer||'').trim().length>10; });
+    var vecs=real.map(function(e){ return tfv(tok((e.title||'')+' '+(e.answer||''))); });
+    var pairs=[];
+    for (var i=0;i<real.length;i++) {
+      if (Object.keys(vecs[i]).length<4) continue;
+      for (var j=i+1;j<real.length;j++) {
+        if (Object.keys(vecs[j]).length<4) continue;
+        var sc=cos(vecs[i],vecs[j]);
+        if (sc<0.22) continue;
+        var wcA=(real[i].answer||'').split(/\s+/).filter(Boolean).length;
+        var wcB=(real[j].answer||'').split(/\s+/).filter(Boolean).length;
+        var type,ov=[];
+        if (sc>=0.45||(wcA<80&&wcB<80)) { type='near-identical'; }
+        else { ov=_dupFindOverlap(real[i].answer,real[j].answer); if(!ov.length) continue; type='partial-overlap'; }
+        pairs.push({idA:real[i].id,idB:real[j].id,score:sc,type:type,overlapSentences:ov});
       }
     }
-
-    // Sort: near-identical first, then by score descending
-    pairs.sort((a,b) => {
-      if (a.type === b.type) return b.score - a.score;
-      return a.type === 'near-identical' ? -1 : 1;
-    });
-
+    pairs.sort(function(a,b){ return a.type===b.type?b.score-a.score:a.type==='near-identical'?-1:1; });
     return pairs;
   }
 
+  // ── Open / close / back ───────────────────────────────────────────
   function openDuplicates() {
-    const overlay = document.getElementById('duplicatesOverlay');
-    if (!overlay) return;
-    overlay.classList.add('open');
-    document.getElementById('dupStep1').style.display = 'block';
-    document.getElementById('dupStep2').style.display = 'none';
-    _dupPairs = _dupBuildPairs();
+    var ov=document.getElementById('duplicatesOverlay'); if(!ov) return;
+    ov.classList.add('open');
+    document.getElementById('dupStep1').style.display='block';
+    document.getElementById('dupStep2').style.display='none';
+    _dupPairs=_dupBuildPairs();
     _dupRenderPairList();
   }
 
   function closeDuplicates() {
-    const overlay = document.getElementById('duplicatesOverlay');
-    if (overlay) overlay.classList.remove('open');
-    _dupActivePair = null;
+    var ov=document.getElementById('duplicatesOverlay'); if(ov) ov.classList.remove('open');
+    _dupActivePair=null; _dupMergedEdits={};
   }
 
   function dupBack() {
-    document.getElementById('dupStep1').style.display = 'block';
-    document.getElementById('dupStep2').style.display = 'none';
-    _dupActivePair = null;
+    document.getElementById('dupStep1').style.display='block';
+    document.getElementById('dupStep2').style.display='none';
+    _dupActivePair=null; _dupMergedEdits={};
   }
 
+  // ── Pair list (step 1) ────────────────────────────────────────────
   function _dupRenderPairList() {
-    const listEl = document.getElementById('dupPairList');
-    const noneEl = document.getElementById('dupNoPairs');
-    if (!_dupPairs.length) {
-      listEl.innerHTML = '';
-      noneEl.style.display = 'block';
-      return;
-    }
-    noneEl.style.display = 'none';
-    listEl.innerHTML = _dupPairs.map((pair, pi) => {
-      const eA = (entries||[]).find(e => e.id === pair.idA);
-      const eB = (entries||[]).find(e => e.id === pair.idB);
-      if (!eA || !eB) return '';
-      const isNear = pair.type === 'near-identical';
-      const badgeCol = isNear ? 'var(--rose)' : 'var(--amber)';
-      const badgeLabel = isNear ? 'Near-identical' : 'Partial overlap';
-      const desc = isNear
-        ? 'These look like the same memory captured twice'
-        : 'These entries share some repeated content';
-      const pct = Math.round(pair.score * 100);
+    var listEl=document.getElementById('dupPairList');
+    var noneEl=document.getElementById('dupNoPairs');
+    if (!_dupPairs.length) { listEl.innerHTML=''; noneEl.style.display='block'; return; }
+    noneEl.style.display='none';
+    listEl.innerHTML=_dupPairs.map(function(pair,pi) {
+      var eA=(entries||[]).find(function(e){ return e.id===pair.idA; });
+      var eB=(entries||[]).find(function(e){ return e.id===pair.idB; });
+      if (!eA||!eB) return '';
+      var isNear=(pair.type==='near-identical');
+      var bc=isNear?'var(--rose)':'var(--amber)';
+      var pct=Math.round(pair.score*100);
       return '<div style="margin-bottom:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
-        '<div>' +
-        '<span style="display:inline-block;font-size:0.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 9px;border-radius:20px;background:' + badgeCol + '22;color:' + badgeCol + ';margin-right:8px">' + badgeLabel + '</span>' +
-        '<span style="font-size:0.72rem;color:var(--text-light)">' + desc + ' &middot; ' + pct + '% similar</span>' +
-        '</div>' +
-        '<button onclick="dupOpenPair(' + pi + ')" style="padding:6px 14px;border:none;border-radius:6px;background:var(--sage);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer">Review →</button>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap">' +
+        '<div><span style="display:inline-block;font-size:0.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 9px;border-radius:20px;background:'+bc+'22;color:'+bc+';margin-right:6px">'+(isNear?'Near-identical':'Partial overlap')+'</span>' +
+        '<span style="font-size:0.72rem;color:var(--text-light)">'+(isNear?'Same memory captured twice':'Shared repeated content')+' &middot; '+pct+'% similar</span></div>' +
+        '<button onclick="dupOpenPair('+pi+')" style="padding:6px 14px;border:none;border-radius:6px;background:var(--sage);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;white-space:nowrap">Review &#8594;</button>' +
         '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px;font-size:0.78rem;border:1px solid var(--border)">' +
-        '<div style="font-weight:700;color:var(--text);margin-bottom:2px">' + (eA.title||'Untitled').slice(0,50) + '</div>' +
-        '<div style="color:var(--text-light)">' + (eA.answer||'').trim().slice(0,80) + (((eA.answer||'').length > 80) ? '…' : '') + '</div>' +
-        '</div>' +
-        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px;font-size:0.78rem;border:1px solid var(--border)">' +
-        '<div style="font-weight:700;color:var(--text);margin-bottom:2px">' + (eB.title||'Untitled').slice(0,50) + '</div>' +
-        '<div style="color:var(--text-light)">' + (eB.answer||'').trim().slice(0,80) + (((eB.answer||'').length > 80) ? '…' : '') + '</div>' +
-        '</div></div></div>';
+        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px;font-size:0.78rem;border:1px solid var(--border)"><div style="font-weight:700;color:var(--text);margin-bottom:2px">'+(eA.title||'Untitled').slice(0,50)+'</div><div style="color:var(--text-light)">'+(eA.answer||'').trim().slice(0,80)+((eA.answer||'').length>80?'&#8230;':'')+'</div></div>' +
+        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px;font-size:0.78rem;border:1px solid var(--border)"><div style="font-weight:700;color:var(--text);margin-bottom:2px">'+(eB.title||'Untitled').slice(0,50)+'</div><div style="color:var(--text-light)">'+(eB.answer||'').trim().slice(0,80)+((eB.answer||'').length>80?'&#8230;':'')+'</div></div>' +
+        '</div></div>';
     }).join('');
   }
 
-  async function dupOpenPair(pi) {
-    const pair = _dupPairs[pi];
-    if (!pair) return;
-    _dupActivePair = pair;
-    const eA = (entries||[]).find(e => e.id === pair.idA);
-    const eB = (entries||[]).find(e => e.id === pair.idB);
-    if (!eA || !eB) return;
+  // ── Build one entry card (A or B) using full edit panel ───────────
+  // Renders: word count line, body text (with optional overlap highlight),
+  // toggle button for the existing buildEditPanel chip UI, and a Save button.
+  function _dupBuildEntryCard(entry, colLabel, overlap) {
+    if (!entry || !entry.id) return '';
+    var wc=(entry.answer||'').split(/\s+/).filter(Boolean).length;
+    var tags=getEntryTags(entry);
 
-    document.getElementById('dupStep1').style.display = 'none';
-    document.getElementById('dupStep2').style.display = 'block';
+    // Read-only body display with overlap highlight
+    var bodyHtml='<div style="white-space:pre-wrap;font-size:0.83rem;line-height:1.6;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:240px;overflow-y:auto">'+
+      _dupHighlightText(entry.answer||'', overlap||[])+'</div>';
 
-    const isNear = pair.type === 'near-identical';
-    const badgeCol = isNear ? 'var(--rose)' : 'var(--amber)';
+    // Existing tag chips (read-only display, same as entries tab)
+    var chipsHtml=buildTagChips(tags);
 
-    const badge = document.getElementById('dupPairBadge');
-    badge.textContent = isNear ? 'Near-identical' : 'Partial overlap';
-    badge.style.background = badgeCol + '22';
-    badge.style.color = badgeCol;
+    // The full edit panel (hidden by default, toggled by button)
+    var editPanelHtml=buildEditPanel(entry.id,'dup');
 
-    document.getElementById('dupPairDesc').textContent = isNear
-      ? 'These look like the same memory captured twice. Consider merging them into one rich entry, or keeping only the fuller version.'
-      : 'These entries share some repeated content. The highlighted sentences appear in both — consider trimming the overlap from one entry.';
+    return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
+      '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-light)">'+colLabel+'</div>' +
+      '<div style="font-size:0.72rem;color:var(--text-light)">'+wc+' words &middot; '+new Date(entry.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})+'</div>' +
+      bodyHtml +
+      (overlap&&overlap.length
+        ? '<div style="font-size:0.72rem;color:var(--amber)">&#9888;&#65039; Highlighted sentences appear in both entries &#8212; consider trimming.</div>'
+        : '') +
+      chipsHtml +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">' +
+        '<button onclick="dupToggleEditPanel(\''+entry.id+'\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">&#9998;&#65039; Edit tags &amp; photos</button>' +
+      '</div>' +
+      editPanelHtml +
+      '<button onclick="dupSaveEntry(\''+entry.id+'\')" style="padding:7px 14px;border:none;border-radius:7px;background:var(--sage);color:#fff;font-size:0.8rem;font-weight:700;cursor:pointer;align-self:flex-start;margin-top:2px">Save Entry</button>' +
+    '</div>';
+  }
 
-    // Render full entry text with overlap highlighted
-    const htmlA = '<div style="font-weight:700;color:var(--text);margin-bottom:4px">' + (eA.title||'Untitled').slice(0,60) + '</div>' +
-      '<div style="font-size:0.72rem;color:var(--text-light);margin-bottom:6px">' +
-      (eA.answer||'').split(/\s+/).filter(Boolean).length + ' words' +
-      (eA.chapter ? ' &middot; ' + eA.chapter : '') + (eA.era ? ' &middot; ' + eA.era : '') + '</div>' +
-      '<div style="white-space:pre-wrap">' + _dupHighlightText(eA.answer, pair.overlapSentences) + '</div>';
-    const htmlB = '<div style="font-weight:700;color:var(--text);margin-bottom:4px">' + (eB.title||'Untitled').slice(0,60) + '</div>' +
-      '<div style="font-size:0.72rem;color:var(--text-light);margin-bottom:6px">' +
-      (eB.answer||'').split(/\s+/).filter(Boolean).length + ' words' +
-      (eB.chapter ? ' &middot; ' + eB.chapter : '') + (eB.era ? ' &middot; ' + eB.era : '') + '</div>' +
-      '<div style="white-space:pre-wrap">' + _dupHighlightText(eB.answer, pair.overlapSentences) + '</div>';
-
-    document.getElementById('dupEntryA').innerHTML = htmlA;
-    document.getElementById('dupEntryB').innerHTML = htmlB;
-
-    // Show/hide merge area + action buttons based on type
-    const mergeArea = document.getElementById('dupMergeArea');
-    const actionsEl = document.getElementById('dupActions');
-    const hintEl    = document.getElementById('dupActionHint');
-
-    if (isNear) {
-      mergeArea.style.display = 'block';
-      document.getElementById('dupMergeTitle').value = eA.title || '';
-      document.getElementById('dupMergeText').value  = '';
-      document.getElementById('dupMergeStatus').textContent = '\u2728 Drafting suggested merge\u2026';
-      document.getElementById('dupRegenBtn').disabled = true;
-
-      actionsEl.innerHTML =
-        '<button onclick="dupKeepA()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">Keep Entry A &amp; Archive B</button>' +
-        '<button onclick="dupKeepB()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">Keep Entry B &amp; Archive A</button>' +
-        '<button id="dupMergeSaveBtn" onclick="dupSaveMerge()" disabled style="padding:8px 16px;border:none;border-radius:8px;background:var(--sage);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">\u2713 Save Merged Entry</button>';
-      hintEl.textContent = 'Merged entry saves and archives both originals. Keep A/B archives the other. Archived entries are recoverable.';
-
-      _dupDraftMerge(eA, eB);
+  // Toggle the edit panel for an entry inside the dup dialog
+  function dupToggleEditPanel(entryId) {
+    var panel=document.getElementById('dup-'+entryId);
+    if (!panel) return;
+    var isHidden=(panel.style.display==='none'||!panel.style.display);
+    if (isHidden) {
+      var tags=getEntryTags((entries||[]).find(function(e){ return e.id===entryId; })||{});
+      registerEntryTags(entryId, tags);
+      populateTagDropdowns('dup_'+entryId);
+      applyTagDefaults('dup_'+entryId, tags, entryId);
+      panel.style.display='grid';
+      panel.style.gridTemplateColumns='1fr 1fr 1fr';
+      loadEditPanelPhotoThumbs(entryId);
     } else {
-      mergeArea.style.display = 'none';
-      actionsEl.innerHTML =
-        '<button onclick="dupEditEntry(\'' + eA.id + '\')" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">\u270F\uFE0F Edit Entry A</button>' +
-        '<button onclick="dupEditEntry(\'' + eB.id + '\')" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">\u270F\uFE0F Edit Entry B</button>';
-      hintEl.textContent = 'Edit one of the entries to remove the repeated content. Once edited and saved, this pair will disappear from this list.';
+      panel.style.display='none';
     }
   }
 
+  // ── Build merged draft card (no entry ID — simple inputs) ─────────
+  function _dupBuildMergedCard(eA, eB) {
+    var title   = _dupMergedEdits.title    !== undefined ? _dupMergedEdits.title    : (eA.title||eB.title||'');
+    var answer  = _dupMergedEdits.answer   !== undefined ? _dupMergedEdits.answer   : '';
+    var chapter = _dupMergedEdits.chapter  !== undefined ? _dupMergedEdits.chapter  : (eA.chapter||eB.chapter||'');
+    var era     = _dupMergedEdits.era      !== undefined ? _dupMergedEdits.era      : (eA.era||eB.era||'');
+    var date    = _dupMergedEdits.date     !== undefined ? _dupMergedEdits.date     : (eA.date||eB.date||'');
+    var location= _dupMergedEdits.location !== undefined ? _dupMergedEdits.location : (eA.location||eB.location||'');
+    var people  = _dupMergedEdits.people   !== undefined ? _dupMergedEdits.people   : (function(){
+      return [].concat(
+        eA.people?eA.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[],
+        eB.people?eB.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[]
+      ).filter(function(v,i,a){return a.indexOf(v)===i;}).join(', ');
+    })();
+
+    function tagRow(field, label, val) {
+      return '<div><div style="font-size:0.62rem;color:var(--muted);margin-bottom:2px">'+label+'</div>' +
+        '<input type="text" value="'+val.replace(/"/g,'&quot;')+'" placeholder="\u2014" oninput="_dupMergedEdits[\''+field+'\']=this.value" ' +
+        'style="width:100%;padding:4px 8px;border:1px solid var(--border);border-radius:5px;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text);background:var(--surface);box-sizing:border-box"></div>';
+    }
+
+    return '<div style="background:rgba(61,255,160,0.03);border:1px solid var(--sage);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
+      '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--sage)">&#10024; Merged Draft</div>' +
+      '<div id="dup-merged-status" style="font-size:0.72rem;color:var(--text-light)">&#10024; Drafting&#8230;</div>' +
+      '<input type="text" id="dup-merged-title" value="'+title.replace(/"/g,'&quot;')+'" placeholder="Title&#8230;" oninput="_dupMergedEdits[\'title\']=this.value" ' +
+        'style="width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.86rem;font-weight:700;color:var(--text);background:var(--surface);box-sizing:border-box">' +
+      '<textarea id="dup-merged-body" rows="10" oninput="_dupMergedEdits[\'answer\']=this.value" ' +
+        'style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical;line-height:1.6" ' +
+        'placeholder="AI is drafting a merged version&#8230;">'+answer.replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</textarea>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px">' +
+        tagRow('chapter','&#128218; Chapter',chapter) +
+        tagRow('era','&#8986; Era',era) +
+        tagRow('date','&#128197; Date',date) +
+        tagRow('location','&#128205; Location',location) +
+        '<div style="grid-column:1/-1">'+tagRow('people','&#128101; People (comma-separated)',people)+'</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ── Open a pair (step 2) ──────────────────────────────────────────
+  async function dupOpenPair(pi) {
+    var pair=_dupPairs[pi]; if (!pair) return;
+    _dupActivePair={idA:pair.idA,idB:pair.idB,score:pair.score,type:pair.type,overlapSentences:pair.overlapSentences,pairIndex:pi};
+    _dupMergedEdits={};
+
+    var eA=(entries||[]).find(function(e){ return e.id===pair.idA; });
+    var eB=(entries||[]).find(function(e){ return e.id===pair.idB; });
+    if (!eA||!eB) return;
+
+    document.getElementById('dupStep1').style.display='none';
+    document.getElementById('dupStep2').style.display='block';
+
+    var isNear=(pair.type==='near-identical');
+    var bc=isNear?'var(--rose)':'var(--amber)';
+    var badge=document.getElementById('dupPairBadge');
+    badge.textContent=isNear?'Near-identical':'Partial overlap';
+    badge.style.background=bc+'22'; badge.style.color=bc;
+
+    document.getElementById('dupPairDesc').textContent=isNear
+      ? 'Edit any column freely. Accept Merge saves the merged entry and archives both originals.'
+      : 'Highlighted sentences appear in both entries. Edit one or both to remove the overlap, then save.';
+
+    var overlap=isNear?[]:pair.overlapSentences||[];
+    var cols=isNear
+      ? '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px" id="dupSideBySide">'+
+          _dupBuildEntryCard(eA,'Entry A',[])+
+          _dupBuildEntryCard(eB,'Entry B',[])+
+          _dupBuildMergedCard(eA,eB)+
+        '</div>'
+      : '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" id="dupSideBySide">'+
+          _dupBuildEntryCard(eA,'Entry A',overlap)+
+          _dupBuildEntryCard(eB,'Entry B',overlap)+
+        '</div>';
+    document.getElementById('dupDetailContainer').innerHTML=cols;
+
+    // Register tags for both entries so edit panels work
+    registerEntryTags(eA.id, getEntryTags(eA));
+    registerEntryTags(eB.id, getEntryTags(eB));
+
+    // Bottom bar
+    document.getElementById('dupMergeStatus').textContent='';
+    document.getElementById('dupActionHint').textContent='';
+    var regen=document.getElementById('dupRegenBtn');
+    var accept=document.getElementById('dupAcceptMergeBtn');
+    if (isNear) {
+      regen.style.display='inline-block'; regen.disabled=true;
+      accept.style.display='inline-block'; accept.disabled=true; accept.textContent='&#10003; Accept Merge';
+      document.getElementById('dupActionHint').textContent=
+        'Accept Merge saves the merged entry and archives both originals (recoverable). Or save edits to A or B individually.';
+      _dupDraftMerge(eA,eB);
+    } else {
+      regen.style.display='none';
+      accept.style.display='none';
+      document.getElementById('dupActionHint').textContent=
+        'Edit Entry A or B to remove the repeated content, then save. Once resolved, this pair disappears.';
+    }
+  }
+
+  // ── AI draft for merged column ────────────────────────────────────
   async function _dupDraftMerge(eA, eB) {
-    const statusEl  = document.getElementById('dupMergeStatus');
-    const textEl    = document.getElementById('dupMergeText');
-    const saveBtn   = document.getElementById('dupMergeSaveBtn');
-    const regenBtn  = document.getElementById('dupRegenBtn');
+    var accept=document.getElementById('dupAcceptMergeBtn');
+    var regen=document.getElementById('dupRegenBtn');
     try {
-      const combined = 'Entry A: ' + (eA.title||'Untitled') + '\n' + (eA.answer||'').trim() +
-        '\n\n---\n\nEntry B: ' + (eB.title||'Untitled') + '\n' + (eB.answer||'').trim();
-      const wc = Math.min(500, ((eA.answer||'').split(/\s+/).filter(Boolean).length + (eB.answer||'').split(/\s+/).filter(Boolean).length) + 60);
-      const prompt = 'You are a warm, skilled biographer helping someone write their memoir.\n\n' +
-        'Below are 2 journal entries about the same memory, captured twice. Merge them into one rich, cohesive first-person memoir entry. Keep all specific names, dates, places and feelings. Warm and vivid. Roughly ' + wc + ' words.\n\n' +
-        combined + '\n\nReturn ONLY the merged memoir text. No preamble, no title, no explanation.';
-      const merged = await callAI(prompt);
-      textEl.value = merged;
-      statusEl.textContent = '\u2713 Draft ready \u2014 edit freely before saving';
-      if (saveBtn) saveBtn.disabled = false;
-      if (regenBtn) regenBtn.disabled = false;
+      var combined='Entry A: '+(eA.title||'Untitled')+'\n'+(eA.answer||'').trim()+'\n\n---\n\nEntry B: '+(eB.title||'Untitled')+'\n'+(eB.answer||'').trim();
+      var wc=Math.min(500,((eA.answer||'').split(/\s+/).filter(Boolean).length+(eB.answer||'').split(/\s+/).filter(Boolean).length)+60);
+      var prompt='You are a warm, skilled biographer helping someone write their memoir.\n\n'+
+        'Below are 2 journal entries about the same memory, captured twice. Merge into one rich, cohesive first-person memoir entry. Keep all specific names, dates, places and feelings. Warm and vivid. Roughly '+wc+' words.\n\nReturn ONLY the merged memoir text. No preamble, no title, no explanation.\n\n'+combined;
+      var merged=await callAI(prompt);
+      // Only set if user hasn't typed already
+      if (_dupMergedEdits.answer===undefined) _dupMergedEdits.answer=merged;
+      // Update the textarea and status
+      var bodyEl=document.getElementById('dup-merged-body');
+      var statusEl=document.getElementById('dup-merged-status');
+      if (bodyEl && _dupMergedEdits.answer===merged) bodyEl.value=merged;
+      if (statusEl) statusEl.textContent='&#10003; Draft ready &#8212; edit freely before accepting';
+      if (accept) accept.disabled=false;
+      if (regen)  regen.disabled=false;
     } catch(err) {
-      statusEl.textContent = '\u26A0\uFE0F ' + (err.message||'AI draft failed \u2014 type the merged text manually');
-      if (saveBtn) saveBtn.disabled = false;
-      if (regenBtn) regenBtn.disabled = false;
+      var statusEl=document.getElementById('dup-merged-status');
+      if (statusEl) statusEl.textContent='&#9888; AI draft failed &#8212; type merged text manually';
+      if (accept) accept.disabled=false;
+      if (regen)  regen.disabled=false;
     }
   }
 
   async function dupRegenerate() {
     if (!_dupActivePair) return;
-    const eA = (entries||[]).find(e => e.id === _dupActivePair.idA);
-    const eB = (entries||[]).find(e => e.id === _dupActivePair.idB);
-    if (!eA || !eB) return;
-    document.getElementById('dupMergeStatus').textContent = '\u2728 Regenerating\u2026';
-    document.getElementById('dupMergeSaveBtn').disabled = true;
-    document.getElementById('dupRegenBtn').disabled = true;
-    document.getElementById('dupMergeText').value = '';
-    await _dupDraftMerge(eA, eB);
+    var eA=(entries||[]).find(function(e){ return e.id===_dupActivePair.idA; });
+    var eB=(entries||[]).find(function(e){ return e.id===_dupActivePair.idB; });
+    if (!eA||!eB) return;
+    _dupMergedEdits={};
+    document.getElementById('dupAcceptMergeBtn').disabled=true;
+    document.getElementById('dupRegenBtn').disabled=true;
+    var statusEl=document.getElementById('dup-merged-status');
+    if (statusEl) statusEl.textContent='&#10024; Regenerating&#8230;';
+    var bodyEl=document.getElementById('dup-merged-body');
+    if (bodyEl) bodyEl.value='';
+    await _dupDraftMerge(eA,eB);
   }
 
-  // Archive helper — sets category to _archived instead of deleting
+  // ── Save individual entry (calls existing saveEntryTags) ──────────
+  async function dupSaveEntry(entryId) {
+    // saveEntryTags reads the dup edit panel, saves to DB, updates local entries
+    await saveEntryTags(entryId, 'dup');
+    // Refresh the pair list in case overlap is now resolved
+    _dupPairs=_dupBuildPairs();
+    // Stay on detail view — user sees their edits persisted
+  }
+
+  // ── Archive helper ────────────────────────────────────────────────
   async function _dupArchiveEntry(id) {
-    await _supabase.from('life_entries').update({ category: '_archived' }).eq('id', id).eq('user_id', currentUser.id);
+    await _supabase.from('life_entries').update({category:'_archived'}).eq('id',id).eq('user_id',currentUser.id);
   }
 
-  async function dupKeepA() {
+  // ── Accept Merge ──────────────────────────────────────────────────
+  async function dupAcceptMerge() {
     if (!_dupActivePair) return;
+    // Read merged body from textarea (in case user typed without triggering oninput)
+    var bodyEl=document.getElementById('dup-merged-body');
+    var titleEl=document.getElementById('dup-merged-title');
+    if (bodyEl)  _dupMergedEdits.answer=bodyEl.value;
+    if (titleEl) _dupMergedEdits.title=titleEl.value;
+    var mergedAnswer=(_dupMergedEdits.answer||'').trim();
+    var mergedTitle =(_dupMergedEdits.title ||'').trim();
+    if (!mergedAnswer) { toast('Merged entry has no text &#8212; please add content first'); return; }
+    var eA=(entries||[]).find(function(e){ return e.id===_dupActivePair.idA; });
+    var eB=(entries||[]).find(function(e){ return e.id===_dupActivePair.idB; });
+    if (!eA||!eB) return;
+    if (!confirm(
+      'Accept Merge will:\n\n' +
+      '\u2022 Save the merged entry\n' +
+      '\u2022 Archive "' + (eA.title||'Entry A') + '"\n' +
+      '\u2022 Archive "' + (eB.title||'Entry B') + '"\n\n' +
+      'Archived entries are not deleted and can be recovered. Continue?'
+    )) return;
+    var acceptBtn=document.getElementById('dupAcceptMergeBtn');
+    if (acceptBtn) { acceptBtn.disabled=true; acceptBtn.textContent='Saving\u2026'; }
     try {
-      await _dupArchiveEntry(_dupActivePair.idB);
-      await loadEntries();
-      renderDashboard();
-      closeDuplicates();
-      toast('\u2713 Entry B archived. Entry A kept.');
-    } catch(err) { toast('Error: ' + (err.message||'unknown')); }
-  }
-
-  async function dupKeepB() {
-    if (!_dupActivePair) return;
-    try {
-      await _dupArchiveEntry(_dupActivePair.idA);
-      await loadEntries();
-      renderDashboard();
-      closeDuplicates();
-      toast('\u2713 Entry A archived. Entry B kept.');
-    } catch(err) { toast('Error: ' + (err.message||'unknown')); }
-  }
-
-  async function dupSaveMerge() {
-    if (!_dupActivePair) return;
-    const mergedTitle = document.getElementById('dupMergeTitle').value.trim();
-    const mergedText  = document.getElementById('dupMergeText').value.trim();
-    if (!mergedText) { toast('Please add some text before saving'); return; }
-    const saveBtn = document.getElementById('dupMergeSaveBtn');
-    saveBtn.disabled = true; saveBtn.textContent = 'Saving\u2026';
-    const eA = (entries||[]).find(e => e.id === _dupActivePair.idA);
-    const eB = (entries||[]).find(e => e.id === _dupActivePair.idB);
-    if (!eA || !eB) { toast('Entries not found'); saveBtn.disabled=false; saveBtn.textContent='\u2713 Save Merged Entry'; return; }
-    try {
-      const allPeople = [...new Set([
-        ...(eA.people ? eA.people.split(',').map(p=>p.trim()).filter(Boolean) : []),
-        ...(eB.people ? eB.people.split(',').map(p=>p.trim()).filter(Boolean) : [])
-      ])];
-      const { error } = await _supabase.from('life_entries').insert([{
+      var m=_dupMergedEdits;
+      var allPeople=(m.people!==undefined)
+        ? m.people.split(',').map(function(p){return p.trim();}).filter(Boolean)
+        : [].concat(
+            eA.people?eA.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[],
+            eB.people?eB.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[]
+          ).filter(function(v,i,a){return a.indexOf(v)===i;});
+      var res=await _supabase.from('life_entries').insert([{
         user_id:  currentUser.id,
-        title:    mergedTitle || (eA.title||'Merged Memory'),
-        answer:   mergedText,
-        chapter:  eA.chapter  || eB.chapter  || null,
-        era:      eA.era      || eB.era      || null,
-        location: eA.location || eB.location || null,
-        people:   allPeople.length ? allPeople.join(',') : null,
+        title:    mergedTitle||eA.title||eB.title||'Merged Memory',
+        answer:   mergedAnswer,
+        chapter:  m.chapter||eA.chapter||eB.chapter||null,
+        era:      m.era||eA.era||eB.era||null,
+        location: m.location||eA.location||eB.location||null,
+        people:   allPeople.length?allPeople.join(','):null,
         category: 'consolidated'
       }]);
-      if (error) throw error;
-      // Archive both originals
+      if (res.error) throw res.error;
       await _dupArchiveEntry(eA.id);
       await _dupArchiveEntry(eB.id);
       await loadEntries();
@@ -7324,20 +7344,9 @@
       closeDuplicates();
       toast('\u2713 Merged entry saved. Both originals archived.');
     } catch(err) {
-      toast('Error saving: ' + (err.message||'unknown'));
-      saveBtn.disabled = false; saveBtn.textContent = '\u2713 Save Merged Entry';
+      toast('Error: '+(err.message||'unknown'));
+      if (acceptBtn) { acceptBtn.disabled=false; acceptBtn.textContent='\u2713 Accept Merge'; }
     }
-  }
-
-  function dupEditEntry(id) {
-    // Navigate to Entries tab and open the edit panel for this entry
-    closeDuplicates();
-    showPanel('entries');
-    // Small delay to let panel render, then scroll to entry
-    setTimeout(() => {
-      const el = document.getElementById('entry-card-' + id);
-      if (el) { el.scrollIntoView({behavior:'smooth',block:'center'}); el.classList.add('highlight-pulse'); }
-    }, 300);
   }
 
   // ── Consolidate Topic ─────────────────────────────────────────────
@@ -7609,13 +7618,13 @@
           date_tag: base.date_tag || null,
           location: base.location || null,
           people:   allPeople.length ? allPeople.join(',') : null,
-          category: base.category || null,
+          category: 'consolidated',
           source:   'consolidated'
         }])
         .select();
       if (error) throw error;
 
-      // Archive included originals only (excluded entries are kept)
+      // Archive included originals (excluded entries kept as-is)
       for (const id of sourceEntries.map(e=>e.id)) {
         await _supabase.from('life_entries').update({ category: '_archived' }).eq('id', id).eq('user_id', currentUser.id);
       }
