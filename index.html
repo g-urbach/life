@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.15 — Duplicates & Overlaps: pairwise detector replaces consolidate. Near-identical: 3-col editable layout (Entry A, B, Merged Draft) with full chip tag UI + photos. Partial-overlap: 2-col with sentence-level highlights. Accept Merge archives both originals with confirm. Archive-not-delete throughout. Fixes consolidateApprove table name bug.";
+  const DEPLOY_NOTES = "v2.16 — Dup & Overlaps UX: always-open edit cards (removed toggle), body text editable inline, tag panel + photos always visible. Fixed HTML entity rendering in JS textContent. dupSaveEntry saves body + tags together.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.15
+  Current: v2.16
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -284,7 +284,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.15 → next review at v2.20.
+  Build counter: currently at v2.16 → next review at v2.20.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -492,7 +492,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.15</title>
+  <title>My Life Story v2.16</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1873,7 +1873,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.15</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.16</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2847,7 +2847,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.15 starting...');
+    dbg('INIT','v2.16 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -7095,50 +7095,35 @@
   function _dupBuildEntryCard(entry, colLabel, overlap) {
     if (!entry || !entry.id) return '';
     var wc=(entry.answer||'').split(/\s+/).filter(Boolean).length;
-    var tags=getEntryTags(entry);
 
-    // Read-only body display with overlap highlight
-    var bodyHtml='<div style="white-space:pre-wrap;font-size:0.83rem;line-height:1.6;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:240px;overflow-y:auto">'+
-      _dupHighlightText(entry.answer||'', overlap||[])+'</div>';
+    // Body text — editable textarea (with overlap highlight note below if needed)
+    var bodyHtml=
+      '<textarea id="dup-body-'+entry.id+'" rows="8" '+
+        'style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical;line-height:1.6">'+
+        (entry.answer||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')+
+      '</textarea>';
 
-    // Existing tag chips (read-only display, same as entries tab)
-    var chipsHtml=buildTagChips(tags);
+    // Overlap highlight shown as a collapsible read-only note (partial-overlap only)
+    var overlapNote='';
+    if (overlap&&overlap.length) {
+      overlapNote='<details style="font-size:0.75rem;color:var(--text-light)">' +
+        '<summary style="cursor:pointer;color:var(--amber)">⚠️ Show highlighted overlaps</summary>' +
+        '<div style="white-space:pre-wrap;margin-top:6px;padding:8px 10px;background:var(--surface2);border-radius:6px;line-height:1.6">'+_dupHighlightText(entry.answer||'',overlap)+'</div>' +
+        '</details>';
+    }
 
-    // The full edit panel (hidden by default, toggled by button)
+    // The tag+photo edit panel — always open (display:grid from the start)
+    // buildEditPanel generates it hidden; we override display after render via dupOpenPair
     var editPanelHtml=buildEditPanel(entry.id,'dup');
 
     return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
       '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-light)">'+colLabel+'</div>' +
-      '<div style="font-size:0.72rem;color:var(--text-light)">'+wc+' words &middot; '+new Date(entry.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})+'</div>' +
+      '<div style="font-size:0.72rem;color:var(--text-light)">'+wc+' words \u00B7 '+new Date(entry.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})+'</div>' +
       bodyHtml +
-      (overlap&&overlap.length
-        ? '<div style="font-size:0.72rem;color:var(--amber)">&#9888;&#65039; Highlighted sentences appear in both entries &#8212; consider trimming.</div>'
-        : '') +
-      chipsHtml +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">' +
-        '<button onclick="dupToggleEditPanel(\''+entry.id+'\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">&#9998;&#65039; Edit tags &amp; photos</button>' +
-      '</div>' +
+      overlapNote +
       editPanelHtml +
-      '<button onclick="dupSaveEntry(\''+entry.id+'\')" style="padding:7px 14px;border:none;border-radius:7px;background:var(--sage);color:#fff;font-size:0.8rem;font-weight:700;cursor:pointer;align-self:flex-start;margin-top:2px">Save Entry</button>' +
+      '<button onclick="dupSaveEntry(\''+entry.id+'\')" style="padding:7px 14px;border:none;border-radius:7px;background:var(--sage);color:#fff;font-size:0.8rem;font-weight:700;cursor:pointer;align-self:flex-start">Save Entry</button>' +
     '</div>';
-  }
-
-  // Toggle the edit panel for an entry inside the dup dialog
-  function dupToggleEditPanel(entryId) {
-    var panel=document.getElementById('dup-'+entryId);
-    if (!panel) return;
-    var isHidden=(panel.style.display==='none'||!panel.style.display);
-    if (isHidden) {
-      var tags=getEntryTags((entries||[]).find(function(e){ return e.id===entryId; })||{});
-      registerEntryTags(entryId, tags);
-      populateTagDropdowns('dup_'+entryId);
-      applyTagDefaults('dup_'+entryId, tags, entryId);
-      panel.style.display='grid';
-      panel.style.gridTemplateColumns='1fr 1fr 1fr';
-      loadEditPanelPhotoThumbs(entryId);
-    } else {
-      panel.style.display='none';
-    }
   }
 
   // ── Build merged draft card (no entry ID — simple inputs) ─────────
@@ -7163,8 +7148,8 @@
     }
 
     return '<div style="background:rgba(61,255,160,0.03);border:1px solid var(--sage);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
-      '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--sage)">&#10024; Merged Draft</div>' +
-      '<div id="dup-merged-status" style="font-size:0.72rem;color:var(--text-light)">&#10024; Drafting&#8230;</div>' +
+      '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--sage)">\u2728 Merged Draft</div>' +
+      '<div id="dup-merged-status" style="font-size:0.72rem;color:var(--text-light)">\u2728 Drafting\u2026</div>' +
       '<input type="text" id="dup-merged-title" value="'+title.replace(/"/g,'&quot;')+'" placeholder="Title&#8230;" oninput="_dupMergedEdits[\'title\']=this.value" ' +
         'style="width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.86rem;font-weight:700;color:var(--text);background:var(--surface);box-sizing:border-box">' +
       '<textarea id="dup-merged-body" rows="10" oninput="_dupMergedEdits[\'answer\']=this.value" ' +
@@ -7216,9 +7201,31 @@
         '</div>';
     document.getElementById('dupDetailContainer').innerHTML=cols;
 
-    // Register tags for both entries so edit panels work
-    registerEntryTags(eA.id, getEntryTags(eA));
-    registerEntryTags(eB.id, getEntryTags(eB));
+    // Open tag panels immediately for Entry A and B (always-visible, no toggle)
+    function _initDupEntryPanel(e) {
+      var tags=getEntryTags(e);
+      registerEntryTags(e.id, tags);
+      var panel=document.getElementById('dup-'+e.id);
+      if (panel) {
+        panel.style.display='grid';
+        panel.style.gridTemplateColumns='1fr 1fr 1fr';
+        // Remove the panel title row — redundant inside the dup card
+        var titleRow=panel.querySelector('.tag-panel-title');
+        if (titleRow) titleRow.style.display='none';
+        // Also hide the Save tags / Cancel row — we have Save Entry instead
+        var btnRow=panel.querySelector('[style*="grid-column:1/-1"]');
+        // Hide save/cancel row (last child that has the btn-primary)
+        var btnRows=panel.querySelectorAll('div[style*="grid-column"]');
+        btnRows.forEach(function(row){
+          if (row.querySelector('.btn-primary')) row.style.display='none';
+        });
+        populateTagDropdowns('dup_'+e.id);
+        applyTagDefaults('dup_'+e.id, tags, e.id);
+        loadEditPanelPhotoThumbs(e.id);
+      }
+    }
+    _initDupEntryPanel(eA);
+    _initDupEntryPanel(eB);
 
     // Bottom bar
     document.getElementById('dupMergeStatus').textContent='';
@@ -7227,7 +7234,7 @@
     var accept=document.getElementById('dupAcceptMergeBtn');
     if (isNear) {
       regen.style.display='inline-block'; regen.disabled=true;
-      accept.style.display='inline-block'; accept.disabled=true; accept.textContent='&#10003; Accept Merge';
+      accept.style.display='inline-block'; accept.disabled=true; accept.textContent='\u2713 Accept Merge';
       document.getElementById('dupActionHint').textContent=
         'Accept Merge saves the merged entry and archives both originals (recoverable). Or save edits to A or B individually.';
       _dupDraftMerge(eA,eB);
@@ -7255,12 +7262,12 @@
       var bodyEl=document.getElementById('dup-merged-body');
       var statusEl=document.getElementById('dup-merged-status');
       if (bodyEl && _dupMergedEdits.answer===merged) bodyEl.value=merged;
-      if (statusEl) statusEl.textContent='&#10003; Draft ready &#8212; edit freely before accepting';
+      if (statusEl) statusEl.textContent='\u2713 Draft ready \u2014 edit freely before accepting';
       if (accept) accept.disabled=false;
       if (regen)  regen.disabled=false;
     } catch(err) {
       var statusEl=document.getElementById('dup-merged-status');
-      if (statusEl) statusEl.textContent='&#9888; AI draft failed &#8212; type merged text manually';
+      if (statusEl) statusEl.textContent='\u26A0\uFE0F AI draft failed \u2014 type merged text manually';
       if (accept) accept.disabled=false;
       if (regen)  regen.disabled=false;
     }
@@ -7275,19 +7282,31 @@
     document.getElementById('dupAcceptMergeBtn').disabled=true;
     document.getElementById('dupRegenBtn').disabled=true;
     var statusEl=document.getElementById('dup-merged-status');
-    if (statusEl) statusEl.textContent='&#10024; Regenerating&#8230;';
+    if (statusEl) statusEl.textContent='\u2728 Regenerating\u2026';
     var bodyEl=document.getElementById('dup-merged-body');
     if (bodyEl) bodyEl.value='';
     await _dupDraftMerge(eA,eB);
   }
 
-  // ── Save individual entry (calls existing saveEntryTags) ──────────
+  // ── Save individual entry ─────────────────────────────────────────
   async function dupSaveEntry(entryId) {
-    // saveEntryTags reads the dup edit panel, saves to DB, updates local entries
+    // First patch the body text if the textarea has been edited
+    var bodyEl=document.getElementById('dup-body-'+entryId);
+    if (bodyEl) {
+      var newAnswer=bodyEl.value.trim();
+      var base=(entries||[]).find(function(e){ return e.id===entryId; });
+      if (base && newAnswer !== (base.answer||'').trim()) {
+        var res=await _supabase.from('life_entries').update({answer:newAnswer||null}).eq('id',entryId).eq('user_id',currentUser.id);
+        if (res.error) { toast('Error saving body: '+(res.error.message||'unknown')); return; }
+        // Update local cache so saveEntryTags doesn't overwrite with stale data
+        var idx=(entries||[]).findIndex(function(e){ return e.id===entryId; });
+        if (idx>-1) entries[idx].answer=newAnswer||null;
+      }
+    }
+    // Then save tags via existing infrastructure (reads the dup edit panel dropdowns/chips)
     await saveEntryTags(entryId, 'dup');
-    // Refresh the pair list in case overlap is now resolved
+    // Rebuild pair list in case overlap is now resolved
     _dupPairs=_dupBuildPairs();
-    // Stay on detail view — user sees their edits persisted
   }
 
   // ── Archive helper ────────────────────────────────────────────────
@@ -7305,7 +7324,7 @@
     if (titleEl) _dupMergedEdits.title=titleEl.value;
     var mergedAnswer=(_dupMergedEdits.answer||'').trim();
     var mergedTitle =(_dupMergedEdits.title ||'').trim();
-    if (!mergedAnswer) { toast('Merged entry has no text &#8212; please add content first'); return; }
+    if (!mergedAnswer) { toast('Merged entry has no text \u2014 please add content first'); return; }
     var eA=(entries||[]).find(function(e){ return e.id===_dupActivePair.idA; });
     var eB=(entries||[]).find(function(e){ return e.id===_dupActivePair.idB; });
     if (!eA||!eB) return;
