@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.08 — Dashboard redesign: 13 tiles → 5 logical super-tiles (Your Story, Story Health+Hygiene, Write Today, Your Book, Recent Entries); hygiene+health now one combined expandable tile; hygiene click bug fixed; journal photos+people bug fixed";
+  const DEPLOY_NOTES = "v2.09 — Hygiene/cluster fixes: removed 20-word minimum (short entries now cluster); threshold lowered to 0.12 for sparse vectors; words-by-chapter rows now clickable (navigate to chapter entries)";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.08): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.09): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.08
+  Current: v2.09
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.08): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.09): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.08 → next review at v2.08.
+  Build counter: currently at v2.09 → next review at v2.09.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.08</title>
+  <title>My Life Story v2.09</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1862,7 +1862,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.08</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.09</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2711,7 +2711,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.08 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.09 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2801,7 +2801,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.08 starting...');
+    dbg('INIT','v2.09 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3261,7 +3261,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.08 — log full state before switching
+    // PANEL BUG DEBUG v2.09 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -5593,10 +5593,10 @@
         const pgs = Math.round(wc / WORDS_PER_PAGE);
         const pct = Math.round((wc / maxChWc) * 100);
         const col = wc >= 500 ? 'var(--sage)' : wc >= 200 ? 'var(--gold)' : 'var(--rose)';
-        return '<div style="margin-bottom:10px">' +
+        return '<div style="margin-bottom:10px;cursor:pointer;padding:2px 0" onclick="filterEntriesByChapter(&quot;' + ch.replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '&quot;);event.stopPropagation()">' +
           '<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:3px">' +
-          '<span style="color:var(--text)">' + ch + '</span>' +
-          '<span style="color:var(--text-light)">' + wc.toLocaleString() + ' words · ~' + (pgs||'<1') + ' page' + (pgs===1?'':'s') + '</span>' +
+          '<span style="color:var(--text);font-weight:600">' + ch + ' <span style="font-size:0.7rem;color:var(--sage);font-weight:400">&#8594; view</span></span>' +
+          '<span style="color:var(--text-light)">' + wc.toLocaleString() + ' words·~' + (pgs||'<1') + 'p</span>' +
           '</div>' +
           '<div style="height:5px;border-radius:3px;background:var(--border)">' +
           '<div style="height:100%;border-radius:3px;background:' + col + ';width:' + pct + '%;transition:width 0.5s ease"></div>' +
@@ -6776,11 +6776,11 @@
     }
 
     // Only cluster entries with enough content (>20 words)
-    const richEntries = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length > 20);
+    const richEntries = real.slice(); // include all entries regardless of length — short entries are candidates for consolidation too
     const vectors = richEntries.map(e => tfVector(tokenise(e.title + ' ' + e.title + ' ' + e.answer)));
 
     // Group entries with cosine similarity > 0.18 (meaningful topic overlap)
-    const THRESHOLD = 0.18;
+    const THRESHOLD = 0.12; // lowered from 0.18 — short entries have sparse vectors so need lower threshold
     const assigned  = new Set();
     const dupGroups = [];
     for (let i = 0; i < richEntries.length; i++) {
@@ -6942,9 +6942,9 @@
       keys.forEach(k => { const av=a[k]||0,bv=b[k]||0; dot+=av*bv; mA+=av*av; mB+=bv*bv; });
       return (mA&&mB) ? dot/(Math.sqrt(mA)*Math.sqrt(mB)) : 0;
     }
-    const rich = real.filter(e => (e.answer||'').split(/\s+/).filter(Boolean).length > 15);
+    const rich = real.slice(); // no minimum — even short entries should cluster
     const vecs  = rich.map(e => tfVec(tokenise(e.title+' '+e.title+' '+e.answer)));
-    const THRESHOLD = 0.16;
+    const THRESHOLD = 0.12;
     const assigned = new Set();
     const groups   = [];
     for (let i=0; i<rich.length; i++) {
@@ -6952,7 +6952,7 @@
       const group = [i];
       for (let j=i+1; j<rich.length; j++) {
         if (assigned.has(j)) continue;
-        if (cosSim(vecs[i],vecs[j]) >= THRESHOLD) { group.push(j); assigned.add(j); }
+        if (cosSim(vecs[i],vecs[j]) >= 0.12) { group.push(j); assigned.add(j); }
       }
       if (group.length > 1) { groups.push(group); assigned.add(i); }
     }
