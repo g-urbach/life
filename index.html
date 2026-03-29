@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.19 — Dup dialog: photo strip now shows above body text in each entry card (entry own photo_url + child photos), loaded async via getSignedUrl. Previously only buildEditPanel photo children were shown, missing direct photo_url entries.";
+  const DEPLOY_NOTES = "v2.20 — Fix _supabase not defined error: all dup and consolidate DB calls converted to fetch(DB_URL,...). _supabase never existed — app uses PostgREST REST API throughout.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.19
+  Current: v2.20
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -284,7 +284,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.19 → next review at v2.20.
+  Build counter: currently at v2.20 → next review at v2.30.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -492,7 +492,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.19</title>
+  <title>My Life Story v2.20</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1873,7 +1873,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.19</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.20</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2847,7 +2847,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.19 starting...');
+    dbg('INIT','v2.20 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -7332,8 +7332,12 @@
       var newAnswer=bodyEl.value.trim();
       var base=(entries||[]).find(function(e){ return e.id===entryId; });
       if (base && newAnswer !== (base.answer||'').trim()) {
-        var res=await _supabase.from('life_entries').update({answer:newAnswer||null}).eq('id',entryId).eq('user_id',currentUser.id);
-        if (res.error) { toast('Error saving body: '+(res.error.message||'unknown')); return; }
+        var res=await fetch(DB_URL+'?id=eq.'+entryId+'&user_id=eq.'+currentUser.id, {
+          method:'PATCH',
+          headers:{...getAuthHeaders(),'Prefer':'return=minimal'},
+          body:JSON.stringify({answer:newAnswer||null})
+        });
+        if (!res.ok) { toast('Error saving body: '+(await res.text())); return; }
         // Update local cache so saveEntryTags doesn't overwrite with stale data
         var idx=(entries||[]).findIndex(function(e){ return e.id===entryId; });
         if (idx>-1) entries[idx].answer=newAnswer||null;
@@ -7347,7 +7351,11 @@
 
   // ── Archive helper ────────────────────────────────────────────────
   async function _dupArchiveEntry(id) {
-    await _supabase.from('life_entries').update({category:'_archived'}).eq('id',id).eq('user_id',currentUser.id);
+    await fetch(DB_URL+'?id=eq.'+id+'&user_id=eq.'+currentUser.id, {
+      method:'PATCH',
+      headers:{...getAuthHeaders(),'Prefer':'return=minimal'},
+      body:JSON.stringify({category:'_archived'})
+    });
   }
 
   // ── Accept Merge ──────────────────────────────────────────────────
@@ -7381,17 +7389,21 @@
             eA.people?eA.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[],
             eB.people?eB.people.split(',').map(function(p){return p.trim();}).filter(Boolean):[]
           ).filter(function(v,i,a){return a.indexOf(v)===i;});
-      var res=await _supabase.from('life_entries').insert([{
-        user_id:  currentUser.id,
-        title:    mergedTitle||eA.title||eB.title||'Merged Memory',
-        answer:   mergedAnswer,
-        chapter:  m.chapter||eA.chapter||eB.chapter||null,
-        era:      m.era||eA.era||eB.era||null,
-        location: m.location||eA.location||eB.location||null,
-        people:   allPeople.length?allPeople.join(','):null,
-        category: 'consolidated'
-      }]);
-      if (res.error) throw res.error;
+      var res=await fetch(DB_URL, {
+        method:'POST',
+        headers:{...getAuthHeaders(),'Prefer':'return=minimal'},
+        body:JSON.stringify({
+          user_id:  currentUser.id,
+          title:    mergedTitle||eA.title||eB.title||'Merged Memory',
+          answer:   mergedAnswer,
+          chapter:  m.chapter||eA.chapter||eB.chapter||null,
+          era:      m.era||eA.era||eB.era||null,
+          location: m.location||eA.location||eB.location||null,
+          people:   allPeople.length?allPeople.join(','):null,
+          category: 'consolidated'
+        })
+      });
+      if (!res.ok) throw new Error(await res.text());
       await _dupArchiveEntry(eA.id);
       await _dupArchiveEntry(eB.id);
       await loadEntries();
@@ -7662,26 +7674,29 @@
       const allPeople = [...new Set(sourceEntries.flatMap(e => e.people ? e.people.split(',').map(p => p.trim()).filter(Boolean) : []))];
 
       // Save merged entry
-      const { data, error } = await _supabase
-        .from('life_entries')
-        .insert([{
+      const insertRes = await fetch(DB_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+        body: JSON.stringify({
           user_id:  currentUser.id,
           title:    mergedTitle || (base.title||'Merged Memory'),
           answer:   mergedText,
           chapter:  base.chapter  || null,
           era:      base.era      || null,
-          date_tag: base.date_tag || null,
           location: base.location || null,
           people:   allPeople.length ? allPeople.join(',') : null,
-          category: 'consolidated',
-          source:   'consolidated'
-        }])
-        .select();
-      if (error) throw error;
+          category: 'consolidated'
+        })
+      });
+      if (!insertRes.ok) throw new Error(await insertRes.text());
 
       // Archive included originals (excluded entries kept as-is)
       for (const id of sourceEntries.map(e=>e.id)) {
-        await _supabase.from('life_entries').update({ category: '_archived' }).eq('id', id).eq('user_id', currentUser.id);
+        await fetch(DB_URL+'?id=eq.'+id+'&user_id=eq.'+currentUser.id, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ category: '_archived' })
+        });
       }
 
       // Refresh local entries
