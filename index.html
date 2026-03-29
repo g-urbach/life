@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.10 — Consolidate overhaul: group detail view with full entry previews, per-entry exclude toggles + inline editing, auto-regenerate on changes; Save New / Cancel button labels; hygiene people-tag bug fix";
+  const DEPLOY_NOTES = "v2.12 — Clustering fix: any-member linkage so similar entries are not split into separate groups; words-by-chapter chapter filter fix";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.10): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.12): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.10
+  Current: v2.12
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.10): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.12): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.10 → next review at v2.10.
+  Build counter: currently at v2.12 → next review at v2.12.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.10</title>
+  <title>My Life Story v2.12</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1862,7 +1862,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.10</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.12</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2714,7 +2714,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.10 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.12 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2804,7 +2804,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.10 starting...');
+    dbg('INIT','v2.12 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3264,7 +3264,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.10 — log full state before switching
+    // PANEL BUG DEBUG v2.12 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -3290,7 +3290,7 @@
     dbg('PANEL', 'After scrollTo: scrollY=' + window.scrollY + ' docEl.scrollTop=' + document.documentElement.scrollTop + ' body.scrollTop=' + document.body.scrollTop);
 
     if (name === 'dashboard') renderDashboard();
-    if (name === 'entries')   { populateReviewFilter(); renderReviewEntries(); }
+    if (name === 'entries')   { populateReviewFilter(_entriesChapterFilter); _entriesChapterFilter = null; renderReviewEntries(); }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
@@ -6180,12 +6180,19 @@
     return 'Just getting started';
   }
 
-  function populateReviewFilter() {
+  function populateReviewFilter(preselectChapter) {
     const sel = document.getElementById('reviewFilterCat');
     if (!sel) return;
+    const prev = preselectChapter !== undefined ? preselectChapter : sel.value;
     const chapters = [...new Set(entries.filter(e=>e.chapter).map(e=>e.chapter))].sort();
     sel.innerHTML = '<option value="">All chapters</option>' +
-      chapters.map(c => '<option>' + c + '</option>').join('');
+      chapters.map(c => '<option' + (c === prev ? ' selected' : '') + '>' + c + '</option>').join('');
+    if (prev && !chapters.includes(prev)) {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = prev;
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
   }
 
   async function renderReview() {
@@ -6330,7 +6337,7 @@
       (!e.answer || PHOTO_STUBS.has(e.answer.toLowerCase().trim()) || e.answer.trim().length < 25);
 
     let filtered = (filter
-      ? real.filter(e => (e.chapter || e.category || 'Uncategorised') === filter)
+      ? real.filter(e => (e.chapter || '') === filter)
       : real
     ).filter(e => !isPhotoAttachment(e));
 
@@ -6782,8 +6789,8 @@
     const richEntries = real.slice(); // include all entries regardless of length — short entries are candidates for consolidation too
     const vectors = richEntries.map(e => tfVector(tokenise(e.title + ' ' + e.title + ' ' + e.answer)));
 
-    // Group entries with cosine similarity > 0.18 (meaningful topic overlap)
-    const THRESHOLD = 0.12; // lowered from 0.18 — short entries have sparse vectors so need lower threshold
+    // Group entries using any-member linkage: join if similar to ANY existing member of the group
+    const THRESHOLD = 0.12;
     const assigned  = new Set();
     const dupGroups = [];
     for (let i = 0; i < richEntries.length; i++) {
@@ -6791,10 +6798,8 @@
       const group = [i];
       for (let j = i+1; j < richEntries.length; j++) {
         if (assigned.has(j)) continue;
-        if (cosineSim(vectors[i], vectors[j]) >= THRESHOLD) {
-          group.push(j);
-          assigned.add(j);
-        }
+        const simToGroup = group.some(gi => cosineSim(vectors[gi], vectors[j]) >= THRESHOLD);
+        if (simToGroup) { group.push(j); assigned.add(j); }
       }
       if (group.length > 1) { dupGroups.push(group); assigned.add(i); }
     }
@@ -6954,7 +6959,8 @@
       const group = [i];
       for (let j=i+1; j<rich.length; j++) {
         if (assigned.has(j)) continue;
-        if (cosSim(vecs[i],vecs[j]) >= 0.12) { group.push(j); assigned.add(j); }
+        const simToGroup = group.some(gi => cosSim(vecs[gi],vecs[j]) >= 0.12);
+        if (simToGroup) { group.push(j); assigned.add(j); }
       }
       if (group.length > 1) { groups.push(group); assigned.add(i); }
     }
@@ -7219,21 +7225,13 @@
   let _entriesTypeFilter     = null; // 'photos' | 'people' | null
   let _entriesPersonFilter   = null; // person name string | null
   let _entriesLocationFilter = null; // location string | null
+  let _entriesChapterFilter  = null; // chapter string | null
 
   function filterEntriesByChapter(chapter) {
     _entriesTypeFilter     = null;
     _entriesPersonFilter   = null;
     _entriesLocationFilter = null;
-    const sel = document.getElementById('reviewFilterCat');
-    if (sel) {
-      if (chapter) {
-        let found = false;
-        for (const opt of sel.options) { if (opt.value === chapter) { sel.value = chapter; found = true; break; } }
-        if (!found) { const opt = document.createElement('option'); opt.value = opt.textContent = chapter; sel.appendChild(opt); sel.value = chapter; }
-      } else {
-        sel.value = '';
-      }
-    }
+    _entriesChapterFilter  = chapter || null;
     showPanel('entries', null, 3);
   }
 
