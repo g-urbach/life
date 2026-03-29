@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.17 — deploy_v8: removed stale dupToggleEditPanel regression test, replaced with _initDupEntryPanel test.";
+  const DEPLOY_NOTES = "v2.18 — Fix dup dialog tag/photo population: correct prefix convention for populateTagDropdowns/applyTagDefaults, manual people chips render using short prefix matching buildEditPanel IDs.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.17
+  Current: v2.18
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -284,7 +284,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.17 → next review at v2.20.
+  Build counter: currently at v2.18 → next review at v2.20.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -492,7 +492,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.17</title>
+  <title>My Life Story v2.18</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1873,7 +1873,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.17</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.18</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2847,7 +2847,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.17 starting...');
+    dbg('INIT','v2.18 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -7112,8 +7112,7 @@
         '</details>';
     }
 
-    // The tag+photo edit panel — always open (display:grid from the start)
-    // buildEditPanel generates it hidden; we override display after render via dupOpenPair
+    // The tag+photo edit panel — short prefix 'dup' matches how all other panels work
     var editPanelHtml=buildEditPanel(entry.id,'dup');
 
     return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
@@ -7205,22 +7204,38 @@
     function _initDupEntryPanel(e) {
       var tags=getEntryTags(e);
       registerEntryTags(e.id, tags);
+      // buildEditPanel(entryId, 'dup') generates panel id="dup-{entryId}"
       var panel=document.getElementById('dup-'+e.id);
       if (panel) {
         panel.style.display='grid';
         panel.style.gridTemplateColumns='1fr 1fr 1fr';
-        // Remove the panel title row — redundant inside the dup card
+        // Hide panel title — redundant inside the dup card
         var titleRow=panel.querySelector('.tag-panel-title');
         if (titleRow) titleRow.style.display='none';
-        // Also hide the Save tags / Cancel row — we have Save Entry instead
-        var btnRow=panel.querySelector('[style*="grid-column:1/-1"]');
-        // Hide save/cancel row (last child that has the btn-primary)
+        // Hide Save tags / Cancel row — replaced by Save Entry button
         var btnRows=panel.querySelectorAll('div[style*="grid-column"]');
         btnRows.forEach(function(row){
           if (row.querySelector('.btn-primary')) row.style.display='none';
         });
-        populateTagDropdowns('dup_'+e.id);
-        applyTagDefaults('dup_'+e.id, tags, e.id);
+        // Baked prefix for inputs (buildEditPanel uses prefix_entryId for input IDs)
+        var pfx='dup_'+e.id;
+        populateTagDropdowns(pfx);
+        // applyTagDefaults with baked prefix, no entryId arg — matches input IDs
+        // (title: pfx+'TagTitle', selects: pfx+'TagChapter' etc, hidden: pfx+'TagPeople')
+        applyTagDefaults(pfx, tags);
+        // People chips: buildEditPanel uses short prefix for chips container id
+        // = 'dup'+'PeopleChips'+entryId — must render manually
+        if (tags.people) {
+          var chipsEl=document.getElementById('dupPeopleChips'+e.id);
+          if (chipsEl) {
+            renderTagChipManager('dupPeopleChips'+e.id,
+              tags.people.split(',').map(function(s){return s.trim();}).filter(Boolean),
+              'people', 'dup', e.id);
+          }
+          // Also set the hidden input so saveEntryTags reads it
+          var hidden=document.getElementById(pfx+'TagPeople');
+          if (hidden) hidden.value=tags.people;
+        }
         loadEditPanelPhotoThumbs(e.id);
       }
     }
