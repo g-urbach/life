@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.09 — Hygiene/cluster fixes: removed 20-word minimum (short entries now cluster); threshold lowered to 0.12 for sparse vectors; words-by-chapter rows now clickable (navigate to chapter entries)";
+  const DEPLOY_NOTES = "v2.10 — Consolidate overhaul: group detail view with full entry previews, per-entry exclude toggles + inline editing, auto-regenerate on changes; Save New / Cancel button labels; hygiene people-tag bug fix";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -126,7 +126,7 @@
 
   VERSIONING RULES:
   - Minor bump (e.g. v1.06 → v1.07): bug fixes, small improvements
-  - Major bump (e.g. v1.06 → v2.09): new tab, major feature, restructure
+  - Major bump (e.g. v1.06 → v2.10): new tab, major feature, restructure
   - DEPLOY_NOTES format: "v1.07 — short description of what changed"
   ------------------------------------------------------------
 
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.09
+  Current: v2.10
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,7 +198,7 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
-  - Mic stop fix (v2.09): tapping Stop no longer blanks the textarea. onend
+  - Mic stop fix (v2.10): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
 
@@ -277,7 +277,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.09 → next review at v2.09.
+  Build counter: currently at v2.10 → next review at v2.10.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -484,7 +484,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.09</title>
+  <title>My Life Story v2.10</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1862,7 +1862,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.09</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.10</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2065,7 +2065,7 @@
       <!-- Row 2: save actions -->
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="memSaveBtn"    onclick="memSave()">💾 Save</button>
-        <button class="btn btn-ghost"     id="memSaveNewBtn" onclick="memSaveAndNew()">💾 Save &amp; New</button>
+        <button class="btn btn-ghost"     id="memSaveNewBtn" onclick="memSaveAndNew()">✚ New</button>
         <button class="btn btn-ghost"     id="memCancelBtn"  onclick="memCancel()">✕ Cancel</button>
       </div>
     </div>
@@ -2478,22 +2478,25 @@
       <!-- Step 2: review + edit merged draft -->
       <div id="consolidateStep2" style="display:none">
         <button onclick="consolidateBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;margin-bottom:12px;padding:0">← Back to groups</button>
-        <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:8px">Merging these entries:</p>
-        <div id="consolidateSourceList" style="margin-bottom:14px"></div>
+
+        <!-- Source entries with full detail + exclude + inline edit -->
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Entries in this group</div>
+        <div id="consolidateSourceList" style="margin-bottom:16px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
+
+        <!-- Suggested consolidation -->
         <div id="consolidateDraftArea" style="margin-bottom:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Merged Title</label>
+            <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Suggested Consolidation</label>
+            <button id="consolidateRegenerateBtn" onclick="consolidateRegenerate()" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.78rem;cursor:pointer;color:var(--text)">↺ Regenerate</button>
           </div>
           <input id="consolidateMergeTitle" type="text" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:10px" placeholder="Title for merged memory…">
-          <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Merged Memory</label>
-          <textarea id="consolidateMergeText" rows="10" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;line-height:1.6" placeholder="AI-drafted merged memory will appear here…"></textarea>
+          <textarea id="consolidateMergeText" rows="8" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;line-height:1.6" placeholder="AI-drafted merged memory will appear here…"></textarea>
         </div>
         <div id="consolidateAiStatus" style="font-size:0.8rem;color:var(--text-light);margin-bottom:10px;min-height:1.2em"></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button id="consolidateRegenerateBtn" onclick="consolidateRegenerate()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.82rem;cursor:pointer;color:var(--text)">↺ Regenerate</button>
           <button id="consolidateApproveBtn" onclick="consolidateApprove()" style="padding:8px 20px;border:none;border-radius:8px;background:var(--sage);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer;flex:1">✓ Save Merged Entry &amp; Delete Originals</button>
         </div>
-        <p style="font-size:0.72rem;color:var(--text-light);margin-top:8px">The original entries will be deleted and replaced with this merged version.</p>
+        <p style="font-size:0.72rem;color:var(--text-light);margin-top:8px">Included originals will be deleted and replaced with the merged version. Excluded entries are kept as-is.</p>
       </div>
     </div>
   </div>
@@ -2711,7 +2714,7 @@
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.09 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.10 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2801,7 +2804,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.09 starting...');
+    dbg('INIT','v2.10 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -3261,7 +3264,7 @@
 
   // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.09 — log full state before switching
+    // PANEL BUG DEBUG v2.10 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -6907,6 +6910,8 @@
   // ── Consolidate Topic ─────────────────────────────────────────────
   let _consolidateGroups = []; // array of arrays of entry IDs
   let _consolidateActiveGroup = null; // array of entry IDs for current merge
+  let _consolidateExcluded = new Set(); // IDs excluded from merge
+  let _consolidateEdits = {}; // id -> {title, answer} overrides made inline
 
   function openConsolidate() {
     const overlay = document.getElementById('consolidateOverlay');
@@ -6916,7 +6921,6 @@
     step1.style.display = 'block';
     step2.style.display = 'none';
     overlay.classList.add('open');
-    // Re-run content clustering fresh each time (picks up any new entries)
     consolidateRunClustering();
   }
 
@@ -6925,7 +6929,6 @@
     const listEl = document.getElementById('consolidateClusterList');
     const noneEl = document.getElementById('consolidateNoClusters');
 
-    // Content-based TF-IDF cosine similarity (same logic as hygiene tile)
     const STOPWORDS = new Set(['the','and','was','for','that','with','this','his','her','our','they','them','their','have','had','but','not','are','were','from','has','been','one','all','would','could','when','what','which','who','into','out','him','she','its','than','then','some','more','will','about','just','been','also','like','said','your','after','before','there','these','those','very','over','such','much','many','even','back','time','year','years','day','days','life','well','knew','got','get','went','come','came','made','make','know','way','think','felt','feel','told','took','still','never','always','little','much','good','long','hand','home','old','too','can','did','how','why','him']);
     function tokenise(text) {
       return (text||'').toLowerCase().replace(/[^a-z\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !STOPWORDS.has(w));
@@ -6942,9 +6945,8 @@
       keys.forEach(k => { const av=a[k]||0,bv=b[k]||0; dot+=av*bv; mA+=av*av; mB+=bv*bv; });
       return (mA&&mB) ? dot/(Math.sqrt(mA)*Math.sqrt(mB)) : 0;
     }
-    const rich = real.slice(); // no minimum — even short entries should cluster
+    const rich = real.slice();
     const vecs  = rich.map(e => tfVec(tokenise(e.title+' '+e.title+' '+e.answer)));
-    const THRESHOLD = 0.12;
     const assigned = new Set();
     const groups   = [];
     for (let i=0; i<rich.length; i++) {
@@ -6956,7 +6958,6 @@
       }
       if (group.length > 1) { groups.push(group); assigned.add(i); }
     }
-    // Map to IDs
     _consolidateGroups = groups.map(g => g.map(i => rich[i].id));
     window._hygienceDupGroups = _consolidateGroups;
 
@@ -6965,18 +6966,27 @@
       noneEl.style.display = 'block';
     } else {
       noneEl.style.display = 'none';
-      listEl.innerHTML = '<p style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px">Found ' + _consolidateGroups.length + ' topic group' + (_consolidateGroups.length>1?'s':'') + ' — tap one to merge:</p>' +
+      listEl.innerHTML = '<p style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px">Found ' + _consolidateGroups.length + ' topic group' + (_consolidateGroups.length>1?'s':'') + ' — tap one to review and merge:</p>' +
         _consolidateGroups.map((group, gi) => {
           const groupEntries = group.map(id => entries.find(e => e.id===id)).filter(Boolean);
           const totalWc = groupEntries.reduce((n,e) => n+(e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-          return '<div style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer" onclick="consolidateSelectGroup(' + gi + ')">' +
-            '<div style="font-size:0.75rem;color:var(--text-light);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.07em">' + group.length + ' related entries · ' + totalWc.toLocaleString() + ' words total</div>' +
-            groupEntries.map(e => '<div style="font-size:0.85rem;color:var(--text);margin-bottom:3px">\uD83D\uDCC4 \u201C' + (e.title||'Untitled').slice(0,55) + '\u201D</div>').join('') +
-            '<div style="margin-top:8px;font-size:0.75rem;color:var(--sage);font-weight:600">Tap to merge into one rich memory \u2192</div>' +
+          const preview = groupEntries.map(e => {
+            const snippet = (e.answer||'').trim().slice(0,80);
+            return '<div style="margin-bottom:6px;padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">' +
+              '<div style="font-size:0.83rem;font-weight:700;color:var(--text);margin-bottom:3px">\uD83D\uDCC4 ' + (e.title||'Untitled').slice(0,60) + '</div>' +
+              (snippet ? '<div style="font-size:0.78rem;color:var(--text-light);line-height:1.4">' + snippet + (e.answer&&e.answer.length>80?'…':'') + '</div>' : '') +
+              '<div style="font-size:0.72rem;color:var(--text-light);margin-top:3px">' + (e.answer||'').split(/\s+/).filter(Boolean).length + ' words' + (e.chapter?' · '+e.chapter:'') + (e.era?' · '+e.era:'') + '</div>' +
+              '</div>';
+          }).join('');
+          return '<div style="margin-bottom:14px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+            '<span style="font-size:0.75rem;color:var(--text-light);font-weight:700;text-transform:uppercase;letter-spacing:.07em">' + group.length + ' related entries · ' + totalWc.toLocaleString() + ' words</span>' +
+            '<button onclick="consolidateSelectGroup(' + gi + ')" style="padding:6px 14px;border:none;border-radius:6px;background:var(--sage);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer">Review &amp; Merge →</button>' +
+            '</div>' +
+            preview +
             '</div>';
         }).join('');
     }
-    // Re-render hygiene tile score with updated clusters
     if (document.getElementById('panel-dashboard')?.classList.contains('active')) renderDashboard();
   }
 
@@ -6984,39 +6994,95 @@
     const overlay = document.getElementById('consolidateOverlay');
     if (overlay) overlay.classList.remove('open');
     _consolidateActiveGroup = null;
+    _consolidateExcluded = new Set();
+    _consolidateEdits = {};
   }
 
   function consolidateBack() {
     document.getElementById('consolidateStep1').style.display = 'block';
     document.getElementById('consolidateStep2').style.display = 'none';
     _consolidateActiveGroup = null;
+    _consolidateExcluded = new Set();
+    _consolidateEdits = {};
+  }
+
+  function _consolidateRenderSourceList() {
+    const groupEntries = _consolidateActiveGroup.map(id => entries.find(e => e.id === id)).filter(Boolean);
+    document.getElementById('consolidateSourceList').innerHTML = groupEntries.map(e => {
+      const excluded = _consolidateExcluded.has(e.id);
+      const edit = _consolidateEdits[e.id] || {};
+      const title = edit.title !== undefined ? edit.title : (e.title||'');
+      const answer = edit.answer !== undefined ? edit.answer : (e.answer||'');
+      const wc = answer.split(/\s+/).filter(Boolean).length;
+      return '<div id="consol-card-' + e.id + '" style="border:1px solid var(--border);border-radius:10px;background:' + (excluded?'var(--surface2)':'var(--surface)') + ';padding:12px 14px;opacity:' + (excluded?'0.5':'1') + ';transition:opacity .2s">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.83rem;font-weight:700;color:var(--text)">' +
+        '<input type="checkbox" ' + (excluded?'':'checked') + ' onchange="consolidateToggleExclude(\'' + e.id + '\', !this.checked)" style="width:15px;height:15px;cursor:pointer">' +
+        '<span>' + (excluded ? '<s>' : '') + (title.slice(0,55)||'Untitled') + (excluded ? '</s>' : '') + '</span>' +
+        '</label>' +
+        '<span style="font-size:0.72rem;color:var(--text-light)">' + wc + ' words</span>' +
+        '</div>' +
+        (!excluded ? (
+          '<input type="text" value="' + title.replace(/"/g,'&quot;') + '" oninput="consolidateEditField(&quot;' + e.id + '&quot;,&quot;title&quot;,this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:6px" placeholder="Title…">' +
+          '<textarea rows="4" oninput="consolidateEditField(&quot;' + e.id + '&quot;,&quot;answer&quot;,this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;line-height:1.5">' + answer.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
+        ) : '<p style="font-size:0.78rem;color:var(--text-light);margin:4px 0 0">Excluded — will not be merged or deleted</p>') +
+        '</div>';
+    }).join('');
+  }
+
+  function consolidateToggleExclude(id, exclude) {
+    if (exclude) { _consolidateExcluded.add(id); } else { _consolidateExcluded.delete(id); }
+    _consolidateRenderSourceList();
+    // Auto-regenerate if at least 2 entries remain included
+    const included = _consolidateActiveGroup.filter(i => !_consolidateExcluded.has(i));
+    if (included.length >= 2) consolidateRegenerate();
+    else {
+      document.getElementById('consolidateMergeText').value = '';
+      document.getElementById('consolidateAiStatus').textContent = 'Include at least 2 entries to generate a merge.';
+      document.getElementById('consolidateApproveBtn').disabled = true;
+    }
+  }
+
+  function consolidateEditField(id, field, value) {
+    if (!_consolidateEdits[id]) _consolidateEdits[id] = {};
+    _consolidateEdits[id][field] = value;
   }
 
   async function consolidateSelectGroup(gi) {
     const group = _consolidateGroups[gi];
     if (!group) return;
     _consolidateActiveGroup = group;
+    _consolidateExcluded = new Set();
+    _consolidateEdits = {};
     const groupEntries = group.map(id => entries.find(e => e.id === id)).filter(Boolean);
 
     document.getElementById('consolidateStep1').style.display = 'none';
     document.getElementById('consolidateStep2').style.display = 'block';
 
-    // Render source list
-    document.getElementById('consolidateSourceList').innerHTML = groupEntries.map(e =>
-      '<div style="font-size:0.82rem;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:6px;color:var(--text)">' +
-      '📄 <strong>' + (e.title||'Untitled') + '</strong>' +
-      (e.answer ? ' <span style="color:var(--text-light)">· ' + (e.answer||'').split(/\s+/).filter(Boolean).length + ' words</span>' : '') +
-      '</div>'
-    ).join('');
+    _consolidateRenderSourceList();
 
-    // Prefill title with first entry title
     document.getElementById('consolidateMergeTitle').value = groupEntries[0]?.title || '';
     document.getElementById('consolidateMergeText').value = '';
-    document.getElementById('consolidateAiStatus').textContent = '✨ Drafting merged memory…';
+    document.getElementById('consolidateAiStatus').textContent = '✨ Drafting suggested consolidation…';
     document.getElementById('consolidateApproveBtn').disabled = true;
     document.getElementById('consolidateRegenerateBtn').disabled = true;
 
     await consolidateDraft(groupEntries);
+  }
+
+  function _consolidateIncludedEntries() {
+    return _consolidateActiveGroup
+      .filter(id => !_consolidateExcluded.has(id))
+      .map(id => {
+        const base = entries.find(e => e.id === id) || {};
+        const edit = _consolidateEdits[id] || {};
+        return {
+          ...base,
+          title:  edit.title  !== undefined ? edit.title  : base.title,
+          answer: edit.answer !== undefined ? edit.answer : base.answer,
+        };
+      })
+      .filter(Boolean);
   }
 
   async function consolidateDraft(groupEntries) {
@@ -7028,6 +7094,7 @@
       const combined = groupEntries.map((e,i) =>
         'Entry ' + (i+1) + ': ' + (e.title||'Untitled') + '\n' + (e.answer||'').trim()
       ).join('\n\n---\n\n');
+      const targetWc = Math.min(600, groupEntries.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) + 80);
       const prompt =
         'You are a warm, skilled biographer helping someone write their memoir.\n\n' +
         'Below are ' + groupEntries.length + ' separate journal entries about closely related memories or the same event.\n\n' +
@@ -7037,11 +7104,11 @@
         '- Reads as one cohesive, first-person narrative\n' +
         '- Keeps all specific names, dates, places and feelings\n' +
         '- Is warm, vivid and personal in tone\n' +
-        '- Is roughly ' + Math.min(600, groupEntries.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) + 80) + ' words\n\n' +
+        '- Is roughly ' + targetWc + ' words\n\n' +
         'Return ONLY the merged memoir text. No preamble, no title, no explanation.';
       const merged = await callAI(prompt);
       textEl.value = merged;
-      statusEl.textContent = '✓ Draft ready — edit freely before saving';
+      statusEl.textContent = '✓ Draft ready — edit title and text freely before saving';
       approveBtn.disabled = false;
       regenBtn.disabled = false;
     } catch(err) {
@@ -7053,12 +7120,13 @@
 
   async function consolidateRegenerate() {
     if (!_consolidateActiveGroup) return;
-    const groupEntries = _consolidateActiveGroup.map(id => entries.find(e => e.id === id)).filter(Boolean);
+    const included = _consolidateIncludedEntries();
+    if (included.length < 2) return;
     document.getElementById('consolidateAiStatus').textContent = '✨ Regenerating…';
     document.getElementById('consolidateApproveBtn').disabled = true;
     document.getElementById('consolidateRegenerateBtn').disabled = true;
     document.getElementById('consolidateMergeText').value = '';
-    await consolidateDraft(groupEntries);
+    await consolidateDraft(included);
   }
 
   async function consolidateApprove() {
@@ -7071,8 +7139,9 @@
     approveBtn.textContent = 'Saving…';
 
     try {
-      // Use first source entry's metadata for the merged entry (chapter, era, date, people, etc.)
-      const sourceEntries = _consolidateActiveGroup.map(id => entries.find(e => e.id === id)).filter(Boolean);
+      // Use included entries only
+      const sourceEntries = _consolidateIncludedEntries();
+      if (!sourceEntries.length) { toast('No entries included in merge'); approveBtn.disabled=false; approveBtn.textContent='✓ Save Merged Entry & Delete Originals'; return; }
       const base = sourceEntries[0] || {};
       // Collect all people from all source entries
       const allPeople = [...new Set(sourceEntries.flatMap(e => e.people ? e.people.split(',').map(p => p.trim()).filter(Boolean) : []))];
@@ -7095,8 +7164,8 @@
         .select();
       if (error) throw error;
 
-      // Delete originals
-      for (const id of _consolidateActiveGroup) {
+      // Delete included originals only (excluded entries are kept)
+      for (const id of sourceEntries.map(e=>e.id)) {
         await _supabase.from('memories').delete().eq('id', id).eq('user_id', currentUser.id);
       }
 
