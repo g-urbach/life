@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.18 — Fix dup dialog tag/photo population: correct prefix convention for populateTagDropdowns/applyTagDefaults, manual people chips render using short prefix matching buildEditPanel IDs.";
+  const DEPLOY_NOTES = "v2.19 — Dup dialog: photo strip now shows above body text in each entry card (entry own photo_url + child photos), loaded async via getSignedUrl. Previously only buildEditPanel photo children were shown, missing direct photo_url entries.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.18
+  Current: v2.19
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -284,7 +284,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.18 → next review at v2.20.
+  Build counter: currently at v2.19 → next review at v2.20.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -492,7 +492,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.18</title>
+  <title>My Life Story v2.19</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1873,7 +1873,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.18</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.19</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2847,7 +2847,7 @@
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.18 starting...');
+    dbg('INIT','v2.19 starting...');
     initTheme();
 
     // Detect return from Peecho after successful order
@@ -7096,14 +7096,26 @@
     if (!entry || !entry.id) return '';
     var wc=(entry.answer||'').split(/\s+/).filter(Boolean).length;
 
-    // Body text — editable textarea (with overlap highlight note below if needed)
+    // Body text — editable textarea
     var bodyHtml=
       '<textarea id="dup-body-'+entry.id+'" rows="8" '+
         'style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical;line-height:1.6">'+
         (entry.answer||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')+
       '</textarea>';
 
-    // Overlap highlight shown as a collapsible read-only note (partial-overlap only)
+    // Photo strip — entry's own photo_url + any child photo entries
+    var childPhotos=(entries||[]).filter(function(c){ return c.parent_entry_id===entry.id && c.photo_url; });
+    var allPhotos=entry.photo_url ? [entry].concat(childPhotos) : childPhotos;
+    var photoStripHtml='';
+    if (allPhotos.length) {
+      photoStripHtml='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">'+
+        allPhotos.map(function(p){
+          return '<div id="dup-photo-'+p.id+'" style="width:80px;height:80px;border-radius:8px;overflow:hidden;background:var(--surface2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.5rem;border:1px solid var(--border)">📷</div>';
+        }).join('')+
+      '</div>';
+    }
+
+    // Overlap highlight collapsible (partial-overlap only)
     var overlapNote='';
     if (overlap&&overlap.length) {
       overlapNote='<details style="font-size:0.75rem;color:var(--text-light)">' +
@@ -7112,12 +7124,12 @@
         '</details>';
     }
 
-    // The tag+photo edit panel — short prefix 'dup' matches how all other panels work
     var editPanelHtml=buildEditPanel(entry.id,'dup');
 
     return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0">' +
       '<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-light)">'+colLabel+'</div>' +
       '<div style="font-size:0.72rem;color:var(--text-light)">'+wc+' words \u00B7 '+new Date(entry.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})+'</div>' +
+      photoStripHtml +
       bodyHtml +
       overlapNote +
       editPanelHtml +
@@ -7237,6 +7249,15 @@
           if (hidden) hidden.value=tags.people;
         }
         loadEditPanelPhotoThumbs(e.id);
+        // Load the dup photo strip (entry's own photo + child photos)
+        var childPhotos=(entries||[]).filter(function(c){ return c.parent_entry_id===e.id && c.photo_url; });
+        var allPhotos=e.photo_url ? [e].concat(childPhotos) : childPhotos;
+        allPhotos.forEach(function(p){
+          getSignedUrl(p.photo_url).then(function(url){
+            var el=document.getElementById('dup-photo-'+p.id);
+            if (el && url) el.innerHTML='<img src="'+url+'" style="width:100%;height:100%;object-fit:cover">';
+          });
+        });
       }
     }
     _initDupEntryPanel(eA);
