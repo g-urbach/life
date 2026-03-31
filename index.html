@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.26 — Disclaimer: removed clause 4 (data rights/contact email), renumbered remaining clauses to 4-6.";
+  const DEPLOY_NOTES = "v2.27 — Memories layout redesign: cleaner order (title → mic → text → details), Era field removed (date is now free text), details section collapsed by default, four larger buttons (A question for me / Review my writing / Done / New entry), Save button hidden (autosave handles it).";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -208,6 +208,15 @@
     pairs show 2 columns with sentence-level overlap highlighted; user edits and
     saves to resolve. Archive-not-delete on all paths. Fixed consolidateApprove
     table name bug (memories → life_entries) and array people field.
+  - v2.27 Memories layout redesign: cleaner order (title → mic → textarea →
+    details accordion → buttons). Era field removed; date is now a free-text
+    field (e.g. "1987", "Summer 1985", "early 70s"). Details panel (chapter,
+    date, location, people, references, photos) collapsed by default behind
+    "+ Add details" toggle. Four larger buttons for 60+ users: "A question for
+    me" / "Review my writing" / "Done" / "New entry". Save button hidden from
+    UI (autosave handles persistence). memDone() and memNewEntry() replace
+    memSaveAndNew/memCancel as primary actions. New entry warns before clearing
+    unsaved content.
 
   ENTRIES TAB
   - Keyword search with gold highlight, chapter filter, person filter, location filter
@@ -284,7 +293,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.26 → next review at v2.30.
+  Build counter: currently at v2.27 → next review at v2.30.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -298,6 +307,14 @@
     to prevent abuse once app has more users
   - Supabase RLS audit: confirm life_entries and life-photos are scoped to
     user_id; verify a user cannot access another user's data via direct API call
+
+  - Inline Q&A interview mode (v2.27 design agreed): "A question for me" button
+    speaks question aloud AND appends it inline into the textarea as a labelled
+    prompt (e.g. "💬 What did your father's workshop smell like?"). User answers
+    below it. Pressing again appends a new question after their answer — building
+    a gentle interview thread in a single entry. On "Review my writing", AI
+    consolidates the Q&A into a clean narrative. parent_entry_id kept in DB for
+    photo attachments but no longer used for conversation chains.
 
   - Error notification system: alert Geoff immediately when runtime errors occur
     (storage quota, AI token exhaustion, auth failures, edge fn errors) so issues
@@ -494,7 +511,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.26</title>
+  <title>My Life Story v2.27</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1378,6 +1395,8 @@
     /* ── BUTTONS ── */
     .btn { padding: 11px 22px; border: none; border-radius: 8px; font-family: 'Lato', sans-serif; font-size: 0.88rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: all 0.18s; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Larger buttons for memories panel — 60+ audience */
+    .mem-action-btn { padding: 14px 18px; font-size: 1rem; border-radius: 10px; width: 100%; }
     .btn-primary { background: var(--gold); color: white; }
     .btn-primary:hover:not(:disabled) { background: var(--gold-dark); }
     .btn-secondary { background: var(--ink); color: var(--cream); }
@@ -1875,7 +1894,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.26</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.27</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -1959,128 +1978,133 @@
   <!-- RECORD (merged Talk + Voice Memo + Typed Entry) -->
   <div class="panel active" id="panel-memories">
     <h2 class="section-title">Memories</h2>
-    <p class="section-sub" id="memoriesSubtitle">Write a memory, add photos and tags — then save or start an AI conversation.</p>
 
     <!-- AI question box (shown during AI conversation) -->
-    <div id="aiQuestionBox" style="display:none;margin-bottom:16px">
-      <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:0 10px 10px 0;padding:14px 18px;font-size:1rem;line-height:1.6;color:var(--text)" id="aiQuestionText"></div>
+    <div id="aiQuestionBox" style="display:none;margin-bottom:18px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:0 10px 10px 0;padding:16px 20px;font-size:1.05rem;line-height:1.7;color:var(--text);font-style:italic" id="aiQuestionText"></div>
     </div>
 
     <!-- Status bar (shown during AI conversation) -->
-    <div id="recordStatus" style="display:none;align-items:center;gap:12px;padding:12px 16px;background:var(--surface2);border-radius:10px;margin-bottom:14px;font-size:0.88rem;font-weight:700;color:var(--text-light)">
+    <div id="recordStatus" style="display:none;align-items:center;gap:12px;padding:12px 16px;background:var(--surface2);border-radius:10px;margin-bottom:14px;font-size:0.9rem;font-weight:700;color:var(--text-light)">
       <div class="pulse idle" id="statusDot"></div>
       <span id="statusText"></span>
     </div>
 
     <!-- Title -->
-    <div style="margin-bottom:14px">
+    <div style="margin-bottom:16px">
       <input type="text" id="memTitle" placeholder="Title — e.g. Dad's workshop, First day of school..."
-        style="width:100%;padding:12px 16px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
+        style="width:100%;padding:14px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
     </div>
 
-    <!-- Tags -->
-    <div class="tag-panel" id="memTagPanel">
-
-      <!-- Row 1: Chapter | Era | Date -->
-      <div class="tag-field">
-        <label>📚 Chapter</label>
-        <select id="recTagChapter" onchange="handleNewTagOption(this,'recTagChapterCustom')"><option value="">Not specified</option></select>
-        <input type="text" id="recTagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
-      </div>
-      <div class="tag-field">
-        <label>📅 Era</label>
-        <select id="recTagYear" onchange="handleNewTagOption(this,'recTagYearCustom')"><option value="">Not specified</option></select>
-        <input type="text" id="recTagYearCustom" placeholder="e.g. 1985 or 1980s..." style="margin-top:6px;display:none">
-      </div>
-      <div class="tag-field">
-        <label>🗓️ Date <span style="font-weight:400;font-size:0.75em;color:var(--text-light)">(when it happened)</span></label>
-        <input type="date" id="recTagDate" onchange="onTagDateChange()"
-          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
-        <div style="margin-top:4px;display:flex;gap:4px">
-          <button type="button" onclick="setTagDateToday()" style="font-size:0.68rem;padding:2px 7px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Today</button>
-          <button type="button" onclick="clearTagDate()" style="font-size:0.68rem;padding:2px 7px;border-radius:4px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Clear</button>
-        </div>
-      </div>
-
-      <!-- Row 2: Location | People | References -->
-      <div class="tag-field">
-        <label>📍 Location</label>
-        <select id="recTagLocation" onchange="handleNewTagOption(this,'recTagLocationCustom')"><option value="">Not specified</option></select>
-        <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
-      </div>
-      <div class="tag-field">
-        <label>👥 People</label>
-        <div id="recPeopleChips" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
-          <button type="button" onclick="openTagManager('people','rec')"
-            style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
-            ＋ Tag person
-          </button>
-        </div>
-        <input type="hidden" id="recTagPeople">
-      </div>
-      <div class="tag-field">
-        <label>🔗 References</label>
-        <div id="recRefChips" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
-          <button type="button" onclick="openTagManager('ref','rec')"
-            style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
-            ＋ Add reference
-          </button>
-        </div>
-        <input type="hidden" id="recTagRef">
-        <input type="hidden" id="recTagRefUrl">
-      </div>
-
-      <!-- Row 3: Photos (full width, chip-style) -->
-      <div class="tag-field" style="grid-column:1/-1">
-        <label>📷 Photos</label>
-        <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
-          <button type="button" onclick="document.getElementById('recPhotoInput').click()"
-            style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
-            ＋ Add photo
-          </button>
-        </div>
-        <input type="file" id="recPhotoInput" accept="image/*" multiple style="display:none" onchange="handleRecPhotos(this)">
-        <span id="recPhotoCount" style="display:none"></span>
-      </div>
-
-    </div>
-
     <!-- Mic button — prominent, above textarea -->
-    <div style="margin-top:4px;margin-bottom:8px">
+    <div style="margin-bottom:12px">
       <button id="memMicBtn" onclick="toggleMemMic()"
-        style="width:100%;padding:12px 16px;border-radius:10px;border:2px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:0.95rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all 0.2s;color:var(--text)">
-        <span id="memMicIcon" style="font-size:1.3rem">🎙️</span>
+        style="width:100%;padding:16px 18px;border-radius:10px;border:2px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:1.05rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;transition:all 0.2s;color:var(--text)">
+        <span id="memMicIcon" style="font-size:1.5rem">🎙️</span>
         <span id="memMicLabel">Tap to speak your memory</span>
       </button>
-      <!-- Interim transcript rendered live in the main textarea below -->
     </div>
 
     <!-- Memory text -->
-    <div style="position:relative;margin-top:0">
+    <div style="position:relative;margin-bottom:16px">
       <textarea id="memAnswer" placeholder="Or type your memory here..."
         spellcheck="true" lang="en-AU"
-        style="width:100%;min-height:120px;padding:14px 16px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text);transition:border-color 0.2s"
+        style="width:100%;min-height:160px;padding:16px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.05rem;line-height:1.8;resize:vertical;background:var(--surface);color:var(--text);transition:border-color 0.2s"
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'"></textarea>
     </div>
 
     <!-- Spell check result -->
-    <div id="memSpellPanel" class="improve-panel-mem" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:0.9rem;line-height:1.7"></div>
+    <div id="memSpellPanel" class="improve-panel-mem" style="display:none;margin-bottom:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;font-size:1rem;line-height:1.8"></div>
+
+    <!-- Details accordion — collapsed by default -->
+    <div style="margin-bottom:20px">
+      <button type="button" onclick="memToggleDetails()" id="memDetailsToggle"
+        style="width:100%;padding:10px 16px;border:1px dashed var(--border);border-radius:8px;background:none;font-family:'Lato',sans-serif;font-size:0.88rem;color:var(--text-light);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"
+        onmouseover="this.style.borderColor='var(--gold-dark)';this.style.color='var(--text)'"
+        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-light)'">
+        <span id="memDetailsIcon">＋</span>
+        <span id="memDetailsLabel">Add details — chapter, date, people, photos…</span>
+      </button>
+
+      <div id="memDetailsPanel" style="display:none;margin-top:10px">
+        <div class="tag-panel" id="memTagPanel">
+
+          <!-- Row 1: Chapter | Date (free text) -->
+          <div class="tag-field">
+            <label>📚 Chapter</label>
+            <select id="recTagChapter" onchange="handleNewTagOption(this,'recTagChapterCustom')"><option value="">Not specified</option></select>
+            <input type="text" id="recTagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
+          </div>
+          <div class="tag-field">
+            <label>🗓️ When <span style="font-weight:400;font-size:0.85em;color:var(--text-light)">— be as specific or vague as you like</span></label>
+            <input type="text" id="recTagDate" placeholder="e.g. 1987, Summer 1985, early 70s…"
+              style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
+          </div>
+
+          <!-- Hidden era field — kept for data compatibility, not shown -->
+          <input type="hidden" id="recTagYear">
+          <input type="hidden" id="recTagYearCustom">
+
+          <!-- Row 2: Location | People | References -->
+          <div class="tag-field">
+            <label>📍 Location</label>
+            <select id="recTagLocation" onchange="handleNewTagOption(this,'recTagLocationCustom')"><option value="">Not specified</option></select>
+            <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+          </div>
+          <div class="tag-field">
+            <label>👥 People</label>
+            <div id="recPeopleChips" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
+              <button type="button" onclick="openTagManager('people','rec')"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Tag person
+              </button>
+            </div>
+            <input type="hidden" id="recTagPeople">
+          </div>
+          <div class="tag-field">
+            <label>🔗 References</label>
+            <div id="recRefChips" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
+              <button type="button" onclick="openTagManager('ref','rec')"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Add reference
+              </button>
+            </div>
+            <input type="hidden" id="recTagRef">
+            <input type="hidden" id="recTagRefUrl">
+          </div>
+
+          <!-- Row 3: Photos (full width) -->
+          <div class="tag-field" style="grid-column:1/-1">
+            <label>📷 Photos</label>
+            <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
+              <button type="button" onclick="document.getElementById('recPhotoInput').click()"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Add photo
+              </button>
+            </div>
+            <input type="file" id="recPhotoInput" accept="image/*" multiple style="display:none" onchange="handleRecPhotos(this)">
+            <span id="recPhotoCount" style="display:none"></span>
+          </div>
+
+        </div>
+      </div>
+    </div>
 
     <!-- Buttons -->
-    <div id="memButtons" style="margin-top:16px">
-      <!-- Row 1: AI actions (hero) -->
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <button class="btn btn-primary" id="memAIConvBtn"  onclick="memAIConversation()">💬 Talk to me about this</button>
-        <button class="btn btn-ghost"   id="memAITopicBtn" onclick="memAINewTopic()">💡 Suggest new topic</button>
-        <button class="btn btn-ghost"   id="memSpellBtn"   onclick="spellCheckMemory()">🔍 AI Review</button>
+    <div id="memButtons">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <button class="btn btn-primary mem-action-btn" id="memAITopicBtn" onclick="memAINewTopic()">💬 A question for me</button>
+        <button class="btn btn-ghost   mem-action-btn" id="memSpellBtn"   onclick="spellCheckMemory()">🔍 Review my writing</button>
       </div>
-      <!-- Row 2: save actions -->
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" id="memSaveBtn"    onclick="memSave()">💾 Save</button>
-        <button class="btn btn-ghost"     id="memSaveNewBtn" onclick="memSaveAndNew()">✚ New</button>
-        <button class="btn btn-ghost"     id="memCancelBtn"  onclick="memCancel()">✕ Cancel</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <button class="btn btn-secondary mem-action-btn" id="memSaveNewBtn" onclick="memDone()">✓ Done</button>
+        <button class="btn btn-ghost     mem-action-btn" id="memNewBtn"     onclick="memNewEntry()">✚ New entry</button>
       </div>
+      <!-- Hidden save button kept for programmatic use by autosave/AI flows -->
+      <button id="memSaveBtn"   onclick="memSave()"        style="display:none"></button>
+      <button id="memCancelBtn" onclick="memCancel()"      style="display:none"></button>
+      <button id="memAIConvBtn" onclick="memAIConversation()" style="display:none"></button>
     </div>
 
   </div>
@@ -3437,6 +3461,58 @@
   function memCheckButtons() {
     // Buttons always enabled — no disabling
   }
+
+  // ── Details accordion ────────────────────────────────────────────
+  function memToggleDetails() {
+    var panel  = document.getElementById('memDetailsPanel');
+    var icon   = document.getElementById('memDetailsIcon');
+    var label  = document.getElementById('memDetailsLabel');
+    var toggle = document.getElementById('memDetailsToggle');
+    var open   = panel.style.display === 'none';
+    panel.style.display = open ? 'block' : 'none';
+    icon.textContent  = open ? '−' : '＋';
+    label.textContent = open ? 'Hide details' : 'Add details — chapter, date, people, photos…';
+    toggle.style.borderStyle = open ? 'solid' : 'dashed';
+  }
+
+  // ── Done: save and clear ─────────────────────────────────────────
+  async function memDone() {
+    await memSaveCurrentEntry();
+    document.getElementById('memTitle').value  = '';
+    document.getElementById('memAnswer').value = '';
+    var panel = document.getElementById('memDetailsPanel');
+    if (panel) panel.style.display = 'none';
+    var icon  = document.getElementById('memDetailsIcon');
+    if (icon)  icon.textContent = '+';
+    var label = document.getElementById('memDetailsLabel');
+    if (label) label.textContent = 'Add details — chapter, date, people, photos…';
+    var toggle = document.getElementById('memDetailsToggle');
+    if (toggle) toggle.style.borderStyle = 'dashed';
+    recLastParentId = null;
+    toast('Memory saved');
+  }
+
+  // ── New entry: warn if unsaved content, then clear ───────────────
+  function memNewEntry() {
+    var title  = (document.getElementById('memTitle')  || {}).value  || '';
+    var answer = (document.getElementById('memAnswer') || {}).value  || '';
+    if (title.trim() || answer.trim()) {
+      if (!confirm('You have unsaved text. Start a new entry and lose what is here?')) return;
+    }
+    document.getElementById('memTitle').value  = '';
+    document.getElementById('memAnswer').value = '';
+    var panel = document.getElementById('memDetailsPanel');
+    if (panel) panel.style.display = 'none';
+    var icon  = document.getElementById('memDetailsIcon');
+    if (icon)  icon.textContent = '+';
+    var label = document.getElementById('memDetailsLabel');
+    if (label) label.textContent = 'Add details — chapter, date, people, photos…';
+    var toggle = document.getElementById('memDetailsToggle');
+    if (toggle) toggle.style.borderStyle = 'dashed';
+    recLastParentId = null;
+    document.getElementById('memTitle').focus();
+  }
+
 
   // ── Mic dictation into textarea ───────────────────────────────────
   function setMicUI(active) {
