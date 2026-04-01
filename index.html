@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.27 — Memories layout redesign + Interview Me. Layout: title → mic → text → details accordion (collapsed). Era removed, date is free text. Four larger buttons. memInterviewMe(): asks follow-up if content present, new topic if empty — no save. Buttons: Interview me / Review this entry / Done / New entry.";
+  const DEPLOY_NOTES = "v2.28 — Inline Q&A interview: questions appended into textarea as AI Question:/name: blocks. Mic respects userMicPref — auto-start only if user had mic on. Interview me button becomes Continue interview after first press, resets on Done/New. Textarea never cleared mid-interview.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -212,11 +212,21 @@
     details accordion → buttons). Era field removed; date is now a free-text
     field (e.g. "1987", "Summer 1985", "early 70s"). Details panel (chapter,
     date, location, people, references, photos) collapsed by default behind
-    "+ Add details" toggle. Four larger buttons for 60+ users: "A question for
-    me" / "Review my writing" / "Done" / "New entry". Save button hidden from
-    UI (autosave handles persistence). memDone() and memNewEntry() replace
+    "+ Add details" toggle. Four larger buttons for 60+ users: "Interview me" /
+    "Review this entry" / "Done" / "New entry". Save button hidden from UI
+    (autosave handles persistence). memDone() and memNewEntry() replace
     memSaveAndNew/memCancel as primary actions. New entry warns before clearing
     unsaved content.
+  - v2.28 Inline Q&A interview: memInterviewMe() appends questions directly into
+    the textarea as "AI Question: ...
+
+Name:
+" blocks using memAppendQuestion().
+    No separate question box. Context for each follow-up is built from the full
+    textarea content (title + running thread). Mic auto-start respects userMicPref
+    — only restarts after a question if the user had mic on; turning mic off stays
+    off. Interview me button flips to "Continue interview" after first press;
+    resets on Done or New entry. interviewActive and userMicPref state vars added.
 
   ENTRIES TAB
   - Keyword search with gold highlight, chapter filter, person filter, location filter
@@ -293,7 +303,7 @@
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.27 → next review at v2.30.
+  Build counter: currently at v2.28 → next review at v2.30.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -511,7 +521,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.27</title>
+  <title>My Life Story v2.28</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1894,7 +1904,7 @@
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.27</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.28</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -3456,6 +3466,8 @@
   let recCurQuestion = '';   // current AI question
   let recActive      = false;// AI conversation running
   let memMicActive   = false;// mic dictation active
+  let userMicPref    = false;// true = user wants mic on; respected by auto-start after questions
+  let interviewActive = false;// true after first Interview me press; flips button label
 
   // ── Enable/disable buttons based on content ───────────────────────
   function memCheckButtons() {
@@ -3489,6 +3501,10 @@
     var toggle = document.getElementById('memDetailsToggle');
     if (toggle) toggle.style.borderStyle = 'dashed';
     recLastParentId = null;
+    interviewActive = false;
+    memSetInterviewBtn(false);
+    recDeepContext = '';
+    recCurQuestion = '';
     toast('Memory saved');
   }
 
@@ -3510,6 +3526,10 @@
     var toggle = document.getElementById('memDetailsToggle');
     if (toggle) toggle.style.borderStyle = 'dashed';
     recLastParentId = null;
+    interviewActive = false;
+    memSetInterviewBtn(false);
+    recDeepContext = '';
+    recCurQuestion = '';
     document.getElementById('memTitle').focus();
   }
 
@@ -3609,7 +3629,7 @@
   }
 
   function toggleMemMic() {
-    if (memMicActive) { stopMemMic(); } else { startMemMic(); }
+    if (memMicActive) { userMicPref = false; stopMemMic(); } else { userMicPref = true; startMemMic(); }
   }
 
   function setMemStatus(state, text) {
@@ -4125,6 +4145,13 @@
   // If content exists: ask a follow-up question about it (no save).
   // If empty: ask a fresh new-topic question (no save).
   // Speaks the question aloud and starts the mic.
+  // ── Update interview button label ───────────────────────────────
+  function memSetInterviewBtn(active) {
+    const btn = document.getElementById('memAITopicBtn');
+    if (!btn) return;
+    btn.textContent = active ? '💬 Continue interview' : '💬 Interview me';
+  }
+
   async function memInterviewMe() {
     if (!currentUser) return toast('Please sign in first');
     const { title, answer } = memReadEntry();
@@ -4137,8 +4164,9 @@
     }
 
     if (answer || title) {
-      // Has content — ask a follow-up question about what is already written
-      recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
+      // Has content — build context from everything in the textarea (includes prior Q&A)
+      // so each follow-up question is aware of the full running thread
+      recDeepContext = (title ? 'Title: ' + title + '\n' : '') + answer;
       if (memMicActive) stopMemMic();
       setMemStatus('speaking', 'Thinking of a question...');
       await memAskFollowUp();
@@ -4147,6 +4175,10 @@
       recActive = true;
       await memAskQuestion('new');
     }
+
+    // After first press, flip button to "Continue interview"
+    interviewActive = true;
+    memSetInterviewBtn(true);
   }
 
   // ── AI Conversation ───────────────────────────────────────────────
@@ -4188,6 +4220,18 @@
   }
 
   // Ask a single follow-up question, display it, keep normal buttons
+  // ── Append a question inline into the textarea ───────────────────
+  function memAppendQuestion(question) {
+    const ta    = document.getElementById('memAnswer');
+    const name  = (userProfile && userProfile.name) ? userProfile.name : 'Your response';
+    const sep   = ta.value.trim() ? '\n\n' : '';
+    ta.value   += sep + 'AI Question: ' + question + '\n\n' + name + ':\n';
+    // Scroll to bottom and place cursor ready to type
+    ta.scrollTop = ta.scrollHeight;
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
   async function memAskFollowUp() {
     if (!recDeepContext) return;
     try {
@@ -4198,27 +4242,28 @@
         'Be warm and show genuine curiosity. Return ONLY the question.';
       const question = await callAI(prompt);
       recCurQuestion = question;
-      document.getElementById('aiQuestionText').textContent  = question;
-      document.getElementById('aiQuestionBox').style.display = 'block';
-      memCheckButtons();
-      // Speak question then start mic fresh
+      // Append inline — no separate question box needed
+      memAppendQuestion(question);
+      document.getElementById('aiQuestionBox').style.display = 'none';
+      // Speak question, then start mic only if user has mic preference on
       if (memMicActive) stopMemMic();
       setMemStatus('speaking', 'Asking question...');
       if (window.speechSynthesis) {
         speechSynthesis.cancel();
         const utt = new SpeechSynthesisUtterance(question);
         utt.lang = 'en-AU'; utt.rate = 0.92;
-        // Small delay before starting mic on iOS to avoid capturing TTS audio
         utt.onend = () => {
-          setTimeout(() => { setMemStatus('listening', 'Listening...'); startMemMic(); }, 300);
+          setMemStatus('idle', '');
+          if (userMicPref) { setTimeout(() => startMemMic(), 300); }
         };
         utt.onerror = () => {
-          setTimeout(() => { setMemStatus('listening', 'Listening...'); startMemMic(); }, 300);
+          setMemStatus('idle', '');
+          if (userMicPref) { setTimeout(() => startMemMic(), 300); }
         };
         speechSynthesis.speak(utt);
       } else {
-        setMemStatus('listening', 'Listening...');
-        startMemMic();
+        setMemStatus('idle', '');
+        if (userMicPref) startMemMic();
       }
     } catch(err) {
       dbgErr('MEM', 'Follow-up failed:', err.message);
@@ -4337,17 +4382,20 @@
       if (!recActive) return;
       recCurQuestion = question;
 
-      document.getElementById('aiQuestionText').textContent  = question;
-      document.getElementById('aiQuestionBox').style.display = 'block';
+      // Append inline — keep question box hidden
+      memAppendQuestion(question);
+      document.getElementById('aiQuestionBox').style.display = 'none';
       applyTagDefaults('rec', recLastTags);
 
       await speakAndWait(question);
       if (!recActive) return;
-      setMemStatus('listening', 'Listening... answer below, then Next topic or Go deeper');
-      // Start mic fresh for this answer
+      setMemStatus('idle', '');
+      // Respect user mic preference — do not force mic on if user turned it off
       if (memMicActive) stopMemMic();
-      await new Promise(r => setTimeout(r, 150));
-      startMemMic();
+      if (userMicPref) {
+        await new Promise(r => setTimeout(r, 150));
+        startMemMic();
+      }
 
     } catch(err) {
       dbgErr('MEM', err.message);
