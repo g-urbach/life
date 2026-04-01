@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.29 — Mic prefix fix: dictation now preserves inline Q&A history above cursor (startMemMic captures prefix up to last Name label). Inline question format updated: --- AI Question: ... --- with FIRSTNAME: label. contenteditable upgrade noted for future bold rendering.";
+  const DEPLOY_NOTES = "v2.30 — Interview entry rendering: renderEntryAnswer() styles question blocks (bold gold) and name labels (bold) in entry cards. white-space:pre-wrap on .entry-text preserves newlines. interviewActive flag stops last AI question appearing as entry title. All three entry card renderers updated.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.29 → next review at v2.30.
+  Build counter: currently at v2.30 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -521,7 +521,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.29</title>
+  <title>My Life Story v2.30</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1313,7 +1313,7 @@ Name:
     }
     .entry-date { font-size: 0.78rem; color: var(--text-light); margin-left: auto; }
     .entry-q { font-style: italic; color: var(--text-light); font-size: 0.88rem; margin-bottom: 8px; }
-    .entry-text { font-size: 0.95rem; line-height: 1.7; color: var(--text); }
+    .entry-text { font-size: 0.95rem; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
 
     /* ── STORY OUTPUT — book typography ── */
     #storyOutput {
@@ -1904,7 +1904,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.29</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.30</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -3797,7 +3797,9 @@ Name:
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
     // Link to parent if we're in a follow-up conversation
-    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, recCurQuestion || null, null, null, fullTags, recLastParentId);
+    // In interview mode questions are embedded inline in the answer — don't save as separate question field
+    const entryQuestion = interviewActive ? null : (recCurQuestion || null);
+    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, recLastParentId);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
@@ -5762,6 +5764,40 @@ Name:
     return q.replace(/\s*\[tags: .+?\]/, '').trim() || null;
   }
 
+  // ── Render entry answer with styled inline interview formatting ───
+  // Parses "--- AI Question: ... ---" and "FIRSTNAME:" labels written
+  // by memAppendQuestion() and renders them visually distinct in entry cards.
+  // Plain text entries pass through unchanged.
+  function renderEntryAnswer(rawAnswer) {
+    if (!rawAnswer) return '';
+    // Check if this looks like an interview thread
+    if (!rawAnswer.includes('--- AI Question:')) {
+      return escHtml(rawAnswer);
+    }
+    // Split on interview question markers and name labels
+    // Regex: match either a question block or a NAME: label at start of line
+    var out = '';
+    var lines = rawAnswer.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      // Question line: "--- AI Question: ... ---"
+      var qMatch = line.match(/^--- AI Question: (.+?) ---$/);
+      if (qMatch) {
+        out += '<span style="display:block;font-weight:700;color:var(--gold-dark);margin-top:14px;margin-bottom:2px;font-size:0.95em">❓ ' + escHtml(qMatch[1]) + '</span>';
+        continue;
+      }
+      // Name label: "FIRSTNAME:" at start of line (all caps word followed by colon)
+      var nameMatch = line.match(/^([A-Z][A-Z0-9 ]+):$/);
+      if (nameMatch) {
+        out += '<span style="display:block;font-weight:700;color:var(--text);margin-top:6px;margin-bottom:2px">' + escHtml(nameMatch[1]) + ':</span>';
+        continue;
+      }
+      // Regular text line
+      out += (line ? escHtml(line) : '') + '\n';
+    }
+    return out;
+  }
+
   // ── Delete single entry ──────────────────────────────────────────
   async function deleteEntry(entryId) {
     if (!currentUser) return;
@@ -6146,7 +6182,7 @@ Name:
         </div>
         ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
         ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
-        <p class="entry-text">${e.answer}</p>
+        <p class="entry-text">${renderEntryAnswer(e.answer)}</p>
         ${tagHtml}
         ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
@@ -6723,7 +6759,7 @@ Name:
         ${photoStripHtml}
         ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
         ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
-        <p class="entry-text">${e.answer}</p>
+        <p class="entry-text">${renderEntryAnswer(e.answer)}</p>
         ${tagHtml}
         ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
@@ -8140,7 +8176,7 @@ Name:
         '</div>' +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + e.title + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
-        '<p class="entry-text">' + highlightSearch(e.answer, search) + '</p>' +
+        '<p class="entry-text">' + highlightSearch(renderEntryAnswer(e.answer), search) + '</p>' +
         photoStripHtml +
         tagHtml +
         (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
