@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.28 — Inline Q&A interview: questions appended into textarea as AI Question:/name: blocks. Mic respects userMicPref — auto-start only if user had mic on. Interview me button becomes Continue interview after first press, resets on Done/New. Textarea never cleared mid-interview.";
+  const DEPLOY_NOTES = "v2.29 — Mic prefix fix: dictation now preserves inline Q&A history above cursor (startMemMic captures prefix up to last Name label). Inline question format updated: --- AI Question: ... --- with FIRSTNAME: label. contenteditable upgrade noted for future bold rendering.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.28 → next review at v2.30.
+  Build counter: currently at v2.29 → next review at v2.30.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -521,7 +521,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.28</title>
+  <title>My Life Story v2.29</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1904,7 +1904,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.28</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.29</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -3568,7 +3568,24 @@ Name:
     setMemStatus('listening', 'Listening...');
     var el = document.getElementById('memAnswer');
     listeningActive = true;
-    var accumulated = ''; // finals committed across restarts
+    var accumulated = ''; // finals committed across restarts in this mic session
+
+    // Capture everything already in the textarea as a prefix to preserve.
+    // In inline interview mode the textarea holds the full Q&A thread above
+    // the cursor — mic dictation must append below it, not overwrite it.
+    // We detect the prefix as everything up to and including the last "Name:\n"
+    // label, or the full current value if no label is present.
+    var prefix = '';
+    var currentVal = el.value;
+    // Find the last occurrence of a "Name:" response label (e.g. "Geoff:\n")
+    // which is always the last line before the user types their answer.
+    var lastLabelIdx = currentVal.lastIndexOf(':\n');
+    if (lastLabelIdx !== -1) {
+      prefix = currentVal.slice(0, lastLabelIdx + 2); // include ":\n"
+    } else {
+      // No label found — treat full existing content as prefix so we append
+      prefix = currentVal ? currentVal + (currentVal.endsWith('\n') ? '' : '\n') : '';
+    }
 
     function createAndStart() {
       if (!memMicActive || !listeningActive) return;
@@ -3593,8 +3610,8 @@ Name:
         if (newFinals) {
           accumulated += (accumulated ? ' ' : '') + newFinals;
         }
-        // Show live text (finals + interim) directly in the main textarea
-        el.value = accumulated + (interim ? ' ' + interim : '');
+        // Write prefix + new dictation so the inline Q&A history above is preserved
+        el.value = prefix + accumulated + (interim ? ' ' + interim : '');
         memCheckButtons();
       };
 
@@ -3604,11 +3621,11 @@ Name:
         // Overwriting with accumulated (which excludes the last interim chunk) would blank
         // or truncate whatever the user saw just before they tapped stop.
         if (memMicActive && listeningActive) {
-          el.value = accumulated;
+          el.value = prefix + accumulated;
           memCheckButtons();
           setTimeout(createAndStart, gotResult ? 300 : 150);
         }
-        // On stop: leave textarea as-is. The last onresult already wrote accumulated+interim.
+        // On stop: leave textarea as-is. The last onresult already wrote prefix+accumulated+interim.
       };
 
       rec.onerror = function(e) {
@@ -4221,11 +4238,17 @@ Name:
 
   // Ask a single follow-up question, display it, keep normal buttons
   // ── Append a question inline into the textarea ───────────────────
+  // Format: divider line, then "AI Question:", then name label in CAPS.
+  // Plain textarea cannot render bold — CAPS name provides clear visual rhythm.
+  // Future: upgrade to contenteditable div for true bold rendering.
   function memAppendQuestion(question) {
     const ta    = document.getElementById('memAnswer');
-    const name  = (userProfile && userProfile.name) ? userProfile.name : 'Your response';
+    const rawName = (userProfile && userProfile.name) ? userProfile.name : 'Your response';
+    // Use first name only, uppercased, for clean interview rhythm
+    const firstName = rawName.split(' ')[0].toUpperCase();
+    const divider = '--- AI Question: ' + question + ' ---';
     const sep   = ta.value.trim() ? '\n\n' : '';
-    ta.value   += sep + 'AI Question: ' + question + '\n\n' + name + ':\n';
+    ta.value   += sep + divider + '\n\n' + firstName + ':\n';
     // Scroll to bottom and place cursor ready to type
     ta.scrollTop = ta.scrollHeight;
     ta.focus();
