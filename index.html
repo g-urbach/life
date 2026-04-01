@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.27 — Memories layout redesign: cleaner order (title → mic → text → details), Era field removed (date is now free text), details section collapsed by default, four larger buttons (A question for me / Review my writing / Done / New entry), Save button hidden (autosave handles it).";
+  const DEPLOY_NOTES = "v2.27 — Memories layout redesign + Interview Me. Layout: title → mic → text → details accordion (collapsed). Era removed, date is free text. Four larger buttons. memInterviewMe(): asks follow-up if content present, new topic if empty — no save. Buttons: Interview me / Review this entry / Done / New entry.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -2094,8 +2094,8 @@
     <!-- Buttons -->
     <div id="memButtons">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <button class="btn btn-primary mem-action-btn" id="memAITopicBtn" onclick="memAINewTopic()">💬 A question for me</button>
-        <button class="btn btn-ghost   mem-action-btn" id="memSpellBtn"   onclick="spellCheckMemory()">🔍 Review my writing</button>
+        <button class="btn btn-primary mem-action-btn" id="memAITopicBtn" onclick="memInterviewMe()">💬 Interview me</button>
+        <button class="btn btn-ghost   mem-action-btn" id="memSpellBtn"   onclick="spellCheckMemory()">🔍 Review this entry</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <button class="btn btn-secondary mem-action-btn" id="memSaveNewBtn" onclick="memDone()">✓ Done</button>
@@ -4119,6 +4119,34 @@
   // ── Cancel button ─────────────────────────────────────────────────
   function memCancel() {
     memResetForm(false);
+  }
+
+  // ── Interview Me ─────────────────────────────────────────────────
+  // If content exists: ask a follow-up question about it (no save).
+  // If empty: ask a fresh new-topic question (no save).
+  // Speaks the question aloud and starts the mic.
+  async function memInterviewMe() {
+    if (!currentUser) return toast('Please sign in first');
+    const { title, answer } = memReadEntry();
+
+    // Prime iOS speech engine on user tap (required for gesture context)
+    if (window.speechSynthesis) {
+      const primer = new SpeechSynthesisUtterance('');
+      speechSynthesis.speak(primer);
+      speechSynthesis.cancel();
+    }
+
+    if (answer || title) {
+      // Has content — ask a follow-up question about what is already written
+      recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
+      if (memMicActive) stopMemMic();
+      setMemStatus('speaking', 'Thinking of a question...');
+      await memAskFollowUp();
+    } else {
+      // Nothing written yet — pick a new topic from the user's life story
+      recActive = true;
+      await memAskQuestion('new');
+    }
   }
 
   // ── AI Conversation ───────────────────────────────────────────────
