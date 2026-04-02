@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.34 — iOS mic fix 2: getUserMedia primes audio session before SpeechRecognition on iOS. rec.start() errors now logged and handled cleanly instead of silent retry loop.";
+  const DEPLOY_NOTES = "v2.35 — iOS mic fix 3 (root cause): getUserMedia stream now stays alive until AFTER rec.start() succeeds, then released. Previously the stream was stopped immediately, deactivating the iOS audio session before SpeechRecognition could claim it — causing silent failure on iPad.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.26
+  Current: v2.35
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.34 → next review at v2.40.
+  Build counter: currently at v2.35 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.34</title>
+  <title>My Life Story v2.35</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1908,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.34</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.35</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2797,7 +2797,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.34 — iOS mic fix attempt 2: startMemMic now calls getUserMedia({audio:true}) first to explicitly prime the iOS audio session before starting SpeechRecognition. rec.start() catch now logs the error and stops cleanly instead of silently retrying in a loop outside gesture context.";
+  const DEPLOY_NOTES = "v2.35 — iOS mic fix 3 (root cause): getUserMedia stream now stays alive until AFTER rec.start() succeeds, then released. Previously the stream was stopped immediately, deactivating the iOS audio session before SpeechRecognition could claim it — causing silent failure on iPad.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3574,19 +3574,23 @@ Name:
     // ── iOS: explicitly request mic permission via getUserMedia FIRST.
     // On iOS Safari, webkitSpeechRecognition silently fails if the audio
     // session hasn't been activated by a prior getUserMedia call in the
-    // same gesture context. This primes the audio session properly.
+    // same gesture context. This primes the audio session.
+    //
+    // CRITICAL: do NOT stop the stream tracks here. Stopping tracks immediately
+    // deactivates the iOS audio session before webkitSpeechRecognition.start()
+    // fires — which is the exact failure we are trying to prevent. The stream
+    // is passed into createAndStart() and stopped AFTER rec.start() succeeds,
+    // by which point the audio session has been handed off to SpeechRecognition.
+    var primedStream = null;
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Got permission — stop the stream immediately (we don't need it,
-      // SpeechRecognition manages its own audio session)
-      stream.getTracks().forEach(function(t) { t.stop(); });
+      primedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dbg('MIC', 'getUserMedia succeeded — audio session primed');
     } catch (permErr) {
       // NotAllowedError = user denied, NotFoundError = no mic hardware
       if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
         return toast('Microphone access denied — please allow mic in your browser settings');
       }
-      // Any other error (NotFoundError, etc) — try anyway, SpeechRecognition
-      // may still work on desktop even if getUserMedia fails
+      // Any other error — try anyway; SpeechRecognition may still work on desktop
       dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
     }
 
@@ -3615,8 +3619,12 @@ Name:
       prefix = currentVal ? currentVal + (currentVal.endsWith('\n') ? '' : '\n') : '';
     }
 
-    function createAndStart() {
-      if (!memMicActive || !listeningActive) return;
+    function createAndStart(streamToRelease) {
+      if (!memMicActive || !listeningActive) {
+        // Mic was stopped before we even started — clean up the stream now
+        if (streamToRelease) streamToRelease.getTracks().forEach(function(t) { t.stop(); });
+        return;
+      }
       var rec = new SR();
       recognition = rec;
       // Use interimResults=true so user sees words appearing as they speak
@@ -3684,8 +3692,14 @@ Name:
       try {
         rec.start();
         dbg('MIC', 'rec.start() succeeded');
+        // Audio session now handed off to SpeechRecognition — safe to release the priming stream
+        if (streamToRelease) {
+          streamToRelease.getTracks().forEach(function(t) { t.stop(); });
+          dbg('MIC', 'getUserMedia priming stream released after rec.start()');
+        }
       } catch(startErr) {
         dbgErr('MIC', 'rec.start() threw:', startErr.name, startErr.message);
+        if (streamToRelease) streamToRelease.getTracks().forEach(function(t) { t.stop(); });
         if (startErr.name === 'InvalidStateError') {
           // Recognition already started — abort and retry once
           try { rec.abort(); } catch(e) {}
@@ -3697,7 +3711,7 @@ Name:
         }
       }
     }
-    createAndStart();
+    createAndStart(primedStream);
   }
 
   function stopMemMic() {
