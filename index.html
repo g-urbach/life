@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.31 — Interview formatting: 'AI Question:' bold gold (no dashes), 'FIRSTNAME Answer:' bold label. Context capped at 7 questions. Autosave + unsaved-content warning now only fire after real user input (_userHasTyped flag) — no false alerts when interview appends questions to empty entry.";
+  const DEPLOY_NOTES = "v2.33 — Fix iOS/iPad mic: stopListening() before rec.start() broke iOS 17+ gesture context. Abort inline instead. onerror retries on transient not-allowed. Prefix detection seeds accumulated from already-typed answer text.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.30 → next review at v2.40.
+  Build counter: currently at v2.33 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -481,6 +481,10 @@ Name:
     AI calls to avoid JSON escaping issues with free text
   - Android mic: continuous=false with restart on onend, 300ms gap
   - iOS TTS: must prime speechSynthesis on user gesture tap
+  - iOS mic (v2.33 fix): rec.start() must happen synchronously within gesture handler —
+    stopListening() before start() broke this on iOS 17+. Fixed by aborting inline.
+    onerror 'not-allowed' is transient on iOS (service not ready) — now retries rather
+    than permanently killing mic. Monitor across iOS versions.
   - No runtime error alerting yet: if storage fills up or AI tokens are exhausted
     during a user session, Geoff won't know until manually checking. Notification
     system is in BACKLOG HIGH.
@@ -521,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.32</title>
+  <title>My Life Story v2.33</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1904,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.32</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.33</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2793,7 +2797,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.32 — Fix AI Review accept revert bug: acceptReconstruction and acceptSpellFix now call draftSave() immediately after updating the textarea so the autosave ticker cannot overwrite the accepted text. Fix title suggestion not applying in Memories panel: applyAIReviewTags now writes to memTitle instead of the non-existent recTagTitle.";
+  const DEPLOY_NOTES = "v2.33 — Fix iOS/iPad mic broken: startMemMic no longer calls stopListening() before rec.start() (this broke the iOS gesture context requirement for WebSpeech API on iOS 17+). Abort existing session inline instead. onerror now retries on transient not-allowed (iOS fires this when speech service not ready, not just for denied permissions). Prefix detection now seeds accumulated with any already-typed answer text so re-tapping mic preserves prior input.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3566,26 +3570,30 @@ Name:
   function startMemMic() {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return toast('Speech not supported in this browser');
-    stopListening(); // kill any existing session first
+
+    // ── iOS fix: abort any existing session WITHOUT calling stopListening(),
+    // which would set listeningActive=false and lose the user gesture context.
+    // On iOS 17+, rec.start() must happen synchronously within the gesture
+    // call stack — going through stopListening() breaks that chain.
+    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
+
     memMicActive = true;
+    listeningActive = true;
     setMicUI(true);
     setMemStatus('listening', 'Listening...');
     var el = document.getElementById('memAnswer');
-    listeningActive = true;
-    var accumulated = ''; // finals committed across restarts in this mic session
-
-    // Capture everything already in the textarea as a prefix to preserve.
-    // In inline interview mode the textarea holds the full Q&A thread above
-    // the cursor — mic dictation must append below it, not overwrite it.
-    // We detect the prefix as everything up to and including the last "Name:\n"
-    // label, or the full current value if no label is present.
     var prefix = '';
+    var accumulated = ''; // finals committed across restarts in this mic session
     var currentVal = el.value;
-    // Find the last occurrence of a "Name:" response label (e.g. "Geoff:\n")
-    // which is always the last line before the user types their answer.
+    // Find the last "FIRSTNAME Answer:\n" label — everything before+including it is
+    // the prefix (preserved as-is). Everything after it is the user's answer so far,
+    // which seeds `accumulated` so mic dictation appends rather than overwrites.
     var lastLabelIdx = currentVal.lastIndexOf(':\n');
     if (lastLabelIdx !== -1) {
-      prefix = currentVal.slice(0, lastLabelIdx + 2); // include ":\n"
+      prefix = currentVal.slice(0, lastLabelIdx + 2); // up to and including ":\n"
+      // Seed accumulated with any text the user already typed after the label
+      var alreadyTyped = currentVal.slice(lastLabelIdx + 2).trim();
+      if (alreadyTyped) accumulated = alreadyTyped;
     } else {
       // No label found — treat full existing content as prefix so we append
       prefix = currentVal ? currentVal + (currentVal.endsWith('\n') ? '' : '\n') : '';
@@ -3634,7 +3642,26 @@ Name:
       };
 
       rec.onerror = function(e) {
-        if (e.error === 'not-allowed') { stopMemMic(); toast('Microphone permission denied'); }
+        if (e.error === 'not-allowed') {
+          // On iOS, 'not-allowed' fires transiently when the speech service
+          // isn't ready yet (not just for permanently denied permissions).
+          // Check if mic permission is actually denied before giving up.
+          if (navigator.permissions) {
+            navigator.permissions.query({ name: 'microphone' }).then(function(result) {
+              if (result.state === 'denied') {
+                stopMemMic(); toast('Microphone permission denied — please allow mic access in Settings');
+              } else {
+                // Transient error — retry after a short delay
+                if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
+              }
+            }).catch(function() {
+              // permissions API not available (older iOS) — retry anyway
+              if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
+            });
+          } else {
+            stopMemMic(); toast('Microphone permission denied');
+          }
+        }
         else if (memMicActive && listeningActive) setTimeout(createAndStart, 400);
       };
 
