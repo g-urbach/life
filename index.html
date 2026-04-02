@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.35 — iOS mic fix 3 (root cause): getUserMedia stream now stays alive until AFTER rec.start() succeeds, then released. Previously the stream was stopped immediately, deactivating the iOS audio session before SpeechRecognition could claim it — causing silent failure on iPad.";
+  const DEPLOY_NOTES = "v2.36-debug — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.35
+  Current: v2.36-debug
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.35 → next review at v2.40.
+  Build counter: currently at v2.36-debug → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.35</title>
+  <title>My Life Story v2.36-debug</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1908,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.35</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.36-debug</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2009,6 +2009,17 @@ Name:
       <input type="text" id="memTitle" placeholder="Title — e.g. Dad's workshop, First day of school..."
         style="width:100%;padding:14px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
+    </div>
+
+    <!-- ON-SCREEN DEBUG PANEL — temporary, remove after iOS mic issue resolved -->
+    <div id="_dbgPanel" style="margin-bottom:12px;background:#111;border:1px solid #444;border-radius:8px;padding:10px;font-family:monospace">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="color:#f5c842;font-size:11px;font-weight:bold">MIC DEBUG LOG</span>
+        <button onclick="document.getElementById('_dbgBox').innerHTML=''" style="font-size:10px;padding:2px 8px;background:#333;color:#ccc;border:1px solid #555;border-radius:4px;cursor:pointer">Clear</button>
+      </div>
+      <div id="_dbgBox" style="max-height:180px;overflow-y:auto;color:#a8d8a8;font-size:11px;line-height:1.4">
+        <div style="color:#666;font-size:11px">Tap mic button - logs will appear here</div>
+      </div>
     </div>
 
     <!-- Mic button — prominent, above textarea -->
@@ -2797,7 +2808,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.35 — iOS mic fix 3 (root cause): getUserMedia stream now stays alive until AFTER rec.start() succeeds, then released. Previously the stream was stopped immediately, deactivating the iOS audio session before SpeechRecognition could claim it — causing silent failure on iPad.";
+  const DEPLOY_NOTES = "v2.36-debug — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2853,9 +2864,31 @@ Name:
   }
 
   // ── Debug ────────────────────────────────────────────────────────
-  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
-  function dbgErr(area,...args){ console.error(`[${area}] ERROR`,...args); }
-  function dbgWarn(area,...args){ console.warn(`[${area}] WARN`,...args); }
+  // ── ON-SCREEN DEBUG LOG (temporary — remove after iOS mic issue resolved) ──
+  function _screenLog(level, area, args) {
+    var box = document.getElementById('_dbgBox');
+    if (!box) return;
+    var t = new Date().toLocaleTimeString('en-AU', {hour12:false});
+    var msg = '[' + t + '] [' + area + '] ' + (level !== 'LOG' ? level + ': ' : '') + Array.from(args).join(' ');
+    var line = document.createElement('div');
+    line.textContent = msg;
+    line.style.cssText = 'padding:2px 0;border-bottom:1px solid #333;word-break:break-all;color:' +
+      (level === 'ERR' ? '#ff6b6b' : level === 'WARN' ? '#ffb347' : '#a8d8a8') + ';font-size:11px';
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+  function dbg(area, ...args) {
+    console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args);
+    _screenLog('LOG', area, args);
+  }
+  function dbgErr(area,...args){
+    console.error(`[${area}] ERROR`,...args);
+    _screenLog('ERR', area, args);
+  }
+  function dbgWarn(area,...args){
+    console.warn(`[${area}] WARN`,...args);
+    _screenLog('WARN', area, args);
+  }
 
   // ── html2pdf standalone test (remove after debugging) ───────────
   window.testHtml2pdf = async function() {
