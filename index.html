@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.30 — Interview entry rendering: renderEntryAnswer() styles question blocks (bold gold) and name labels (bold) in entry cards. white-space:pre-wrap on .entry-text preserves newlines. interviewActive flag stops last AI question appearing as entry title. All three entry card renderers updated.";
+  const DEPLOY_NOTES = "v2.31 — Interview formatting: 'AI Question:' bold gold (no dashes), 'FIRSTNAME Answer:' bold label. Context capped at 7 questions. Autosave + unsaved-content warning now only fire after real user input (_userHasTyped flag) — no false alerts when interview appends questions to empty entry.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -521,7 +521,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.30</title>
+  <title>My Life Story v2.31</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1904,7 +1904,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.30</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.31</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2793,7 +2793,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.14 — Story Hygiene tile: expandable tile with score + 4 checks (near-duplicate detection, chapter gap analysis, print readiness / short entries, missing people tags)";
+  const DEPLOY_NOTES = "v2.31 — Interview formatting: 'AI Question:' bold gold (no dashes), 'FIRSTNAME Answer:' bold label. Context capped at 7 questions. Autosave + unsaved-content warning now only fire after real user input (_userHasTyped flag) — no false alerts when interview appends questions to empty entry.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3468,6 +3468,7 @@ Name:
   let memMicActive   = false;// mic dictation active
   let userMicPref    = false;// true = user wants mic on; respected by auto-start after questions
   let interviewActive = false;// true after first Interview me press; flips button label
+  let _userHasTyped  = false;// true once user has personally entered content (blocks autosave on AI-only prompts)
 
   // ── Enable/disable buttons based on content ───────────────────────
   function memCheckButtons() {
@@ -3512,7 +3513,8 @@ Name:
   function memNewEntry() {
     var title  = (document.getElementById('memTitle')  || {}).value  || '';
     var answer = (document.getElementById('memAnswer') || {}).value  || '';
-    if (title.trim() || answer.trim()) {
+    // Only warn if the user has personally typed/spoken (not just AI-appended questions)
+    if (_userHasTyped && (title.trim() || answer.trim())) {
       if (!confirm('You have unsaved text. Start a new entry and lose what is here?')) return;
     }
     document.getElementById('memTitle').value  = '';
@@ -3530,6 +3532,8 @@ Name:
     memSetInterviewBtn(false);
     recDeepContext = '';
     recCurQuestion = '';
+    _userHasTyped = false;
+    draftClear();
     document.getElementById('memTitle').focus();
   }
 
@@ -3612,6 +3616,7 @@ Name:
         }
         // Write prefix + new dictation so the inline Q&A history above is preserved
         el.value = prefix + accumulated + (interim ? ' ' + interim : '');
+        if (accumulated || interim) _userHasTyped = true; // mic input = real user content
         memCheckButtons();
       };
 
@@ -3685,6 +3690,7 @@ Name:
     recDeepContext  = '';
     recLastParentId = null;
     recActive = false;
+    _userHasTyped = false;
     memCheckButtons();
     populateTagDropdowns('rec');
     draftClear(); // draft saved — wipe the autosave
@@ -3700,8 +3706,10 @@ Name:
   function draftSave() {
     var title  = document.getElementById('memTitle')  ? document.getElementById('memTitle').value  : '';
     var answer = document.getElementById('memAnswer') ? document.getElementById('memAnswer').value : '';
-    // Only persist if there is something worth saving
+    // Only persist if there is something worth saving AND the user has personally typed/spoken content
+    // (prevents autosave triggering when interview appended an AI question to a blank entry)
     if (!title.trim() && !answer.trim()) { draftClear(); return; }
+    if (!_userHasTyped) return; // no real user input yet — don't save
     var draft = {
       title:  title,
       answer: answer,
@@ -4183,9 +4191,22 @@ Name:
     }
 
     if (answer || title) {
-      // Has content — build context from everything in the textarea (includes prior Q&A)
-      // so each follow-up question is aware of the full running thread
-      recDeepContext = (title ? 'Title: ' + title + '\n' : '') + answer;
+      // Has content — build context from the textarea (includes prior Q&A thread).
+      // Cap at the last 7 exchanges to avoid oversized AI prompts on long interviews.
+      var fullContext = (title ? 'Title: ' + title + '\n' : '') + answer;
+      var contextLines = fullContext.split('\n');
+      var qCount = contextLines.filter(function(l){ return /^AI Question:/.test(l); }).length;
+      if (qCount > 7) {
+        var found = 0, startIdx = 0;
+        for (var ci = contextLines.length - 1; ci >= 0; ci--) {
+          if (/^AI Question:/.test(contextLines[ci])) {
+            found++;
+            if (found === 7) { startIdx = ci; break; }
+          }
+        }
+        fullContext = contextLines.slice(startIdx).join('\n');
+      }
+      recDeepContext = fullContext;
       if (memMicActive) stopMemMic();
       setMemStatus('speaking', 'Thinking of a question...');
       await memAskFollowUp();
@@ -4246,11 +4267,11 @@ Name:
   function memAppendQuestion(question) {
     const ta    = document.getElementById('memAnswer');
     const rawName = (userProfile && userProfile.name) ? userProfile.name : 'Your response';
-    // Use first name only, uppercased, for clean interview rhythm
-    const firstName = rawName.split(' ')[0].toUpperCase();
-    const divider = '--- AI Question: ' + question + ' ---';
+    // Use first name only, capitalised, for clean interview rhythm
+    const firstName = rawName.split(' ')[0];
+    const firstNameUpper = firstName.toUpperCase();
     const sep   = ta.value.trim() ? '\n\n' : '';
-    ta.value   += sep + divider + '\n\n' + firstName + ':\n';
+    ta.value   += sep + 'AI Question: ' + question + '\n\n' + firstNameUpper + ' Answer:\n';
     // Scroll to bottom and place cursor ready to type
     ta.scrollTop = ta.scrollHeight;
     ta.focus();
@@ -5770,26 +5791,25 @@ Name:
   // Plain text entries pass through unchanged.
   function renderEntryAnswer(rawAnswer) {
     if (!rawAnswer) return '';
-    // Check if this looks like an interview thread
-    if (!rawAnswer.includes('--- AI Question:')) {
+    // Check if this looks like an interview thread (new format)
+    if (!rawAnswer.includes('AI Question:')) {
       return escHtml(rawAnswer);
     }
-    // Split on interview question markers and name labels
-    // Regex: match either a question block or a NAME: label at start of line
+    // Split on interview question markers and name answer labels
     var out = '';
     var lines = rawAnswer.split('\n');
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
-      // Question line: "--- AI Question: ... ---"
-      var qMatch = line.match(/^--- AI Question: (.+?) ---$/);
+      // Question line: "AI Question: ..." (new format, no dashes)
+      var qMatch = line.match(/^AI Question: (.+)$/);
       if (qMatch) {
-        out += '<span style="display:block;font-weight:700;color:var(--gold-dark);margin-top:14px;margin-bottom:2px;font-size:0.95em">❓ ' + escHtml(qMatch[1]) + '</span>';
+        out += '<span style="display:block;font-weight:700;color:var(--gold-dark);margin-top:14px;margin-bottom:2px;font-size:0.95em">AI Question: ' + escHtml(qMatch[1]) + '</span>';
         continue;
       }
-      // Name label: "FIRSTNAME:" at start of line (all caps word followed by colon)
-      var nameMatch = line.match(/^([A-Z][A-Z0-9 ]+):$/);
+      // Name Answer label: "FIRSTNAME Answer:" (new format)
+      var nameMatch = line.match(/^([A-Z][A-Z0-9 ]+) Answer:$/);
       if (nameMatch) {
-        out += '<span style="display:block;font-weight:700;color:var(--text);margin-top:6px;margin-bottom:2px">' + escHtml(nameMatch[1]) + ':</span>';
+        out += '<span style="display:block;font-weight:700;color:var(--text);margin-top:6px;margin-bottom:2px">' + escHtml(nameMatch[1]) + ' Answer:</span>';
         continue;
       }
       // Regular text line
@@ -9152,7 +9172,12 @@ Name:
   document.addEventListener('DOMContentLoaded', () => {
     ['memTitle','memAnswer'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('input', memCheckButtons);
+      if (el) {
+        el.addEventListener('input', memCheckButtons);
+        // Mark that the user has personally typed/spoken content — enables autosave
+        // and unsaved-content warnings. Not set by memAppendQuestion() (AI-only writes).
+        el.addEventListener('input', () => { _userHasTyped = true; });
+      }
     });
     // Memories tab is active on load — start autosave ticker immediately
     draftStartTicker();
