@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.33 — Fix iOS/iPad mic: stopListening() before rec.start() broke iOS 17+ gesture context. Abort inline instead. onerror retries on transient not-allowed. Prefix detection seeds accumulated from already-typed answer text.";
+  const DEPLOY_NOTES = "v2.34 — iOS mic fix 2: getUserMedia primes audio session before SpeechRecognition on iOS. rec.start() errors now logged and handled cleanly instead of silent retry loop.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.33 → next review at v2.40.
+  Build counter: currently at v2.34 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.33</title>
+  <title>My Life Story v2.34</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1908,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.33</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.34</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2797,7 +2797,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.33 — Fix iOS/iPad mic broken: startMemMic no longer calls stopListening() before rec.start() (this broke the iOS gesture context requirement for WebSpeech API on iOS 17+). Abort existing session inline instead. onerror now retries on transient not-allowed (iOS fires this when speech service not ready, not just for denied permissions). Prefix detection now seeds accumulated with any already-typed answer text so re-tapping mic preserves prior input.";
+  const DEPLOY_NOTES = "v2.34 — iOS mic fix attempt 2: startMemMic now calls getUserMedia({audio:true}) first to explicitly prime the iOS audio session before starting SpeechRecognition. rec.start() catch now logs the error and stops cleanly instead of silently retrying in a loop outside gesture context.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3567,14 +3567,30 @@ Name:
     }
   }
 
-  function startMemMic() {
+  async function startMemMic() {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return toast('Speech not supported in this browser');
+    if (!SR) return toast('Speech recognition is not supported in this browser');
 
-    // ── iOS fix: abort any existing session WITHOUT calling stopListening(),
-    // which would set listeningActive=false and lose the user gesture context.
-    // On iOS 17+, rec.start() must happen synchronously within the gesture
-    // call stack — going through stopListening() breaks that chain.
+    // ── iOS: explicitly request mic permission via getUserMedia FIRST.
+    // On iOS Safari, webkitSpeechRecognition silently fails if the audio
+    // session hasn't been activated by a prior getUserMedia call in the
+    // same gesture context. This primes the audio session properly.
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Got permission — stop the stream immediately (we don't need it,
+      // SpeechRecognition manages its own audio session)
+      stream.getTracks().forEach(function(t) { t.stop(); });
+    } catch (permErr) {
+      // NotAllowedError = user denied, NotFoundError = no mic hardware
+      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+        return toast('Microphone access denied — please allow mic in your browser settings');
+      }
+      // Any other error (NotFoundError, etc) — try anyway, SpeechRecognition
+      // may still work on desktop even if getUserMedia fails
+      dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
+    }
+
+    // Abort any existing session cleanly without resetting listeningActive
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
 
     memMicActive = true;
@@ -3665,7 +3681,21 @@ Name:
         else if (memMicActive && listeningActive) setTimeout(createAndStart, 400);
       };
 
-      try { rec.start(); } catch(e) { setTimeout(createAndStart, 500); }
+      try {
+        rec.start();
+        dbg('MIC', 'rec.start() succeeded');
+      } catch(startErr) {
+        dbgErr('MIC', 'rec.start() threw:', startErr.name, startErr.message);
+        if (startErr.name === 'InvalidStateError') {
+          // Recognition already started — abort and retry once
+          try { rec.abort(); } catch(e) {}
+          setTimeout(createAndStart, 300);
+        } else {
+          // Any other error — stop and tell the user
+          stopMemMic();
+          toast('Could not start microphone — ' + startErr.message);
+        }
+      }
     }
     createAndStart();
   }
