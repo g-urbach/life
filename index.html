@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.37 — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
+  const DEPLOY_NOTES = "v2.38 — iOS PWA mic fix: detect standalone PWA mode and show Open in Safari overlay instead of attempting webkitSpeechRecognition, which Apple blocks with service-not-allowed in home screen apps (iOS 16+ bug). Debug panel removed. getUserMedia priming stream kept alive for full session.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.37
+  Current: v2.38
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.37 → next review at v2.40.
+  Build counter: currently at v2.38 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.37</title>
+  <title>My Life Story v2.38</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1908,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.37</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.38</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2009,17 +2009,6 @@ Name:
       <input type="text" id="memTitle" placeholder="Title — e.g. Dad's workshop, First day of school..."
         style="width:100%;padding:14px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
-    </div>
-
-    <!-- ON-SCREEN DEBUG PANEL — temporary, remove after iOS mic issue resolved -->
-    <div id="_dbgPanel" style="margin-bottom:12px;background:#111;border:1px solid #444;border-radius:8px;padding:10px;font-family:monospace">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="color:#f5c842;font-size:11px;font-weight:bold">MIC DEBUG LOG</span>
-        <button onclick="document.getElementById('_dbgBox').innerHTML=''" style="font-size:10px;padding:2px 8px;background:#333;color:#ccc;border:1px solid #555;border-radius:4px;cursor:pointer">Clear</button>
-      </div>
-      <div id="_dbgBox" style="max-height:180px;overflow-y:auto;color:#a8d8a8;font-size:11px;line-height:1.4">
-        <div style="color:#666;font-size:11px">Tap mic button - logs will appear here</div>
-      </div>
     </div>
 
     <!-- Mic button — prominent, above textarea -->
@@ -2794,6 +2783,27 @@ Name:
   </div>
 </div>
 
+<!-- PWA mic blocked overlay — shown when user taps mic in iOS standalone mode.
+     iOS blocks webkitSpeechRecognition in PWA/home-screen apps (Apple bug, iOS 16+).
+     Directs user to open in Safari where it works correctly. -->
+<div id="pwaMicBlockedOverlay" style="display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;padding:24px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;max-width:380px;width:100%;font-family:Lato,sans-serif;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+    <div style="font-size:2.5rem;margin-bottom:12px">&#127897;</div>
+    <div style="font-weight:700;font-size:1.1rem;color:var(--text);margin-bottom:10px">Voice recording needs Safari</div>
+    <div style="font-size:0.92rem;color:var(--text-light);line-height:1.6;margin-bottom:20px">
+      Apple does not allow voice recording in home screen apps. Tap below to open in Safari — everything else stays the same.
+    </div>
+    <a id="pwaMicSafariBtn" href=""
+      style="display:block;width:100%;padding:14px;background:var(--gold);color:var(--ink);font-family:Lato,sans-serif;font-weight:700;font-size:1rem;border-radius:10px;text-decoration:none;margin-bottom:12px;box-sizing:border-box">
+      Open in Safari
+    </a>
+    <button onclick="document.getElementById('pwaMicBlockedOverlay').style.display='none'"
+      style="background:none;border:none;color:var(--text-light);font-family:Lato,sans-serif;font-size:0.88rem;cursor:pointer;padding:4px">
+      Dismiss
+    </button>
+  </div>
+</div>
+
 <!-- Android PWA install banner — triggered by beforeinstallprompt event -->
 <div id="pwaAndroidBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;padding:14px 16px;background:var(--ink);color:var(--cream);font-family:'Lato',sans-serif;box-shadow:0 -4px 20px rgba(0,0,0,0.3)">
   <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;gap:12px">
@@ -2808,7 +2818,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.37 — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
+  const DEPLOY_NOTES = "v2.38 — iOS PWA mic fix: detect standalone PWA mode and show Open in Safari overlay instead of attempting webkitSpeechRecognition, which Apple blocks with service-not-allowed in home screen apps (iOS 16+ bug). Debug panel removed. getUserMedia priming stream kept alive for full session.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2864,31 +2874,9 @@ Name:
   }
 
   // ── Debug ────────────────────────────────────────────────────────
-  // ── ON-SCREEN DEBUG LOG (temporary — remove after iOS mic issue resolved) ──
-  function _screenLog(level, area, args) {
-    var box = document.getElementById('_dbgBox');
-    if (!box) return;
-    var t = new Date().toLocaleTimeString('en-AU', {hour12:false});
-    var msg = '[' + t + '] [' + area + '] ' + (level !== 'LOG' ? level + ': ' : '') + Array.from(args).join(' ');
-    var line = document.createElement('div');
-    line.textContent = msg;
-    line.style.cssText = 'padding:2px 0;border-bottom:1px solid #333;word-break:break-all;color:' +
-      (level === 'ERR' ? '#ff6b6b' : level === 'WARN' ? '#ffb347' : '#a8d8a8') + ';font-size:11px';
-    box.appendChild(line);
-    box.scrollTop = box.scrollHeight;
-  }
-  function dbg(area, ...args) {
-    console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args);
-    _screenLog('LOG', area, args);
-  }
-  function dbgErr(area,...args){
-    console.error(`[${area}] ERROR`,...args);
-    _screenLog('ERR', area, args);
-  }
-  function dbgWarn(area,...args){
-    console.warn(`[${area}] WARN`,...args);
-    _screenLog('WARN', area, args);
-  }
+  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
+  function dbgErr(area,...args){ console.error(`[${area}] ERROR`,...args); }
+  function dbgWarn(area,...args){ console.warn(`[${area}] WARN`,...args); }
 
   // ── html2pdf standalone test (remove after debugging) ───────────
   window.testHtml2pdf = async function() {
@@ -3665,7 +3653,6 @@ Name:
       rec.continuous = isIOS ? true : false;
 
       rec.onresult = function(e) {
-        dbg('MIC', 'onresult fired, results:', e.results.length);
         var interim = '';
         var newFinals = '';
         for (var i = 0; i < e.results.length; i++) {
@@ -3677,7 +3664,6 @@ Name:
         }
         if (newFinals) {
           accumulated += (accumulated ? ' ' : '') + newFinals;
-          dbg('MIC', 'Final:', newFinals);
         }
         el.value = prefix + accumulated + (interim ? ' ' + interim : '');
         if (accumulated || interim) _userHasTyped = true;
@@ -3685,7 +3671,7 @@ Name:
       };
 
       rec.onend = function() {
-        dbg('MIC', 'onend fired — memMicActive:' + memMicActive + ' listeningActive:' + listeningActive);
+        dbg('MIC', 'onend — memMicActive:' + memMicActive + ' listeningActive:' + listeningActive);
         // iOS with continuous=true: onend should only fire when we call abort().
         // Non-iOS with continuous=false: onend fires after silence — restart.
         if (memMicActive && listeningActive) {
@@ -3747,6 +3733,17 @@ Name:
   }
 
   function toggleMemMic() {
+    // iOS PWA (home screen) blocks webkitSpeechRecognition with 'service-not-allowed'.
+    // Detect standalone mode and show the "Open in Safari" overlay instead.
+    var isStandalone = window.navigator.standalone === true;
+    var isIosPwa = isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIosPwa && !memMicActive) {
+      var overlay = document.getElementById('pwaMicBlockedOverlay');
+      var safariBtn = document.getElementById('pwaMicSafariBtn');
+      if (safariBtn) safariBtn.href = window.location.href;
+      if (overlay) overlay.style.display = 'flex';
+      return;
+    }
     if (memMicActive) { userMicPref = false; stopMemMic(); } else { userMicPref = true; startMemMic(); }
   }
 
