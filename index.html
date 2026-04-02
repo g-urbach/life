@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.36-debug — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
+  const DEPLOY_NOTES = "v2.37 — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.36-debug
+  Current: v2.37
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.36-debug → next review at v2.40.
+  Build counter: currently at v2.37 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,7 +525,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.36-debug</title>
+  <title>My Life Story v2.37</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1908,7 +1908,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.36-debug</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.37</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2808,7 +2808,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.36-debug — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
+  const DEPLOY_NOTES = "v2.37 — Temporary on-screen debug log panel added above mic button. dbg/dbgErr/dbgWarn now write to visible box on-device for iPad diagnostics. Remove after mic issue resolved.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3503,6 +3503,7 @@ Name:
   let recCurQuestion = '';   // current AI question
   let recActive      = false;// AI conversation running
   let memMicActive   = false;// mic dictation active
+  let _micPrimedStream = null; // getUserMedia stream kept alive on iOS during recognition session
   let userMicPref    = false;// true = user wants mic on; respected by auto-start after questions
   let interviewActive = false;// true after first Interview me press; flips button label
   let _userHasTyped  = false;// true once user has personally entered content (blocks autosave on AI-only prompts)
@@ -3604,69 +3605,67 @@ Name:
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return toast('Speech recognition is not supported in this browser');
 
-    // ── iOS: explicitly request mic permission via getUserMedia FIRST.
-    // On iOS Safari, webkitSpeechRecognition silently fails if the audio
-    // session hasn't been activated by a prior getUserMedia call in the
-    // same gesture context. This primes the audio session.
-    //
-    // CRITICAL: do NOT stop the stream tracks here. Stopping tracks immediately
-    // deactivates the iOS audio session before webkitSpeechRecognition.start()
-    // fires — which is the exact failure we are trying to prevent. The stream
-    // is passed into createAndStart() and stopped AFTER rec.start() succeeds,
-    // by which point the audio session has been handed off to SpeechRecognition.
+    // ── Detect iOS Safari ────────────────────────────────────────────
+    // iOS requires different session management to Android/desktop Chrome.
+    // On iOS: continuous=true holds the session open (no restart loop needed).
+    // On Android/desktop: continuous=false with manual restart works correctly.
+    // The iPad crash-loop bug (v2.36 debug) showed iOS closes sessions instantly
+    // with continuous=false — causing ~3 restarts/second and zero onresult events.
+    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    dbg('MIC', 'Platform: ' + (isIOS ? 'iOS — using continuous:true' : 'non-iOS — using continuous:false'));
+
+    // ── Prime the iOS audio session via getUserMedia ─────────────────
+    // webkitSpeechRecognition silently fails on iOS if getUserMedia hasn't
+    // been called first in the same gesture context.
+    // CRITICAL: keep the stream alive until stopMemMic() — stopping tracks
+    // early deactivates the audio session before recognition can claim it.
     var primedStream = null;
     try {
       primedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      dbg('MIC', 'getUserMedia succeeded — audio session primed');
+      dbg('MIC', 'getUserMedia succeeded — audio session primed, stream kept alive');
     } catch (permErr) {
-      // NotAllowedError = user denied, NotFoundError = no mic hardware
       if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
         return toast('Microphone access denied — please allow mic in your browser settings');
       }
-      // Any other error — try anyway; SpeechRecognition may still work on desktop
       dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
     }
 
-    // Abort any existing session cleanly without resetting listeningActive
+    // Abort any existing session cleanly
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
 
     memMicActive = true;
     listeningActive = true;
+    // Store primed stream on the mic state so stopMemMic() can release it
+    _micPrimedStream = primedStream;
     setMicUI(true);
     setMemStatus('listening', 'Listening...');
     var el = document.getElementById('memAnswer');
     var prefix = '';
-    var accumulated = ''; // finals committed across restarts in this mic session
+    var accumulated = '';
     var currentVal = el.value;
-    // Find the last "FIRSTNAME Answer:\n" label — everything before+including it is
-    // the prefix (preserved as-is). Everything after it is the user's answer so far,
-    // which seeds `accumulated` so mic dictation appends rather than overwrites.
     var lastLabelIdx = currentVal.lastIndexOf(':\n');
     if (lastLabelIdx !== -1) {
-      prefix = currentVal.slice(0, lastLabelIdx + 2); // up to and including ":\n"
-      // Seed accumulated with any text the user already typed after the label
+      prefix = currentVal.slice(0, lastLabelIdx + 2);
       var alreadyTyped = currentVal.slice(lastLabelIdx + 2).trim();
       if (alreadyTyped) accumulated = alreadyTyped;
     } else {
-      // No label found — treat full existing content as prefix so we append
       prefix = currentVal ? currentVal + (currentVal.endsWith('\n') ? '' : '\n') : '';
     }
 
-    function createAndStart(streamToRelease) {
-      if (!memMicActive || !listeningActive) {
-        // Mic was stopped before we even started — clean up the stream now
-        if (streamToRelease) streamToRelease.getTracks().forEach(function(t) { t.stop(); });
-        return;
-      }
+    function createAndStart() {
+      if (!memMicActive || !listeningActive) return;
       var rec = new SR();
       recognition = rec;
-      // Use interimResults=true so user sees words appearing as they speak
-      rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = false;
-
-      var gotResult = false;
+      rec.lang = 'en-AU';
+      rec.interimResults = true;
+      // iOS: continuous=true keeps session open — iOS kills sessions instantly
+      // with continuous=false causing a restart storm with no onresult events.
+      // Android/desktop: continuous=false with manual restart on onend works fine.
+      rec.continuous = isIOS ? true : false;
 
       rec.onresult = function(e) {
-        gotResult = true;
+        dbg('MIC', 'onresult fired, results:', e.results.length);
         var interim = '';
         var newFinals = '';
         for (var i = 0; i < e.results.length; i++) {
@@ -3678,41 +3677,36 @@ Name:
         }
         if (newFinals) {
           accumulated += (accumulated ? ' ' : '') + newFinals;
+          dbg('MIC', 'Final:', newFinals);
         }
-        // Write prefix + new dictation so the inline Q&A history above is preserved
         el.value = prefix + accumulated + (interim ? ' ' + interim : '');
-        if (accumulated || interim) _userHasTyped = true; // mic input = real user content
+        if (accumulated || interim) _userHasTyped = true;
         memCheckButtons();
       };
 
       rec.onend = function() {
-        // Only snap textarea back to finals when still actively recording (mid-session restart).
-        // If the user tapped Stop, memMicActive is already false — do NOT overwrite el.value.
-        // Overwriting with accumulated (which excludes the last interim chunk) would blank
-        // or truncate whatever the user saw just before they tapped stop.
+        dbg('MIC', 'onend fired — memMicActive:' + memMicActive + ' listeningActive:' + listeningActive);
+        // iOS with continuous=true: onend should only fire when we call abort().
+        // Non-iOS with continuous=false: onend fires after silence — restart.
         if (memMicActive && listeningActive) {
           el.value = prefix + accumulated;
           memCheckButtons();
-          setTimeout(createAndStart, gotResult ? 300 : 150);
+          // Longer restart delay on iOS to avoid hammering the audio subsystem
+          setTimeout(createAndStart, isIOS ? 800 : 300);
         }
-        // On stop: leave textarea as-is. The last onresult already wrote prefix+accumulated+interim.
       };
 
       rec.onerror = function(e) {
+        dbgErr('MIC', 'onerror:', e.error);
         if (e.error === 'not-allowed') {
-          // On iOS, 'not-allowed' fires transiently when the speech service
-          // isn't ready yet (not just for permanently denied permissions).
-          // Check if mic permission is actually denied before giving up.
           if (navigator.permissions) {
             navigator.permissions.query({ name: 'microphone' }).then(function(result) {
               if (result.state === 'denied') {
                 stopMemMic(); toast('Microphone permission denied — please allow mic access in Settings');
               } else {
-                // Transient error — retry after a short delay
                 if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
               }
             }).catch(function() {
-              // permissions API not available (older iOS) — retry anyway
               if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
             });
           } else {
@@ -3724,32 +3718,30 @@ Name:
 
       try {
         rec.start();
-        dbg('MIC', 'rec.start() succeeded');
-        // Audio session now handed off to SpeechRecognition — safe to release the priming stream
-        if (streamToRelease) {
-          streamToRelease.getTracks().forEach(function(t) { t.stop(); });
-          dbg('MIC', 'getUserMedia priming stream released after rec.start()');
-        }
+        dbg('MIC', 'rec.start() succeeded — continuous:' + rec.continuous);
       } catch(startErr) {
         dbgErr('MIC', 'rec.start() threw:', startErr.name, startErr.message);
-        if (streamToRelease) streamToRelease.getTracks().forEach(function(t) { t.stop(); });
         if (startErr.name === 'InvalidStateError') {
-          // Recognition already started — abort and retry once
           try { rec.abort(); } catch(e) {}
-          setTimeout(createAndStart, 300);
+          setTimeout(createAndStart, 500);
         } else {
-          // Any other error — stop and tell the user
           stopMemMic();
           toast('Could not start microphone — ' + startErr.message);
         }
       }
     }
-    createAndStart(primedStream);
+    createAndStart();
   }
 
   function stopMemMic() {
     stopListening();
     memMicActive = false;
+    // Release the iOS priming stream now that the session is fully stopped
+    if (_micPrimedStream) {
+      _micPrimedStream.getTracks().forEach(function(t) { t.stop(); });
+      _micPrimedStream = null;
+      dbg('MIC', 'Priming stream released on stop');
+    }
     setMicUI(false);
     setMemStatus('idle', '');
   }
