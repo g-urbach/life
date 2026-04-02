@@ -16,7 +16,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.38 — iOS PWA mic fix: detect standalone PWA mode and show Open in Safari overlay instead of attempting webkitSpeechRecognition, which Apple blocks with service-not-allowed in home screen apps (iOS 16+ bug). Debug panel removed. getUserMedia priming stream kept alive for full session.";
+  const DEPLOY_NOTES = "v2.39 — Chrome on iPad fix: added fallback CDN (unpkg) if jsDelivr fails to load Supabase JS, plus guard in init() that shows a clear error message rather than hanging blank if both CDNs fail. Also added Shortcuts app instructions to the PWA mic overlay.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +171,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.38
+  Current: v2.39
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -303,7 +303,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.38 → next review at v2.40.
+  Build counter: currently at v2.39 → next review at v2.40.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -525,8 +525,14 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.38</title>
+  <title>My Life Story v2.39</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
+  <script>
+    if (typeof supabase === 'undefined') {
+      document.write('<script src="https://unpkg.com/@supabase/supabase-js@2"><\/script>');
+    }
+  </script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
@@ -1908,7 +1914,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.38</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.39</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2786,17 +2792,27 @@ Name:
 <!-- PWA mic blocked overlay — shown when user taps mic in iOS standalone mode.
      iOS blocks webkitSpeechRecognition in PWA/home-screen apps (Apple bug, iOS 16+).
      Directs user to open in Safari where it works correctly. -->
-<div id="pwaMicBlockedOverlay" style="display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;padding:24px">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;max-width:380px;width:100%;font-family:Lato,sans-serif;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+<div id="pwaMicBlockedOverlay" style="display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.6)">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;max-width:400px;width:100%;font-family:Lato,sans-serif;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
     <div style="font-size:2.5rem;margin-bottom:12px">&#127897;</div>
     <div style="font-weight:700;font-size:1.1rem;color:var(--text);margin-bottom:10px">Voice recording needs Safari</div>
-    <div style="font-size:0.92rem;color:var(--text-light);line-height:1.6;margin-bottom:20px">
+    <div style="font-size:0.92rem;color:var(--text-light);line-height:1.6;margin-bottom:16px">
       Apple does not allow voice recording in home screen apps. Tap below to open in Safari — everything else stays the same.
     </div>
     <a id="pwaMicSafariBtn" href=""
-      style="display:block;width:100%;padding:14px;background:var(--gold);color:var(--ink);font-family:Lato,sans-serif;font-weight:700;font-size:1rem;border-radius:10px;text-decoration:none;margin-bottom:12px;box-sizing:border-box">
+      style="display:block;width:100%;padding:14px;background:var(--gold);color:var(--ink);font-family:Lato,sans-serif;font-weight:700;font-size:1rem;border-radius:10px;text-decoration:none;margin-bottom:16px;box-sizing:border-box">
       Open in Safari
     </a>
+    <div style="background:var(--surface2,#f5ede0);border-radius:10px;padding:12px 14px;margin-bottom:14px;text-align:left">
+      <div style="font-weight:700;font-size:0.82rem;color:var(--text);margin-bottom:6px">&#128161; Tip: make a home screen icon that opens in Safari</div>
+      <div style="font-size:0.8rem;color:var(--text-light);line-height:1.6">
+        1. Open the <strong>Shortcuts</strong> app on your iPad<br>
+        2. Tap <strong>+</strong> then <strong>Add Action</strong><br>
+        3. Search for <strong>Open URL</strong> and tap it<br>
+        4. Paste: <span style="font-family:monospace;font-size:0.75rem;color:var(--gold)">https://g-urbach.github.io/life/</span><br>
+        5. Tap the shortcut name, choose an icon, tap <strong>Add to Home Screen</strong>
+      </div>
+    </div>
     <button onclick="document.getElementById('pwaMicBlockedOverlay').style.display='none'"
       style="background:none;border:none;color:var(--text-light);font-family:Lato,sans-serif;font-size:0.88rem;cursor:pointer;padding:4px">
       Dismiss
@@ -2818,7 +2834,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.38 — iOS PWA mic fix: detect standalone PWA mode and show Open in Safari overlay instead of attempting webkitSpeechRecognition, which Apple blocks with service-not-allowed in home screen apps (iOS 16+ bug). Debug panel removed. getUserMedia priming stream kept alive for full session.";
+  const DEPLOY_NOTES = "v2.39 — Chrome on iPad fix: added fallback CDN (unpkg) if jsDelivr fails to load Supabase JS, plus guard in init() that shows a clear error message rather than hanging blank if both CDNs fail. Also added Shortcuts app instructions to the PWA mic overlay.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2908,8 +2924,22 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.26 starting...');
+    dbg('INIT','v2.39 starting...');
     initTheme();
+
+    // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
+    // show a clear message rather than hanging silently on a blank screen.
+    if (typeof supabase === 'undefined') {
+      document.getElementById('landingScreen').style.display = 'block';
+      document.getElementById('appShell').style.display = 'none';
+      var errEl = document.getElementById('landingAuthError');
+      if (errEl) {
+        errEl.textContent = 'Could not load the app — please check your internet connection and reload the page. If using Chrome on iPad, try opening in Safari instead.';
+        errEl.style.display = 'block';
+      }
+      dbgErr('INIT', 'supabase is undefined — CDN load failed');
+      return;
+    }
 
     // Detect return from Peecho after successful order
     const urlParams = new URLSearchParams(window.location.search);
