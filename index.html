@@ -521,7 +521,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.31</title>
+  <title>My Life Story v2.32</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1904,7 +1904,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.31</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.32</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2793,7 +2793,7 @@ Name:
 </div>
 
 <script>
-  const DEPLOY_NOTES = "v2.31 — Interview formatting: 'AI Question:' bold gold (no dashes), 'FIRSTNAME Answer:' bold label. Context capped at 7 questions. Autosave + unsaved-content warning now only fire after real user input (_userHasTyped flag) — no false alerts when interview appends questions to empty entry.";
+  const DEPLOY_NOTES = "v2.32 — Fix AI Review accept revert bug: acceptReconstruction and acceptSpellFix now call draftSave() immediately after updating the textarea so the autosave ticker cannot overwrite the accepted text. Fix title suggestion not applying in Memories panel: applyAIReviewTags now writes to memTitle instead of the non-existent recTagTitle.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -4069,6 +4069,7 @@ Name:
     } else {
       document.getElementById('memAnswer').value = fixed;
       panel.style.display = 'none';
+      draftSave(); // snapshot fixed text so autosave ticker can't revert it
       toast('Spelling fixed ✓');
       memCheckButtons();
     }
@@ -4092,8 +4093,11 @@ Name:
       panel.style.display = 'none';
       if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries(); if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
     } else {
+      // Memories panel (unsaved entry) — write to textarea then immediately
+      // force-save the draft so the autosave ticker can't revert it.
       document.getElementById('memAnswer').value = text;
       panel.style.display = 'none';
+      draftSave(); // snapshot accepted text into localStorage right now
       toast('Entry updated ✓');
       memCheckButtons();
     }
@@ -4142,7 +4146,18 @@ Name:
       }
       if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
     } else {
-      applyTagDefaults('rec', tags);
+      // Memories panel — title tag writes to the main memTitle field, not recTagTitle
+      // (there is no recTagTitle in the Memories form — the title lives at the top)
+      if (tags.title) {
+        const memTitleEl = document.getElementById('memTitle');
+        if (memTitleEl) memTitleEl.value = tags.title;
+        // Remove title from tags before passing to applyTagDefaults so it's not double-applied
+        const { title: _t, ...restTags } = tags;
+        applyTagDefaults('rec', restTags);
+      } else {
+        applyTagDefaults('rec', tags);
+      }
+      draftSave(); // snapshot title change so autosave ticker preserves it
       toast('Tags applied ✓');
     }
   }
