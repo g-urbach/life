@@ -20,7 +20,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.49 — Undo delete (10s toast, deferred Supabase delete, instant local removal). Error notification system: notifyDev() helper, NOTIFY_PROXY_URL constant, wired into dbgErr + AI rate limit paths. Backlog tidied: autosave + RLS audit moved to implemented, Peecho rate limit + pg_cron moved to lower. + reference_url fields (was omitted). DRAFT_KEY bumped to v2 to bust stale drafts. Supabase security hardening: RLS confirmed on all tables, exec_* functions patched with SET search_path=public, user_approvals policy tightened, storage delete policy added.";
+  const DEPLOY_NOTES = "v2.51 — Project memory updated: lifetold.app live on Cloudflare Pages (auto-deploy from GitHub). Hosting section rewritten. Notification system marked complete in known limitations. Backlog expanded with native mobile app, gifting flow, family contributions, weekly email nudge, shareable memory cards, interview-a-loved-one mode, QR codes in printed book.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -144,8 +144,9 @@
   OWNER / DEPLOYER
   ----------------
   Geoff Urbach (gethro@gmail.com)
-  Deployed: https://g-urbach.github.io/life/
-  Deployed via: deploy.html (custom GitHub Pages deploy tool w/ regression tests)
+  Primary URL: https://lifetold.app (Cloudflare Pages, auto-deploys from GitHub)
+  Legacy URL: https://g-urbach.github.io/life/ (still active)
+  Deployed via: deploy.html (custom regression test tool) → push to g-urbach/life → Cloudflare auto-deploys
 
   TECH STACK
   ----------
@@ -175,7 +176,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.49
+  Current: v2.51
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -311,7 +312,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.49 → next review at v2.50.
+  Build counter: currently at v2.51 → next review at v2.60.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -344,6 +345,16 @@ Name:
     trivial build. Do before user base grows.
   - Undo last delete: DONE (v2.49). 10s undo toast, deferred Supabase delete,
     instant local removal. _commitDelete() fires after timeout. Move to FEATURES IMPLEMENTED next tidy.
+
+  - Native mobile app (iOS/Android): Capacitor wrapper around existing HTML is
+    likely path — avoids rewrite. App Store presence matters for discovery and
+    trust with older users. All major competitors have native apps.
+  - Gift a subscription flow: "give this to Mum for her birthday" is the primary
+    acquisition channel for StoryWorth and most competitors. No gifting flow = no
+    viral growth. Needs gift purchase, redemption code, and onboarding for recipient.
+  - Collaborative family contributions: invite family members to add their own
+    memories to the storyteller's book, or submit questions for them to answer.
+    Viral loop + retention driver. StoryWorth, LifeTales, Remento all have this.
 
   STORY HYGIENE (new category — v2.x milestone)
   - Story Hygiene Dashboard tile: shell tile that runs cross-entry hygiene checks
@@ -388,6 +399,18 @@ Name:
     Useful at 50+ entries, essential at 100+.
   - Mobile PWA install prompt: one-time "Add to Home Screen" nudge.
     Android: beforeinstallprompt event. iOS: manual instruction overlay.
+  - Weekly prompt email nudge: opt-in weekly question delivered by email to keep
+    users engaged between sessions. Low build cost — Supabase cron + Resend.
+    Configurable frequency (weekly/fortnightly). StoryWorth's core engagement mechanic.
+  - Shareable memory cards: export a single entry as a styled image card for
+    sharing on WhatsApp or social media. Viral growth mechanism — every share is
+    an ad. Several competitors have this; none do it well yet.
+  - "Interview a loved one" mode: flip the app so the user captures someone else's
+    story — a parent or grandparent. Large market (adult children doing this for
+    ageing parents). Many competitors are built entirely around this use case.
+  - QR codes in printed book: each entry that was recorded via mic gets a QR code
+    in the printed book linking to the original audio. Requires per-entry audio
+    storage. Remento and StoriedLife do this — genuinely differentiating premium feature.
 
   LOWER / FUTURE
   - PEECHO_PROXY rate limiting: per-user request count check in edge function — low urgency,
@@ -457,14 +480,15 @@ Name:
   - IMPLEMENTED v2.40: Help panel now includes About, Support (email), Privacy & Terms sections.
     Remaining: donation link, feature request form, mission statement prose
 
-  HOSTING — better URL than GitHub Pages
-  - Current: g-urbach.github.io/life/ (not ideal for sharing)
-  - Options to explore:
-    - Custom domain (e.g. mylifestory.app) via GitHub Pages CNAME — easy, free
-    - Cloudflare Pages — free, fast, custom domain, better analytics
-    - Vercel — free tier, excellent performance, easy deploy
-    - Keep deploy.html workflow but point at new host
-  - Priority: custom domain is high value, low cost (~$15/yr)
+  HOSTING — DONE (v2.51)
+  - Domain: lifetold.app (registered via Cloudflare Registrar, ~$15/yr)
+  - Hosting: Cloudflare Pages — free tier, auto-deploys on every GitHub push
+  - Primary URL: https://lifetold.app
+  - www: https://www.lifetold.app (also configured)
+  - GitHub repo: g-urbach/life (single index.html, branch: main)
+  - Deploy workflow: push index.html to GitHub → Cloudflare auto-deploys within ~30s
+  - Old URL: g-urbach.github.io/life/ (still works, GitHub Pages still active)
+  - deploy.html workflow unchanged — still used for regression testing before push
 
   MARKETING (when ready)
   - SEO: meta tags, Open Graph, structured data
@@ -480,9 +504,8 @@ Name:
     stopListening() before start() broke this on iOS 17+. Fixed by aborting inline.
     onerror 'not-allowed' is transient on iOS (service not ready) — now retries rather
     than permanently killing mic. Monitor across iOS versions.
-  - No runtime error alerting yet: if storage fills up or AI tokens are exhausted
-    during a user session, Geoff won't know until manually checking. Notification
-    system is in BACKLOG HIGH.
+  - Runtime error alerting: DONE (v2.49/v2.50). notifyDev() fires Telegram
+    notification via NOTIFY_PROXY edge function. Telegram bot live and tested.
   - Panel scroll bug: FIXED v1.97 — stray </div> after Peecho anchor was
     closing panel-story early, leaving storyOutput/storySkeletonLoader outside
     any .panel div so they were never hidden by CSS.
@@ -520,7 +543,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.49</title>
+  <title>My Life Story v2.51</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1914,7 +1937,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.49</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.51</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2878,7 +2901,7 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const DEPLOY_NOTES = "v2.49 — Undo delete (10s toast, deferred Supabase delete, instant local removal). Error notification system: notifyDev() helper, NOTIFY_PROXY_URL constant, wired into dbgErr + AI rate limit paths. Backlog tidied: autosave + RLS audit moved to implemented, Peecho rate limit + pg_cron moved to lower. + reference_url fields (was omitted). DRAFT_KEY bumped to v2 to bust stale drafts. Supabase security hardening: RLS confirmed on all tables, exec_* functions patched with SET search_path=public, user_approvals policy tightened, storage delete policy added.";
+  const DEPLOY_NOTES = "v2.51 — Project memory updated: lifetold.app live on Cloudflare Pages (auto-deploy from GitHub). Hosting section rewritten. Notification system marked complete in known limitations. Backlog expanded with native mobile app, gifting flow, family contributions, weekly email nudge, shareable memory cards, interview-a-loved-one mode, QR codes in printed book.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2996,7 +3019,7 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.49 starting...');
+    dbg('INIT','v2.51 starting...');
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
