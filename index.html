@@ -20,7 +20,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.51 — Project memory updated: lifetold.app live on Cloudflare Pages (auto-deploy from GitHub). Hosting section rewritten. Notification system marked complete in known limitations. Backlog expanded with native mobile app, gifting flow, family contributions, weekly email nudge, shareable memory cards, interview-a-loved-one mode, QR codes in printed book.";
+  const DEPLOY_NOTES = "v2.53 — Android mic fix: switched to continuous=true (same as iOS) — continuous=false caused constant beeping and isFinal never firing on real Android Chrome; notifyDev version field now derived from DEPLOY_NOTES instead of hardcoded stale string; password reset redirectTo updated to lifetold.app.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -176,7 +176,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.51
+  Current: v2.53
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -281,24 +281,17 @@ Name:
     Dashboard nudge tile shown when details are missing, links to My Story
 
   AUTH
-  - Landing page with sign in / create account
+  - Landing page with sign in / create account (toggled modes in a single form)
+  - Create account requires password entered twice; validated before disclaimer shown
+  - Activation-pending panel shown after signup — instructs user to check email
   - Disclaimer overlay on sign up
-  - Forgot password flow with email reset link
+  - Forgot password flow with email reset link (redirects to lifetold.app)
   - Set new password overlay on return from reset email
   - Onboarding (name, DOB, sex) on first login
-
-  PROMPTS TAB
   - 50 curated questions across life areas, tap to pre-fill Memories
 
   HELP TAB
   - AI-powered help assistant
-
-  AUTH
-  - Landing page with sign in / create account
-  - Disclaimer overlay on sign up
-  - Forgot password flow with email reset link
-  - Set new password overlay on return from reset email
-  - Onboarding (name, DOB, sex) on first login
 
   REGRESSION TESTING
   - deploy.html runs 90+ static checks after every deploy
@@ -312,7 +305,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.51 → next review at v2.60.
+  Build counter: currently at v2.53 → next review at v2.60.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -480,7 +473,7 @@ Name:
   - IMPLEMENTED v2.40: Help panel now includes About, Support (email), Privacy & Terms sections.
     Remaining: donation link, feature request form, mission statement prose
 
-  HOSTING — DONE (v2.51)
+  HOSTING — DONE (v2.53)
   - Domain: lifetold.app (registered via Cloudflare Registrar, ~$15/yr)
   - Hosting: Cloudflare Pages — free tier, auto-deploys on every GitHub push
   - Primary URL: https://lifetold.app
@@ -498,7 +491,9 @@ Name:
   -----------------
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
-  - Android mic: continuous=false with restart on onend, 300ms gap
+  - Android mic: continuous=true (v2.53, same as iOS). continuous=false caused
+    constant restart beeping and isFinal never firing on real Android Chrome.
+    onend restart safety net kept at 800ms delay for unexpected drops.
   - iOS TTS: must prime speechSynthesis on user gesture tap
   - iOS mic (v2.33 fix): rec.start() must happen synchronously within gesture handler —
     stopListening() before start() broke this on iOS 17+. Fixed by aborting inline.
@@ -543,7 +538,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.51</title>
+  <title>My Life Story v2.53</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1863,23 +1858,48 @@ Name:
         <li>Print it as a real book for your family</li>
       </ul>
 
-      <div class="landing-auth">
-        <h3>Begin your story</h3>
+      <!-- Sign In / Create Account form (toggled by landingSetMode) -->
+      <div class="landing-auth" id="landingAuthPanel">
+        <h3 id="landingAuthTitle">Sign in to your story</h3>
         <input id="landingEmail" placeholder="Email address" type="email" autocomplete="email"
           oninput="document.getElementById('landingAuthError').style.display='none'">
         <input id="landingPassword" placeholder="Password" type="password" autocomplete="current-password"
-          onkeydown="if(event.key==='Enter') landingSignIn()"
+          onkeydown="if(event.key==='Enter') landingPrimaryAction()"
+          oninput="document.getElementById('landingAuthError').style.display='none'">
+        <!-- Confirm password — shown only in Create Account mode -->
+        <input id="landingPasswordConfirm" placeholder="Confirm password" type="password" autocomplete="new-password"
+          style="display:none"
+          onkeydown="if(event.key==='Enter') landingPrimaryAction()"
           oninput="document.getElementById('landingAuthError').style.display='none'">
         <div id="landingAuthError" style="display:none;font-size:0.82rem;color:#e07060;margin-top:4px;line-height:1.5"></div>
         <div class="landing-btn-row">
-          <button class="landing-btn-primary" id="landingSignInBtn" onclick="landingSignIn()">Sign In</button>
-          <button class="landing-btn-ghost" onclick="landingShowDisclaimer()">Create Account</button>
+          <button class="landing-btn-primary" id="landingPrimaryBtn" onclick="landingPrimaryAction()">Sign In</button>
         </div>
-        <div style="text-align:center;margin-top:10px">
-          <button onclick="showForgotPassword()" style="background:none;border:none;color:rgba(250,247,242,0.5);font-size:0.8rem;cursor:pointer;font-family:'Lato',sans-serif;text-decoration:underline">
+        <div style="text-align:center;margin-top:12px;font-size:0.82rem;color:rgba(250,247,242,0.5)">
+          <span id="landingModeToggleText">New here?</span>
+          <button id="landingModeToggleBtn" onclick="landingToggleMode()"
+            style="background:none;border:none;color:rgba(201,169,110,0.9);font-size:0.82rem;cursor:pointer;font-family:'Lato',sans-serif;text-decoration:underline;margin-left:4px">
+            Create an account
+          </button>
+        </div>
+        <div style="text-align:center;margin-top:6px" id="landingForgotRow">
+          <button onclick="showForgotPassword()" style="background:none;border:none;color:rgba(250,247,242,0.4);font-size:0.78rem;cursor:pointer;font-family:'Lato',sans-serif;text-decoration:underline">
             Forgot your password?
           </button>
         </div>
+      </div>
+
+      <!-- Activation pending panel — shown after successful sign-up -->
+      <div class="landing-auth" id="landingActivationPanel" style="display:none">
+        <h3>Check your email ✉️</h3>
+        <p style="font-size:0.88rem;color:rgba(250,247,242,0.65);line-height:1.6;margin-bottom:14px">
+          We've sent an activation link to <strong id="landingActivationEmail" style="color:rgba(250,247,242,0.9)"></strong>.<br><br>
+          Click the link in the email to activate your account, then come back here and sign in.
+        </p>
+        <p style="font-size:0.78rem;color:rgba(250,247,242,0.4);line-height:1.5;margin-bottom:14px">
+          Can't find it? Check your spam or junk folder.
+        </p>
+        <button class="landing-btn-primary" style="width:100%" onclick="landingShowSignIn()">Back to Sign In</button>
       </div>
 
       <!-- Forgot password panel -->
@@ -1937,7 +1957,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.51</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.53</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2901,7 +2921,7 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const DEPLOY_NOTES = "v2.51 — Project memory updated: lifetold.app live on Cloudflare Pages (auto-deploy from GitHub). Hosting section rewritten. Notification system marked complete in known limitations. Backlog expanded with native mobile app, gifting flow, family contributions, weekly email nudge, shareable memory cards, interview-a-loved-one mode, QR codes in printed book.";
+  const DEPLOY_NOTES = "v2.53 — Android mic fix: switched to continuous=true (same as iOS) — continuous=false caused constant beeping and isFinal never firing on real Android Chrome; notifyDev version field now derived from DEPLOY_NOTES instead of hardcoded stale string; password reset redirectTo updated to lifetold.app.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2981,7 +3001,8 @@ Name:
     if (_notifyCache[key] && now - _notifyCache[key] < 60000) return; // dedupe 60s
     _notifyCache[key] = now;
     var user = currentUser ? currentUser.email || currentUser.id : 'unauthenticated';
-    var payload = { level: level, area: area, detail: detail, user: user, ts: new Date().toISOString(), version: '2.48' };
+    var appVersion = (typeof DEPLOY_NOTES === 'string') ? DEPLOY_NOTES.split(' ')[0] : 'unknown';
+    var payload = { level: level, area: area, detail: detail, user: user, ts: new Date().toISOString(), version: appVersion };
     fetch(NOTIFY_PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
@@ -3019,7 +3040,7 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.51 starting...');
+    dbg('INIT','v2.53 starting...');
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
@@ -3115,14 +3136,63 @@ Name:
   }
 
   // ── Landing auth ─────────────────────────────────────────────────
+  // Tracks whether the landing form is in sign-in or create-account mode.
+  var _landingMode = 'signin'; // 'signin' | 'create'
+
+  function landingToggleMode() {
+    if (_landingMode === 'signin') {
+      landingShowCreateAccount();
+    } else {
+      landingShowSignIn();
+    }
+  }
+
+  function landingShowSignIn() {
+    _landingMode = 'signin';
+    document.getElementById('landingAuthPanel').style.display = 'block';
+    document.getElementById('landingActivationPanel').style.display = 'none';
+    document.getElementById('landingAuthTitle').textContent = 'Sign in to your story';
+    document.getElementById('landingPasswordConfirm').style.display = 'none';
+    document.getElementById('landingPasswordConfirm').value = '';
+    document.getElementById('landingPassword').autocomplete = 'current-password';
+    document.getElementById('landingPrimaryBtn').textContent = 'Sign In';
+    document.getElementById('landingModeToggleText').textContent = 'New here?';
+    document.getElementById('landingModeToggleBtn').textContent = 'Create an account';
+    document.getElementById('landingForgotRow').style.display = 'block';
+    document.getElementById('landingAuthError').style.display = 'none';
+  }
+
+  function landingShowCreateAccount() {
+    _landingMode = 'create';
+    document.getElementById('landingAuthPanel').style.display = 'block';
+    document.getElementById('landingActivationPanel').style.display = 'none';
+    document.getElementById('landingAuthTitle').textContent = 'Create your account';
+    document.getElementById('landingPasswordConfirm').style.display = 'block';
+    document.getElementById('landingPassword').autocomplete = 'new-password';
+    document.getElementById('landingPrimaryBtn').textContent = 'Create Account';
+    document.getElementById('landingModeToggleText').textContent = 'Already have an account?';
+    document.getElementById('landingModeToggleBtn').textContent = 'Sign in';
+    document.getElementById('landingForgotRow').style.display = 'none';
+    document.getElementById('landingAuthError').style.display = 'none';
+    document.getElementById('landingPasswordConfirm').focus();
+  }
+
+  // Single entry point for the primary button — delegates based on mode
+  async function landingPrimaryAction() {
+    if (_landingMode === 'create') {
+      landingShowDisclaimer();
+    } else {
+      await landingSignIn();
+    }
+  }
+
   async function landingSignIn() {
     const email   = document.getElementById('landingEmail').value.trim();
     const pass    = document.getElementById('landingPassword').value;
-    const errEl   = document.getElementById('landingAuthError');
-    const btn     = document.getElementById('landingSignInBtn');
-    errEl.style.display = 'none';
+    document.getElementById('landingAuthError').style.display = 'none';
     if (!email) { showAuthError('Please enter your email address.'); return; }
     if (!pass)  { showAuthError('Please enter your password.'); return; }
+    const btn = document.getElementById('landingPrimaryBtn');
     btn.textContent = 'Signing in...'; btn.disabled = true;
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
     btn.textContent = 'Sign In'; btn.disabled = false;
@@ -3131,7 +3201,7 @@ Name:
       if (msg.includes('invalid') || msg.includes('credentials') || msg.includes('wrong')) {
         showAuthError('Incorrect email or password. <span style="text-decoration:underline;cursor:pointer" onclick="showForgotPassword()">Forgot your password?</span>');
       } else if (msg.includes('email') && msg.includes('confirm')) {
-        showAuthError('Please check your email and confirm your account first.');
+        showAuthError('Please check your email to activate your account before signing in.');
       } else if (msg.includes('too many')) {
         showAuthError('Too many attempts — please wait a moment and try again.');
       } else {
@@ -3150,14 +3220,14 @@ Name:
   function showForgotPassword() {
     document.getElementById('landingEmail') && (document.getElementById('forgotEmail').value = document.getElementById('landingEmail').value);
     document.getElementById('forgotPanel').style.display = 'block';
-    document.querySelector('.landing-auth').style.display = 'none';
+    document.getElementById('landingAuthPanel').style.display = 'none';
     document.getElementById('forgotMsg').style.display = 'none';
     document.getElementById('forgotEmail').focus();
   }
 
   function hideForgotPassword() {
     document.getElementById('forgotPanel').style.display = 'none';
-    document.querySelector('.landing-auth').style.display = 'block';
+    document.getElementById('landingAuthPanel').style.display = 'block';
   }
 
   function showSetNewPassword() {
@@ -3196,7 +3266,7 @@ Name:
     if (!email) { msg.style.color='#e07060'; msg.textContent='Please enter your email address.'; msg.style.display='block'; return; }
     btn.textContent = 'Sending...'; btn.disabled = true;
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://g-urbach.github.io/life/'
+      redirectTo: 'https://lifetold.app'
     });
     btn.textContent = 'Send Reset Link'; btn.disabled = false;
     if (error) {
@@ -3211,14 +3281,17 @@ Name:
   }
 
   function landingShowDisclaimer() {
-    const email = document.getElementById('landingEmail').value.trim();
-    const pass  = document.getElementById('landingPassword').value;
-    if (!email || !pass) return toast('Please enter email and password first');
-    // Copy to hidden inputs for existing signUp flow
-    document.getElementById('disclaimerOverlay').style.display = 'flex';
-    // Store for use in acceptDisclaimer
+    const email   = document.getElementById('landingEmail').value.trim();
+    const pass    = document.getElementById('landingPassword').value;
+    const confirm = document.getElementById('landingPasswordConfirm').value;
+    if (!email) { showAuthError('Please enter your email address.'); return; }
+    if (!pass)  { showAuthError('Please enter a password.'); return; }
+    if (pass.length < 6) { showAuthError('Password must be at least 6 characters.'); return; }
+    if (pass !== confirm) { showAuthError('Passwords do not match — please re-enter them.'); return; }
+    // Store credentials for use in acceptDisclaimer → signUp()
     window._pendingEmail = email;
     window._pendingPass  = pass;
+    document.getElementById('disclaimerOverlay').style.display = 'flex';
   }
 
   async function signIn() {
@@ -3230,14 +3303,8 @@ Name:
     else toast('Welcome back!');
   }
 
-  function showDisclaimer() {
-    const email = document.getElementById('emailInput')?.value.trim();
-    const pass  = document.getElementById('passwordInput')?.value;
-    if (!email || !pass) return toast('Please enter email and password first');
-    window._pendingEmail = email;
-    window._pendingPass  = pass;
-    document.getElementById('disclaimerOverlay').style.display = 'flex';
-  }
+  // showDisclaimer() removed in v2.53 — was dead code referencing old emailInput/passwordInput elements.
+  // New flow: landingShowDisclaimer() handles all create-account validation.
 
   async function acceptDisclaimer() {
     if (!document.getElementById('disclaimerCheck').checked)
@@ -3307,7 +3374,6 @@ Name:
     dbg('AUTH','Signing up:', email);
     const { data, error } = await sb.auth.signUp({ email, password: pass });
     if (error) { toast('Sign up failed: ' + error.message); return; }
-    toast('Account created! Check your email to confirm.');
     notifyAdmin(email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
     // Save disclaimer acceptance — user may not have a session yet if email confirm required,
     // so _saveDisclaimerAcceptance will be called again on first login via onAuthStateChange
@@ -3316,6 +3382,13 @@ Name:
       sessionToken = data.session?.access_token || null;
       await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save on signup failed (non-fatal):',e.message));
     }
+    // Show activation panel — Supabase requires email confirmation before sign-in
+    document.getElementById('landingActivationEmail').textContent = email;
+    document.getElementById('landingAuthPanel').style.display = 'none';
+    document.getElementById('landingActivationPanel').style.display = 'block';
+    document.getElementById('forgotPanel').style.display = 'none';
+    window._pendingEmail = null;
+    window._pendingPass  = null;
   }
 
   async function notifyAdmin(email) {
@@ -3790,10 +3863,15 @@ Name:
       recognition = rec;
       rec.lang = 'en-AU';
       rec.interimResults = true;
+      // Both iOS and Android now use continuous=true.
       // iOS: continuous=true keeps session open — iOS kills sessions instantly
       // with continuous=false causing a restart storm with no onresult events.
-      // Android/desktop: continuous=false with manual restart on onend works fine.
-      rec.continuous = isIOS ? true : false;
+      // Android: continuous=false was previously used with manual onend restart,
+      // but real-device testing (v2.53) showed this caused constant beeping
+      // (browser chime on each restart) and isFinal never firing because sessions
+      // ended before speech was committed. continuous=true fixes both.
+      // The onend restart safety net below still covers any unexpected drops.
+      rec.continuous = true;
 
       rec.onresult = function(e) {
         var interim = '';
@@ -3815,13 +3893,13 @@ Name:
 
       rec.onend = function() {
         dbg('MIC', 'onend — memMicActive:' + memMicActive + ' listeningActive:' + listeningActive);
-        // iOS with continuous=true: onend should only fire when we call abort().
-        // Non-iOS with continuous=false: onend fires after silence — restart.
+        // With continuous=true on both platforms, onend should only fire on abort()
+        // or an unexpected browser drop. Restart as a safety net with a generous
+        // delay to avoid hammering the audio subsystem.
         if (memMicActive && listeningActive) {
           el.value = prefix + accumulated;
           memCheckButtons();
-          // Longer restart delay on iOS to avoid hammering the audio subsystem
-          setTimeout(createAndStart, isIOS ? 800 : 300);
+          setTimeout(createAndStart, 800);
         }
       };
 
