@@ -13,10 +13,14 @@
 
   ⚠️  CLAUDE INSTRUCTION — MANDATORY ON EVERY SINGLE BUILD
   ------------------------------------------------------------
+  ⚠️  VERSION BUMP IS NON-NEGOTIABLE: Every build — including backlog-only
+  updates, comment fixes, and security-only sessions — MUST bump the version.
+  No exceptions. No "this was only a comment change". If the file changes, the version changes.
+
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.47 — Entry word count badges (red/amber/green dot + word count on every card). Session-expiry toast + sign-out highlight on 401. Offline banner when device loses connection. Supabase AU region claim softened across all privacy text.";
+  const DEPLOY_NOTES = "v2.49 — Undo delete (10s toast, deferred Supabase delete, instant local removal). Error notification system: notifyDev() helper, NOTIFY_PROXY_URL constant, wired into dbgErr + AI rate limit paths. Backlog tidied: autosave + RLS audit moved to implemented, Peecho rate limit + pg_cron moved to lower. + reference_url fields (was omitted). DRAFT_KEY bumped to v2 to bust stale drafts. Supabase security hardening: RLS confirmed on all tables, exec_* functions patched with SET search_path=public, user_approvals policy tightened, storage delete policy added.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -171,7 +175,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.47
+  Current: v2.49
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -198,6 +202,10 @@
   - Mic: prominent full-width button, live interim transcript flows directly
     into the main textarea (no separate preview box), rose border on textarea
     while recording confirms active state. Button label/colour changes clearly.
+  - Autosave draft (v2.48): saves title, answer, chapter, era, date, location, people,
+    reference, reference_url to localStorage every 3s while on Memories tab (gated by
+    _userHasTyped so AI-appended questions don't trigger it). Restored on login with
+    "📝 Draft restored" toast. DRAFT_KEY=mls_draft_v2. Cleared on save/Done/New Entry.
   - Mic stop fix (v2.14): tapping Stop no longer blanks the textarea. onend
     only overwrites el.value during active mid-session restarts; on user stop
     the textarea retains exactly what was visible when stop was tapped.
@@ -303,7 +311,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.47 → next review at v2.50.
+  Build counter: currently at v2.49 → next review at v2.50.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -313,10 +321,9 @@ Name:
   - Peecho: test full order flow with real story end-to-end (preview fix in v1.45)
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
-  - PEECHO_PROXY rate limiting: add per-user request count check in edge function
-    to prevent abuse once app has more users
-  - Supabase RLS audit: confirm life_entries and life-photos are scoped to
-    user_id; verify a user cannot access another user's data via direct API call
+  - Supabase RLS audit: DONE (v2.48 session). RLS enabled on life_entries,
+    life_settings, life_print_tokens. Storage policies confirmed on life-photos.
+    exec_* functions patched with SET search_path=public. Move to FEATURES IMPLEMENTED next tidy.
 
   - Inline Q&A interview mode (v2.27 design agreed): "A question for me" button
     speaks question aloud AND appends it inline into the textarea as a labelled
@@ -326,27 +333,17 @@ Name:
     consolidates the Q&A into a clean narrative. parent_entry_id kept in DB for
     photo attachments but no longer used for conversation chains.
 
-  - Error notification system: alert Geoff immediately when runtime errors occur
-    (storage quota, AI token exhaustion, auth failures, edge fn errors) so issues
-    during testing/use can be responded to quickly. Recommended stack:
-      · Resend (resend.com) — 3,000 emails/month free, simple API, best for
-        detailed error reports and non-urgent alerts
-      · Telegram bot — free forever, instant phone push notification, best for
-        "something just broke" critical alerts; set up via @BotFather in ~5 mins
-      · Implementation: thin notifyDev(level, context, detail) helper in the
-        edge functions; client-side errors POST to a new NOTIFY_PROXY edge fn
-        which calls Resend + Telegram. Never expose API keys in HTML.
-      · Suggested triggers: Supabase storage quota >80%, AI 429/rate-limit errors,
-        edge function 5xx, auth failures spike, Peecho API errors
+  - Error notification system: CLIENT SIDE DONE (v2.49). notifyDev() helper wired
+    into dbgErr + AI rate limit paths. NOTIFY_PROXY_URL constant added.
+    REMAINING: deploy NOTIFY_PROXY edge function in Supabase with Telegram bot token
+    + chat ID as secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). See session notes
+    for full edge function code. Optional: add RESEND_API_KEY for email alerts.
 
-  - Autosave draft (localStorage): fire every few seconds while user is typing in
-    memAnswer; restore silently on return. Prevents data loss on accidental tab
-    close/refresh. Low build cost, real consequence if skipped.
   - Export data (JSON/CSV): one-click download of all entries. Required under
     Australian Privacy Act (right to access own data). Data already in memory —
     trivial build. Do before user base grows.
-  - Undo last delete: 10-second toast before Supabase delete fires. Very low
-    build cost, meaningful safety net against accidental entry loss.
+  - Undo last delete: DONE (v2.49). 10s undo toast, deferred Supabase delete,
+    instant local removal. _commitDelete() fires after timeout. Move to FEATURES IMPLEMENTED next tidy.
 
   STORY HYGIENE (new category — v2.x milestone)
   - Story Hygiene Dashboard tile: shell tile that runs cross-entry hygiene checks
@@ -383,8 +380,6 @@ Name:
   - Untagged entries nudge tile (only shown when entries missing chapter tags)
   - Conversation threads tile (count of AI conversation chains)
   - Data export / right to deletion flow (GDPR / Aus Privacy Act)
-  - pg_cron scheduled cleanup for life_print_tokens (daily delete of expired rows)
-    — currently handled opportunistically in edge function, fine for low volume
   - Progressive onboarding: 3-step first-run experience (name → first memory →
     what AI can do). Track first-run state in life_settings.
   - Per-chapter word count / page estimate: extend Words Written or Story Health
@@ -395,6 +390,10 @@ Name:
     Android: beforeinstallprompt event. iOS: manual instruction overlay.
 
   LOWER / FUTURE
+  - PEECHO_PROXY rate limiting: per-user request count check in edge function — low urgency,
+    needed before significant multi-user growth
+  - pg_cron scheduled cleanup for life_print_tokens: daily DELETE where expires_at < now().
+    Currently handled opportunistically in edge fn, fine for low volume indefinitely.
   - Family Tree tab: people registry with relationships, entry counts,
     DB tables: life_people + life_entry_people junction
   - Other Peecho products: mug, t-shirt with photo + short quote
@@ -521,7 +520,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.47</title>
+  <title>My Life Story v2.49</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1560,6 +1559,11 @@ Name:
     #toast { position: fixed; bottom: 90px; right: 20px; background: var(--ink); color: var(--cream); padding: 12px 20px; border-radius: 8px; font-size: 0.88rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 999; max-width: 280px; }
     @media (min-width: 701px) { #toast { bottom: 30px; right: 30px; } }
     #toast.show { opacity: 1; }
+    /* ── UNDO DELETE TOAST ── */
+    #undoToast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--cream); padding: 12px 20px; border-radius: 8px; font-size: 0.88rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 1000; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+    @media (min-width: 701px) { #undoToast { bottom: 30px; } }
+    #undoToast.show { opacity: 1; pointer-events: auto; }
+    #undoToast button { background: var(--gold); color: var(--ink); border: none; border-radius: 5px; padding: 4px 12px; font-size: 0.85rem; font-weight: 700; cursor: pointer; }
 
     @media (max-width: 600px) {
       header { padding: 16px 20px; }
@@ -1910,7 +1914,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.47</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.49</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2708,7 +2712,7 @@ Name:
     <div class="help-section">
       <h3>📬 Support</h3>
       <p>Questions, feedback or something not working?</p>
-      <p style="margin-top:8px"><a href="mailto:gethro@gmail.com" style="color:var(--gold-dark);font-weight:600">gethro@gmail.com</a></p>
+      <p style="margin-top:8px"><a href="/cdn-cgi/l/email-protection#caadafbea2b8a58aada7aba3a6e4a9a5a7" style="color:var(--gold-dark);font-weight:600"><span class="__cf_email__" data-cfemail="cea9abbaa6bca18ea9a3afa7a2e0ada1a3">[email&#160;protected]</span></a></p>
     </div>
 
     <div class="help-section">
@@ -2813,6 +2817,7 @@ Name:
 </div>
 
 <div id="toast"></div>
+<div id="undoToast"><span id="undoToastMsg">Entry deleted</span><button onclick="undoDelete()">Undo</button></div>
 
 <!-- iOS PWA install nudge — shown once after 30s on mobile Safari -->
 <div id="pwaIosOverlay" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;padding:16px;background:var(--ink);color:var(--cream);font-family:'Lato',sans-serif;box-shadow:0 -4px 20px rgba(0,0,0,0.3)">
@@ -2872,13 +2877,14 @@ Name:
   </div>
 </div>
 
-<script>
-  const DEPLOY_NOTES = "v2.47 — Entry word count badges (red/amber/green dot + word count on every card). Session-expiry toast + sign-out highlight on 401. Offline banner when device loses connection. Supabase AU region claim softened across all privacy text.";
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  const DEPLOY_NOTES = "v2.49 — Undo delete (10s toast, deferred Supabase delete, instant local removal). Error notification system: notifyDev() helper, NOTIFY_PROXY_URL constant, wired into dbgErr + AI rate limit paths. Backlog tidied: autosave + RLS audit moved to implemented, Peecho rate limit + pg_cron moved to lower. + reference_url fields (was omitted). DRAFT_KEY bumped to v2 to bust stale drafts. Supabase security hardening: RLS confirmed on all tables, exec_* functions patched with SET search_path=public, user_approvals policy tightened, storage delete policy added.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
-  const AI_ENDPOINT   = SUPABASE_URL + '/functions/v1/AI_PROXY';
-  const NOTIFY_URL    = SUPABASE_URL + '/functions/v1/APPROVE_USER';
+  const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
+  const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
+  const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
   const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
@@ -2930,8 +2936,35 @@ Name:
 
   // ── Debug ────────────────────────────────────────────────────────
   function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
-  function dbgErr(area,...args){ console.error(`[${area}] ERROR`,...args); }
+  function dbgErr(area,...args){
+    console.error(`[${area}] ERROR`,...args);
+    // Forward serious errors to NOTIFY_PROXY (fire-and-forget, never throws)
+    try {
+      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      notifyDev('error', area, msg);
+    } catch(e) {}
+  }
   function dbgWarn(area,...args){ console.warn(`[${area}] WARN`,...args); }
+
+  // ── Dev error notifications ───────────────────────────────────────
+  // Posts to NOTIFY_PROXY edge function which forwards to Telegram (and optionally
+  // Resend email). Fire-and-forget — never throws, never blocks the user.
+  // Deduplication: same area+message is suppressed for 60s to avoid spam.
+  var _notifyCache = {};
+  function notifyDev(level, area, detail) {
+    if (!NOTIFY_PROXY_URL) return;
+    var key = area + '|' + detail.substring(0, 80);
+    var now = Date.now();
+    if (_notifyCache[key] && now - _notifyCache[key] < 60000) return; // dedupe 60s
+    _notifyCache[key] = now;
+    var user = currentUser ? currentUser.email || currentUser.id : 'unauthenticated';
+    var payload = { level: level, area: area, detail: detail, user: user, ts: new Date().toISOString(), version: '2.48' };
+    fetch(NOTIFY_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      body: JSON.stringify(payload)
+    }).catch(function(){}); // truly fire-and-forget
+  }
 
   // ── html2pdf standalone test (remove after debugging) ───────────
   window.testHtml2pdf = async function() {
@@ -2963,7 +2996,7 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.47 starting...');
+    dbg('INIT','v2.49 starting...');
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
@@ -3499,8 +3532,10 @@ Name:
         return content.trim();
       } catch (err) {
         if ((err.message.includes('429') || err.message.includes('rate')) && attempt < 3) {
+          if (attempt === 2) notifyDev('warn', 'AI', 'Groq rate limit hit — retrying attempt ' + attempt);
           await new Promise(r => setTimeout(r, attempt * 8000)); continue;
         }
+        if (err.message.includes('429') || err.message.includes('rate')) notifyDev('error', 'AI', 'Groq rate limit — all retries exhausted: ' + err.message);
         throw err;
       }
     }
@@ -3879,7 +3914,7 @@ Name:
   // while the user is on the memories tab and has content. Restored
   // on next visit with a toast. Cleared on save, save+new, or cancel.
   var _draftTimer = null;
-  var DRAFT_KEY   = 'mls_draft_v1';
+  var DRAFT_KEY   = 'mls_draft_v2'; // v2: added reference + reference_url fields
 
   function draftSave() {
     var title  = document.getElementById('memTitle')  ? document.getElementById('memTitle').value  : '';
@@ -3896,6 +3931,8 @@ Name:
       date:           getFieldVal2('recTagDate'),
       location:       getFieldVal('recTagLocation','recTagLocationCustom'),
       people:         getFieldVal2('recTagPeople'),
+      reference:      getFieldVal2('recTagRef'),
+      reference_url:  getFieldVal2('recTagRefUrl'),
       ts: Date.now()
     };
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch(e) {}
@@ -3929,6 +3966,15 @@ Name:
         pEl.value = d.people;
         renderTagChipManager('recPeopleChips', d.people.split(',').map(function(s){ return s.trim(); }).filter(Boolean), 'people', 'rec', null);
       }
+    }
+    if (d.reference) {
+      var refEl = document.getElementById('recTagRef');
+      var refUrlEl = document.getElementById('recTagRefUrl');
+      if (refEl) refEl.value = d.reference;
+      if (refUrlEl && d.reference_url) refUrlEl.value = d.reference_url;
+      var urls = d.reference_url ? d.reference_url.split('|||') : [];
+      var items = d.reference.split('|||').map(function(label, i){ return { label: label, url: urls[i] || '' }; });
+      renderTagChipManager('recRefChips', items.map(function(i){ return i.label; }), 'references', 'rec', null);
     }
     memCheckButtons();
     toast('📝 Draft restored');
@@ -6030,20 +6076,64 @@ Name:
     return out;
   }
 
-  // ── Delete single entry ──────────────────────────────────────────
-  async function deleteEntry(entryId) {
+  // ── Delete single entry (with 10-second undo) ───────────────────
+  var _undoTimer    = null;  // setTimeout handle for deferred delete
+  var _undoEntry    = null;  // snapshot of entry being deleted
+  var _undoEntryId  = null;  // id of entry pending deletion
+
+  function deleteEntry(entryId) {
     if (!currentUser) return;
-    if (!confirm('Delete this entry? This cannot be undone.')) return;
-    try {
-      const res = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
-        method: 'DELETE', headers: getAuthHeaders()
-      });
-      if (!res.ok) { toast('Could not delete entry'); return; }
-      entries = entries.filter(e => e.id !== entryId);
-      toast('Entry deleted');
-      if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries(); if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
-      else renderTimeline();
-    } catch(err) { toast('Error: ' + err.message); }
+    // Find and snapshot the entry before removing from local array
+    var entry = entries.find(function(e){ return e.id === entryId; });
+    if (!entry) return;
+    // If there is already a pending undo, commit it immediately before starting a new one
+    if (_undoTimer) { clearTimeout(_undoTimer); _commitDelete(); }
+    _undoEntryId = entryId;
+    _undoEntry   = entry;
+    // Remove from local state and re-render immediately — feels instant
+    entries = entries.filter(function(e){ return e.id !== entryId; });
+    _refreshActivePanel();
+    // Show undo toast for 10 seconds
+    var msg = document.getElementById('undoToastMsg');
+    if (msg) msg.textContent = '♻️ Entry deleted';
+    var ut = document.getElementById('undoToast');
+    if (ut) ut.classList.add('show');
+    _undoTimer = setTimeout(function(){ _commitDelete(); }, 10000);
+  }
+
+  function undoDelete() {
+    if (!_undoTimer) return;
+    clearTimeout(_undoTimer);
+    _undoTimer = null;
+    // Restore entry to local array and re-render
+    if (_undoEntry) entries.push(_undoEntry);
+    entries.sort(function(a,b){ return a.timestamp < b.timestamp ? -1 : 1; });
+    _undoEntry   = null;
+    _undoEntryId = null;
+    var ut = document.getElementById('undoToast');
+    if (ut) ut.classList.remove('show');
+    _refreshActivePanel();
+    toast('Entry restored');
+  }
+
+  function _commitDelete() {
+    // Fired after 10s timeout — actually delete from Supabase
+    var id = _undoEntryId;
+    _undoTimer   = null;
+    _undoEntry   = null;
+    _undoEntryId = null;
+    var ut = document.getElementById('undoToast');
+    if (ut) ut.classList.remove('show');
+    if (!id || !currentUser) return;
+    fetch(DB_URL + '?id=eq.' + id + '&user_id=eq.' + currentUser.id, {
+      method: 'DELETE', headers: getAuthHeaders()
+    }).catch(function(err){ dbgErr('DELETE', err.message); });
+  }
+
+  function _refreshActivePanel() {
+    if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries();
+    else if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
+    else renderTimeline();
   }
 
   // ── The Essentials ──────────────────────────────────────────────
@@ -9442,13 +9532,4 @@ Name:
       if (el) {
         el.addEventListener('input', memCheckButtons);
         // Mark that the user has personally typed/spoken content — enables autosave
-        // and unsaved-content warnings. Not set by memAppendQuestion() (AI-only writes).
-        el.addEventListener('input', () => { _userHasTyped = true; });
-      }
-    });
-    // Memories tab is active on load — start autosave ticker immediately
-    draftStartTicker();
-  });
-</script>
-</body>
-</html>
+        // and unsaved-content warnings. Not set by memAppendQuestion() 
