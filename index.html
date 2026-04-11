@@ -20,7 +20,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.54 — Notification coverage: dbgWarn now fires Telegram for serious areas (AUTH, DB, INIT, MIC, AI); fresh sign-ins notify via onAuthStateChange SIGNED_IN event (page-load session restores suppressed via _initSessionRestored flag); new user signup fires notifyDev info alongside existing notifyAdmin; USER_UPDATED event notifies (covers password resets).";
+  const DEPLOY_NOTES = "v2.55 — Android mic root-cause fix: onresult loop now starts at e.resultIndex (not 0) — with continuous=true e.results is cumulative so iterating from 0 re-processed old finals causing words to never appear; getUserMedia now iOS-only (Android does not need audio priming and the live MediaStream competed with SpeechRecognition on some devices).";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -176,7 +176,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.54
+  Current: v2.55
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -305,7 +305,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.54 → next review at v2.60.
+  Build counter: currently at v2.55 → next review at v2.60.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -473,7 +473,7 @@ Name:
   - IMPLEMENTED v2.40: Help panel now includes About, Support (email), Privacy & Terms sections.
     Remaining: donation link, feature request form, mission statement prose
 
-  HOSTING — DONE (v2.54)
+  HOSTING — DONE (v2.55)
   - Domain: lifetold.app (registered via Cloudflare Registrar, ~$15/yr)
   - Hosting: Cloudflare Pages — free tier, auto-deploys on every GitHub push
   - Primary URL: https://lifetold.app
@@ -491,7 +491,7 @@ Name:
   -----------------
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
-  - Android mic: continuous=true (v2.54, same as iOS). continuous=false caused
+  - Android mic: continuous=true (v2.55, same as iOS). continuous=false caused
     constant restart beeping and isFinal never firing on real Android Chrome.
     onend restart safety net kept at 800ms delay for unexpected drops.
   - iOS TTS: must prime speechSynthesis on user gesture tap
@@ -538,7 +538,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.54</title>
+  <title>My Life Story v2.55</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1957,7 +1957,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.54</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.55</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2921,7 +2921,7 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const DEPLOY_NOTES = "v2.54 — Notification coverage: dbgWarn now fires Telegram for serious areas (AUTH, DB, INIT, MIC, AI); fresh sign-ins notify via onAuthStateChange SIGNED_IN event (page-load session restores suppressed via _initSessionRestored flag); new user signup fires notifyDev info alongside existing notifyAdmin; USER_UPDATED event notifies (covers password resets).";
+  const DEPLOY_NOTES = "v2.55 — Android mic root-cause fix: onresult loop now starts at e.resultIndex (not 0) — with continuous=true e.results is cumulative so iterating from 0 re-processed old finals causing words to never appear; getUserMedia now iOS-only (Android does not need audio priming and the live MediaStream competed with SpeechRecognition on some devices).";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3052,7 +3052,7 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.54 starting...');
+    dbg('INIT','v2.55 starting...');
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
@@ -3332,7 +3332,7 @@ Name:
     else toast('Welcome back!');
   }
 
-  // showDisclaimer() removed in v2.54 — was dead code referencing old emailInput/passwordInput elements.
+  // showDisclaimer() removed in v2.55 — was dead code referencing old emailInput/passwordInput elements.
   // New flow: landingShowDisclaimer() handles all create-account validation.
 
   async function acceptDisclaimer() {
@@ -3848,22 +3848,27 @@ Name:
     // with continuous=false — causing ~3 restarts/second and zero onresult events.
     var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
                 (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    dbg('MIC', 'Platform: ' + (isIOS ? 'iOS — using continuous:true' : 'non-iOS — using continuous:false'));
+    dbg('MIC', 'Platform: ' + (isIOS ? 'iOS (continuous=true, getUserMedia primed)' : 'Android/desktop (continuous=true, no getUserMedia)'));
 
-    // ── Prime the iOS audio session via getUserMedia ─────────────────
+    // ── Prime the iOS audio session via getUserMedia (iOS only) ────────
     // webkitSpeechRecognition silently fails on iOS if getUserMedia hasn't
     // been called first in the same gesture context.
     // CRITICAL: keep the stream alive until stopMemMic() — stopping tracks
     // early deactivates the audio session before recognition can claim it.
+    // On Android, getUserMedia is NOT called — it is unnecessary and keeping
+    // a raw MediaStream alive alongside SpeechRecognition can compete for the
+    // audio hardware on some Android devices, causing onresult to never fire.
     var primedStream = null;
-    try {
-      primedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      dbg('MIC', 'getUserMedia succeeded — audio session primed, stream kept alive');
-    } catch (permErr) {
-      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
-        return toast('Microphone access denied — please allow mic in your browser settings');
+    if (isIOS) {
+      try {
+        primedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        dbg('MIC', 'getUserMedia succeeded — audio session primed, stream kept alive');
+      } catch (permErr) {
+        if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+          return toast('Microphone access denied — please allow mic in your browser settings');
+        }
+        dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
       }
-      dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
     }
 
     // Abort any existing session cleanly
@@ -3898,16 +3903,21 @@ Name:
       // iOS: continuous=true keeps session open — iOS kills sessions instantly
       // with continuous=false causing a restart storm with no onresult events.
       // Android: continuous=false was previously used with manual onend restart,
-      // but real-device testing (v2.54) showed this caused constant beeping
+      // but real-device testing (v2.55) showed this caused constant beeping
       // (browser chime on each restart) and isFinal never firing because sessions
       // ended before speech was committed. continuous=true fixes both.
       // The onend restart safety net below still covers any unexpected drops.
       rec.continuous = true;
 
       rec.onresult = function(e) {
+        // CRITICAL: start at e.resultIndex, not 0.
+        // With continuous=true, e.results is cumulative — iterating from 0
+        // on every event re-processes already-committed results, doubling words
+        // and breaking the accumulated/interim split. e.resultIndex points to
+        // the first result that is new in this event.
         var interim = '';
         var newFinals = '';
-        for (var i = 0; i < e.results.length; i++) {
+        for (var i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
             newFinals += (newFinals ? ' ' : '') + e.results[i][0].transcript.trim();
           } else {
