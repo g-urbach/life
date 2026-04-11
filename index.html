@@ -20,7 +20,7 @@
   After EVERY build, without exception and without being asked:
 
   1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.55 — Android mic root-cause fix: onresult loop now starts at e.resultIndex (not 0) — with continuous=true e.results is cumulative so iterating from 0 re-processed old finals causing words to never appear; getUserMedia now iOS-only (Android does not need audio priming and the live MediaStream competed with SpeechRecognition on some devices).";
+  const DEPLOY_NOTES = "v2.56 — New user signup fixes: (1) switching to create account mode now clears all fields and focuses email (previously carried over sign-in field values); (2) signUp() no longer manually sets currentUser — onAuthStateChange owns auth state; activation panel shown only when Supabase returns no session (email confirmation ON); if session returned immediately (email confirmation OFF in dashboard) onAuthStateChange handles login gracefully.";
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -176,7 +176,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.55
+  Current: v2.56
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -305,7 +305,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.55 → next review at v2.60.
+  Build counter: currently at v2.56 → next review at v2.60.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -473,7 +473,7 @@ Name:
   - IMPLEMENTED v2.40: Help panel now includes About, Support (email), Privacy & Terms sections.
     Remaining: donation link, feature request form, mission statement prose
 
-  HOSTING — DONE (v2.55)
+  HOSTING — DONE (v2.56)
   - Domain: lifetold.app (registered via Cloudflare Registrar, ~$15/yr)
   - Hosting: Cloudflare Pages — free tier, auto-deploys on every GitHub push
   - Primary URL: https://lifetold.app
@@ -491,7 +491,7 @@ Name:
   -----------------
   - AI Review JSON occasionally malformed: using 3 separate plain-text
     AI calls to avoid JSON escaping issues with free text
-  - Android mic: continuous=true (v2.55, same as iOS). continuous=false caused
+  - Android mic: continuous=true (v2.56, same as iOS). continuous=false caused
     constant restart beeping and isFinal never firing on real Android Chrome.
     onend restart safety net kept at 800ms delay for unexpected drops.
   - iOS TTS: must prime speechSynthesis on user gesture tap
@@ -538,7 +538,7 @@ Name:
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="My Life Story">
   <meta name="theme-color" content="#c9a96e">
-  <title>My Life Story v2.55</title>
+  <title>My Life Story v2.56</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1957,7 +1957,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1>My <span>Life Story</span> ❤️ <small>v2.55</small></h1>
+  <h1>My <span>Life Story</span> ❤️ <small>v2.56</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2921,7 +2921,7 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const DEPLOY_NOTES = "v2.55 — Android mic root-cause fix: onresult loop now starts at e.resultIndex (not 0) — with continuous=true e.results is cumulative so iterating from 0 re-processed old finals causing words to never appear; getUserMedia now iOS-only (Android does not need audio priming and the live MediaStream competed with SpeechRecognition on some devices).";
+  const DEPLOY_NOTES = "v2.56 — New user signup fixes: (1) switching to create account mode now clears all fields and focuses email (previously carried over sign-in field values); (2) signUp() no longer manually sets currentUser — onAuthStateChange owns auth state; activation panel shown only when Supabase returns no session (email confirmation ON); if session returned immediately (email confirmation OFF in dashboard) onAuthStateChange handles login gracefully.";
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3052,7 +3052,7 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.55 starting...');
+    dbg('INIT','v2.56 starting...');
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
@@ -3203,7 +3203,12 @@ Name:
     document.getElementById('landingModeToggleBtn').textContent = 'Sign in';
     document.getElementById('landingForgotRow').style.display = 'none';
     document.getElementById('landingAuthError').style.display = 'none';
-    document.getElementById('landingPasswordConfirm').focus();
+    // Always start with blank fields in create mode — browser autofill from
+    // the sign-in fields must not carry over, and confirm password must be empty.
+    document.getElementById('landingEmail').value = '';
+    document.getElementById('landingPassword').value = '';
+    document.getElementById('landingPasswordConfirm').value = '';
+    document.getElementById('landingEmail').focus();
   }
 
   // Single entry point for the primary button — delegates based on mode
@@ -3332,7 +3337,7 @@ Name:
     else toast('Welcome back!');
   }
 
-  // showDisclaimer() removed in v2.55 — was dead code referencing old emailInput/passwordInput elements.
+  // showDisclaimer() removed in v2.56 — was dead code referencing old emailInput/passwordInput elements.
   // New flow: landingShowDisclaimer() handles all create-account validation.
 
   async function acceptDisclaimer() {
@@ -3405,20 +3410,30 @@ Name:
     if (error) { toast('Sign up failed: ' + error.message); return; }
     notifyAdmin(email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
     notifyDev('info', 'AUTH', 'New user signed up: ' + email);
-    // Save disclaimer acceptance — user may not have a session yet if email confirm required,
-    // so _saveDisclaimerAcceptance will be called again on first login via onAuthStateChange
-    if (data?.user) {
-      currentUser = data.user;
-      sessionToken = data.session?.access_token || null;
-      await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save on signup failed (non-fatal):',e.message));
-    }
-    // Show activation panel — Supabase requires email confirmation before sign-in
-    document.getElementById('landingActivationEmail').textContent = email;
-    document.getElementById('landingAuthPanel').style.display = 'none';
-    document.getElementById('landingActivationPanel').style.display = 'block';
-    document.getElementById('forgotPanel').style.display = 'none';
     window._pendingEmail = null;
     window._pendingPass  = null;
+
+    // Check whether Supabase returned a live session.
+    // session present  → "Confirm email" is OFF in Supabase dashboard. User is
+    //                    already authenticated. onAuthStateChange will fire and
+    //                    handle login — we just need to save disclaimer acceptance.
+    // session null     → "Confirm email" is ON (correct/expected). Show the
+    //                    activation panel and wait for the user to click the link.
+    if (data?.session) {
+      // Email confirmation disabled in Supabase — user is already signed in.
+      // Do NOT manually set currentUser here; onAuthStateChange owns that.
+      // Save disclaimer now since we have a session.
+      dbgWarn('AUTH', 'signUp returned live session — Supabase email confirmation may be disabled');
+      await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save on signup failed (non-fatal):',e.message));
+      // onAuthStateChange will open the app — nothing more to do here.
+    } else {
+      // Email confirmation required — show the activation pending panel.
+      // Disclaimer will be saved again on first real login via onAuthStateChange.
+      document.getElementById('landingActivationEmail').textContent = email;
+      document.getElementById('landingAuthPanel').style.display = 'none';
+      document.getElementById('landingActivationPanel').style.display = 'block';
+      document.getElementById('forgotPanel').style.display = 'none';
+    }
   }
 
   async function notifyAdmin(email) {
@@ -3903,7 +3918,7 @@ Name:
       // iOS: continuous=true keeps session open — iOS kills sessions instantly
       // with continuous=false causing a restart storm with no onresult events.
       // Android: continuous=false was previously used with manual onend restart,
-      // but real-device testing (v2.55) showed this caused constant beeping
+      // but real-device testing (v2.56) showed this caused constant beeping
       // (browser chime on each restart) and isFinal never firing because sessions
       // ended before speech was committed. continuous=true fixes both.
       // The onend restart safety net below still covers any unexpected drops.
