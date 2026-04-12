@@ -3391,53 +3391,69 @@ Name:
     ]);
     dbg('DISCLAIMER', 'Acceptance saved: version='+DISCLAIMER_VERSION+' at='+now);
     window._pendingDisclaimerAcceptedAt = null;
+    _disclaimerSavedThisSession = true; // prevents any further _checkDisclaimerVersion calls this page load
   }
 
   // Check if user needs to (re-)accept the current disclaimer version
   async function _checkDisclaimerVersion() {
     if (!currentUser) return;
-    // If disclaimer was just accepted during this signup flow, save it now and skip re-check.
-    // Check both the in-memory flag (same-page flow) and localStorage (survives email
-    // confirmation redirect — the flag is set in acceptDisclaimer() before signUp()).
-    var lsPending = null;
-    try { lsPending = localStorage.getItem('lt_disclaimer_pending'); } catch(e) {}
-    if (_disclaimerJustAccepted || lsPending) {
-      if (lsPending) window._pendingDisclaimerAcceptedAt = lsPending; // restore timestamp
-      _disclaimerJustAccepted = false;
-      try { localStorage.removeItem('lt_disclaimer_pending'); } catch(e) {}
-      dbg('DISCLAIMER', 'Just accepted (in-memory or localStorage) — saving and skipping re-check');
-      await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save after signup failed:',e.message));
+    // Guard 1: already saved this page session — no need to check again
+    if (_disclaimerSavedThisSession) {
+      dbg('DISCLAIMER', 'Already saved this session — skipping');
       return;
     }
+    // Guard 2: a check is already in flight — don't run concurrently
+    if (_disclaimerCheckRunning) {
+      dbg('DISCLAIMER', 'Check already in progress — skipping');
+      return;
+    }
+    _disclaimerCheckRunning = true;
     try {
-      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=in.(disclaimer_version,disclaimer_accepted_at)', { headers: getAuthHeaders() });
-      if (!res.ok) return;
-      var rows = await res.json();
-      var savedVersion = (rows.find(function(r){ return r.key==='disclaimer_version'; }) || {}).value || null;
-      if (savedVersion === DISCLAIMER_VERSION) {
-        dbg('DISCLAIMER', 'Current version accepted:', savedVersion);
-        return; // all good
+      // If disclaimer was just accepted during this signup flow, save it now and skip re-check.
+      // Check both the in-memory flag (same-page flow) and localStorage (survives email
+      // confirmation redirect — the flag is set in acceptDisclaimer() before signUp()).
+      var lsPending = null;
+      try { lsPending = localStorage.getItem('lt_disclaimer_pending'); } catch(e) {}
+      if (_disclaimerJustAccepted || lsPending) {
+        if (lsPending) window._pendingDisclaimerAcceptedAt = lsPending; // restore timestamp
+        _disclaimerJustAccepted = false;
+        try { localStorage.removeItem('lt_disclaimer_pending'); } catch(e) {}
+        dbg('DISCLAIMER', 'Just accepted (in-memory or localStorage) — saving and skipping re-check');
+        await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save after signup failed:',e.message));
+        return;
       }
-      // Version mismatch or first login — show re-consent overlay
-      dbg('DISCLAIMER', 'Version mismatch — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
-      var overlay = document.getElementById('disclaimerOverlay');
-      var checkEl = document.getElementById('disclaimerCheck');
-      var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
-      if (checkEl) checkEl.checked = false;
-      // Change button text for re-consent (no sign-up, just save acceptance)
-      if (btnEl) {
-        btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
-        btnEl.onclick = async function() {
-          if (!checkEl.checked) return toast('Please tick the checkbox to agree');
-          overlay.style.display = 'none';
-          window._pendingDisclaimerAcceptedAt = new Date().toISOString();
-          await _saveDisclaimerAcceptance();
-          toast('Thank you — your acceptance has been updated.');
-        };
+      try {
+        var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=in.(disclaimer_version,disclaimer_accepted_at)', { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        var rows = await res.json();
+        var savedVersion = (rows.find(function(r){ return r.key==='disclaimer_version'; }) || {}).value || null;
+        if (savedVersion === DISCLAIMER_VERSION) {
+          dbg('DISCLAIMER', 'Current version accepted:', savedVersion);
+          return; // all good
+        }
+        // Version mismatch or first login — show re-consent overlay
+        dbg('DISCLAIMER', 'Version mismatch — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
+        var overlay = document.getElementById('disclaimerOverlay');
+        var checkEl = document.getElementById('disclaimerCheck');
+        var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
+        if (checkEl) checkEl.checked = false;
+        // Change button text for re-consent (no sign-up, just save acceptance)
+        if (btnEl) {
+          btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
+          btnEl.onclick = async function() {
+            if (!checkEl.checked) return toast('Please tick the checkbox to agree');
+            overlay.style.display = 'none';
+            window._pendingDisclaimerAcceptedAt = new Date().toISOString();
+            await _saveDisclaimerAcceptance();
+            toast('Thank you — your acceptance has been updated.');
+          };
+        }
+        if (overlay) overlay.style.display = 'flex';
+      } catch(err) {
+        dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
       }
-      if (overlay) overlay.style.display = 'flex';
-    } catch(err) {
-      dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
+    } finally {
+      _disclaimerCheckRunning = false;
     }
   }
 
@@ -3515,6 +3531,8 @@ Name:
   var _authExpiredShown = false;
   var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
   var _disclaimerJustAccepted = false; // true after signup disclaimer accept — saves on first onAuthStateChange, skips re-check
+  var _disclaimerCheckRunning = false; // prevents concurrent/double _checkDisclaimerVersion calls
+  var _disclaimerSavedThisSession = false; // once saved, skip all further checks this page load
   function handleAuthError(res) {
     if (res.status === 401 && currentUser && !_authExpiredShown) {
       _authExpiredShown = true;
