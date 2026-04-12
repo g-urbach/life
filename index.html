@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.67
+     Current APP_VERSION: v2.68
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -181,7 +181,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.67
+  Current: v2.68
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -318,7 +318,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.67 → next review at v2.70.
+  Build counter: currently at v2.68 → next review at v2.70.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -2001,7 +2001,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.67</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.68</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2860,8 +2860,8 @@ Name:
       I have read and agree to the above disclaimer.
     </label>
     <div style="display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1" onclick="acceptDisclaimer()">I Agree — Sign Up</button>
-      <button class="btn btn-ghost" onclick="document.getElementById('disclaimerOverlay').style.display='none'">Cancel</button>
+      <!-- Buttons injected dynamically by _checkDisclaimerVersion() -->
+      <button class="btn btn-primary" style="flex:1">I Agree</button>
     </div>
   </div>
 </div>
@@ -2965,8 +2965,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.67';
-  const DEPLOY_NOTES = APP_VERSION + ' — deploy-v25: filename must match APP_VERSION or deploy is blocked (drop gate + regression fail + deploy button disabled). Closes the version-bump enforcement loop.';
+  const APP_VERSION  = 'v2.68';
+  const DEPLOY_NOTES = APP_VERSION + ' — Remove pre-signup T&C overlay entirely. T&Cs now shown only via _checkDisclaimerVersion after login. Simple: create account, confirm email, log in, see T&Cs once if not yet accepted.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3194,16 +3194,7 @@ Name:
 
       updateAuthUI();
       if (currentUser) {
-        // If disclaimer was accepted during signup (timestamp still held in memory or localStorage),
-        // save it to DB now that we have a real session. This covers the email-confirmation flow
-        // where signUp() had no session to write with. The save is idempotent so safe to call twice.
-        var lsPending = null;
-        try { lsPending = localStorage.getItem('lt_disclaimer_pending'); } catch(e) {}
-        if (window._pendingDisclaimerAcceptedAt || lsPending) {
-          if (lsPending && !window._pendingDisclaimerAcceptedAt) window._pendingDisclaimerAcceptedAt = lsPending;
-          try { localStorage.removeItem('lt_disclaimer_pending'); } catch(e) {}
-          await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save on auth change failed:',e.message));
-        }
+        // On every login: check if user has accepted current T&Cs. If not, show overlay.
         await _checkDisclaimerVersion(); await loadEntries(); await loadBookSettings(); showReminder(); renderDashboard(); draftRestore();
       }
     });
@@ -3374,7 +3365,7 @@ Name:
     msg.style.display = 'block';
   }
 
-  function landingShowDisclaimer() {
+  async function landingShowDisclaimer() {
     const email   = document.getElementById('landingEmail').value.trim();
     const pass    = document.getElementById('landingPassword').value;
     const confirm = document.getElementById('landingPasswordConfirm').value;
@@ -3382,10 +3373,10 @@ Name:
     if (!pass)  { showAuthError('Please enter a password.'); return; }
     if (pass.length < 6) { showAuthError('Password must be at least 6 characters.'); return; }
     if (pass !== confirm) { showAuthError('Passwords do not match — please re-enter them.'); return; }
-    // Store credentials for use in acceptDisclaimer → signUp()
+    // No pre-signup T&C overlay — _checkDisclaimerVersion handles it after first login.
     window._pendingEmail = email;
     window._pendingPass  = pass;
-    document.getElementById('disclaimerOverlay').style.display = 'flex';
+    await signUp();
   }
 
   async function signIn() {
@@ -3398,18 +3389,8 @@ Name:
   }
 
   // showDisclaimer() removed in v2.59 — was dead code referencing old emailInput/passwordInput elements.
-  // New flow: landingShowDisclaimer() handles all create-account validation.
-
-  async function acceptDisclaimer() {
-    if (!document.getElementById('disclaimerCheck').checked)
-      return toast('Please tick the checkbox to agree');
-    document.getElementById('disclaimerOverlay').style.display = 'none';
-    window._pendingDisclaimerAcceptedAt = new Date().toISOString();
-    // Persist to localStorage so the timestamp survives the page reload that happens
-    // when the email confirmation link redirects back. Cleared in onAuthStateChange.
-    try { localStorage.setItem('lt_disclaimer_pending', window._pendingDisclaimerAcceptedAt); } catch(e) {}
-    await signUp();
-  }
+  // acceptDisclaimer() removed in v2.68 — pre-signup T&C overlay removed entirely.
+  // T&C check now happens via _checkDisclaimerVersion() after every successful login.
 
   // Called after successful sign-up/sign-in to persist disclaimer acceptance
   async function _saveDisclaimerAcceptance() {
