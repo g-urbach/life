@@ -19,8 +19,11 @@
 
   After EVERY build, without exception and without being asked:
 
-  1. Bump the version number here AND in <title>, AND in the <h1> header,
-  const DEPLOY_NOTES = "v2.64 — Add favicon link tags (favicon-32.png, favicon-16.png, apple-touch-icon.png). Favicon files generated and ready to deploy via deploy-v22.: 'Every life should be told.' Fix double-disclaimer on new signup (localStorage flag survives email confirmation redirect). Add emailRedirectTo lifetold.app to signUp call.";
+  1. Bump APP_VERSION — that's the ONLY string to change for versioning.
+     APP_VERSION is declared once near the top of the <script> block.
+     The <title>, <h1>, DEPLOY_NOTES, and dbg init line all read from it at runtime.
+     Also update DEPLOY_NOTES text to describe what changed this build.
+     Current APP_VERSION: v2.65
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -176,7 +179,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.64
+  Current: v2.65
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -313,9 +316,26 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.62 → next review at v2.70.
+  Build counter: currently at v2.65 → next review at v2.70.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
+
+  ⚠️  WIP — WORK IN PROGRESS (incomplete across sessions)
+  --------------------------------------------------------
+  Keep this section honest. Add items when work is started but not finished.
+  Remove or move items only when fully done and tested. If in doubt, leave it here.
+  Claude: review this section at the start of every session and flag anything stale.
+
+  1. SERVICE WORKER (PWA offline support)
+     Status: Broken. Blob URL approach fails in Cloudflare Pages environment.
+     Error: "The URL protocol of the script ('blob-request://...') is not supported"
+     Cause: Cloudflare rewrites blob: URLs — single-file SW injection via Blob doesn't work.
+     Fix needed: Deploy a real sw.js alongside index.html in the repo, reference it normally.
+     Impact: PWA installs work, but offline mode does not. Non-critical for now.
+
+  2. DEPLOY NOTIFY_PROXY edge function
+     Status: Client side done (v2.49). notifyDev() wired. NOTIFY_PROXY_URL constant in place.
+     Remaining: Deploy the actual Supabase edge function with Telegram bot token.
 
   BACKLOG (prioritised)
   ---------------------
@@ -511,7 +531,7 @@ Name:
     stopListening() before start() broke this on iOS 17+. Fixed by aborting inline.
     onerror 'not-allowed' is transient on iOS (service not ready) — now retries rather
     than permanently killing mic. Monitor across iOS versions.
-  - Double-disclaimer on new signup: FIXED (v2.62). localStorage flag 'lt_disclaimer_pending' bridges _disclaimerJustAccepted across the email confirmation page reload.
+  - Double-disclaimer on new signup: FIXED (v2.65). Root cause: signUp() had no session so _saveDisclaimerAcceptance() was never called before email confirmation redirect. Fix: onAuthStateChange saves pending acceptance (from localStorage timestamp) before calling _checkDisclaimerVersion. _checkDisclaimerVersion simplified to DB-only check — no flags, no race conditions.
   - Runtime error alerting: DONE (v2.49/v2.50). notifyDev() fires Telegram
     notification via NOTIFY_PROXY edge function. Telegram bot live and tested.
   - Panel scroll bug: FIXED v1.97 — stray </div> after Peecho anchor was
@@ -560,7 +580,7 @@ Name:
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="manifest" id="pwaManifest">
-  <title>LifeTold v2.64</title>
+  <title>LifeTold</title><!-- version set at runtime from APP_VERSION -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
@@ -1979,7 +1999,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small>v2.64</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.65</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2942,8 +2962,9 @@ Name:
   </div>
 </div>
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const DEPLOY_NOTES = "v2.64 — Add favicon link tags (favicon-32.png, favicon-16.png, apple-touch-icon.png). Favicon files generated and ready to deploy via deploy-v22.: 'Every life should be told.' Fix double-disclaimer on new signup (localStorage flag survives email confirmation redirect). Add emailRedirectTo lifetold.app to signUp call.";
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"><\/script><script>
+  const APP_VERSION  = 'v2.65';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix double T&C: DB-first check in _checkDisclaimerVersion (always query before showing overlay); save pending acceptance in onAuthStateChange before check; remove brittle flag/localStorage race workarounds. Introduce APP_VERSION single source of truth for versioning.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3074,7 +3095,10 @@ Name:
   };
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
-    dbg('INIT','v2.64 starting...');
+    dbg('INIT', APP_VERSION + ' starting...');
+    document.title = 'LifeTold ' + APP_VERSION;
+    var lbl = document.getElementById('appVersionLabel');
+    if (lbl) lbl.textContent = APP_VERSION;
     initTheme();
 
     // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
@@ -3167,7 +3191,19 @@ Name:
       }
 
       updateAuthUI();
-      if (currentUser) { await _checkDisclaimerVersion(); await loadEntries(); await loadBookSettings(); showReminder(); renderDashboard(); draftRestore(); }
+      if (currentUser) {
+        // If disclaimer was accepted during signup (timestamp still held in memory or localStorage),
+        // save it to DB now that we have a real session. This covers the email-confirmation flow
+        // where signUp() had no session to write with. The save is idempotent so safe to call twice.
+        var lsPending = null;
+        try { lsPending = localStorage.getItem('lt_disclaimer_pending'); } catch(e) {}
+        if (window._pendingDisclaimerAcceptedAt || lsPending) {
+          if (lsPending && !window._pendingDisclaimerAcceptedAt) window._pendingDisclaimerAcceptedAt = lsPending;
+          try { localStorage.removeItem('lt_disclaimer_pending'); } catch(e) {}
+          await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save on auth change failed:',e.message));
+        }
+        await _checkDisclaimerVersion(); await loadEntries(); await loadBookSettings(); showReminder(); renderDashboard(); draftRestore();
+      }
     });
   }
 
@@ -3366,12 +3402,9 @@ Name:
     if (!document.getElementById('disclaimerCheck').checked)
       return toast('Please tick the checkbox to agree');
     document.getElementById('disclaimerOverlay').style.display = 'none';
-    // Record acceptance — will be saved to life_settings after account creation
     window._pendingDisclaimerAcceptedAt = new Date().toISOString();
-    // Flag so _checkDisclaimerVersion on first login saves rather than re-shows the overlay.
-    // Also written to localStorage so the flag survives the page reload that happens when
-    // the email confirmation link redirects back to lifetold.app.
-    _disclaimerJustAccepted = true;
+    // Persist to localStorage so the timestamp survives the page reload that happens
+    // when the email confirmation link redirects back. Cleared in onAuthStateChange.
     try { localStorage.setItem('lt_disclaimer_pending', window._pendingDisclaimerAcceptedAt); } catch(e) {}
     await signUp();
   }
@@ -3391,69 +3424,41 @@ Name:
     ]);
     dbg('DISCLAIMER', 'Acceptance saved: version='+DISCLAIMER_VERSION+' at='+now);
     window._pendingDisclaimerAcceptedAt = null;
-    _disclaimerSavedThisSession = true; // prevents any further _checkDisclaimerVersion calls this page load
   }
 
-  // Check if user needs to (re-)accept the current disclaimer version
+  // Check if user needs to (re-)accept the current disclaimer version.
+  // Simple approach: always ask the DB. If the current version is already saved, do nothing.
+  // This is inherently race-safe — no flags needed.
   async function _checkDisclaimerVersion() {
     if (!currentUser) return;
-    // Guard 1: already saved this page session — no need to check again
-    if (_disclaimerSavedThisSession) {
-      dbg('DISCLAIMER', 'Already saved this session — skipping');
-      return;
-    }
-    // Guard 2: a check is already in flight — don't run concurrently
-    if (_disclaimerCheckRunning) {
-      dbg('DISCLAIMER', 'Check already in progress — skipping');
-      return;
-    }
-    _disclaimerCheckRunning = true;
     try {
-      // If disclaimer was just accepted during this signup flow, save it now and skip re-check.
-      // Check both the in-memory flag (same-page flow) and localStorage (survives email
-      // confirmation redirect — the flag is set in acceptDisclaimer() before signUp()).
-      var lsPending = null;
-      try { lsPending = localStorage.getItem('lt_disclaimer_pending'); } catch(e) {}
-      if (_disclaimerJustAccepted || lsPending) {
-        if (lsPending) window._pendingDisclaimerAcceptedAt = lsPending; // restore timestamp
-        _disclaimerJustAccepted = false;
-        try { localStorage.removeItem('lt_disclaimer_pending'); } catch(e) {}
-        dbg('DISCLAIMER', 'Just accepted (in-memory or localStorage) — saving and skipping re-check');
-        await _saveDisclaimerAcceptance().catch(e => dbgWarn('DISCLAIMER','Save after signup failed:',e.message));
-        return;
+      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.disclaimer_version', { headers: getAuthHeaders() });
+      if (!res.ok) { dbgWarn('DISCLAIMER', 'DB check failed, status:', res.status); return; }
+      var rows = await res.json();
+      var savedVersion = (rows[0] || {}).value || null;
+      if (savedVersion === DISCLAIMER_VERSION) {
+        dbg('DISCLAIMER', 'Current version already accepted:', savedVersion);
+        return; // already accepted — nothing to do
       }
-      try {
-        var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=in.(disclaimer_version,disclaimer_accepted_at)', { headers: getAuthHeaders() });
-        if (!res.ok) return;
-        var rows = await res.json();
-        var savedVersion = (rows.find(function(r){ return r.key==='disclaimer_version'; }) || {}).value || null;
-        if (savedVersion === DISCLAIMER_VERSION) {
-          dbg('DISCLAIMER', 'Current version accepted:', savedVersion);
-          return; // all good
-        }
-        // Version mismatch or first login — show re-consent overlay
-        dbg('DISCLAIMER', 'Version mismatch — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
-        var overlay = document.getElementById('disclaimerOverlay');
-        var checkEl = document.getElementById('disclaimerCheck');
-        var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
-        if (checkEl) checkEl.checked = false;
-        // Change button text for re-consent (no sign-up, just save acceptance)
-        if (btnEl) {
-          btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
-          btnEl.onclick = async function() {
-            if (!checkEl.checked) return toast('Please tick the checkbox to agree');
-            overlay.style.display = 'none';
-            window._pendingDisclaimerAcceptedAt = new Date().toISOString();
-            await _saveDisclaimerAcceptance();
-            toast('Thank you — your acceptance has been updated.');
-          };
-        }
-        if (overlay) overlay.style.display = 'flex';
-      } catch(err) {
-        dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
+      // Not yet accepted (new user or version bump) — show overlay
+      dbg('DISCLAIMER', 'Showing disclaimer — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
+      var overlay = document.getElementById('disclaimerOverlay');
+      var checkEl = document.getElementById('disclaimerCheck');
+      var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
+      if (checkEl) checkEl.checked = false;
+      if (btnEl) {
+        btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
+        btnEl.onclick = async function() {
+          if (!checkEl.checked) return toast('Please tick the checkbox to agree');
+          overlay.style.display = 'none';
+          window._pendingDisclaimerAcceptedAt = new Date().toISOString();
+          await _saveDisclaimerAcceptance();
+          toast('Thank you — your acceptance has been updated.');
+        };
       }
-    } finally {
-      _disclaimerCheckRunning = false;
+      if (overlay) overlay.style.display = 'flex';
+    } catch(err) {
+      dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
     }
   }
 
@@ -3530,9 +3535,7 @@ Name:
   // show a clear "session expired" toast and prompt the user to sign out/in.
   var _authExpiredShown = false;
   var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
-  var _disclaimerJustAccepted = false; // true after signup disclaimer accept — saves on first onAuthStateChange, skips re-check
-  var _disclaimerCheckRunning = false; // prevents concurrent/double _checkDisclaimerVersion calls
-  var _disclaimerSavedThisSession = false; // once saved, skip all further checks this page load
+
   function handleAuthError(res) {
     if (res.status === 401 && currentUser && !_authExpiredShown) {
       _authExpiredShown = true;
