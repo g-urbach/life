@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.74
+     Current APP_VERSION: v2.75
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -190,7 +190,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.74
+  Current: v2.75
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -584,6 +584,9 @@ Name:
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2018,7 +2021,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.74</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.75</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2992,8 +2995,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.74';
-  const DEPLOY_NOTES = APP_VERSION + ' — Critical fix: logActivity() was sending SUPABASE_ANON as Bearer token since v2.71, causing all activity log inserts to silently fail RLS. Now fetches live session JWT via sb.auth.getSession() before each insert.';
+  const APP_VERSION  = 'v2.75';
+  const DEPLOY_NOTES = APP_VERSION + ' — Activity log overhaul: added level+area+platform columns to all logActivity() calls so log viewer matches Telegram detail. notifyDev() events that previously only went to Telegram (sign_in, sign_up, onboarding, password_reset, etc.) now also write to Supabase. Log viewer switched to light mode, added Level filter column.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3095,18 +3098,28 @@ Name:
   }
 
   // ── Activity log ─────────────────────────────────────────────────
-  // Writes usage events to life_activity_log in Supabase. Read via the
-  // Supabase Dashboard → Table Editor → life_activity_log.
+  // Writes usage events to life_activity_log in Supabase. Read via log viewer.
   // Fire-and-forget — never throws, never blocks the user.
-  // Use for: sign-in, sign-out, entry saved, story generated, tab opened,
-  // print attempted, data deleted. NOT for errors — those go to Telegram.
-  function logActivity(action, detail) {
-    if (!currentUser) return; // only log authenticated actions
+  // logActivity(action, detail, level, area)
+  //   action  — snake_case event name (required)
+  //   detail  — human-readable description (optional, mirrors Telegram detail)
+  //   level   — 'info' | 'warn' | 'error' (default 'info')
+  //   area    — uppercase area tag e.g. 'AUTH','AI','PEECHO' (default 'APP')
+  // NOTE: also call logActivity() alongside notifyDev() so all events appear
+  // in both Telegram AND the Supabase log viewer.
+  function logActivity(action, detail, level, area) {
+    // Allow unauthenticated calls (e.g. sign_in_failed) — user_id will be null
+    var platform = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+      ? (/iPad|tablet/i.test(navigator.userAgent) ? 'tablet' : 'mobile')
+      : 'desktop';
     var payload = {
-      user_id:  currentUser.id,
-      email:    currentUser.email || null,
+      user_id:  currentUser ? currentUser.id   : null,
+      email:    currentUser ? (currentUser.email || null) : null,
       action:   action,
-      detail:   detail || null,
+      detail:   detail  || null,
+      level:    level   || 'info',
+      area:     area    || 'APP',
+      platform: platform,
       version:  (typeof APP_VERSION === 'string') ? APP_VERSION : null,
       ts:       new Date().toISOString()
     };
@@ -3186,7 +3199,7 @@ Name:
       // Notify + log — this is the closest signal we have to a completed order
       // (Peecho redirects back with ?printed=true after the user completes checkout)
       notifyDev('warn', 'PEECHO', 'Book ordered — user returned from Peecho checkout');
-      logActivity('book_ordered', null);
+      logActivity('book_ordered', null, 'warn', 'PEECHO');
     }
 
     // Show landing screen initially
@@ -3249,15 +3262,16 @@ Name:
       if (event === 'SIGNED_IN' && session) {
         if (!_initSessionRestored) {
           notifyDev('warn', 'AUTH', 'Sign-in: ' + session.user.email);
-          logActivity('sign_in', null);
+          logActivity('sign_in', 'Sign-in: ' + session.user.email, 'warn', 'AUTH');
         }
         _initSessionRestored = false; // reset so next manual sign-in notifies
       }
       if (event === 'SIGNED_OUT') {
-        logActivity('sign_out', null);
+        logActivity('sign_out', null, 'info', 'AUTH');
       }
       if (event === 'USER_UPDATED' && session) {
         notifyDev('warn', 'AUTH', 'User updated (password reset?): ' + session.user.email);
+        logActivity('user_updated', 'password reset?: ' + session.user.email, 'warn', 'AUTH');
       }
 
       updateAuthUI();
@@ -3354,15 +3368,17 @@ Name:
       if (msg.includes('invalid') || msg.includes('credentials') || msg.includes('wrong')) {
         showAuthError('Incorrect email or password. <span style="text-decoration:underline;cursor:pointer" onclick="showForgotPassword()">Forgot your password?</span>');
         // Wrong password is expected user error — logged to activity only, not Telegram
-        logActivity('sign_in_failed', 'bad_credentials');
+        logActivity('sign_in_failed', 'bad_credentials: ' + email, 'warn', 'AUTH');
       } else if (msg.includes('email') && msg.includes('confirm')) {
         showAuthError('Please check your email to activate your account before signing in.');
       } else if (msg.includes('too many')) {
         showAuthError('Too many attempts — please wait a moment and try again.');
         notifyDev('warn', 'AUTH', 'Sign-in rate limited for: ' + email);
+        logActivity('sign_in_failed', 'rate_limited: ' + email, 'warn', 'AUTH');
       } else {
         showAuthError('Sign in failed. Please try again.');
         notifyDev('error', 'AUTH', 'Unexpected sign-in error for ' + email + ': ' + error.message);
+        logActivity('sign_in_failed', 'unexpected_error: ' + email, 'error', 'AUTH');
       }
     }
   }
@@ -3435,7 +3451,7 @@ Name:
       msg.textContent = '✓ Reset link sent! Check your inbox (and spam folder).';
       btn.style.display = 'none';
       notifyDev('warn', 'AUTH', 'Password reset requested for: ' + email);
-      logActivity('password_reset_requested', null);
+      logActivity('password_reset_requested', 'email: ' + email, 'warn', 'AUTH');
     }
     msg.style.display = 'block';
   }
@@ -3532,10 +3548,12 @@ Name:
       // Notify dev via Telegram — catches rate limit, email quota, and other signup failures
       const level = (emsg.toLowerCase().includes('rate') || emsg.includes('429') || emsg.toLowerCase().includes('email') || emsg.toLowerCase().includes('limit')) ? 'warn' : 'error';
       notifyDev(level, 'AUTH', 'Signup failed for ' + email + ': ' + emsg);
+      logActivity('sign_up_failed', 'Signup failed for ' + email + ': ' + emsg, level, 'AUTH');
       return;
     }
     notifyAdmin(email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
     notifyDev('warn', 'AUTH', 'New user signed up: ' + email);
+    logActivity('sign_up', 'New user: ' + email, 'warn', 'AUTH');
     window._pendingEmail = null;
     window._pendingPass  = null;
 
@@ -3870,7 +3888,7 @@ Name:
     userProfile = { name, dob, sex };
     document.getElementById('onboardingOverlay').style.display = 'none';
     notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + name + ')');
-    logActivity('onboarding_complete', name);
+    logActivity('onboarding_complete', name, 'info', 'AUTH');
     toast('Welcome, ' + name + '! 🎉');
   }
 
@@ -3966,7 +3984,7 @@ Name:
     memSetInterviewBtn(false);
     recDeepContext = '';
     recCurQuestion = '';
-    logActivity('entry_saved', null);
+    logActivity('entry_saved', null, 'info', 'DB');
     toast('Memory saved');
   }
 
@@ -4422,7 +4440,7 @@ Name:
   // ── Core AI Review — used by both Memories and Review/Chapter detail ──────
   async function runAIReview(text, tags, panel, entryId) {
     panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
-    logActivity('ai_review_run', null);
+    logActivity('ai_review_run', null, 'info', 'AI');
     try {
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
       const hasTitle    = !!tags.title;
@@ -4760,7 +4778,7 @@ Name:
 
   async function memInterviewMe() {
     if (!currentUser) return toast('Please sign in first');
-    logActivity('interview_started', null);
+    logActivity('interview_started', null, 'info', 'AI');
     const { title, answer } = memReadEntry();
 
     // Prime iOS speech engine on user tap (required for gesture context)
@@ -5409,7 +5427,7 @@ Name:
     if (!currentUser) return toast('Please sign in first');
     const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!realEntries.length) return toast('Add some entries first!');
-    logActivity('story_generated', mode);
+    logActivity('story_generated', mode, 'info', 'AI');
 
     const out = document.getElementById('storyOutput');
     const skeleton = document.getElementById('storySkeletonLoader');
@@ -8938,7 +8956,7 @@ Name:
       if (!res.ok) { dbgErr('DB', 'confirmDelete failed:', res.status); toast('Error deleting entries'); }
       else {
         notifyDev('warn', 'AUTH', 'User deleted all their entries: ' + currentUser.email);
-        logActivity('data_deleted', 'all_entries');
+        logActivity('data_deleted', 'all_entries: ' + currentUser.email, 'warn', 'AUTH');
         entries = [];
         toast('All entries deleted');
       }
@@ -8986,7 +9004,7 @@ Name:
 
     // Log before deletion (best effort — may not reach DB if edge fn deletes user first)
     notifyDev('warn', 'AUTH', 'Account deletion confirmed by user: ' + currentUser.email);
-    logActivity('account_deletion_requested', 'confirmed_triple');
+    logActivity('account_deletion_requested', 'confirmed_triple: ' + currentUser.email, 'warn', 'AUTH');
 
     const DELETE_ACCOUNT_URL = SUPABASE_URL + '/functions/v1/DELETE_ACCOUNT';
     try {
@@ -9042,7 +9060,7 @@ Name:
   // ── PDF Export ───────────────────────────────────────────────────
   function exportPDF() {
     if (!currentStory) return toast('Generate a story first');
-    logActivity('story_exported', null);
+    logActivity('story_exported', null, 'info', 'APP');
     const name  = userProfile.name || 'My';
     const title = currentStory.funny ? name + "'s Life Story (Comedy Edition)" : name + "'s Life Story";
     const html  = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>'
@@ -9597,7 +9615,7 @@ Name:
   async function printBook() {
     if (!currentUser)  return toast('Please sign in first');
     if (!currentStory) return toast('Generate a story first');
-    logActivity('print_attempted', null);
+    logActivity('print_attempted', null, 'info', 'PEECHO');
     notifyDev('warn', 'PEECHO', 'Print as Book started by: ' + (currentUser.email || currentUser.id));
 
     const printBookBtn = document.getElementById('printBookBtn');
