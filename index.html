@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.68
+     Current APP_VERSION: v2.72
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -173,6 +173,15 @@
            photo_ai_description, parent_entry_id, title, era, location,
            people, chapter, date, reference, reference_url
 
+  DB Table: life_activity_log (added v2.71)
+  Columns: id, user_id, email, action, detail, version, ts
+  RLS: users insert own rows only; no read (admin reads via service_role in dashboard)
+  Used for: usage tracking — sign_in, sign_out, sign_in_failed, entry_saved,
+            story_generated (detail=mode), story_exported, print_attempted, book_ordered,
+            data_deleted, account_deletion_requested, password_reset_requested,
+            onboarding_complete, ai_review_run, interview_started
+  NOT for errors — those go to Telegram via notifyDev/dbgErr.
+
   DB Table: life_settings (added v1.95)
   Columns: user_id, key, value, updated_at
   RLS: users manage own rows only
@@ -318,7 +327,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.68 → next review at v2.70.
+  Build counter: currently at v2.70 → next review at v2.80.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -338,6 +347,11 @@ Name:
   2. DEPLOY NOTIFY_PROXY edge function
      Status: Client side done (v2.49). notifyDev() wired. NOTIFY_PROXY_URL constant in place.
      Remaining: Deploy the actual Supabase edge function with Telegram bot token.
+
+  3. ACCOUNT DELETION FLOW
+     Status: deleteAccount() stub added (v2.71). notifyDev + logActivity wired.
+     Remaining: Build edge function with service_role to delete auth.users row (cascades
+     to all tables via ON DELETE CASCADE migration). Add UI button in Help panel.
 
   BACKLOG (prioritised)
   ---------------------
@@ -2965,8 +2979,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.68';
-  const DEPLOY_NOTES = APP_VERSION + ' — Remove pre-signup T&C overlay entirely. T&Cs now shown only via _checkDisclaimerVersion after login. Simple: create account, confirm email, log in, see T&Cs once if not yet accepted.';
+  const APP_VERSION  = 'v2.72';
+  const DEPLOY_NOTES = APP_VERSION + ' — Telegram/activity log audit: sign-in/signup/onboarding/print/book-ordered/password-reset all notify Telegram. Wrong-password removed from Telegram (noise). PEECHO added to warn areas. Activity log wired: AI review, export, interview, onboarding, bad credentials.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3035,7 +3049,7 @@ Name:
   // dbgWarn: always logs to console. For a curated set of serious areas,
   // also fires a Telegram notification so silent warnings surface in production.
   // Non-fatal noise (PEECHO cleanup, caption failures etc.) is excluded by area.
-  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI'];
+  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO'];
   function dbgWarn(area,...args){
     console.warn(`[${area}] WARN`,...args);
     if (_WARN_NOTIFY_AREAS.includes(area)) {
@@ -3067,7 +3081,31 @@ Name:
     }).catch(function(){}); // truly fire-and-forget
   }
 
-  // ── html2pdf standalone test (remove after debugging) ───────────
+  // ── Activity log ─────────────────────────────────────────────────
+  // Writes usage events to life_activity_log in Supabase. Read via the
+  // Supabase Dashboard → Table Editor → life_activity_log.
+  // Fire-and-forget — never throws, never blocks the user.
+  // Use for: sign-in, sign-out, entry saved, story generated, tab opened,
+  // print attempted, data deleted. NOT for errors — those go to Telegram.
+  function logActivity(action, detail) {
+    if (!currentUser) return; // only log authenticated actions
+    var payload = {
+      user_id:  currentUser.id,
+      email:    currentUser.email || null,
+      action:   action,
+      detail:   detail || null,
+      version:  (typeof APP_VERSION === 'string') ? APP_VERSION : null,
+      ts:       new Date().toISOString()
+    };
+    fetch(DB_ACTIVITY_LOG_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON, 'Prefer': 'return=minimal' },
+      body:    JSON.stringify(payload)
+    }).catch(function(err) {
+      // Log proxy failure to console only — never alert user, never recurse into notifyDev
+      console.warn('[ACTIVITY] Insert failed:', err.message);
+    });
+  }
   window.testHtml2pdf = async function() {
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;top:110vh;left:0;width:148mm;background:white;font-size:12pt;padding:20mm;color:black;';
@@ -3125,6 +3163,10 @@ Name:
       // Show success toast once app has loaded — deferred so toast() is ready
       setTimeout(() => toast('🎉 Your book is on its way! Peecho will email you with tracking details.'), 1200);
       dbg('PEECHO', 'Returned from Peecho after successful order');
+      // Notify + log — this is the closest signal we have to a completed order
+      // (Peecho redirects back with ?printed=true after the user completes checkout)
+      notifyDev('warn', 'PEECHO', 'Book ordered — user returned from Peecho checkout');
+      logActivity('book_ordered', null);
     }
 
     // Show landing screen initially
@@ -3177,19 +3219,25 @@ Name:
 
       currentUser  = session?.user ?? null;
       sessionToken = session?.access_token ?? null;
-      if (currentUser) _authExpiredShown = false; // reset on fresh sign-in
+      // Reset on both fresh sign-in AND sign-out so the flag is always clean
+      // for the next session regardless of which path the user takes.
+      if (currentUser || event === 'SIGNED_OUT') _authExpiredShown = false;
 
       // Notify on sign-in and new account confirmation so every login is visible
       // in Telegram. SIGNED_IN fires on both fresh login and session restore on
       // page load — we suppress the page-load case by checking _initSessionRestored.
       if (event === 'SIGNED_IN' && session) {
         if (!_initSessionRestored) {
-          notifyDev('info', 'AUTH', 'Sign-in: ' + session.user.email);
+          notifyDev('warn', 'AUTH', 'Sign-in: ' + session.user.email);
+          logActivity('sign_in', null);
         }
         _initSessionRestored = false; // reset so next manual sign-in notifies
       }
+      if (event === 'SIGNED_OUT') {
+        logActivity('sign_out', null);
+      }
       if (event === 'USER_UPDATED' && session) {
-        notifyDev('info', 'AUTH', 'User updated (password reset?): ' + session.user.email);
+        notifyDev('warn', 'AUTH', 'User updated (password reset?): ' + session.user.email);
       }
 
       updateAuthUI();
@@ -3285,12 +3333,16 @@ Name:
       const msg = error.message.toLowerCase();
       if (msg.includes('invalid') || msg.includes('credentials') || msg.includes('wrong')) {
         showAuthError('Incorrect email or password. <span style="text-decoration:underline;cursor:pointer" onclick="showForgotPassword()">Forgot your password?</span>');
+        // Wrong password is expected user error — logged to activity only, not Telegram
+        logActivity('sign_in_failed', 'bad_credentials');
       } else if (msg.includes('email') && msg.includes('confirm')) {
         showAuthError('Please check your email to activate your account before signing in.');
       } else if (msg.includes('too many')) {
         showAuthError('Too many attempts — please wait a moment and try again.');
+        notifyDev('warn', 'AUTH', 'Sign-in rate limited for: ' + email);
       } else {
         showAuthError('Sign in failed. Please try again.');
+        notifyDev('error', 'AUTH', 'Unexpected sign-in error for ' + email + ': ' + error.message);
       }
     }
   }
@@ -3357,10 +3409,13 @@ Name:
     if (error) {
       msg.style.color = '#e07060';
       msg.textContent = 'Could not send reset email — please check the address and try again.';
+      notifyDev('error', 'AUTH', 'Password reset failed for ' + email + ': ' + error.message);
     } else {
       msg.style.color = '#6abf7b';
       msg.textContent = '✓ Reset link sent! Check your inbox (and spam folder).';
       btn.style.display = 'none';
+      notifyDev('warn', 'AUTH', 'Password reset requested for: ' + email);
+      logActivity('password_reset_requested', null);
     }
     msg.style.display = 'block';
   }
@@ -3384,7 +3439,7 @@ Name:
     const pass  = document.getElementById('landingPassword')?.value || '';
     if (!email || !pass) return toast('Please enter email and password');
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
-    if (error) { toast('Sign in failed: ' + error.message); }
+    if (error) { notifyDev('error', 'AUTH', 'signIn() failed for ' + email + ': ' + error.message); toast('Sign in failed: ' + error.message); }
     else toast('Welcome back!');
   }
 
@@ -3451,9 +3506,16 @@ Name:
     if (!email || !pass) return toast('Please enter email and password');
     dbg('AUTH','Signing up:', email);
     const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: 'https://lifetold.app' } });
-    if (error) { toast('Sign up failed: ' + error.message); return; }
+    if (error) {
+      const emsg = error.message || '';
+      toast('Sign up failed: ' + emsg);
+      // Notify dev via Telegram — catches rate limit, email quota, and other signup failures
+      const level = (emsg.toLowerCase().includes('rate') || emsg.includes('429') || emsg.toLowerCase().includes('email') || emsg.toLowerCase().includes('limit')) ? 'warn' : 'error';
+      notifyDev(level, 'AUTH', 'Signup failed for ' + email + ': ' + emsg);
+      return;
+    }
     notifyAdmin(email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
-    notifyDev('info', 'AUTH', 'New user signed up: ' + email);
+    notifyDev('warn', 'AUTH', 'New user signed up: ' + email);
     window._pendingEmail = null;
     window._pendingPass  = null;
 
@@ -3512,6 +3574,7 @@ Name:
   const DB_URL              = SUPABASE_URL + '/rest/v1/life_entries';
   const DB_SETTINGS_URL     = SUPABASE_URL + '/rest/v1/life_settings';
   const DB_DISCLAIMER_URL   = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
+  const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/rest/v1/life_activity_log'; // usage tracking
 
   // ── Auth session expiry handler ──────────────────────────────────
   // Called after any fetch — if we get a 401 and are supposedly signed in,
@@ -3786,6 +3849,8 @@ Name:
     await Promise.all(saves);
     userProfile = { name, dob, sex };
     document.getElementById('onboardingOverlay').style.display = 'none';
+    notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + name + ')');
+    logActivity('onboarding_complete', name);
     toast('Welcome, ' + name + '! 🎉');
   }
 
@@ -3881,6 +3946,7 @@ Name:
     memSetInterviewBtn(false);
     recDeepContext = '';
     recCurQuestion = '';
+    logActivity('entry_saved', null);
     toast('Memory saved');
   }
 
@@ -4309,6 +4375,7 @@ Name:
       }
     } catch(err) {
       setMemStatus('idle', ''); // always clear on error
+      dbgErr('MEM', 'memSave failed:', err.message);
       toast('Could not save — ' + err.message);
     }
   }
@@ -4329,6 +4396,7 @@ Name:
   // ── Core AI Review — used by both Memories and Review/Chapter detail ──────
   async function runAIReview(text, tags, panel, entryId) {
     panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
+    logActivity('ai_review_run', null);
     try {
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
       const hasTitle    = !!tags.title;
@@ -4666,6 +4734,7 @@ Name:
 
   async function memInterviewMe() {
     if (!currentUser) return toast('Please sign in first');
+    logActivity('interview_started', null);
     const { title, answer } = memReadEntry();
 
     // Prime iOS speech engine on user tap (required for gesture context)
@@ -5119,7 +5188,7 @@ Name:
       toast('Saved ✓');
       // Leave form intact — user may want to add another photo or adjust tags
       await loadEntries();
-    } catch(err) { toast('Error: ' + err.message); }
+    } catch(err) { dbgErr('PHOTO', 'savePhotoEntry failed:', err.message); toast('Error: ' + err.message); }
   }
 
     async function getSignedUrl(path) {
@@ -5292,6 +5361,7 @@ Name:
       if (el) { el.value = blurb.trim(); bookDetailsChanged(); }
       toast('✨ Blurb suggested — edit to taste, then Save');
     } catch(err) {
+      dbgErr('BOOKSETTINGS', 'suggestBlurb failed:', err.message);
       toast('Could not suggest blurb — try again');
     } finally {
       if (btn) { btn.textContent = '✨ Suggest'; btn.disabled = false; }
@@ -5313,6 +5383,7 @@ Name:
     if (!currentUser) return toast('Please sign in first');
     const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!realEntries.length) return toast('Add some entries first!');
+    logActivity('story_generated', mode);
 
     const out = document.getElementById('storyOutput');
     const skeleton = document.getElementById('storySkeletonLoader');
@@ -6015,7 +6086,7 @@ Name:
           reference_url: tags.reference_url || null
         })
       });
-      if (!res.ok) { toast('Could not save tags'); return; }
+      if (!res.ok) { dbgErr('DB', 'saveEntryTags failed:', res.status, 'entryId:', entryId); toast('Could not save tags'); return; }
       const idx = entries.findIndex(e => e.id === entryId);
       if (idx > -1) {
         entries[idx].era           = tags.year          || null;
@@ -6046,7 +6117,7 @@ Name:
       // Refresh whichever panel is active
       if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries(); if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
       else renderTimeline();
-    } catch(err) { toast('Error: ' + err.message); }
+    } catch(err) { dbgErr('DB', 'saveEntryTags threw:', err.message); toast('Error: ' + err.message); }
   }
 
   // Registry so we never pass tag JSON through onclick attributes
@@ -7188,13 +7259,13 @@ Name:
         headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
         body: JSON.stringify({ answer: text })
       });
-      if (!res.ok) { toast('Could not save — try again'); return; }
+      if (!res.ok) { dbgErr('DB', 'saveEntryText failed:', res.status, 'entryId:', entryId); toast('Could not save — try again'); return; }
       const e = entries.find(e => e.id === entryId);
       if (e) e.answer = text;
       toast('Entry saved ✓');
       document.getElementById('textedit-' + entryId).style.display = 'none';
       renderReviewEntries();
-    } catch(err) { toast('Error: ' + err.message); }
+    } catch(err) { dbgErr('DB', 'saveEntryText threw:', err.message); toast('Error: ' + err.message); }
   }
 
   function goToEntry(safeId) {
@@ -7395,8 +7466,8 @@ Name:
         if (e) Object.assign(e, patch);
         toast('Tags applied ✓');
         renderReview();
-      } else { toast('Could not save tags'); btn.disabled = false; btn.textContent = '＋ Apply suggested tags'; }
-    } catch(err) { toast('Error: ' + err.message); btn.disabled = false; }
+      } else { dbgErr('DB', 'applyTagSuggestions failed:', res.status, 'entryId:', entryId); toast('Could not save tags'); btn.disabled = false; btn.textContent = '＋ Apply suggested tags'; }
+    } catch(err) { dbgErr('DB', 'applyTagSuggestions threw:', err.message); toast('Error: ' + err.message); btn.disabled = false; }
   }
 
   async function acceptImprovement(entryId, btn) {
@@ -7417,10 +7488,11 @@ Name:
         toast('Entry improved ✓');
         renderReviewEntries();
       } else {
+        dbgErr('DB', 'acceptImprovement failed:', res.status, 'entryId:', entryId);
         toast('Save failed — try again');
         btn.disabled = false; btn.textContent = '✓ Accept';
       }
-    } catch(err) { toast('Error: ' + err.message); btn.disabled = false; }
+    } catch(err) { dbgErr('DB', 'acceptImprovement threw:', err.message); toast('Error: ' + err.message); btn.disabled = false; }
   }
 
   function openChapterDetail(chapter) {
@@ -8325,6 +8397,7 @@ Name:
       closeDuplicates();
       toast('\u2713 Merged entry saved. Both originals archived.');
     } catch(err) {
+      dbgErr('DB', 'dupAcceptMerge failed:', err.message);
       toast('Error: '+(err.message||'unknown'));
       if (acceptBtn) { acceptBtn.disabled=false; acceptBtn.textContent='\u2713 Accept Merge'; }
     }
@@ -8619,6 +8692,7 @@ Name:
       closeConsolidate();
       toast('✓ Entries merged and saved!');
     } catch(err) {
+      dbgErr('DB', 'consolidateApprove failed:', err.message);
       toast('Error saving: ' + (err.message||'unknown'));
       approveBtn.disabled = false;
       approveBtn.textContent = '✓ Save Merged Entry & Delete Originals';
@@ -8835,9 +8909,30 @@ Name:
     if (!confirm('Delete ALL ' + entries.length + ' entries? Cannot be undone.')) return;
     try {
       const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id, { method: 'DELETE', headers: getAuthHeaders() });
-      if (!res.ok) toast('Error deleting entries');
-      else { entries = []; toast('All entries deleted'); }
-    } catch(err) { toast('Error: ' + err.message); }
+      if (!res.ok) { dbgErr('DB', 'confirmDelete failed:', res.status); toast('Error deleting entries'); }
+      else {
+        notifyDev('warn', 'AUTH', 'User deleted all their entries: ' + currentUser.email);
+        logActivity('data_deleted', 'all_entries');
+        entries = [];
+        toast('All entries deleted');
+      }
+    } catch(err) { dbgErr('DB', 'confirmDelete threw:', err.message); toast('Error: ' + err.message); }
+  }
+
+  // ── Account deletion (stub — UI button not yet built) ────────────
+  // Wired and ready: notifyDev + logActivity fire before deletion.
+  // To activate: add a "Delete my account" button in the Help/Delete panel
+  // that calls deleteAccount(). Requires NOTIFY_PROXY to be deployed.
+  // The actual auth.users deletion must go through a Supabase edge function
+  // with service_role key — the anon client cannot delete auth users.
+  async function deleteAccount() {
+    if (!currentUser) return;
+    if (!confirm('Permanently delete your account and all data? This cannot be undone.')) return;
+    notifyDev('warn', 'AUTH', 'User requested account deletion: ' + currentUser.email);
+    logActivity('account_deletion_requested', null);
+    // TODO: call an edge function that deletes auth.users row server-side,
+    // which cascades to life_entries, life_settings, life_print_tokens.
+    toast('Account deletion is not yet available — please contact support.');
   }
 
   // ── Help AI ──────────────────────────────────────────────────────
@@ -8861,6 +8956,7 @@ Name:
   // ── PDF Export ───────────────────────────────────────────────────
   function exportPDF() {
     if (!currentStory) return toast('Generate a story first');
+    logActivity('story_exported', null);
     const name  = userProfile.name || 'My';
     const title = currentStory.funny ? name + "'s Life Story (Comedy Edition)" : name + "'s Life Story";
     const html  = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>'
@@ -9415,6 +9511,8 @@ Name:
   async function printBook() {
     if (!currentUser)  return toast('Please sign in first');
     if (!currentStory) return toast('Generate a story first');
+    logActivity('print_attempted', null);
+    notifyDev('warn', 'PEECHO', 'Print as Book started by: ' + (currentUser.email || currentUser.id));
 
     const printBookBtn = document.getElementById('printBookBtn');
     if (printBookBtn) { printBookBtn.disabled = true; printBookBtn.textContent = '⏳ Preparing your book…'; }
@@ -9426,6 +9524,7 @@ Name:
       sessionToken = fresh.access_token;
       dbg('PEECHO', 'Session token refreshed before print');
     } catch (refreshErr) {
+      notifyDev('warn', 'PEECHO', 'Session refresh failed before print: ' + refreshErr.message);
       toast('❌ Session expired — please sign out and back in');
       if (printBookBtn) { printBookBtn.disabled = false; printBookBtn.textContent = '🖨️ Print as Book'; }
       return;
