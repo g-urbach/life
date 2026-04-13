@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.75
+     Current APP_VERSION: v2.77
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -190,7 +190,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.75
+  Current: v2.77
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -2021,7 +2021,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.75</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.77</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2995,8 +2995,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.75';
-  const DEPLOY_NOTES = APP_VERSION + ' — Activity log overhaul: added level+area+platform columns to all logActivity() calls so log viewer matches Telegram detail. notifyDev() events that previously only went to Telegram (sign_in, sign_up, onboarding, password_reset, etc.) now also write to Supabase. Log viewer switched to light mode, added Level filter column.';
+  const APP_VERSION  = 'v2.77';
+  const DEPLOY_NOTES = APP_VERSION + ' — dbgErr() and dbgWarn() now both write to Supabase activity log (app_error / app_warning) in addition to Telegram. Supabase is now the complete record of all caught errors and warnings; Telegram remains the curated subset via _WARN_NOTIFY_AREAS.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3056,24 +3056,25 @@ Name:
   function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
   function dbgErr(area,...args){
     console.error(`[${area}] ERROR`,...args);
-    // Forward serious errors to NOTIFY_PROXY (fire-and-forget, never throws)
     try {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      notifyDev('error', area, msg);
+      notifyDev('error', area, msg);   // Telegram — all errors
+      logActivity('app_error', msg, 'error', area); // Supabase — full record
     } catch(e) {}
   }
-  // dbgWarn: always logs to console. For a curated set of serious areas,
-  // also fires a Telegram notification so silent warnings surface in production.
-  // Non-fatal noise (PEECHO cleanup, caption failures etc.) is excluded by area.
+  // dbgWarn: always logs to console and Supabase. For a curated set of serious
+  // areas, also fires Telegram so important warnings surface there too.
+  // Non-fatal noise (PEECHO cleanup, caption failures etc.) excluded from Telegram only.
   var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO'];
   function dbgWarn(area,...args){
     console.warn(`[${area}] WARN`,...args);
-    if (_WARN_NOTIFY_AREAS.includes(area)) {
-      try {
-        const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-        notifyDev('warn', area, msg);
-      } catch(e) {}
-    }
+    try {
+      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      logActivity('app_warning', msg, 'warn', area); // Supabase — all warnings
+      if (_WARN_NOTIFY_AREAS.includes(area)) {
+        notifyDev('warn', area, msg);  // Telegram — curated areas only
+      }
+    } catch(e) {}
   }
 
   // ── Dev error notifications ───────────────────────────────────────
@@ -9002,9 +9003,8 @@ Name:
     );
     if (!step3) return;
 
-    // Log before deletion (best effort — may not reach DB if edge fn deletes user first)
+    // Notify Telegram that deletion was confirmed (pre-attempt)
     notifyDev('warn', 'AUTH', 'Account deletion confirmed by user: ' + currentUser.email);
-    logActivity('account_deletion_requested', 'confirmed_triple: ' + currentUser.email, 'warn', 'AUTH');
 
     const DELETE_ACCOUNT_URL = SUPABASE_URL + '/functions/v1/DELETE_ACCOUNT';
     try {
@@ -9026,16 +9026,20 @@ Name:
         throw new Error(body.error || 'Edge function returned ' + res.status);
       }
 
-      // Success — sign out locally and show farewell
+      // ✅ Success — log it, sign out, farewell
+      logActivity('account_deleted', 'success: ' + currentUser.email, 'warn', 'AUTH');
       await sb.auth.signOut();
       currentUser = null;
       toast('Your account and all data have been permanently deleted.');
       setTimeout(() => { location.reload(); }, 2000);
 
     } catch (err) {
-      dbgErr('AUTH', 'deleteAccount failed:', err.message);
-      notifyDev('error', 'AUTH', 'Account deletion FAILED for ' + currentUser.email + ': ' + err.message);
-      toast('Account deletion failed — please contact support. Error: ' + err.message);
+      // ❌ Failure — log with error level AND full error message
+      const errMsg = err.message || 'unknown error';
+      logActivity('account_deletion_failed', errMsg + ' | user: ' + currentUser.email, 'error', 'AUTH');
+      dbgErr('AUTH', 'deleteAccount failed:', errMsg);
+      notifyDev('error', 'AUTH', 'Account deletion FAILED for ' + currentUser.email + ': ' + errMsg);
+      toast('Account deletion failed — please contact support. Error: ' + errMsg);
     }
   }
 
