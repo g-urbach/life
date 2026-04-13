@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.78
+     Current APP_VERSION: v2.79
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -146,6 +146,55 @@
   beautifully written life stories in multiple formats. Users can print as a
   physical book via Peecho print-on-demand integration.
 
+  PRODUCT VISION & CORE VALUES
+  ----------------------------
+  LifeTold's core proposition is not the technology — it's the relationship.
+  The app should feel like having a warm, curious companion who genuinely wants
+  to help you tell your story, not a tool that prompts you mechanically. Every
+  feature decision should be tested against this: does it make the experience
+  feel more human, more personal, more like Gethro cares?
+
+  Core values:
+  - Companion over tool: Gethro is the product, not a feature
+  - Earning the story: questions should feel personal and earned, not generic
+  - Low friction for older users: 60+ is the primary audience; everything must
+    be obvious, warm, and forgiving. Older users don't iterate — bad first
+    impressions are permanent.
+  - Legacy over gamification: progress feels meaningful because it builds
+    something real (a book, a keepsake), not because it earns badges
+  - Free should feel genuinely good: only charge for things that actually cost
+    money. Give away anything that creates virality or deepens the relationship.
+  - Ship the feeling first: the companion feeling can be delivered through copy,
+    voice, and warm questions before the technical memory layer exists.
+
+  Differentiator: LifeTold competes on relationship, not features. Competitors
+  (StoryWorth, Remento, LifeTales) are transactional tools. LifeTold is a
+  companion. That gap is the moat.
+
+  GETHRO — THE COMPANION PERSONA
+  --------------------------------
+  Gethro is LifeTold's AI companion. Warm, curious, unhurried. He notices
+  things. He remembers what you've told him. He doesn't nag.
+
+  Voice: OpenAI TTS, voice='onyx' (deep, warm, male). Easy to change —
+  one constant swap, not locked in permanently. Female variant name: Gethie.
+
+  Where Gethro lives:
+  - Onboarding: introduces himself by voice, asks the first question personally
+  - Dashboard: persistent tile with one daily observation (rules-based at first,
+    AI-powered later). Rotates based on data gaps, milestones, days since last entry.
+  - Memories tab: ALL spoken questions are Gethro's voice — the TTS swap IS
+    the persona. Status text reads "Gethro is thinking..." not a generic spinner.
+  - My Story tab: reads the story aloud (Gethro as audiobook narrator)
+  - Weekly email: signed from Gethro, not from LifeTold
+
+  The feeling vs the reality:
+  Ship the feeling first — name + consistent copy voice + entry-reactive
+  questions + TTS. Build the technical memory layer (persistent user model,
+  accumulated context fed into every prompt) over following months. The
+  companion feeling at launch costs almost nothing; the depth behind it
+  compounds over time and is hard for competitors to replicate.
+
   OWNER / DEPLOYER
   ----------------
   Geoff Urbach (gethro@gmail.com)
@@ -190,7 +239,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.78
+  Current: v2.79
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -347,16 +396,46 @@ Name:
      This requires a SECOND file in the repo (sw.js). Two steps: extract code → commit file → update registration line.
      Impact: PWA installs work, but offline mode does not. Non-critical for now.
 
-  2. ACCOUNT DELETION FLOW
-     Status: deleteAccount() fully implemented (v2.73). Multi-step: 2x confirm + email typed.
-     Calls DELETE_ACCOUNT edge function (service_role cascade delete auth.users).
-     UI button added to Help panel (v2.73).
-     Remaining: Deploy the DELETE_ACCOUNT Supabase edge function — code provided in session notes.
-     Edge function must have SUPABASE_SERVICE_ROLE_KEY set as secret.
-
   BACKLOG (prioritised)
   ---------------------
   HIGH
+  - Gethro TTS voice (BUILD NEXT — v2.80): Replace browser speechSynthesis with
+    OpenAI TTS API, voice='onyx'. This IS the Gethro persona landing in the app.
+    Implementation:
+    (1) Deploy TTS_PROXY Supabase edge function: receives {text, voice} from client,
+        calls OpenAI audio/speech endpoint, streams mp3 back. OPENAI_API_KEY as secret.
+    (2) Add gethroSpeak(text) wrapper function in app — fetches TTS_PROXY, decodes
+        audio blob, plays via <audio> element. Falls back to speechSynthesis on error.
+    (3) Swap ALL speechSynthesis.speak() call sites to gethroSpeak().
+    (4) Update all status text: "Thinking of a question..." → "Gethro is thinking..."
+    Voice constant: GETHRO_VOICE = 'onyx' — one-line change to swap voice later.
+    Cost: ~$0.015 per 1000 chars (OpenAI tts-1). Negligible at current scale.
+
+  - Gethro companion persona (v2.81 — after TTS): Wire Gethro identity into app.
+    (1) Dashboard tile: persistent card showing one daily Gethro observation.
+        Rules-based from existing data — no new AI calls needed.
+        Examples: gap in decades covered, milestone (50 entries!), days since last
+        entry, person mentioned often but no dedicated memory. Rotates daily.
+    (2) Onboarding: Gethro introduces himself by voice after name/DOB step.
+        "Hi [name], I'm Gethro. I'm going to help you tell your story..."
+        Then asks first question aloud — not generic, but "Where did you grow up?"
+    (3) Copy pass: all AI status text, nudges, empty states use Gethro's voice.
+        Warm, first-person, curious. Not "No entries found" — "You haven't told
+        me about this yet — want to start?"
+
+  - Entry-reactive interview questions (v2.82): Before generating a follow-up,
+    feed the current entry text to AI and instruct it to find the most specific
+    concrete detail mentioned, then build a question around that detail.
+    "You mentioned a red door — what was behind it?" beats "Tell me more about
+    your childhood home." Sensory and consequence questions unlock richer writing.
+    This is the prompt engineering fix — improves question quality without
+    changing the model.
+
+  - Weekly email nudge from Gethro (v2.8x): Opt-in weekly question by email.
+    Supabase cron + Resend. Email is from Gethro ("Hi Geoff, it's Gethro..."),
+    signed "— Gethro, your story guide". Configurable frequency (weekly/fortnightly).
+    Stored in life_settings. StoryWorth's core retention mechanic.
+
   - Peecho: test full order flow with real story end-to-end (preview fix in v1.45)
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
@@ -378,21 +457,21 @@ Name:
     + chat ID as secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). See session notes
     for full edge function code. Optional: add RESEND_API_KEY for email alerts.
 
-  - Export data (JSON/CSV): one-click download of all entries. Required under
-    Australian Privacy Act (right to access own data). Data already in memory —
-    trivial build. Do before user base grows.
   - Undo last delete: DONE (v2.49). 10s undo toast, deferred Supabase delete,
     instant local removal. _commitDelete() fires after timeout. Move to FEATURES IMPLEMENTED next tidy.
 
   - Native mobile app (iOS/Android): Capacitor wrapper around existing HTML is
     likely path — avoids rewrite. App Store presence matters for discovery and
     trust with older users. All major competitors have native apps.
+    Launch timing: after Gethro persona + TTS + weekly email + print readiness
+    gamification are solid. Older users don't iterate — must be 5-star worthy first.
+    Soft-launch to 10-20 known users before Play Store submission.
   - Gift a subscription flow: "give this to Mum for her birthday" is the primary
     acquisition channel for StoryWorth and most competitors. No gifting flow = no
     viral growth. Needs gift purchase, redemption code, and onboarding for recipient.
-  - Collaborative family contributions: invite family members to add their own
-    memories to the storyteller's book, or submit questions for them to answer.
-    Viral loop + retention driver. StoryWorth, LifeTales, Remento all have this.
+  - Collaborative family contributions: FREE feature — invite family members to
+    add memories or submit questions. No cost to provide; creates virality and
+    network moat. StoryWorth, LifeTales, Remento all have this.
 
   STORY HYGIENE (new category — v2.x milestone)
   - Story Hygiene Dashboard tile: shell tile that runs cross-entry hygiene checks
@@ -463,25 +542,74 @@ Name:
     DB tables: life_people + life_entry_people junction
   - Other Peecho products: mug, t-shirt with photo + short quote
   - Email my story
-  - Shareable read-only story link
+  - Shareable read-only story link (FREE — key for virality, no cost to provide)
   - Chapter-by-chapter story generation (already has chapter tag)
-  - Audio version — TTS personal audiobook export
+  - Audio export — full story as downloadable mp3 (PREMIUM — real TTS cost at
+    full story length, ~6-7c per export at OpenAI pricing. Premium anchor feature:
+    "Download your life story as an audiobook, read by Gethro.")
   - Move AI prompt logic + story generation into edge functions (less in HTML,
     harder to copy, stronger moat)
   - Entry linking (related entries): "see also" link between entries referencing
     same event from different angles. Low urgency but improves printed book flow.
+  - Export data (JSON/CSV): one-click download of all entries. Data already in
+    memory — low effort when needed. Not urgent.
 
 
   BUSINESS / STRATEGIC (not starting yet — ideas to explore)
   ----------------------------------------------------------
+  MONETISATION
+  - Strategy: only charge for things that actually cost money to provide.
+    Give away anything that creates virality or deepens the relationship.
+    Free must feel genuinely good — premium is more depth, not a hobbled free tier.
+  - DO NOT advertise premium in the app yet. Ship the free version first.
+    Get real users, learn what they value, then introduce premium naturally.
+
+  FREE (always — no meaningful cost, or creates virality):
+  - Unlimited entries + photos (compressed), all story formats
+  - Gethro companion voice (standard TTS — negligible cost at scale)
+  - Print as book via Peecho (Peecho handles their own checkout)
+  - Shareable read-only story link (no cost, key viral mechanic)
+  - Family contributions up to 5 members (no cost, network moat)
+  - Story health, chapter progress, all dashboard features
+
+  PREMIUM (~$5-8/mo AUD — when ready to launch):
+  - High-res photo storage (original quality — real storage cost)
+  - Smarter AI story writing — GPT-4o or Claude Sonnet (higher inference cost)
+  - Audio export — full story as downloadable mp3 audiobook (~6-7c/export at
+    OpenAI TTS pricing — real cost at full story length). Best premium hook:
+    "Download your life story as an audiobook, read by Gethro."
+  - More Gethro voice choices / tones (marginal TTS cost, personalisation value)
+
+  AI TIER STRATEGY
+  - Groq/Llama stays for fast structural tasks: hygiene checks, tag suggestions,
+    basic question generation. Fast and essentially free.
+  - GPT-4o or Claude Sonnet for premium: smarter story writing, relationship
+    conversation, life wisdom reflections. Costs more per call — justified by tier.
+  - Architecture already supports this: route mode=premium calls to different
+    model in the AI_PROXY edge function. Frontend change is minimal.
+  - Prompt engineering closes ~70% of quality gap before model upgrade needed.
+    Improve prompts first (entry-reactive questions backlog item) before assuming
+    Groq is the problem.
+
+  ANDROID LAUNCH TIMING
+  - Use Capacitor wrapper around existing HTML — avoids rewrite, proven path.
+  - Do NOT launch at MVP. Older users don't iterate — one bad experience and
+    they tell their family "that app wasn't for me." Reviews stick forever.
+  - Launch after: Gethro TTS voice + persona + weekly email + print readiness
+    gamification are solid (builds v2.80–v2.83 roughly).
+  - Soft-launch to 10–20 known users before Play Store submission.
+  - Target: 5-star worthy before public launch.
+
   MOAT — how to protect from being copied easily
   - The single-HTML file is inherently view-source-able — code cannot be hidden
   - Real moat: Supabase backend. Copying the HTML gives a dead app — no DB, no
     auth, no AI proxy, no photo storage, no Peecho proxy. Copier rebuilds from scratch.
   - Strengthen moat: move MORE logic into Supabase edge functions (less in HTML)
     e.g. AI prompt engineering, story generation, question bank — harder to replicate
-  - Consider: keep growing the question bank / conversation flows as proprietary IP
-  - Consider: family sharing as a network moat (hard to replicate quickly)
+  - Gethro's accumulated user context (tone, themes, gaps, relationship texture)
+    is proprietary per-user IP that compounds over time. Cannot be copied.
+  - Family contributions create a network moat — the more family is in the
+    product, the harder it is to leave.
   - DONE: PEECHO_MERCHANT_KEY + SECRET moved to edge function (v1.31)
 
   SECURITY — make sure data is secure
@@ -496,13 +624,12 @@ Name:
   - TODO: Review Supabase RLS policies on life_entries — confirm user_id scoping
   - TODO: Confirm storage bucket (life-photos) has per-user access policies
   - TODO: Audit — can a user access another user's data via direct API?
-  - TODO: Data export / right to deletion flow for GDPR / Aus Privacy Act
   - TODO: Add rate limiting to PEECHO_PROXY once multi-user (see BACKLOG HIGH)
   - FUTURE: Move AI prompt logic, story generation into edge functions (less in HTML)
 
   PROMOTE — enable/encourage others to use
-  - Shareable read-only story link (already in backlog — key for virality)
-  - "Share a memory" feature — single entry as a card image
+  - Shareable read-only story link (in backlog — key for virality, free)
+  - "Share a memory" feature — single entry as a styled image card (WhatsApp etc)
   - Referral: "invite a family member to read / contribute"
   - Landing page SEO: meta tags, Open Graph, structured data
   - Consider: Product Hunt / AppSumo launch when stable
@@ -2021,7 +2148,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.78</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.79</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2991,8 +3118,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.78';
-  const DEPLOY_NOTES = APP_VERSION + ' — Removed redundant "Delete my data" link from help screen. Delete Account button covers this entirely.';;
+  const APP_VERSION  = 'v2.79';
+  const DEPLOY_NOTES = APP_VERSION + ' — Added OpenAI TTS to HIGH priority backlog with full implementation notes.';;;
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
