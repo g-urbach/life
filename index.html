@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.72
+     Current APP_VERSION: v2.73
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -190,7 +190,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.68
+  Current: v2.73
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -341,17 +341,18 @@ Name:
      Status: Broken. Blob URL approach fails in Cloudflare Pages environment.
      Error: "The URL protocol of the script ('blob-request://...') is not supported"
      Cause: Cloudflare rewrites blob: URLs — single-file SW injection via Blob doesn't work.
-     Fix needed: Deploy a real sw.js alongside index.html in the repo, reference it normally.
+     Fix needed: A real sw.js file must be committed to the GitHub repo root alongside index.html.
+     Then change the registration in index.html from the blob approach to: navigator.serviceWorker.register('/sw.js')
+     The SW code already exists in the blob — just needs extracting to a standalone file.
+     This requires a SECOND file in the repo (sw.js). Two steps: extract code → commit file → update registration line.
      Impact: PWA installs work, but offline mode does not. Non-critical for now.
 
-  2. DEPLOY NOTIFY_PROXY edge function
-     Status: Client side done (v2.49). notifyDev() wired. NOTIFY_PROXY_URL constant in place.
-     Remaining: Deploy the actual Supabase edge function with Telegram bot token.
-
-  3. ACCOUNT DELETION FLOW
-     Status: deleteAccount() stub added (v2.71). notifyDev + logActivity wired.
-     Remaining: Build edge function with service_role to delete auth.users row (cascades
-     to all tables via ON DELETE CASCADE migration). Add UI button in Help panel.
+  2. ACCOUNT DELETION FLOW
+     Status: deleteAccount() fully implemented (v2.73). Multi-step: 2x confirm + email typed.
+     Calls DELETE_ACCOUNT edge function (service_role cascade delete auth.users).
+     UI button added to Help panel (v2.73).
+     Remaining: Deploy the DELETE_ACCOUNT Supabase edge function — code provided in session notes.
+     Edge function must have SUPABASE_SERVICE_ROLE_KEY set as secret.
 
   BACKLOG (prioritised)
   ---------------------
@@ -548,8 +549,9 @@ Name:
     onerror 'not-allowed' is transient on iOS (service not ready) — now retries rather
     than permanently killing mic. Monitor across iOS versions.
   - Double-disclaimer on new signup: FIXED (v2.65). Root cause: signUp() had no session so _saveDisclaimerAcceptance() was never called before email confirmation redirect. Fix: onAuthStateChange saves pending acceptance (from localStorage timestamp) before calling _checkDisclaimerVersion. _checkDisclaimerVersion simplified to DB-only check — no flags, no race conditions.
-  - Runtime error alerting: DONE (v2.49/v2.50). notifyDev() fires Telegram
-    notification via NOTIFY_PROXY edge function. Telegram bot live and tested.
+  - Mic onerror 'aborted' noise: FIXED (v2.73). Added aborted/no-speech filter to memories mic onerror, matching voice memo mic. Prevents Telegram noise on normal mic stop.
+  - Draft reappears after New Entry: FIXED (v2.73). _draftSuppressRestore flag set on draftClear() blocks draftRestore() from firing (e.g. via background onAuthStateChange session refresh) after a deliberate clear.
+  - Runtime error alerting: DONE (v2.49/v2.50). notifyDev() fires Telegram notification via NOTIFY_PROXY edge function. Telegram bot live and tested. WIP item closed v2.73.
   - Panel scroll bug: FIXED v1.97 — stray </div> after Peecho anchor was
     closing panel-story early, leaving storyOutput/storySkeletonLoader outside
     any .panel div so they were never hidden by CSS.
@@ -2015,7 +2017,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.68</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.73</small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -2806,7 +2808,7 @@ Name:
     <div class="help-section">
       <h3>ℹ️ About</h3>
       <p><strong>LifeTold</strong> is a personal memoir app that helps you record, organise and preserve your life story for the people who matter most.</p>
-      <p style="font-size:0.82rem;color:var(--text-light);margin-top:6px">Version 2.64 &nbsp;&middot;&nbsp; Built by Geoff Urbach &nbsp;&middot;&nbsp; <a href="https://lifetold.app" target="_blank" style="color:var(--gold-dark)">lifetold.app</a></p>
+      <p style="font-size:0.82rem;color:var(--text-light);margin-top:6px">Version 2.73 &nbsp;&middot;&nbsp; Built by Geoff Urbach &nbsp;&middot;&nbsp; <a href="https://lifetold.app" target="_blank" style="color:var(--gold-dark)">lifetold.app</a></p>
       <p style="font-size:0.82rem;color:var(--text-light);margin-top:4px">Powered by <a href="https://groq.com" target="_blank" style="color:var(--gold-dark)">Groq AI</a>, <a href="https://supabase.com" target="_blank" style="color:var(--gold-dark)">Supabase</a>, and <a href="https://www.peecho.com" target="_blank" style="color:var(--gold-dark)">Peecho</a>.</p>
     </div>
 
@@ -2829,6 +2831,16 @@ Name:
 
     <div style="margin-top:32px;padding-top:20px;border-top:1px solid var(--border);text-align:center">
       <button onclick="showDeleteModal()" style="background:none;border:none;color:var(--text-light);font-size:0.78rem;cursor:pointer;font-family:'Lato',sans-serif;text-decoration:underline;opacity:0.6">Delete my data</button>
+    </div>
+
+    <div class="help-section" style="border:2px solid var(--rose);border-radius:12px;padding:20px;margin-top:24px;background:rgba(180,60,60,0.04)">
+      <h3 style="color:var(--rose)">⚠️ Delete Account</h3>
+      <p style="font-size:0.85rem;color:var(--text-light);line-height:1.6;margin-bottom:16px">
+        Permanently deletes your account <strong>and all data</strong> — every entry, photo, and setting. This cannot be undone. Your email address will be released immediately.
+      </p>
+      <button class="btn btn-danger" onclick="deleteAccount()" style="width:100%;font-size:0.9rem">
+        🗑 Delete My Account &amp; All Data
+      </button>
     </div>
   </div>
 
@@ -2979,8 +2991,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.72';
-  const DEPLOY_NOTES = APP_VERSION + ' — Telegram/activity log audit: sign-in/signup/onboarding/print/book-ordered/password-reset all notify Telegram. Wrong-password removed from Telegram (noise). PEECHO added to warn areas. Activity log wired: AI review, export, interview, onboarding, bad credentials.';
+  const APP_VERSION  = 'v2.73';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix mic onerror aborted noise; fix draft reappear after New Entry; fix version mismatch in header+about; add Delete Account button in Help (multi-confirm); close NOTIFY_PROXY WIP (was already live); remove stale lt_disclaimer_pending deployer check; write DELETE_ACCOUNT edge function.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -4115,6 +4127,8 @@ Name:
       };
 
       rec.onerror = function(e) {
+        // 'aborted' fires on programmatic stop — not an error; 'no-speech' is routine silence
+        if (e.error === 'aborted' || e.error === 'no-speech') return;
         dbgErr('MIC', 'onerror:', e.error);
         if (e.error === 'not-allowed') {
           if (navigator.permissions) {
@@ -4252,9 +4266,13 @@ Name:
 
   function draftClear() {
     try { localStorage.removeItem(DRAFT_KEY); } catch(e) {}
+    _draftSuppressRestore = true; // deliberate clear — block any subsequent restore this session
   }
 
+  var _draftSuppressRestore = false; // set true when user deliberately clears (New Entry / Save)
+
   function draftRestore() {
+    if (_draftSuppressRestore) return; // user deliberately cleared — don't restore
     var raw;
     try { raw = localStorage.getItem(DRAFT_KEY); } catch(e) { return; }
     if (!raw) return;
@@ -8919,20 +8937,80 @@ Name:
     } catch(err) { dbgErr('DB', 'confirmDelete threw:', err.message); toast('Error: ' + err.message); }
   }
 
-  // ── Account deletion (stub — UI button not yet built) ────────────
-  // Wired and ready: notifyDev + logActivity fire before deletion.
-  // To activate: add a "Delete my account" button in the Help/Delete panel
-  // that calls deleteAccount(). Requires NOTIFY_PROXY to be deployed.
-  // The actual auth.users deletion must go through a Supabase edge function
-  // with service_role key — the anon client cannot delete auth users.
+  // ── Account deletion ─────────────────────────────────────────────
+  // Multi-step: two confirms + email typed, then calls DELETE_ACCOUNT edge function.
+  // Edge function uses service_role to delete auth.users row, which cascades
+  // to life_entries, life_settings, life_print_tokens, life_activity_log.
   async function deleteAccount() {
     if (!currentUser) return;
-    if (!confirm('Permanently delete your account and all data? This cannot be undone.')) return;
-    notifyDev('warn', 'AUTH', 'User requested account deletion: ' + currentUser.email);
-    logActivity('account_deletion_requested', null);
-    // TODO: call an edge function that deletes auth.users row server-side,
-    // which cascades to life_entries, life_settings, life_print_tokens.
-    toast('Account deletion is not yet available — please contact support.');
+
+    // Step 1: first stern warning
+    const step1 = confirm(
+      '⚠️ DELETE ACCOUNT — This cannot be undone.\n\n' +
+      'This will permanently destroy:\n' +
+      '  • Every life story entry you have written\n' +
+      '  • All photos attached to your entries\n' +
+      '  • Your account settings and book details\n' +
+      '  • Your account login\n\n' +
+      'There is NO recovery. Are you sure you want to continue?'
+    );
+    if (!step1) return;
+
+    // Step 2: type email to confirm identity
+    const typed = prompt(
+      'Final confirmation: type your email address exactly as shown below to proceed.\n\n' +
+      currentUser.email
+    );
+    if (!typed) return;
+    if (typed.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
+      toast('Email did not match — account deletion cancelled.');
+      return;
+    }
+
+    // Step 3: absolute last chance
+    const step3 = confirm(
+      '🔴 LAST CHANCE\n\n' +
+      'Deleting account for: ' + currentUser.email + '\n\n' +
+      'All data will be destroyed immediately and permanently.\n\n' +
+      'Press OK to delete, Cancel to keep your account.'
+    );
+    if (!step3) return;
+
+    // Log before deletion (best effort — may not reach DB if edge fn deletes user first)
+    notifyDev('warn', 'AUTH', 'Account deletion confirmed by user: ' + currentUser.email);
+    logActivity('account_deletion_requested', 'confirmed_triple');
+
+    const DELETE_ACCOUNT_URL = SUPABASE_URL + '/functions/v1/DELETE_ACCOUNT';
+    try {
+      // Get fresh token — required for edge function auth
+      const { data: { session }, error: sesErr } = await sb.auth.getSession();
+      if (sesErr || !session) throw new Error('Could not get session');
+
+      const res = await fetch(DELETE_ACCOUNT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token,
+        },
+        body: JSON.stringify({ confirm: 'DELETE_MY_ACCOUNT', email: currentUser.email }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Edge function returned ' + res.status);
+      }
+
+      // Success — sign out locally and show farewell
+      await sb.auth.signOut();
+      currentUser = null;
+      toast('Your account and all data have been permanently deleted.');
+      setTimeout(() => { location.reload(); }, 2000);
+
+    } catch (err) {
+      dbgErr('AUTH', 'deleteAccount failed:', err.message);
+      notifyDev('error', 'AUTH', 'Account deletion FAILED for ' + currentUser.email + ': ' + err.message);
+      toast('Account deletion failed — please contact support. Error: ' + err.message);
+    }
   }
 
   // ── Help AI ──────────────────────────────────────────────────────
