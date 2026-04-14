@@ -25,31 +25,36 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.80
+     Current APP_VERSION: v2.82
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
      WHAT changed in the deployer (e.g. "added test for X" or "removed stale
      check for Y") so Geoff understands why a new deploy file is needed.
   3. Move completed backlog items into FEATURES IMPLEMENTED.
-  3. Add any new backlog items or ideas raised during the session.
-  4. Fix any KNOWN LIMITATIONS that were resolved.
-  5. Update KNOWN ISSUES if new risks or edge cases are identified.
-  6. Always tell the user the new version number in chat (e.g. "v1.07 ready").
-  7. Always tell the user if you have considered all the project ideas from memory down to continuous improvement while making this build.
-  8. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
+  4. Add any new backlog items or ideas raised during the session.
+  5. Fix any KNOWN LIMITATIONS that were resolved.
+  6. Update KNOWN ISSUES if new risks or edge cases are identified.
+  7. Always tell the user the new version number in chat (e.g. "v1.07 ready").
+  8. Always tell the user if you have considered all the project ideas from memory down to continuous improvement while making this build.
+  9. ⚠️  For ANY layout change: call out "⚠️ check on mobile" in chat with
      the specific risk. Primary dev is on laptop; mobile is tested separately.
      See MOBILE TESTING NOTES section for known concerns.
-  9. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
+ 10. ⚠️  STR_REPLACE SAFETY: When str_replace targets the opening line of a
      function (e.g. "function foo() {"), ALWAYS include the full function body
      in old_str — never just the opening line. Partial matches silently drop
      the body, causing "Unexpected token '}'" or "Unexpected end of input".
      ALWAYS run node --check after every edit before shipping.
- 10. ⚠️  TEMPLATE LITERAL SAFETY: Never write new functions containing template
+ 11. ⚠️  TEMPLATE LITERAL SAFETY: Never write new functions containing template
      literals (backticks / ${} interpolations) via str_replace — the escaping
      mangling causes backtick..backtick and ${} to appear as literal text at runtime.
      Instead write them via Python heredoc (cat << 'PYEOF' pattern). This has
      caused 3 build failures (v1.88-v1.90). Non-negotiable.
+ 12. ⚠️  VERSION GREP CHECK — MANDATORY LAST STEP BEFORE PRESENTING FILE:
+     After bumping from vX.OLD to vX.NEW, run:
+       grep -n "vX\.OLD" index_file.html | grep -v "backlog\|DONE\|FEATURES\|session\|roughly\|builds"
+     If ANY lines are returned — a stale version reference remains. Fix before
+     shipping. This caught a duplicate v2.80 build (v2.81 lesson). No exceptions.
 
   ENGINEERING PHILOSOPHY
   ----------------------
@@ -239,7 +244,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.79
+  Current: v2.82
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -377,18 +382,21 @@ Name:
   - AI-powered help assistant
 
   REGRESSION TESTING
-  - deploy.html runs 90+ static checks after every deploy
+  - deploy.html (currently deploy-v27) runs 90+ static checks after every deploy
   - Checks: panels, functions, elements, config constants, nav tabs,
     story modes, script tag balance, escaped backtick detection,
-    AI resilience pattern, truncated string detection
-  - Copy-failures button for quick paste to Claude
+    AI resilience pattern, truncated string detection, Gethro voice functions
+  - Copy-failures button shows for both failures AND warnings (fixed v27)
+  - Version check: DEPLOY_NOTES must be constructed from APP_VERSION constant.
+    appVersionLabel in h1 is intentionally blank in HTML — set at runtime by
+    init() from APP_VERSION. Never hardcode a version in the h1 tag.
 
   CONTINUOUS IMPROVEMENT
   ----------------------
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v2.70 → next review at v2.80.
+  Build counter: currently at v2.80 → next review at v2.90.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -2154,7 +2162,7 @@ Name:
 <div id="appShell" style="display:none">
 
 <header>
-  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel">v2.79</small></h1>
+  <h1><span>LifeTold</span> ❤️ <small id="appVersionLabel"></small></h1>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
@@ -3124,8 +3132,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.80';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro voice: OpenAI TTS (onyx) via TTS_PROXY edge function. gethroSpeak() replaces all speechSynthesis.speak() calls. Status text updated to Gethro persona copy.';
+  const APP_VERSION  = 'v2.82';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix gethroSpeak auth: fresh session token + apikey header on every TTS call, matching callAI pattern. Fixes 401/429 from Supabase edge function.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3918,12 +3926,23 @@ Name:
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
       try {
-        var headers = { 'Content-Type': 'application/json' };
-        if (sessionToken) headers['Authorization'] = 'Bearer ' + sessionToken;
-        else if (typeof SUPABASE_ANON !== 'undefined') headers['Authorization'] = 'Bearer ' + SUPABASE_ANON;
+        // Always fetch a fresh session token — same pattern as callAI.
+        // Stale or missing sessionToken causes 401/429 from Supabase edge functions.
+        var freshToken = sessionToken;
+        try {
+          var sess = await sb.auth.getSession();
+          if (sess && sess.data && sess.data.session) {
+            freshToken = sess.data.session.access_token;
+            sessionToken = freshToken;
+          }
+        } catch(e) { /* use existing sessionToken if refresh fails */ }
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
-          headers: headers,
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON,
+            'Authorization': 'Bearer ' + (freshToken || SUPABASE_ANON)
+          },
           body: JSON.stringify({ text: text, voice: GETHRO_VOICE })
         });
         if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
