@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.85
+     Current APP_VERSION: v2.87
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -244,7 +244,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.85
+  Current: v2.87
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -419,11 +419,13 @@ Name:
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - Gethro TTS voice (DONE v2.80): OpenAI TTS, voice='onyx', via TTS_PROXY Supabase
-    edge function. gethroSpeak(text) wrapper replaces all speechSynthesis.speak() calls.
-    _gethroFallback() reverts to browser TTS if edge function fails. GETHRO_VOICE
-    constant allows one-line voice swap. All status text updated to Gethro persona copy.
-    Edge function code provided in session — deploy TTS_PROXY + set OPENAI_TTS_API_KEY secret.
+  - Gethro TTS voice (DONE v2.87): OpenAI TTS, voice='onyx', via Supabase edge function
+    'tts-proxy' (lowercase). gethroSpeak() sends apikey as query param + Content-Type text/plain
+    to avoid browser CORS preflight (Supabase gateway blocks OPTIONS on custom headers).
+    JWT verification OFF on tts-proxy (gateway-level only — function does its own auth check).
+    AUTH: session token passed in request body as 'token' field. Edge function decodes JWT,
+    checks sub + expiry — rejects if not a valid logged-in user. No anon abuse possible.
+    OPENAI_TTS_API_KEY set as Supabase secret. OpenAI key must be 'All' permissions.
 
   - Gethro companion persona (v2.81 — after TTS): Wire Gethro identity into app.
     (1) Dashboard tile: persistent card showing one daily Gethro observation.
@@ -453,9 +455,12 @@ Name:
   - Peecho: test full order flow with real story end-to-end (preview fix in v1.45)
   - Onboarding tour (tooltips, skippable, version-aware)
   - Entry editing: full text edit (now done in Review, add to Timeline too)
-  - Supabase RLS audit: DONE (v2.48 session). RLS enabled on life_entries,
+  - Supabase RLS audit: Implemented (v2.48 session). RLS enabled on life_entries,
     life_settings, life_print_tokens. Storage policies confirmed on life-photos.
-    exec_* functions patched with SET search_path=public. Move to FEATURES IMPLEMENTED next tidy.
+    exec_* functions patched with SET search_path=public.
+    ⚠️  VERIFY before marking DONE: confirm RLS on life_entries, life_settings,
+    life_print_tokens in Supabase dashboard. Check life-photos bucket policies.
+    See security TODOs below.
 
   - Inline Q&A interview mode (v2.27 design agreed): "A question for me" button
     speaks question aloud AND appends it inline into the textarea as a labelled
@@ -471,8 +476,9 @@ Name:
     + chat ID as secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). See session notes
     for full edge function code. Optional: add RESEND_API_KEY for email alerts.
 
-  - Undo last delete: DONE (v2.49). 10s undo toast, deferred Supabase delete,
-    instant local removal. _commitDelete() fires after timeout. Move to FEATURES IMPLEMENTED next tidy.
+  - Undo last delete: Implemented (v2.49). 10s undo toast, deferred Supabase delete,
+    instant local removal. _commitDelete() fires after timeout.
+    ⚠️  VERIFY before marking DONE: test delete + undo flow end-to-end in app.
 
   - Native mobile app (iOS/Android): Capacitor wrapper around existing HTML is
     likely path — avoids rewrite. App Store presence matters for discovery and
@@ -605,14 +611,14 @@ Name:
     Improve prompts first (entry-reactive questions backlog item) before assuming
     Groq is the problem.
 
-  ANDROID LAUNCH TIMING
+  ANDROID LAUNCH TIMING — TBA (lots to do first)
   - Use Capacitor wrapper around existing HTML — avoids rewrite, proven path.
   - Do NOT launch at MVP. Older users don't iterate — one bad experience and
     they tell their family "that app wasn't for me." Reviews stick forever.
-  - Launch after: Gethro TTS voice + persona + weekly email + print readiness
-    gamification are solid (builds v2.80–v2.83 roughly).
+  - Prerequisites before considering launch: Gethro persona complete, weekly email
+    nudge, print readiness, real multi-user testing, RLS audit verified.
   - Soft-launch to 10–20 known users before Play Store submission.
-  - Target: 5-star worthy before public launch.
+  - Target: 5-star worthy before public launch. No timeline set.
 
   MOAT — how to protect from being copied easily
   - The single-HTML file is inherently view-source-able — code cannot be hidden
@@ -3132,8 +3138,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.85';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix Gethro TTS: send apikey as query param + Content-Type text/plain to avoid browser CORS preflight entirely. Supabase gateway blocks OPTIONS preflight on custom headers.';
+  const APP_VERSION  = 'v2.87';
+  const DEPLOY_NOTES = APP_VERSION + ' — Secure tts-proxy: session token passed in request body, edge function verifies valid logged-in user before calling OpenAI. No preflight triggered.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3926,12 +3932,17 @@ Name:
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
       try {
+        // Pass session token in body (not header) to avoid CORS preflight.
+        // Edge function verifies token is a valid logged-in user before calling OpenAI.
+        var freshToken = sessionToken;
+        try {
+          var sess = await sb.auth.getSession();
+          if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
+        } catch(e) { /* fall back to cached sessionToken */ }
         var res = await fetch(TTS_PROXY_URL + '?apikey=' + encodeURIComponent(SUPABASE_ANON), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain'
-          },
-          body: JSON.stringify({ text: text, voice: GETHRO_VOICE })
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken })
         });
         if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
         var blob = await res.blob();
