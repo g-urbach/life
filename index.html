@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.79
+     Current APP_VERSION: v2.80
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -343,6 +343,18 @@ Name:
     Auto-populates print preview fields when opening print overlay
     Dashboard nudge tile shown when details are missing, links to My Story
 
+  GETHRO VOICE (v2.80)
+  - OpenAI TTS via TTS_PROXY Supabase edge function (OPENAI_TTS_API_KEY secret).
+    voice='onyx' (deep, warm, male). GETHRO_VOICE constant = one-line swap.
+  - gethroSpeak(text): fetches TTS_PROXY, plays via <audio> element.
+    _gethroFallback() reverts to browser speechSynthesis if proxy fails.
+    gethroCancel() stops any playing audio cleanly.
+  - speakAndWait() kept as alias → gethroSpeak() for back-compat.
+  - All status text updated: "Gethro is thinking...", "Gethro is choosing a topic..."
+  - iOS silent primers (empty SpeechSynthesisUtterance gesture-unlock) left as-is —
+    these are not real speech and must remain as speechSynthesis calls.
+  - TTS_PROXY edge function code provided in session notes — deploy separately.
+
   BRANDING
   - LifeTold rebrand (v2.61): all 'My Life Story' UI refs updated to LifeTold.
     Tagline: 'Every life should be told'. Domain: lifetold.app.
@@ -399,17 +411,11 @@ Name:
   BACKLOG (prioritised)
   ---------------------
   HIGH
-  - Gethro TTS voice (BUILD NEXT — v2.80): Replace browser speechSynthesis with
-    OpenAI TTS API, voice='onyx'. This IS the Gethro persona landing in the app.
-    Implementation:
-    (1) Deploy TTS_PROXY Supabase edge function: receives {text, voice} from client,
-        calls OpenAI audio/speech endpoint, streams mp3 back. OPENAI_API_KEY as secret.
-    (2) Add gethroSpeak(text) wrapper function in app — fetches TTS_PROXY, decodes
-        audio blob, plays via <audio> element. Falls back to speechSynthesis on error.
-    (3) Swap ALL speechSynthesis.speak() call sites to gethroSpeak().
-    (4) Update all status text: "Thinking of a question..." → "Gethro is thinking..."
-    Voice constant: GETHRO_VOICE = 'onyx' — one-line change to swap voice later.
-    Cost: ~$0.015 per 1000 chars (OpenAI tts-1). Negligible at current scale.
+  - Gethro TTS voice (DONE v2.80): OpenAI TTS, voice='onyx', via TTS_PROXY Supabase
+    edge function. gethroSpeak(text) wrapper replaces all speechSynthesis.speak() calls.
+    _gethroFallback() reverts to browser TTS if edge function fails. GETHRO_VOICE
+    constant allows one-line voice swap. All status text updated to Gethro persona copy.
+    Edge function code provided in session — deploy TTS_PROXY + set OPENAI_TTS_API_KEY secret.
 
   - Gethro companion persona (v2.81 — after TTS): Wire Gethro identity into app.
     (1) Dashboard tile: persistent card showing one daily Gethro observation.
@@ -3118,14 +3124,16 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.79';
-  const DEPLOY_NOTES = APP_VERSION + ' — Added OpenAI TTS to HIGH priority backlog with full implementation notes.';;;
+  const APP_VERSION  = 'v2.80';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro voice: OpenAI TTS (onyx) via TTS_PROXY edge function. gethroSpeak() replaces all speechSynthesis.speak() calls. Status text updated to Gethro persona copy.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/TTS_PROXY';    // Gethro voice
+  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — change here to swap voice globally
   const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
@@ -3895,17 +3903,53 @@ Name:
     return { path, desc };
   }
 
-  // ── Speech synthesis ────────────────────────────────────────────
-  function speakAndWait(text) {
-    return new Promise(resolve => {
-      if (!window.speechSynthesis) { resolve(); return; }
-      speechSynthesis.cancel();
-      const utt = new SpeechSynthesisUtterance(text);
-      utt.lang = 'en-AU'; utt.rate = 0.92; utt.pitch = 1.0;
-      utt.onend = resolve; utt.onerror = resolve;
-      speechSynthesis.speak(utt);
+  // ── Gethro voice (OpenAI TTS via TTS_PROXY edge function) ──────
+  // gethroSpeak(text) — returns a Promise that resolves when audio finishes.
+  // Falls back to browser speechSynthesis if TTS_PROXY fails or is unavailable.
+  // All spoken questions and prompts go through this function.
+  // To change Gethro's voice: update the GETHRO_VOICE constant above.
+  let _gethroAudio = null; // track current audio element so we can cancel
+  function gethroCancel() {
+    if (_gethroAudio) { _gethroAudio.pause(); _gethroAudio = null; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+  }
+  function gethroSpeak(text) {
+    return new Promise(async function(resolve) {
+      if (!text || !text.trim()) { resolve(); return; }
+      gethroCancel();
+      try {
+        var headers = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = 'Bearer ' + sessionToken;
+        else if (typeof SUPABASE_ANON !== 'undefined') headers['Authorization'] = 'Bearer ' + SUPABASE_ANON;
+        var res = await fetch(TTS_PROXY_URL, {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({ text: text, voice: GETHRO_VOICE })
+        });
+        if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
+        var blob = await res.blob();
+        var url  = URL.createObjectURL(blob);
+        var audio = new Audio(url);
+        _gethroAudio = audio;
+        audio.onended = function() { URL.revokeObjectURL(url); _gethroAudio = null; resolve(); };
+        audio.onerror = function() { URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve); };
+        audio.play().catch(function() { URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve); });
+      } catch(err) {
+        dbg('TTS', 'TTS_PROXY failed, falling back to browser TTS:', err.message);
+        _gethroFallback(text, resolve);
+      }
     });
   }
+  function _gethroFallback(text, resolve) {
+    if (!window.speechSynthesis) { resolve(); return; }
+    speechSynthesis.cancel();
+    var utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'en-AU'; utt.rate = 0.92; utt.pitch = 1.0;
+    utt.onend = resolve; utt.onerror = resolve;
+    speechSynthesis.speak(utt);
+  }
+  // Legacy alias — speakAndWait now routes through Gethro
+  function speakAndWait(text) { return gethroSpeak(text); }
 
   // ── Persistent mic ────────────────────────────────────────────────
   // Restarts automatically on silence/no-speech; use stopListening() to kill cleanly.
@@ -4930,7 +4974,7 @@ Name:
       }
       recDeepContext = fullContext;
       if (memMicActive) stopMemMic();
-      setMemStatus('speaking', 'Thinking of a question...');
+      setMemStatus('speaking', 'Gethro is thinking...');
       await memAskFollowUp();
     } else {
       // Nothing written yet — pick a new topic from the user's life story
@@ -5015,26 +5059,13 @@ Name:
       // Append inline — no separate question box needed
       memAppendQuestion(question);
       document.getElementById('aiQuestionBox').style.display = 'none';
-      // Speak question, then start mic only if user has mic preference on
+      // Gethro speaks the follow-up question, then starts mic if user preference on
       if (memMicActive) stopMemMic();
-      setMemStatus('speaking', 'Asking question...');
-      if (window.speechSynthesis) {
-        speechSynthesis.cancel();
-        const utt = new SpeechSynthesisUtterance(question);
-        utt.lang = 'en-AU'; utt.rate = 0.92;
-        utt.onend = () => {
-          setMemStatus('idle', '');
-          if (userMicPref) { setTimeout(() => startMemMic(), 300); }
-        };
-        utt.onerror = () => {
-          setMemStatus('idle', '');
-          if (userMicPref) { setTimeout(() => startMemMic(), 300); }
-        };
-        speechSynthesis.speak(utt);
-      } else {
+      setMemStatus('speaking', 'Gethro is thinking...');
+      gethroSpeak(question).then(function() {
         setMemStatus('idle', '');
-        if (userMicPref) startMemMic();
-      }
+        if (userMicPref) { setTimeout(function() { startMemMic(); }, 300); }
+      });
     } catch(err) {
       dbgErr('MEM', 'Follow-up failed:', err.message);
       setMemStatus('idle', '');
@@ -5101,7 +5132,7 @@ Name:
   function memConvEnd() {
     recActive = false;
     stopListening();
-    if (window.speechSynthesis) speechSynthesis.cancel();
+    gethroCancel();
 
     document.getElementById('aiQuestionBox').style.display  = 'none';
     document.getElementById('memAnswer').value = '';
@@ -5119,7 +5150,7 @@ Name:
   async function memAskQuestion(direction) {
     if (!recActive) return;
     const isDeep = direction === 'deep';
-    setMemStatus('speaking', isDeep ? 'Thinking of a follow-up...' : 'Picking a new topic...');
+    setMemStatus('speaking', isDeep ? 'Gethro is thinking...' : 'Gethro is choosing a topic...');
     document.getElementById('aiQuestionBox').style.display = 'none';
 
     try {
@@ -7804,7 +7835,7 @@ Name:
     document.getElementById('memTitle').value  = '';
     recPhotos = []; renderRecPhotoStrip();
 
-    setMemStatus('speaking', 'Thinking of a question about ' + chapter + '...');
+    setMemStatus('speaking', 'Gethro is thinking about ' + chapter + '...');
     try {
       const history = entries.filter(e => !e.category.startsWith('_profile')).slice(-30)
         .map(e => e.answer).join(' ');
@@ -7818,16 +7849,10 @@ Name:
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
       if (memMicActive) stopMemMic();
-      if (window.speechSynthesis) {
-        speechSynthesis.cancel();
-        const utt = new SpeechSynthesisUtterance(question);
-        utt.lang = 'en-AU'; utt.rate = 0.92;
-        utt.onend = () => { setMemStatus('listening','Listening...'); startMemMic(); };
-        utt.onerror = () => { setMemStatus('listening','Listening...'); startMemMic(); };
-        speechSynthesis.speak(utt);
-      } else {
-        setMemStatus('listening','Listening...'); startMemMic();
-      }
+      gethroSpeak(question).then(function() {
+        setMemStatus('listening','Listening...');
+        startMemMic();
+      });
     } catch(err) {
       dbgErr('REVIEW', 'askAboutChapter failed:', err.message);
       setMemStatus('idle','');
