@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v2.83
+     Current APP_VERSION: v2.84
   2. If deploy.html was modified, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -244,7 +244,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v2.83
+  Current: v2.84
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -3132,8 +3132,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.83';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix Gethro TTS: rename edge function to tts-proxy (lowercase), resolves Supabase gateway 401 on uppercase function names.';
+  const APP_VERSION  = 'v2.84';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix Gethro TTS: remove Authorization header from tts-proxy call, apikey-only. Authorization header triggers Supabase JWT validation even with JWT verification off, blocking OPTIONS preflight.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3926,22 +3926,11 @@ Name:
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
       try {
-        // Always fetch a fresh session token — same pattern as callAI.
-        // Stale or missing sessionToken causes 401/429 from Supabase edge functions.
-        var freshToken = sessionToken;
-        try {
-          var sess = await sb.auth.getSession();
-          if (sess && sess.data && sess.data.session) {
-            freshToken = sess.data.session.access_token;
-            sessionToken = freshToken;
-          }
-        } catch(e) { /* use existing sessionToken if refresh fails */ }
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON,
-            'Authorization': 'Bearer ' + (freshToken || SUPABASE_ANON)
+            'apikey': SUPABASE_ANON
           },
           body: JSON.stringify({ text: text, voice: GETHRO_VOICE })
         });
