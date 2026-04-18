@@ -1517,9 +1517,6 @@
     </div>
 
     
-    <div id="iceBreakerCards" style="display:none"></div>
-
-    
     <div style="margin-bottom:16px">
       <input type="text" id="memTitle" placeholder="Title — e.g. Dad's workshop, First day of school..."
         style="width:100%;padding:14px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
@@ -2323,16 +2320,18 @@
       <h2 style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:600;margin-bottom:8px">Hello, I'm Gethro.</h2>
       <p style="font-size:0.95rem;color:var(--text-light);line-height:1.6;margin-bottom:4px">I'm going to help you tell your story — at your own pace, in your own words.</p>
       <p style="font-size:0.88rem;color:var(--text-light);line-height:1.5">Just tell me a little about yourself to get started.</p>
-      
-      <div id="onboardGethroStatus" style="display:none;margin-top:10px;font-size:0.8rem;color:var(--gold);font-style:italic">🔊 Gethro is speaking…</div>
     </div>
-    <label for="onboardName">Your first name</label>
+    <label for="onboardName">Your first name <span style="color:var(--rose)">*</span></label>
     <input id="onboardName" type="text" placeholder="e.g. Geoff" autocomplete="given-name">
-    <label for="onboardDob">Date of birth</label>
+    <label for="onboardDob" style="display:flex;align-items:center;justify-content:space-between">
+      Date of birth <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
+    </label>
     <input id="onboardDob" type="date">
-    <label for="onboardSex">Sex</label>
+    <label for="onboardSex" style="display:flex;align-items:center;justify-content:space-between">
+      Sex <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
+    </label>
     <select id="onboardSex">
-      <option value="">Select...</option>
+      <option value="">Prefer not to say</option>
       <option value="male">Male</option>
       <option value="female">Female</option>
       <option value="other">Other</option>
@@ -2400,8 +2399,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.93';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Phase 2: pronunciation fix (phonetic TTS), expanded onboarding intro with ice-breaker prompt cards, Gethro dashboard tile (daily rules-based observation).';
+  const APP_VERSION  = 'v2.94';
+  const DEPLOY_NOTES = APP_VERSION + ' — Onboarding tidy: T&Cs first (blocks login until accepted), DOB/sex optional, scrap ice-breaker cards — Gethro asks single question + mic auto-starts, fix draft overwrite.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2718,8 +2717,15 @@
 
       updateAuthUI();
       if (currentUser) {
-        // On every login: check if user has accepted current T&Cs. If not, show overlay.
-        await _checkDisclaimerVersion(); await loadEntries(); await loadBookSettings(); showReminder(); renderDashboard(); draftRestore();
+        // T&Cs FIRST — must be accepted before we collect any personal data.
+        // _checkDisclaimerVersion() now returns a promise that resolves only after
+        // the user clicks "I Agree". loadEntries (which triggers onboarding) runs after.
+        await _checkDisclaimerVersion();
+        await loadEntries();
+        await loadBookSettings();
+        showReminder();
+        renderDashboard();
+        draftRestore();
       }
     });
   }
@@ -2943,8 +2949,9 @@
   }
 
   // Check if user needs to (re-)accept the current disclaimer version.
-  // Simple approach: always ask the DB. If the current version is already saved, do nothing.
-  // This is inherently race-safe — no flags needed.
+  // Returns a Promise that resolves immediately if already accepted, or only
+  // after the user clicks "I Agree" if they haven't. This ensures the rest of
+  // the login sequence (loadEntries → onboarding) is blocked until T&Cs are done.
   async function _checkDisclaimerVersion() {
     if (!currentUser) return;
     try {
@@ -2954,25 +2961,28 @@
       var savedVersion = (rows[0] || {}).value || null;
       if (savedVersion === DISCLAIMER_VERSION) {
         dbg('DISCLAIMER', 'Current version already accepted:', savedVersion);
-        return; // already accepted — nothing to do
+        return; // already accepted — continue immediately
       }
-      // Not yet accepted (new user or version bump) — show overlay
+      // Not yet accepted — show overlay and wait for user to agree before resolving
       dbg('DISCLAIMER', 'Showing disclaimer — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
-      var overlay = document.getElementById('disclaimerOverlay');
-      var checkEl = document.getElementById('disclaimerCheck');
-      var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
-      if (checkEl) checkEl.checked = false;
-      if (btnEl) {
-        btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
-        btnEl.onclick = async function() {
-          if (!checkEl.checked) return toast('Please tick the checkbox to agree');
-          overlay.style.display = 'none';
-          window._pendingDisclaimerAcceptedAt = new Date().toISOString();
-          await _saveDisclaimerAcceptance();
-          toast('Thank you — your acceptance has been updated.');
-        };
-      }
-      if (overlay) overlay.style.display = 'flex';
+      return new Promise(function(resolve) {
+        var overlay = document.getElementById('disclaimerOverlay');
+        var checkEl = document.getElementById('disclaimerCheck');
+        var btnEl   = overlay ? overlay.querySelector('.btn-primary') : null;
+        if (checkEl) checkEl.checked = false;
+        if (btnEl) {
+          btnEl.textContent = savedVersion ? 'I Agree — Update my acceptance' : 'I Agree — Continue';
+          btnEl.onclick = async function() {
+            if (!checkEl.checked) return toast('Please tick the checkbox to agree');
+            overlay.style.display = 'none';
+            window._pendingDisclaimerAcceptedAt = new Date().toISOString();
+            await _saveDisclaimerAcceptance();
+            toast('Thank you — your acceptance has been recorded.');
+            resolve(); // now let the rest of login proceed
+          };
+        }
+        if (overlay) overlay.style.display = 'flex';
+      });
     } catch(err) {
       dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
     }
@@ -3102,7 +3112,8 @@
       userProfile.name = nameEntry?.answer ?? null;
       userProfile.dob  = dobEntry?.answer  ?? null;
       userProfile.sex  = sexEntry?.answer  ?? null;
-      if (!userProfile.name || !userProfile.dob || !userProfile.sex) {
+      // Only name is required — DOB and sex are optional (privacy: user can skip)
+      if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
       }
       populateTagDropdowns('rec');
@@ -3361,115 +3372,89 @@
   }
 
   // ── Onboarding ───────────────────────────────────────────────────
+  // ── Onboarding ───────────────────────────────────────────────────
+  // Name is the only required field. DOB and sex are optional — user can skip them.
+  // T&Cs are always accepted BEFORE this overlay is shown (via _checkDisclaimerVersion).
   async function saveOnboarding() {
     const name = document.getElementById('onboardName').value.trim();
     const dob  = document.getElementById('onboardDob').value;
     const sex  = document.getElementById('onboardSex').value;
-    if (!name) return toast('Please enter your name');
-    if (!dob)  return toast('Please enter your date of birth');
-    if (!sex)  return toast('Please select your sex');
+    if (!name) return toast('Please enter your name — Gethro needs to know what to call you!');
+    // Always save name; save DOB and sex only if provided
     const saves = [
       fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_name',answer:name,question:'What is your name?',timestamp:new Date().toISOString()})}),
-      fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_dob',answer:dob,question:'What is your date of birth?',timestamp:new Date().toISOString()})}),
-      fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_sex',answer:sex,question:'What is your sex?',timestamp:new Date().toISOString()})}),
     ];
+    if (dob) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_dob',answer:dob,question:'What is your date of birth?',timestamp:new Date().toISOString()})}));
+    if (sex) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_sex',answer:sex,question:'What is your sex?',timestamp:new Date().toISOString()})}));
     await Promise.all(saves);
-    userProfile = { name, dob, sex };
+    userProfile = { name, dob: dob || null, sex: sex || null };
     document.getElementById('onboardingOverlay').style.display = 'none';
     notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + name + ')');
     logActivity('onboarding_complete', name, 'info', 'AUTH');
     toast('Welcome, ' + name + '! 🎉');
-    // Gethro introduces himself by voice, then asks the first question aloud.
-    // iOS TTS primer must happen synchronously on the user gesture (button click) —
-    // we do it here before the async saves to ensure gesture context is captured.
     _onboardGethroIntro(name);
   }
 
   // Called after onboarding saves — Gethro speaks his welcome then shows ice-breaker cards.
   // Pronunciation note: TTS text uses "Jeffro" so OpenAI onyx voice produces the correct
   // soft-G sound (like "Geoff"). All UI text still reads "Gethro".
+  // Called after onboarding saves — Gethro speaks his welcome then asks one ice-breaker
+  // question and starts the mic. No cards or tap-to-choose UI — just a conversation.
+  // Pronunciation: TTS uses "Jeffro" (soft-G like "Geoff"). UI always reads "Gethro".
+  // Ice-breaker questions rotate by user signup day so returning testers don't hear the same one.
+  var ONBOARD_ICE_BREAKERS = [
+    { title: 'Where I grew up',     q: 'Where did you grow up?' },
+    { title: 'My childhood home',   q: 'Tell me about the home you grew up in.' },
+    { title: 'My parents',          q: 'Tell me about your parents.' },
+    { title: 'My earliest memory',  q: "What's your earliest memory?" },
+    { title: 'What I wanted to be', q: 'What did you want to be when you grew up?' },
+  ];
+
   async function _onboardGethroIntro(name) {
     try {
-      // Prime iOS speech engine on the gesture context
+      // Prime iOS speech engine on the user gesture context
       if (window.speechSynthesis) {
-        const primer = new SpeechSynthesisUtterance('');
+        var primer = new SpeechSynthesisUtterance('');
         speechSynthesis.speak(primer);
         speechSynthesis.cancel();
       }
-      const firstName = (name || '').split(' ')[0];
-      // "Jeffro" in TTS text only — produces the correct soft-G sound like "Geoff".
-      // UI everywhere still reads "Gethro".
-      const welcomeSpeech =
-        'Hi ' + firstName + ', I\'m Jeffro — your personal story guide. ' +
-        'My job is to help you remember and capture the moments that made you who you are. ' +
-        'We\'ll go at your own pace — no rush, no wrong answers. Every memory matters, big or small. ' +
-        'Now, to break the ice, I\'ve picked a few easy questions to get us started. ' +
-        'Just tap the one that feels right. Or if something else is on your mind, tell me and we\'ll go there instead.';
+      var firstName = (name || '').split(' ')[0];
 
-      await new Promise(r => setTimeout(r, 400)); // brief pause after overlay closes
+      // Pick ice-breaker — rotate by day so it varies between sessions
+      var dayIdx = Math.floor(Date.now() / 86400000) % ONBOARD_ICE_BREAKERS.length;
+      var ib = ONBOARD_ICE_BREAKERS[dayIdx];
+
+      // Build the full welcome + question speech
+      // "Jeffro" in TTS only — produces the correct soft-G (like "Geoff"); UI reads "Gethro"
+      var speech =
+        'Hi ' + firstName + ", I'm Jeffro, your personal story guide. " +
+        "My job is to help you remember and capture the moments that made you who you are. " +
+        "We'll go at your own pace, no rush, no wrong answers. Every memory matters. " +
+        "Now let me ask you something to get us started. " +
+        ib.q;
+
+      // Small pause after overlay closes, then navigate to Memories
+      await new Promise(function(r) { setTimeout(r, 400); });
       showPanel('memories', null, 0);
-      // Show ice-breaker prompt cards above the textarea
-      _renderIceBreakerCards(firstName);
-      // Gethro speaks the welcome
-      await gethroSpeak(welcomeSpeech);
+
+      // Pre-fill title and clear any stale draft so we start fresh
+      var titleEl  = document.getElementById('memTitle');
+      var answerEl = document.getElementById('memAnswer');
+      if (titleEl)  { titleEl.value = ib.title; }
+      if (answerEl) { answerEl.value = ''; answerEl.placeholder = ib.q; }
+      _userHasTyped = false; // programmatic fill — don't arm autosave guard
+      draftClear();          // clear any restored draft from a previous session
+
+      // Gethro speaks the welcome + first question, then mic starts automatically
+      await gethroSpeak(speech);
+      // Start mic so they can answer straight away — same as the interview flow
+      if (document.getElementById('panel-memories').classList.contains('active')) {
+        await new Promise(function(r) { setTimeout(r, 200); });
+        startMemMic();
+      }
     } catch(err) {
-      dbg('ONBOARD', 'Gethro intro TTS failed (non-critical):', err.message);
+      dbg('ONBOARD', 'Gethro intro failed (non-critical):', err.message);
     }
-  }
-
-  // Ice-breaker prompt cards — shown after onboarding, above the Memories textarea.
-  // Five warm, accessible starting questions. Tap one to pre-fill title + placeholder.
-  // Dismissed once user starts typing or taps "something else".
-  var _iceBreakerShown = false;
-  var ICE_BREAKERS = [
-    { title: 'Where I grew up',        q: 'Where did you grow up, and what was it like?' },
-    { title: 'My childhood home',      q: 'Tell me about the house or home you grew up in.' },
-    { title: 'My parents',             q: 'Tell me about your parents — what were they like?' },
-    { title: 'My earliest memory',     q: 'What\'s your earliest memory?' },
-    { title: 'What I wanted to be',    q: 'What did you want to be when you grew up?' },
-  ];
-
-  function _renderIceBreakerCards(firstName) {
-    if (_iceBreakerShown) return;
-    _iceBreakerShown = true;
-    const container = document.getElementById('iceBreakerCards');
-    if (!container) return;
-    const greeting = firstName ? 'Hi ' + firstName + ', where would you like to start?' : 'Where would you like to start?';
-    container.innerHTML =
-      '<div style="margin-bottom:18px;padding:16px 18px;background:linear-gradient(135deg,rgba(201,169,110,0.12),rgba(122,158,126,0.08));border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:12px">' +
-        '<p style="font-size:0.95rem;font-weight:600;color:var(--text);margin-bottom:12px">🎙️ ' + greeting + '</p>' +
-        '<div style="display:flex;flex-direction:column;gap:8px">' +
-          ICE_BREAKERS.map((ib, i) =>
-            '<button onclick="_selectIceBreaker(' + i + ')" ' +
-            'style="text-align:left;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-family:\'Lato\',sans-serif;font-size:0.9rem;color:var(--text);cursor:pointer;transition:all 0.15s" ' +
-            'onmouseover="this.style.borderColor=\'var(--gold)\';this.style.background=\'var(--surface2)\'" ' +
-            'onmouseout="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--surface)\'">' +
-            '✍️ ' + ib.q +
-            '</button>'
-          ).join('') +
-          '<button onclick="_dismissIceBreaker()" ' +
-          'style="text-align:left;padding:8px 14px;border:1px dashed var(--border);border-radius:8px;background:none;font-family:\'Lato\',sans-serif;font-size:0.82rem;color:var(--text-light);cursor:pointer;margin-top:2px">' +
-          '💬 Something else on my mind…' +
-          '</button>' +
-        '</div>' +
-      '</div>';
-    container.style.display = 'block';
-  }
-
-  function _selectIceBreaker(idx) {
-    const ib = ICE_BREAKERS[idx];
-    if (!ib) return;
-    const titleEl  = document.getElementById('memTitle');
-    const answerEl = document.getElementById('memAnswer');
-    if (titleEl)  titleEl.value = ib.title;
-    if (answerEl) { answerEl.value = ''; answerEl.placeholder = ib.q; answerEl.focus(); }
-    _dismissIceBreaker();
-    _userHasTyped = false; // title was set programmatically — don't arm autosave guard yet
-  }
-
-  function _dismissIceBreaker() {
-    const container = document.getElementById('iceBreakerCards');
-    if (container) { container.style.display = 'none'; container.innerHTML = ''; }
   }
 
   // ── Panels ───────────────────────────────────────────────────────
