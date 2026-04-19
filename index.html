@@ -2569,8 +2569,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.01';
-  const DEPLOY_NOTES = APP_VERSION + ' — HOTFIX: strip regex broken by embedded <!-- comment --> text in PROJECT MEMORY. Fix: (1) remove embedded comment tag from memory text, (2) deployer strip regex changed from non-greedy to greedy anchored before <html so embedded --> in memory text no longer terminates match early.';
+  const APP_VERSION  = 'v3.02';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix TTS silent on laptop: decodeAudioData switched from callback API (silently swallows errors on Chrome desktop) to Promise API so failures surface and fall back to speechSynthesis correctly. Also: AudioContext closed on sign-out; reviewSearch cleared on tab change; Gethro panel scrolls to latest message on open.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3218,6 +3218,13 @@
 
   async function signOut() {
     if (recActive) { recActive = false; stopListening(); }
+    gethroCancel();
+    // Close AudioContext to free OS audio resources — a new one will be created
+    // on next gesture if the user signs back in within the same page load.
+    if (_gethroAudioCtx) {
+      try { _gethroAudioCtx.close(); } catch(e) {}
+      _gethroAudioCtx = null;
+    }
     await sb.auth.signOut();
     entries = [];
     toast('Signed out');
@@ -3468,21 +3475,26 @@
         var ctx = _gethroAudioCtx;
         if (ctx.state === 'suspended') { await ctx.resume(); }
         dbg('TTS', 'AudioContext state=' + ctx.state);
-        ctx.decodeAudioData(arrayBuf, function(decoded) {
-          dbg('TTS', 'decodeAudioData ok, duration=' + decoded.duration.toFixed(1) + 's');
-          var source = ctx.createBufferSource();
-          source.buffer = decoded;
-          source.connect(ctx.destination);
-          source.onended = function() { dbg('TTS', 'AudioContext source ended ok'); _gethroAudio = null; resolve(); };
-          _gethroAudio = source;
-          source.start(0);
-          dbg('TTS', 'AudioContext source.start() called');
-        }, function(decodeErr) {
+        // Use Promise-based decodeAudioData — the old callback form silently swallows
+        // errors on Chrome desktop, leaving resolve() never called. Promise form
+        // properly rejects, is caught by the outer try/catch, and falls back cleanly.
+        var decoded;
+        try {
+          decoded = await ctx.decodeAudioData(arrayBuf);
+        } catch(decodeErr) {
           var msg = decodeErr ? decodeErr.message || String(decodeErr) : 'decodeAudioData failed';
           dbg('TTS', 'decodeAudioData error:', msg);
           notifyDev('error', 'TTS', 'decodeAudioData failed: ' + msg);
-          _gethroAudio = null; _gethroFallback(text, resolve);
-        });
+          _gethroAudio = null; _gethroFallback(text, resolve); return;
+        }
+        dbg('TTS', 'decodeAudioData ok, duration=' + decoded.duration.toFixed(1) + 's');
+        var source = ctx.createBufferSource();
+        source.buffer = decoded;
+        source.connect(ctx.destination);
+        source.onended = function() { dbg('TTS', 'AudioContext source ended ok'); _gethroAudio = null; resolve(); };
+        _gethroAudio = source;
+        source.start(0);
+        dbg('TTS', 'AudioContext source.start() called');
       } catch(err) {
         dbg('TTS', 'TTS_PROXY error:', err.message);
         notifyDev('error', 'TTS', 'gethroSpeak error: ' + err.message);
@@ -3720,6 +3732,12 @@
 
     if (name === 'dashboard') renderDashboard();
     if (name === 'entries')   { populateReviewFilter(_entriesChapterFilter); _entriesChapterFilter = null; renderReviewEntries(); }
+    if (name !== 'entries') {
+      // Clear Entries search when leaving the tab so stale Gethro filter_text
+      // queries don't persist the next time the user opens Entries manually.
+      var srchEl = document.getElementById('reviewSearch');
+      if (srchEl && srchEl.value) { srchEl.value = ''; }
+    }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
@@ -9897,6 +9915,11 @@
     }
     panel.classList.add('open');
     if (fab) fab.classList.add('panel-open');
+    // Scroll log to bottom — if history is long the user should see the latest message, not the top.
+    setTimeout(function() {
+      var log = document.getElementById('agpLog');
+      if (log) log.scrollTop = log.scrollHeight;
+    }, 50);
     // Show opening message if log is empty
     if (!_gethroHistory.length) {
       var firstName = (userProfile.name || '').split(' ')[0] || '';
