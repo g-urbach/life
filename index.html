@@ -2345,15 +2345,11 @@
       <p>Go to My Story, generate your story, then click <strong>🖨️ Print as Book</strong> to order a real printed copy via Peecho — choose your format, enter your address and pay on their site.</p>
     </div>
 
-    <div class="help-section">
-      <h3>💬 Ask Gethro</h3>
-      <div id="helpChatLog"></div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <input id="helpInput" type="text" placeholder="e.g. How do I add a photo?"
-          style="flex:1;padding:12px 16px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)"
-          onkeydown="if(event.key==='Enter') askHelp()">
-        <button class="btn btn-primary" onclick="askHelp()">Ask</button>
-      </div>
+    <div class="help-section" style="text-align:center;padding:20px 16px;background:var(--surface2);border-radius:12px;border:1px solid var(--border)">
+      <div style="font-size:2rem;margin-bottom:8px">🎙️</div>
+      <h3 style="margin-bottom:8px">Ask Gethro</h3>
+      <p style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:16px">Gethro can answer any question about the app, your entries, or your story — from any screen. Just tap the button below.</p>
+      <button class="btn btn-primary" onclick="openAskGethro()" style="font-size:0.95rem;padding:12px 28px">🎙️ Open Gethro</button>
     </div>
 
     <div class="help-section">
@@ -2569,8 +2565,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.02';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix TTS silent on laptop: decodeAudioData switched from callback API (silently swallows errors on Chrome desktop) to Promise API so failures surface and fall back to speechSynthesis correctly. Also: AudioContext closed on sign-out; reviewSearch cleared on tab change; Gethro panel scrolls to latest message on open.';
+  const APP_VERSION  = 'v3.04';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Telegram notifications now include full conversation transcript for context (friction observations and feature suggestions).';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3741,7 +3737,7 @@
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
-    if (name === 'help')     document.getElementById('helpInput').focus();
+    if (name === 'help')     { /* help tab — no input to focus */ }
     if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);
     if (name === 'memories') populateTagDropdowns('rec');
     if (name === 'story')    renderBookDetails();
@@ -9975,15 +9971,52 @@
     var totalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
     var userName = (userProfile.name || '').split(' ')[0] || 'the user';
 
+    // Keyword-match entries against the user's latest message — gives Gethro
+    // actual content for questions like "what do you think about my dog?"
+    // Extracts nouns/keywords from the message, searches ALL entry text, returns
+    // up to 5 matching snippets so Gethro can answer with real information.
+    var lastMsg = (_gethroHistory[_gethroHistory.length - 1] || {}).content || '';
+    var stopWords = new Set(['what','do','you','think','about','my','the','a','an','is','are','was','were','have','has','had','i','me','we','us','tell','me','know','any','of','in','on','at','to','for','with','and','or','but','how','when','where','who']);
+    var keywords = lastMsg.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(function(w) { return w.length > 2 && !stopWords.has(w); });
+    var matchedSnippets = '';
+    if (keywords.length) {
+      var matched = real.filter(function(e) {
+        var haystack = ((e.title || '') + ' ' + (e.answer || '') + ' ' + (e.people || '')).toLowerCase();
+        return keywords.some(function(k) { return haystack.indexOf(k) !== -1; });
+      });
+      if (matched.length) {
+        matchedSnippets = '\nENTRIES MATCHING THIS QUESTION (' + matched.length + ' found):\n' +
+          matched.slice(0, 5).map(function(e) {
+            return '"' + (e.title || 'Untitled') + '": ' + (e.answer || '').slice(0, 150);
+          }).join('\n');
+      }
+    }
+
     // Keep last 6 exchanges as conversation history
     var historyToSend = _gethroHistory.slice(-12);
+
+    var APP_KNOWLEDGE =
+      'APP KNOWLEDGE — answer any how-to question using this:\n' +
+      '- MEMORIES TAB: Write or dictate a memory. Tap "Interview me" for Gethro to ask questions. Tap mic to dictate. Use "+ Add details" for chapter, date, location, people, photos. Tap "Done" to save.\n' +
+      '- ENTRIES TAB: Browse, search, edit or delete saved memories. Use filters for chapter/person/location. Tap any entry to expand and edit.\n' +
+      '- MY STORY TAB: Generate an AI-written memoir in 5 formats (Snapshot, Short, Full, Book Edition, Journal). Toggle Funny mode. Export as HTML or print as a physical book via Peecho.\n' +
+      '- DASHBOARD: See story health, word count, people/places tiles. Click a chapter to filter entries. Gethro tile shows a daily observation.\n' +
+      '- HELP TAB: App guide, privacy info, support email, and delete account button.\n' +
+      '- PRINTING: My Story tab → generate → click "Print as Book" → customise title/author → order via Peecho (external checkout, they handle payment and shipping).\n' +
+      '- DELETE ACCOUNT: Help tab → scroll to bottom → red "Delete My Account & All Data" button. This is permanent.\n' +
+      '- PHOTOS: In Memories tab, expand "+ Add details" → Photos section → upload. Photos appear on entry cards.\n' +
+      '- PEOPLE & REFERENCES: chip-based tag input in the Add details section. Type a name and press Enter to add.\n' +
+      '- SIGN OUT: Top-right corner of the app.\n' +
+      '- FORGOT PASSWORD: On the sign-in screen, tap "Forgot password".\n';
 
     var systemPrompt =
       'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
       'You speak in first person: warm, unhurried, curious. You remember what you have been told.\n' +
       'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
       'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
-      'RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n\n' +
+      'RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' +
+      matchedSnippets + '\n\n' +
+      APP_KNOWLEDGE + '\n' +
       'APP ACTIONS YOU CAN TRIGGER (include in your JSON response when appropriate):\n' +
       '  navigate_memories   — open the Memories (write) tab\n' +
       '  navigate_entries    — open the Entries tab\n' +
@@ -10004,7 +10037,8 @@
       '}\n' +
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
-      'Keep reply under 60 words — warm and direct, not rambling.';
+      'Keep reply under 60 words — warm and direct, not rambling.\n' +
+      'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
     // Build messages array: system + history
     var messages = [{ role: 'user', content: systemPrompt + '\n\nCONVERSATION:\n' +
@@ -10039,9 +10073,12 @@
         await _agpRoute(parsed.action);
       }
 
-      // Log friction observations to Telegram
+      // Log friction observations to Telegram with conversation context
       if (parsed.observation) {
-        notifyDev('info', 'GETHRO', 'Friction observation: ' + parsed.observation);
+        var convoLines = historyToSend.map(function(m) {
+          return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
+        }).join('\n');
+        notifyDev('info', 'GETHRO', 'Friction observation: ' + parsed.observation + '\n\nConversation:\n' + convoLines);
         dbg('GETHRO', 'Observation:', parsed.observation);
       }
 
@@ -10059,6 +10096,13 @@
     if (!action || !action.type) return;
     var p = action.params || {};
     var delay = 800; // small pause so reply is read before navigation
+
+    // Navigation actions: close the panel first so user lands on the destination cleanly.
+    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard',
+                      'filter_person','filter_chapter','filter_location','filter_text','new_memory','generate_story'];
+    if (navActions.indexOf(action.type) !== -1) {
+      setTimeout(function() { closeAskGethro(); }, delay - 200);
+    }
 
     switch (action.type) {
       case 'navigate_memories':
@@ -10103,7 +10147,10 @@
         setTimeout(function() { showPanel('story', null, 2); generateStory(mode); }, delay + 300); break;
       case 'capture_feedback':
         var feedback = p.feedback || '(no detail captured)';
-        notifyDev('info', 'FEEDBACK', 'Feature suggestion via Gethro: ' + feedback);
+        var fbConvo = _gethroHistory.slice(-12).map(function(m) {
+          return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
+        }).join('\n');
+        notifyDev('info', 'FEEDBACK', 'Feature suggestion via Gethro: ' + feedback + '\n\nConversation:\n' + fbConvo);
         logActivity('feature_suggestion', feedback, 'info', 'GETHRO');
         dbg('GETHRO', 'Feedback captured:', feedback);
         break;
