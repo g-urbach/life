@@ -2542,8 +2542,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.95';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Phase 3: Ask Gethro floating button + slide-up panel. Conversational UI with mic, session history, AI intent routing (navigate, filter, new_memory, generate_story, capture_feedback), friction observation logging to Telegram.';
+  const APP_VERSION  = 'v2.97';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro voice fix: add speechSynthesis primer synchronously in openAskGethro() and sendToGethro() to unlock browser/iOS autoplay policy before async TTS fetch. Without this primer in the gesture handler, audio.play() was blocked by autoplay policy on every reply.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -9797,6 +9797,12 @@
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
+    // Prime browser audio on the user gesture — required for iOS and Chrome autoplay policy.
+    // Must happen synchronously inside the click handler before any async work.
+    if (window.speechSynthesis) {
+      var primer = new SpeechSynthesisUtterance('');
+      speechSynthesis.speak(primer); speechSynthesis.cancel();
+    }
     panel.classList.add('open');
     if (fab) fab.classList.add('panel-open');
     // Show opening message if log is empty
@@ -9828,6 +9834,11 @@
     var inp  = document.getElementById('agpInput');
     var text = (inp ? inp.value.trim() : '');
     if (!text) return;
+    // Prime browser audio on user gesture — unlocks audio for Gethro's reply.
+    if (window.speechSynthesis) {
+      var primer = new SpeechSynthesisUtterance('');
+      speechSynthesis.speak(primer); speechSynthesis.cancel();
+    }
     inp.value = '';
     _agpStopMic();
     _agpAppendUser(text);
@@ -9853,7 +9864,8 @@
 
     var systemPrompt =
       'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
-      'You speak in first person: warm, unhurried, curious. You remember what you have been told.\n\n' +
+      'You speak in first person: warm, unhurried, curious. You remember what you have been told.\n' +
+      'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
       'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
       'RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n\n' +
       'APP ACTIONS YOU CAN TRIGGER (include in your JSON response when appropriate):\n' +
@@ -9864,6 +9876,7 @@
       '  filter_person       — filter Entries by person. params: { person: "name" }\n' +
       '  filter_chapter      — filter Entries by chapter. params: { chapter: "name" }\n' +
       '  filter_location     — filter Entries by location. params: { location: "name" }\n' +
+      '  filter_text         — free-text search across all entries. params: { query: "word or phrase" }. Use this when user asks about a topic (e.g. "show me stories about my cat" → filter_text with query="cat").\n' +
       '  new_memory          — start a new memory. params: { title?: "...", chapter?: "..." }\n' +
       '  generate_story      — generate story. params: { mode: "blurb|short|extended|chapters|journal" }\n' +
       '  capture_feedback    — user wants to suggest a feature. params: { feedback: "their words" }\n\n' +
@@ -9946,6 +9959,15 @@
         if (p.chapter) setTimeout(function() { filterEntriesByChapter(p.chapter); }, delay); break;
       case 'filter_location':
         if (p.location) setTimeout(function() { filterEntriesByLocation(p.location); }, delay); break;
+      case 'filter_text':
+        if (p.query) setTimeout(function() {
+          _entriesTypeFilter = null; _entriesPersonFilter = null; _entriesLocationFilter = null;
+          showPanel('entries', null, 3);
+          setTimeout(function() {
+            var srch = document.getElementById('reviewSearch');
+            if (srch) { srch.value = p.query; renderReviewEntries(); }
+          }, 300);
+        }, delay); break;
       case 'new_memory':
         setTimeout(function() {
           showPanel('memories', null, 0);
@@ -9996,7 +10018,7 @@
     textDiv.textContent = text;
     div.appendChild(textDiv);
     // If there is a navigational action, add a small action button hint
-    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','filter_person','filter_chapter','filter_location','new_memory','generate_story'];
+    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','filter_person','filter_chapter','filter_location','filter_text','new_memory','generate_story'];
     if (action && navActions.indexOf(action.type) !== -1) {
       var btn = document.createElement('button');
       btn.className = 'agp-action-btn';
@@ -10008,6 +10030,7 @@
         filter_person:     '👤 Filter: ' + ((action.params||{}).person||''),
         filter_chapter:    '📚 Filter: ' + ((action.params||{}).chapter||''),
         filter_location:   '📍 Filter: ' + ((action.params||{}).location||''),
+        filter_text:       '🔍 Search: ' + ((action.params||{}).query||''),
         new_memory:        '✍️ Start memory',
         generate_story:    '📖 Generate story',
       };
