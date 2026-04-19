@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -21,15 +20,15 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="manifest" id="pwaManifest">
-  <title>LifeTold</title>
+  <title>LifeTold</title><!-- version set at runtime from APP_VERSION -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  
+  <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
   <script>
     if (typeof supabase === 'undefined') {
       document.write('<script src="https://unpkg.com/@supabase/supabase-js@2"><\/script>');
     }
   </script>
-  
+  <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
@@ -1448,6 +1447,9 @@
 </head>
 <body>
 
+<!-- ══════════════════════════════════════════
+     LANDING SCREEN (logged-out users)
+══════════════════════════════════════════ -->
 <div id="landingScreen">
   <div class="landing-inner">
     <div class="landing-left">
@@ -1461,7 +1463,7 @@
         <li>Print it as a real book for your family</li>
       </ul>
 
-      
+      <!-- Sign In / Create Account form (toggled by landingSetMode) -->
       <div class="landing-auth" id="landingAuthPanel">
         <h3 id="landingAuthTitle">Sign in to your story</h3>
         <input id="landingEmail" placeholder="Email address" type="email" autocomplete="email"
@@ -1469,7 +1471,7 @@
         <input id="landingPassword" placeholder="Password" type="password" autocomplete="current-password"
           onkeydown="if(event.key==='Enter') landingPrimaryAction()"
           oninput="document.getElementById('landingAuthError').style.display='none'">
-        
+        <!-- Confirm password — shown only in Create Account mode -->
         <input id="landingPasswordConfirm" placeholder="Confirm password" type="password" autocomplete="new-password"
           style="display:none"
           onkeydown="if(event.key==='Enter') landingPrimaryAction()"
@@ -1492,7 +1494,7 @@
         </div>
       </div>
 
-      
+      <!-- Activation pending panel — shown after successful sign-up -->
       <div class="landing-auth" id="landingActivationPanel" style="display:none">
         <h3>Check your email ✉️</h3>
         <p style="font-size:0.88rem;color:rgba(250,247,242,0.65);line-height:1.6;margin-bottom:14px">
@@ -1505,7 +1507,7 @@
         <button class="landing-btn-primary" style="width:100%" onclick="landingShowSignIn()">Back to Sign In</button>
       </div>
 
-      
+      <!-- Forgot password panel -->
       <div id="forgotPanel" style="display:none">
         <div class="landing-auth">
           <h3>Reset your password</h3>
@@ -1554,6 +1556,9 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════
+     APP (logged-in)
+══════════════════════════════════════════ -->
 <div id="appShell" style="display:none">
 
 <header>
@@ -1565,6 +1570,8 @@
   </div>
 </header>
 
+<!-- Desktop nav -->
+<!-- ── Tag Manager Modal ─────────────────────────────────────────── -->
 <div id="tagManagerOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,0.4)">
     <h3 id="tagManagerTitle" style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:400;margin-bottom:16px"></h3>
@@ -1597,6 +1604,7 @@
   <button class="nav-btn" onclick="showPanel('help', this, 4)">❓ Help</button>
 </div>
 
+<!-- Mobile bottom tab bar -->
 <div id="mobileTabBar">
   <div class="tab-bar-inner">
     <button class="tab-btn active" id="tab-0" onclick="showPanel('memories', null, 0)">
@@ -1625,29 +1633,29 @@
 <main>
   <div id="reminder"></div>
 
-  
+  <!-- RECORD (merged Talk + Voice Memo + Typed Entry) -->
   <div class="panel active" id="panel-memories">
     <h2 class="section-title">Tell Gethro a Memory</h2>
 
-    
+    <!-- AI question box (shown during AI conversation) -->
     <div id="aiQuestionBox" style="display:none;margin-bottom:18px">
       <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:0 10px 10px 0;padding:16px 20px;font-size:1.05rem;line-height:1.7;color:var(--text);font-style:italic" id="aiQuestionText"></div>
     </div>
 
-    
+    <!-- Status bar (shown during AI conversation) -->
     <div id="recordStatus" style="display:none;align-items:center;gap:12px;padding:12px 16px;background:var(--surface2);border-radius:10px;margin-bottom:14px;font-size:0.9rem;font-weight:700;color:var(--text-light)">
       <div class="pulse idle" id="statusDot"></div>
       <span id="statusText"></span>
     </div>
 
-    
+    <!-- Title -->
     <div style="margin-bottom:16px">
       <input type="text" id="memTitle" placeholder="Title — e.g. Dad's workshop, First day of school..."
         style="width:100%;padding:14px 18px;border:2px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:1.1rem;font-weight:700;background:var(--surface);color:var(--text);transition:border-color 0.2s"
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
     </div>
 
-    
+    <!-- Mic button — prominent, above textarea -->
     <div style="margin-bottom:12px">
       <button id="memMicBtn" onclick="toggleMemMic()"
         style="width:100%;padding:16px 18px;border-radius:10px;border:2px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:1.05rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;transition:all 0.2s;color:var(--text)">
@@ -1656,7 +1664,7 @@
       </button>
     </div>
 
-    
+    <!-- Memory text -->
     <div style="position:relative;margin-bottom:16px">
       <textarea id="memAnswer" placeholder="Or type your memory here..."
         spellcheck="true" lang="en-AU"
@@ -1664,10 +1672,10 @@
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'"></textarea>
     </div>
 
-    
+    <!-- Spell check result -->
     <div id="memSpellPanel" class="improve-panel-mem" style="display:none;margin-bottom:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;font-size:1rem;line-height:1.8"></div>
 
-    
+    <!-- Details accordion — collapsed by default -->
     <div style="margin-bottom:20px">
       <button type="button" onclick="memToggleDetails()" id="memDetailsToggle"
         style="width:100%;padding:10px 16px;border:1px dashed var(--border);border-radius:8px;background:none;font-family:'Lato',sans-serif;font-size:0.88rem;color:var(--text-light);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"
@@ -1680,7 +1688,7 @@
       <div id="memDetailsPanel" style="display:none;margin-top:10px">
         <div class="tag-panel" id="memTagPanel">
 
-          
+          <!-- Row 1: Chapter | Date (free text) -->
           <div class="tag-field">
             <label>📚 Chapter</label>
             <select id="recTagChapter" onchange="handleNewTagOption(this,'recTagChapterCustom')"><option value="">Not specified</option></select>
@@ -1692,11 +1700,11 @@
               style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
           </div>
 
-          
+          <!-- Hidden era field — kept for data compatibility, not shown -->
           <input type="hidden" id="recTagYear">
           <input type="hidden" id="recTagYearCustom">
 
-          
+          <!-- Row 2: Location | People | References -->
           <div class="tag-field">
             <label>📍 Location</label>
             <select id="recTagLocation" onchange="handleNewTagOption(this,'recTagLocationCustom')"><option value="">Not specified</option></select>
@@ -1724,7 +1732,7 @@
             <input type="hidden" id="recTagRefUrl">
           </div>
 
-          
+          <!-- Row 3: Photos (full width) -->
           <div class="tag-field" style="grid-column:1/-1">
             <label>📷 Photos</label>
             <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
@@ -1741,7 +1749,7 @@
       </div>
     </div>
 
-    
+    <!-- Buttons -->
     <div id="memButtons">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
         <button class="btn btn-primary mem-action-btn" id="memAITopicBtn" onclick="memInterviewMe()">💬 Interview me</button>
@@ -1751,7 +1759,7 @@
         <button class="btn btn-secondary mem-action-btn" id="memSaveNewBtn" onclick="memDone()">✓ Done</button>
         <button class="btn btn-ghost     mem-action-btn" id="memNewBtn"     onclick="memNewEntry()">✚ New entry</button>
       </div>
-      
+      <!-- Hidden save button kept for programmatic use by autosave/AI flows -->
       <button id="memSaveBtn"   onclick="memSave()"        style="display:none"></button>
       <button id="memCancelBtn" onclick="memCancel()"      style="display:none"></button>
       <button id="memAIConvBtn" onclick="memAIConversation()" style="display:none"></button>
@@ -1759,12 +1767,12 @@
 
   </div>
 
-    
+    <!-- STORY -->
   <div class="panel" id="panel-story">
     <h2 class="section-title">My Story</h2>
     <p class="section-sub">Choose a format, then generate. Toggle 😄 Funny for a warm roast of any format.</p>
 
-    
+    <!-- ── Book Details section ─────────────────────────────────────── -->
     <div id="bookDetailsSection" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;cursor:pointer" onclick="toggleBookDetails()">
         <div>
@@ -1810,7 +1818,7 @@
       </div>
     </div>
 
-    
+    <!-- Funny toggle -->
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <button id="funnyToggleBtn" onclick="toggleFunny()" style="display:flex;align-items:center;gap:8px;padding:8px 16px;border:2px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer;transition:all 0.18s;color:var(--text)">
         <span>😄</span> <span id="funnyToggleLabel">Funny: Off</span>
@@ -1845,7 +1853,7 @@
         <span class="story-mode-desc">Your exact words, in date order — no AI, just you</span>
       </button>
     </div>
-    
+    <!-- Nudge shown when no story has been generated yet -->
     <div id="storyNudge" style="padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:0.85rem;color:var(--text-light);margin-bottom:16px">
       👆 Choose a format above and I'll write your story for you. Then you can export or print it as a book.
     </div>
@@ -1854,14 +1862,21 @@
       <button class="btn btn-secondary" id="printBookBtn" onclick="openPrintPreview()" style="display:none">🖨️ Print as Book</button>
     </div>
 
-    
+    <!-- Peecho Button script — must be on page so it can process the hidden <a> tag
+         below and navigate to the configurator with a valid publicationId.
+         The script reads data-src + other data-* attrs, registers the PDF with Peecho,
+         then navigates to peecho.com/configurator?publicationId=xxx. -->
   <script type="text/javascript">
     var p=document.createElement("script");p.type="text/javascript";p.async=true;
     var h=("https:"==document.location.protocol?"https://":"http://");
     p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
     var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
   </script>
-    
+    <!-- Peecho anchor — hidden until printBook() finishes preparing the PDF.
+         The Peecho Button script requires a real user gesture to navigate.
+         Programmatic .click() is ignored (v1.81 lesson: synthetic clicks don't trigger
+         Peecho's redirect). Solution: show this button after prep, user clicks it once.
+         Two interactions total: "Print as Book" to prepare, then this to go to Peecho. -->
     <a id="peechoPrintBtn"
        href="https://www.peecho.com/"
        class="peecho-print-button btn btn-secondary"
@@ -1892,7 +1907,7 @@
     <div id="storyOutput" style="display:none"></div>
   </div>
 
-  
+  <!-- ── PRINT PREVIEW OVERLAY ─────────────────────────────────────────── -->
   <div id="printPreviewOverlay" role="dialog" aria-modal="true" aria-label="Book preview">
     <div class="ppo-header">
       <div class="ppo-title">📖 Your Book Preview</div>
@@ -1907,7 +1922,7 @@
       </div>
     </div>
     <div class="ppo-body">
-      
+      <!-- Left: customisation controls -->
       <div class="ppo-controls">
         <div>
           <h3>Book Details</h3>
@@ -1952,24 +1967,24 @@
           Add more memories to grow your story — the more you add, the richer your book!
         </div>
       </div>
-      
+      <!-- Right: paginated book preview -->
       <div class="ppo-preview" id="ppoPreview">
-        
+        <!-- Pages rendered by renderPrintPreview() -->
       </div>
     </div>
   </div>
 
-  
+  <!-- TIMELINE -->
 
-  
-  
+  <!-- REVIEW -->
+  <!-- DASHBOARD panel -->
   <div class="panel" id="panel-dashboard">
     <h2 class="section-title">Dashboard</h2>
     <p class="section-sub" id="dashGreeting">Here's how your story is shaping up.</p>
 
     <div class="dash-grid">
 
-      
+      <!-- ⓪ GETHRO TILE — daily observation, rules-based -->
       <div class="dash-tile dash-tile-wide" id="dashGethroTile" style="display:none;min-height:auto;padding:16px 20px;border-left:3px solid var(--gold)">
         <div style="display:flex;gap:12px;align-items:flex-start">
           <div style="font-size:1.6rem;flex-shrink:0;line-height:1;margin-top:2px">🎙️</div>
@@ -1981,7 +1996,7 @@
         </div>
       </div>
 
-      
+      <!-- ① YOUR STORY -->
       <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('story')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
         <div class="dash-super-hd">
@@ -2022,7 +2037,7 @@
         </div>
       </div>
 
-      
+      <!-- ② STORY HEALTH + HYGIENE -->
       <div class="dash-tile dash-tile-wide dash-super" id="dashHealthTile" onclick="toggleSuper('health')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--rose)"></div>
         <div class="dash-super-hd">
@@ -2058,7 +2073,7 @@
         </div>
       </div>
 
-      
+      <!-- ③ WRITE TODAY -->
       <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('write')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--gold)"></div>
         <div class="dash-super-hd">
@@ -2107,7 +2122,7 @@
         </div>
       </div>
 
-      
+      <!-- ④ YOUR BOOK -->
       <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('book')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--ink-light)"></div>
         <div class="dash-super-hd">
@@ -2151,7 +2166,7 @@
         </div>
       </div>
 
-      
+      <!-- ⑤ RECENT ENTRIES -->
       <div class="dash-tile dash-tile-wide" style="min-height:auto;padding:14px 20px;cursor:pointer"
         onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null;showPanel('entries',null,3)">
         <div class="dash-tile-accent" style="background:var(--border)"></div>
@@ -2163,20 +2178,20 @@
   </div>
   </div>
 
-  
+  <!-- DUPLICATES & OVERLAPS MODAL -->
   <div class="dash-dialog-overlay" id="duplicatesOverlay">
     <div class="dash-dialog" style="max-width:1100px;width:95vw" onclick="event.stopPropagation()">
       <div class="dash-dialog-title" style="display:flex;align-items:center;justify-content:space-between">
         <span>&#128269; Duplicates &amp; Overlaps</span>
         <button class="dash-dialog-close" onclick="closeDuplicates()">&#10005;</button>
       </div>
-      
+      <!-- Step 1: pair list -->
       <div id="dupStep1">
         <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">Entries that may share content are listed below. Fix each one to keep your story clean. Pairs stay listed until you resolve them.</p>
         <div id="dupPairList"></div>
         <p id="dupNoPairs" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">&#10024; No duplicate or overlapping entries found &#8212; your story is clean!</p>
       </div>
-      
+      <!-- Step 2: editable columns -->
       <div id="dupStep2" style="display:none">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
           <button onclick="dupBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;padding:0;white-space:nowrap">&#8592; Back</button>
@@ -2184,7 +2199,7 @@
           <p id="dupPairDesc" style="font-size:0.82rem;color:var(--text-light);margin:0;flex:1;min-width:0"></p>
         </div>
         <div id="dupDetailContainer" style="overflow-y:auto;max-height:62vh"></div>
-        
+        <!-- Bottom bar -->
         <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)">
           <div id="dupMergeStatus" style="font-size:0.8rem;color:var(--text-light);flex:1;min-height:1.2em"></div>
           <button id="dupRegenBtn" onclick="dupRegenerate()" style="display:none;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text)">&#8635; Regenerate</button>
@@ -2195,7 +2210,7 @@
     </div>
   </div>
 
-  
+  <!-- CONSOLIDATE TOPIC MODAL (legacy) -->
   <div class="dash-dialog-overlay" id="consolidateOverlay">
     <div class="dash-dialog" style="max-width:680px" onclick="event.stopPropagation()">
       <div class="dash-dialog-title" style="display:flex;align-items:center;justify-content:space-between">
@@ -2203,22 +2218,22 @@
         <button class="dash-dialog-close" onclick="closeConsolidate()">✕</button>
       </div>
 
-      
+      <!-- Step 1: cluster list -->
       <div id="consolidateStep1">
         <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:14px">AI has found related entries that might tell the same story. Select a group to merge into one rich memory.</p>
         <div id="consolidateClusterList"></div>
         <p id="consolidateNoClusters" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:20px 0">No closely related entries found yet — add more memories and check back!</p>
       </div>
 
-      
+      <!-- Step 2: review + edit merged draft -->
       <div id="consolidateStep2" style="display:none">
         <button onclick="consolidateBack()" style="font-size:0.8rem;color:var(--text-light);background:none;border:none;cursor:pointer;margin-bottom:12px;padding:0">← Back to groups</button>
 
-        
+        <!-- Source entries with full detail + exclude + inline edit -->
         <div style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Entries in this group</div>
         <div id="consolidateSourceList" style="margin-bottom:16px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
 
-        
+        <!-- Suggested consolidation -->
         <div id="consolidateDraftArea" style="margin-bottom:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <label style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em">Suggested Consolidation</label>
@@ -2236,9 +2251,9 @@
     </div>
   </div>
 
-  
+  <!-- DASHBOARD DIALOGS -->
 
-  
+  <!-- Coverage / Chapters dialog -->
   <div class="dash-dialog-overlay" id="dashDialogCoverage">
     <div class="dash-dialog">
       <div class="dash-dialog-title">
@@ -2247,7 +2262,7 @@
       </div>
       <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px" id="dashCoverageStats"></p>
       <div id="dashCoverageGrid" class="chapter-grid"></div>
-      
+      <!-- Chapter detail inside dialog -->
       <div id="dashChapterDetail" style="display:none;margin-top:16px">
         <button class="chapter-back-btn" onclick="closeDashChapterDetail()">← Back to chapters</button>
         <div id="dashChapterDetailTitle" style="font-family:'Playfair Display',serif;font-size:1.2rem;margin:12px 0 4px"></div>
@@ -2257,8 +2272,8 @@
     </div>
   </div>
 
-  
-  
+  <!-- Essentials dialog -->
+  <!-- PROMPTS panel -->
   <div class="panel" id="panel-prompts">
     <h2 class="section-title">Memory Prompts</h2>
     <p class="section-sub">Stuck on what to write? Pick a question below — tap it and you'll land straight in Memories ready to answer. 50 questions across 8 life areas.</p>
@@ -2273,7 +2288,7 @@
     <div id="promptsGrid"></div>
   </div>
 
-  
+  <!-- ENTRIES panel -->
   <div class="panel" id="panel-entries">
     <h2 class="section-title">My Entries</h2>
     <p class="section-sub">Browse, search and improve all your memories.</p>
@@ -2294,7 +2309,7 @@
     <div id="reviewEntryList"></div>
   </div>
 
-  
+  <!-- REVIEW panel (hidden from nav — kept for function compatibility) -->
   <div class="panel" id="panel-review" style="display:none!important">
     <div id="reviewSectionEssentials" style="display:none">
       <div id="chapterGrid" class="chapter-grid"></div>
@@ -2310,7 +2325,7 @@
     </div>
   </div>
 
-  
+  <!-- HELP -->
   <div class="panel" id="panel-help">
     <h2 class="section-title">Help &amp; About</h2>
     <p class="section-sub">Questions? I'm here. Ask me anything about LifeTold.</p>
@@ -2376,15 +2391,17 @@
     </div>
   </div>
 
-  
+  <!-- DELETE panel kept for function compatibility; modal used instead -->
   <div class="panel" id="panel-delete" style="display:none!important"></div>
 </main>
-</div>
+</div><!-- /appShell -->
 
+<!-- OFFLINE BANNER -->
 <div id="offlineBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:var(--rose);color:#fff;text-align:center;font-size:0.85rem;font-family:'Lato',sans-serif;font-weight:600;padding:8px 16px;letter-spacing:0.02em">
   📶 You’re offline — changes won’t save until reconnected
 </div>
 
+<!-- DELETE MODAL -->
 <div id="deleteModal" style="display:none;position:fixed;inset:0;background:rgba(44,36,22,0.75);align-items:center;justify-content:center;z-index:1200;padding:20px">
   <div style="background:var(--cream);border-radius:16px;padding:36px;max-width:400px;width:100%;box-shadow:0 8px 48px rgba(44,36,22,0.3)">
     <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:400;margin-bottom:8px;color:var(--rose)">⚠️ Delete My Data</h2>
@@ -2396,6 +2413,7 @@
   </div>
 </div>
 
+<!-- DISCLAIMER -->
 <div id="disclaimerOverlay" style="display:none">
   <div id="disclaimerBox">
     <h2>Privacy &amp; Terms</h2>
@@ -2415,12 +2433,13 @@
       I have read and agree to the above disclaimer.
     </label>
     <div style="display:flex;gap:10px">
-      
+      <!-- Buttons injected dynamically by _checkDisclaimerVersion() -->
       <button class="btn btn-primary" style="flex:1">I Agree</button>
     </div>
   </div>
 </div>
 
+<!-- SET NEW PASSWORD (after clicking reset link in email) -->
 <div id="newPasswordOverlay" style="display:none;position:fixed;inset:0;background:rgba(44,36,22,0.75);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px">
   <div style="background:var(--cream);border-radius:16px;padding:36px;max-width:400px;width:100%;box-shadow:0 8px 48px rgba(44,36,22,0.3)">
     <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:400;margin-bottom:8px">Set a new password</h2>
@@ -2438,7 +2457,7 @@
 
 <div id="onboardingOverlay" style="display:none">
   <div id="onboardingBox">
-    
+    <!-- Gethro intro header -->
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:2.5rem;margin-bottom:8px">🎙️</div>
       <h2 style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:600;margin-bottom:8px">Hello, I'm Gethro.</h2>
@@ -2466,10 +2485,13 @@
   </div>
 </div>
 
+<!-- ── Ask Gethro — floating button + slide-up panel ──────────────────── -->
+<!-- FAB: only shown when logged in. Hidden when panel is open. -->
 <button id="askGethroFab" style="display:none" onclick="openAskGethro()" title="Ask Gethro anything" aria-label="Ask Gethro">
   🎙️
 </button>
 
+<!-- Slide-up panel -->
 <div id="askGethroPanel" role="dialog" aria-modal="true" aria-label="Ask Gethro">
   <div class="agp-header">
     <div class="agp-title"><span>🎙️</span> Gethro</div>
@@ -2488,6 +2510,7 @@
 <div id="toast"></div>
 <div id="undoToast"><span id="undoToastMsg">Entry deleted</span><button onclick="undoDelete()">Undo</button></div>
 
+<!-- iOS PWA install nudge — shown once after 30s on mobile Safari -->
 <div id="pwaIosOverlay" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;padding:16px;background:var(--ink);color:var(--cream);font-family:'Lato',sans-serif;box-shadow:0 -4px 20px rgba(0,0,0,0.3)">
   <div style="max-width:600px;margin:0 auto;display:flex;align-items:flex-start;gap:12px">
     <span style="font-size:2rem;flex-shrink:0">&#128241;</span>
@@ -2501,6 +2524,9 @@
   </div>
 </div>
 
+<!-- PWA mic blocked overlay — shown when user taps mic in iOS standalone mode.
+     iOS blocks webkitSpeechRecognition in PWA/home-screen apps (Apple bug, iOS 16+).
+     Directs user to open in Safari where it works correctly. -->
 <div id="pwaMicBlockedOverlay" style="display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.6)">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;max-width:400px;width:100%;font-family:Lato,sans-serif;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
     <div style="font-size:2.5rem;margin-bottom:12px">&#127897;</div>
@@ -2529,6 +2555,7 @@
   </div>
 </div>
 
+<!-- Android PWA install banner — triggered by beforeinstallprompt event -->
 <div id="pwaAndroidBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;padding:14px 16px;background:var(--ink);color:var(--cream);font-family:'Lato',sans-serif;box-shadow:0 -4px 20px rgba(0,0,0,0.3)">
   <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;gap:12px">
     <span style="font-size:1.8rem">&#128241;</span>
@@ -2542,8 +2569,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.98';
-  const DEPLOY_NOTES = APP_VERSION + ' — TTS debug build: full diagnostic logging on every gethroSpeak path (fetch status, blob size, audio.play resolve/reject, fallback). Telegram notifyDev on every failure path, not just first. _gethroFallbackNotified flag removed. _gethroFallback now waits for voices to load before speaking (Chrome async voices bug).';
+  const APP_VERSION  = 'v3.01';
+  const DEPLOY_NOTES = APP_VERSION + ' — HOTFIX: strip regex broken by embedded <!-- comment --> text in PROJECT MEMORY. Fix: (1) remove embedded comment tag from memory text, (2) deployer strip regex changed from non-greedy to greedy anchored before <html so embedded --> in memory text no longer terminates match early.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3377,9 +3404,30 @@
   // Falls back to browser speechSynthesis if TTS_PROXY fails or is unavailable.
   // All spoken questions and prompts go through this function.
   // To change Gethro's voice: update the GETHRO_VOICE constant above.
-  let _gethroAudio = null; // track current audio element so we can cancel
+  let _gethroAudio    = null; // current Audio element (if playing)
+  let _gethroAudioCtx = null; // shared AudioContext — created once on first gesture,
+                               // reused so resume() reliably unlocks desktop Chrome autoplay.
+  // Call this synchronously inside every user-gesture handler that might lead to audio.
+  // Creates the AudioContext on first call (requires gesture on Chrome desktop),
+  // then resumes it (no-op if already running). Safe to call multiple times.
+  function _primeAudioContext() {
+    if (!window.AudioContext && !window.webkitAudioContext) return;
+    if (!_gethroAudioCtx) {
+      _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (_gethroAudioCtx.state === 'suspended') {
+      _gethroAudioCtx.resume().catch(function(){});
+    }
+  }
   function gethroCancel() {
-    if (_gethroAudio) { _gethroAudio.pause(); _gethroAudio = null; }
+    if (_gethroAudio) {
+      try {
+        // AudioBufferSourceNode uses stop(); HTMLAudioElement uses pause()
+        if (typeof _gethroAudio.stop === 'function') { _gethroAudio.stop(); }
+        else if (typeof _gethroAudio.pause === 'function') { _gethroAudio.pause(); }
+      } catch(e) {}
+      _gethroAudio = null;
+    }
     if (window.speechSynthesis) speechSynthesis.cancel();
   }
   function gethroSpeak(text) {
@@ -3407,25 +3455,33 @@
           try { errBody = await res.text(); } catch(e2) {}
           throw new Error('TTS_PROXY ' + res.status + ': ' + errBody.slice(0, 200));
         }
-        var blob = await res.blob();
-        dbg('TTS', 'blob size=' + blob.size + ', type=' + blob.type);
-        if (!blob.size) throw new Error('TTS_PROXY returned empty blob');
-        var url  = URL.createObjectURL(blob);
-        var audio = new Audio(url);
-        _gethroAudio = audio;
-        audio.onended = function() { dbg('TTS', 'audio.onended ok'); URL.revokeObjectURL(url); _gethroAudio = null; resolve(); };
-        audio.onerror = function(e) {
-          var msg = e && e.message ? e.message : 'audio element error';
-          dbg('TTS', 'audio.onerror:', msg);
-          notifyDev('error', 'TTS', 'audio.onerror after blob: ' + msg);
-          URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve);
-        };
-        audio.play().then(function() {
-          dbg('TTS', 'audio.play() resolved');
-        }).catch(function(playErr) {
-          dbg('TTS', 'audio.play() rejected:', playErr.message);
-          notifyDev('error', 'TTS', 'audio.play() blocked: ' + playErr.message);
-          URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve);
+        var arrayBuf = await res.arrayBuffer();
+        dbg('TTS', 'arrayBuffer size=' + arrayBuf.byteLength);
+        if (!arrayBuf.byteLength) throw new Error('TTS_PROXY returned empty buffer');
+        // Use AudioContext to decode and play — bypasses Chrome desktop autoplay
+        // policy that blocks new Audio().play() on low-engagement sites.
+        // AudioContext is unlocked by _primeAudioContext() called in the gesture handler.
+        if (!_gethroAudioCtx) {
+          // Fallback: create context here if somehow not primed (e.g. non-gesture call)
+          _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        var ctx = _gethroAudioCtx;
+        if (ctx.state === 'suspended') { await ctx.resume(); }
+        dbg('TTS', 'AudioContext state=' + ctx.state);
+        ctx.decodeAudioData(arrayBuf, function(decoded) {
+          dbg('TTS', 'decodeAudioData ok, duration=' + decoded.duration.toFixed(1) + 's');
+          var source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          source.onended = function() { dbg('TTS', 'AudioContext source ended ok'); _gethroAudio = null; resolve(); };
+          _gethroAudio = source;
+          source.start(0);
+          dbg('TTS', 'AudioContext source.start() called');
+        }, function(decodeErr) {
+          var msg = decodeErr ? decodeErr.message || String(decodeErr) : 'decodeAudioData failed';
+          dbg('TTS', 'decodeAudioData error:', msg);
+          notifyDev('error', 'TTS', 'decodeAudioData failed: ' + msg);
+          _gethroAudio = null; _gethroFallback(text, resolve);
         });
       } catch(err) {
         dbg('TTS', 'TTS_PROXY error:', err.message);
@@ -4521,8 +4577,10 @@
     logActivity('interview_started', null, 'info', 'AI');
     const { title, answer } = memReadEntry();
 
-    // Prime iOS speech engine on user tap (required for gesture context)
+    // Prime audio on user tap — AudioContext for Chrome desktop, speechSynthesis for iOS
+    _primeAudioContext();
     if (window.speechSynthesis) {
+      _primeAudioContext();
       const primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer);
       speechSynthesis.cancel();
@@ -4568,6 +4626,7 @@
 
     // Prime iOS speech engine immediately on user tap (required for gesture context)
     if (window.speechSynthesis) {
+      _primeAudioContext();
       const primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer);
       speechSynthesis.cancel();
@@ -4648,6 +4707,7 @@
     if (!currentUser) return toast('Please sign in first');
     // Prime iOS speech engine on user tap
     if (window.speechSynthesis) {
+      _primeAudioContext();
       const primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer);
       speechSynthesis.cancel();
@@ -5985,14 +6045,14 @@
       <div id="${prefix}-${entryId}" class="tag-panel" style="display:none;margin-top:12px;grid-template-columns:1fr 1fr 1fr">
         <div class="tag-panel-title" style="grid-column:1/-1">✏️ Edit tags & photos</div>
 
-        
+        <!-- Title (full width) -->
         <div class="tag-field" style="grid-column:1/-1">
           <label>🏷️ Title</label>
           <input type="text" id="${prefix}_${entryId}TagTitle" placeholder="e.g. Dad's workshop..."
             style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
         </div>
 
-        
+        <!-- Row 1: Chapter | Era | Date -->
         <div class="tag-field">
           <label>📚 Chapter</label>
           <select id="${prefix}_${entryId}TagChapter" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagChapterCustom')"><option value="">Not specified</option></select>
@@ -6009,7 +6069,7 @@
             style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
         </div>
 
-        
+        <!-- Row 2: Location | People | References -->
         <div class="tag-field">
           <label>📍 Location</label>
           <select id="${prefix}_${entryId}TagLocation" onchange="handleNewTagOption(this,'${prefix}_${entryId}TagLocationCustom')"><option value="">Not specified</option></select>
@@ -6033,7 +6093,7 @@
           <input type="hidden" id="${prefix}_${entryId}TagRefUrl">
         </div>
 
-        
+        <!-- Row 3: Photos (full width) -->
         <div class="tag-field" style="grid-column:1/-1">
           <label>📷 Photos</label>
           <div id="${prefix}PhotoStrip${entryId}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
@@ -6045,7 +6105,7 @@
             onchange="handleEditPanelPhotos(this,'${entryId}','${prefix}')">
         </div>
 
-        
+        <!-- Save / Cancel -->
         <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
           <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${entryId}','${prefix}')">Save tags</button>
           <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('${prefix}-${entryId}').style.display='none'">Cancel</button>
@@ -9827,8 +9887,10 @@
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
-    // Prime browser audio on the user gesture — required for iOS and Chrome autoplay policy.
-    // Must happen synchronously inside the click handler before any async work.
+    // Prime browser audio on the user gesture — required for iOS and Chrome desktop autoplay policy.
+    // _primeAudioContext creates/resumes AudioContext synchronously in gesture context.
+    // speechSynthesis primer kept for iOS (AudioContext alone is not enough on iOS Safari).
+    _primeAudioContext();
     if (window.speechSynthesis) {
       var primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer); speechSynthesis.cancel();
@@ -9865,6 +9927,7 @@
     var text = (inp ? inp.value.trim() : '');
     if (!text) return;
     // Prime browser audio on user gesture — unlocks audio for Gethro's reply.
+    _primeAudioContext();
     if (window.speechSynthesis) {
       var primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer); speechSynthesis.cancel();
