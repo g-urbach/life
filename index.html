@@ -2584,7 +2584,7 @@
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
   const APP_VERSION  = 'v3.05';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Piece 1: removed Interview me button; Gethro seeds a follow-up question when opened on Memories tab with content; memory conversations detected and Save to entry bar shown in panel footer.';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Piece 1+2: removed Interview me; memory-seeded opener when Gethro opens on Memories tab with content; Save to entry flow with AI consolidation and raw transcript options (reuses AI Review memSpellPanel).';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -9914,15 +9914,13 @@
   var _agpMicActive   = false;
   var _agpRecognition = null;
   var _agpSending     = false;
-  var _agpMemoryMode  = false; // true when conversation is memory/story-related — shows Save to entry bar
+  var _agpMemoryMode  = false; // true when conversation is memory-related
 
   function openAskGethro() {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
     // Prime browser audio on the user gesture — required for iOS and Chrome desktop autoplay policy.
-    // _primeAudioContext creates/resumes AudioContext synchronously in gesture context.
-    // speechSynthesis primer kept for iOS (AudioContext alone is not enough on iOS Safari).
     _primeAudioContext();
     if (window.speechSynthesis) {
       var primer = new SpeechSynthesisUtterance('');
@@ -9930,7 +9928,7 @@
     }
     panel.classList.add('open');
     if (fab) fab.classList.add('panel-open');
-    // Scroll log to bottom — if history is long the user should see the latest message, not the top.
+    // Scroll log to bottom
     setTimeout(function() {
       var log = document.getElementById('agpLog');
       if (log) log.scrollTop = log.scrollHeight;
@@ -9938,19 +9936,15 @@
     // Show opening message if log is empty
     if (!_gethroHistory.length) {
       var firstName = (userProfile.name || '').split(' ')[0] || '';
-
-      // ── Memory-seeded opener: if user is on Memories tab with content, ask a question about it
-      var onMemTab = document.getElementById('panel-memories') &&
-                     document.getElementById('panel-memories').classList.contains('active');
-      var memTitle  = onMemTab ? (document.getElementById('memTitle')  || {}).value || '' : '';
-      var memAnswer = onMemTab ? (document.getElementById('memAnswer') || {}).value || '' : '';
-
+      // Memory-seeded opener: if on Memories tab with content, ask about it
+      var onMemTab  = !!(document.getElementById('panel-memories') &&
+                         document.getElementById('panel-memories').classList.contains('active'));
+      var memTitle  = onMemTab ? ((document.getElementById('memTitle')  || {}).value  || '') : '';
+      var memAnswer = onMemTab ? ((document.getElementById('memAnswer') || {}).value || '') : '';
       if (onMemTab && (memTitle || memAnswer)) {
-        // Seed the history with internal context so Gethro has what to ask about, but
-        // only display the generated question — don't expose the system seed message.
         _agpMemoryMode = true;
         _agpUpdateSaveBar();
-        var seedCtx = (memTitle ? 'Title: ' + memTitle + '\n' : '') + (memAnswer ? memAnswer.slice(0, 400) : '');
+        var seedCtx = (memTitle ? 'Title: ' + memTitle + '\n' : '') + memAnswer.slice(0, 400);
         _agpSeedMemoryQuestion(firstName, seedCtx);
       } else {
         var opener = firstName
@@ -9972,66 +9966,167 @@
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
     _agpStopMic();
-    // Reset memory mode so next open starts fresh
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
   }
 
-  // ── Save-bar visibility ──────────────────────────────────────────
-  // Shows the "Save to entry" bar when conversation is memory-related.
+  // ── Save-bar visibility ─────────────────────────────────────────
+  // Shows "Save to entry" bar when conversation is memory-related.
+  // Label adapts: on Memories tab with content = "Add to this memory",
+  // elsewhere = "Save as new memory".
   function _agpUpdateSaveBar() {
     var bar = document.getElementById('agpSaveBar');
     if (!bar) return;
     bar.style.display = _agpMemoryMode ? 'block' : 'none';
-    // Update button label based on context: on Memories tab = "Add to this memory",
-    // elsewhere = "Save as new memory" (full flow wired in Piece 2).
     var btn = document.getElementById('agpSaveBtn');
     if (!btn) return;
-    var onMemTab = document.getElementById('panel-memories') &&
-                   document.getElementById('panel-memories').classList.contains('active');
-    var memTitle  = onMemTab ? (document.getElementById('memTitle')  || {}).value || '' : '';
-    var memAnswer = onMemTab ? (document.getElementById('memAnswer') || {}).value || '' : '';
-    var hasEntry  = onMemTab && (memTitle || memAnswer);
-    btn.textContent = hasEntry ? '\uD83D\uDCD6 Add to this memory' : '\uD83D\uDCD6 Save as new memory';
+    var onMemTab  = !!(document.getElementById('panel-memories') &&
+                       document.getElementById('panel-memories').classList.contains('active'));
+    var memAnswer = onMemTab ? ((document.getElementById('memAnswer') || {}).value || '') : '';
+    var memTitle  = onMemTab ? ((document.getElementById('memTitle')  || {}).value || '') : '';
+    var hasEntry  = onMemTab && !!(memAnswer || memTitle);
+    btn.textContent = hasEntry ? '📖 Add to this memory' : '📖 Save as new memory';
   }
 
-  // ── Memory-seeded opening question ──────────────────────────────
-  // Called when Gethro opens on Memories tab with entry content.
-  // Makes an AI call to generate a warm follow-up question, speaks it, adds to log.
+  // ── Memory-seeded opening question ───────────────────────────────
+  // Called when panel opens on Memories tab with entry content.
+  // Generates a warm follow-up question about what the user has written.
   async function _agpSeedMemoryQuestion(firstName, entryContext) {
     var typingEl = _agpAppendTyping();
     try {
       var nameStr = firstName ? firstName + '.' : 'you.';
       var prompt =
-        'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
-        'The user just opened a conversation with you while they were writing this memory entry:\n\n' +
+        'You are Gethro, a warm and curious personal story guide.\n' +
+        'The user is writing this memory entry:\n\n' +
         entryContext + '\n\n' +
-        'Ask ONE warm, specific follow-up question (max 20 words) that invites them to tell you more.\n' +
+        'Ask ONE warm specific follow-up question (max 20 words) about a detail in what they wrote.\n' +
         'Address them as ' + nameStr + '\n' +
-        'Show genuine curiosity about a detail in what they wrote.\n' +
-        'Return ONLY the question — no preamble, no JSON.';
-      var question = await callAI(prompt, { max_tokens: 80 });
-      question = question.trim().replace(/^["']|["']$/g, '');
+        'Return ONLY the question, nothing else.';
+      var raw = (await callAI(prompt, { max_tokens: 80 })).trim();
+      // Clean up any quotes/trailing punctuation then ensure ends with ?
+      var question = raw.replace(/^["']/, '').replace(/["'.]$/, '').trim();
+      if (!question.endsWith('?')) question += '?';
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
-      // Seed history so follow-ups have context
       _gethroHistory.push({ role: 'assistant', content: question });
       gethroSpeak(question).catch(function(){});
     } catch(err) {
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       var fallback = firstName
-        ? 'Hi ' + firstName + ', I can see you\'re working on a memory. Tell me more — what stands out most about that time?'
-        : 'I can see you\'re working on a memory. Tell me more — what stands out most about that time?';
+        ? 'Hi ' + firstName + ', I can see you\'re working on a memory. What stands out most when you think back to that time?'
+        : 'I can see you\'re working on a memory. What stands out most when you think back to that time?';
       _agpAppendGethro(fallback, null);
       _gethroHistory.push({ role: 'assistant', content: fallback });
       gethroSpeak(fallback).catch(function(){});
     }
   }
 
-  // ── Save conversation to entry (stub — full flow in Piece 2) ────
-  // When user taps "Save to entry" / "Save as new memory" in panel footer.
-  function agpSaveToEntry() {
-    toast('Coming soon — this will add the conversation to your entry.');
+  // ── Save conversation to entry ───────────────────────────────────
+  // Consolidates the Gethro conversation into a clean prose paragraph,
+  // navigates to Memories tab, and presents two choices in memSpellPanel
+  // (reusing the existing AI Review panel and its styling):
+  //   - "Gethro's version" — AI-consolidated prose (same pattern as runAIReview reconstruction)
+  //   - "In my own words" — raw conversation transcript
+  // On Memories tab with content -> appends. Elsewhere -> fills blank entry.
+  async function agpSaveToEntry() {
+    if (!_gethroHistory.length) return toast('Nothing to save yet — have a chat with Gethro first.');
+
+    // Build readable transcript
+    var transcript = _gethroHistory.map(function(m) {
+      return (m.role === 'assistant' ? 'Gethro' : 'You') + ': ' + m.content;
+    }).join('\n');
+
+    closeAskGethro();
+    showPanel('memories', null, 0);
+
+    var existingAnswer = ((document.getElementById('memAnswer') || {}).value || '').trim();
+    var existingTitle  = ((document.getElementById('memTitle')  || {}).value || '').trim();
+    var hasEntry = !!(existingAnswer || existingTitle);
+
+    // Reuse memSpellPanel — same element the AI Review uses, same styling
+    var panel = document.getElementById('memSpellPanel');
+    if (!panel) return;
+    panel.style.display = 'block';
+    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Gethro is writing this up…</span>';
+    setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+
+    try {
+      // Same consolidation pattern as runAIReview() reconstruction call
+      var consolidatePrompt =
+        'You are a warm memoir editor. Below is a conversation between a user and their AI companion Gethro about a personal memory.\n\n' +
+        'CONVERSATION:\n' + transcript + '\n\n' +
+        'Rewrite ONLY what the user shared as ONE clean, warm prose paragraph (80–150 words). ' +
+        'Write in first person as the user. Preserve every specific fact, name, place, and feeling they mentioned. ' +
+        'Ignore everything Gethro said. Return ONLY the paragraph, no preamble.';
+      var consolidated = (await callAI(consolidatePrompt, { max_tokens: 300 })).trim();
+
+      var modeLabel = hasEntry ? 'ADD TO THIS MEMORY' : 'SAVE AS NEW MEMORY';
+      var html = '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:12px">' + modeLabel + '</p>';
+
+      // Choice A: AI consolidated — same visual style as AI Review reconstruction
+      html += '<div style="margin-bottom:16px">';
+      html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--gold-dark);margin-bottom:6px">🤖 Gethro\u2019s version \u2014 cleaned up</p>';
+      html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + consolidated.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+      html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="agpAcceptConsolidated(false)">\u2713 Use this version</button>';
+      html += '</div>';
+
+      // Choice B: raw transcript
+      html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
+      html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:6px">In my own words \u2014 word for word</p>';
+      var transcriptHtml = transcript.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+      html += '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.82rem;line-height:1.6;color:var(--text-light);margin-bottom:10px;max-height:120px;overflow-y:auto">' + transcriptHtml + '</div>';
+      html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 14px" onclick="agpAcceptConsolidated(true)">\u2713 Use conversation as-is</button>';
+      html += '</div>';
+
+      panel.innerHTML = html;
+      // Stash both versions on the panel element — same pattern as acceptReconstruction()
+      panel.dataset.consolidated = consolidated;
+      panel.dataset.transcript   = transcript;
+      panel.dataset.hasEntry     = hasEntry ? '1' : '0';
+
+    } catch(err) {
+      panel.innerHTML = '<span style="color:var(--rose)">Couldn\u2019t write that up \u2014 try again.</span>';
+      dbgErr('AGP-SAVE', err.message);
+    }
+  }
+
+  // ── Accept handler: appends chosen version to memAnswer ──────────
+  // Mirrors acceptReconstruction() — same append-to-textarea pattern.
+  // useRaw=false -> AI consolidated prose. useRaw=true -> raw transcript.
+  function agpAcceptConsolidated(useRaw) {
+    var panel = document.getElementById('memSpellPanel');
+    if (!panel) return;
+    var text     = useRaw ? (panel.dataset.transcript || '') : (panel.dataset.consolidated || '');
+    var hasEntry = panel.dataset.hasEntry === '1';
+    if (!text) return;
+
+    var ta = document.getElementById('memAnswer');
+    if (!ta) return;
+
+    if (hasEntry && ta.value.trim()) {
+      // Append to existing content with blank-line separator
+      ta.value = ta.value.trimEnd() + '\n\n' + text;
+    } else {
+      ta.value = text;
+    }
+
+    _userHasTyped = true;
+    memCheckButtons();
+    draftSave();
+
+    panel.style.display = 'none';
+    delete panel.dataset.consolidated;
+    delete panel.dataset.transcript;
+    delete panel.dataset.hasEntry;
+
+    var msg = hasEntry
+      ? 'Added to your entry \u2014 edit as you like, then tap Done.'
+      : 'Entry filled in \u2014 add a title and tap Done to save.';
+    toast(msg);
+
+    ta.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
   }
 
   // ── Send message ─────────────────────────────────────────────────
@@ -10092,7 +10187,7 @@
 
     var APP_KNOWLEDGE =
       'APP KNOWLEDGE — answer any how-to question using this:\n' +
-      '- MEMORIES TAB: Write or dictate a memory. Tap the Gethro button to start a conversation about your entry. Tap mic to dictate. Use "+ Add details" for chapter, date, location, people, photos. Tap "Done" to save.\n' +
+      '- MEMORIES TAB: Write or dictate a memory. Tap the Gethro button to chat about it. Tap mic to dictate. Use "+ Add details" for chapter, date, location, people, photos. Tap "Done" to save.\n' +
       '- ENTRIES TAB: Browse, search, edit or delete saved memories. Use filters for chapter/person/location. Tap any entry to expand and edit.\n' +
       '- MY STORY TAB: Generate an AI-written memoir in 5 formats (Snapshot, Short, Full, Book Edition, Journal). Toggle Funny mode. Export as HTML or print as a physical book via Peecho.\n' +
       '- DASHBOARD: See story health, word count, people/places tiles. Click a chapter to filter entries. Gethro tile shows a daily observation.\n' +
@@ -10133,7 +10228,7 @@
       '}\n' +
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
-      'Set "memory_conversation": true when the conversation is about a personal story, memory, or life event the user has shared or is sharing. Omit it (or set false) for navigation, how-to, or app questions.\n' +
+      'Set "memory_conversation": true when the conversation is about a personal story or life event. Omit for navigation/how-to questions.\n' +
       'Keep reply under 60 words — warm and direct, not rambling.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
@@ -10165,9 +10260,8 @@
       // Speak the reply
       gethroSpeak(reply).catch(function(){});
 
-      // Detect memory conversation — show save bar when Gethro confirms we're discussing a story/memory.
-      // Once set true for a session it stays on (conversation is sticky — once we're in memory mode, stay there).
-      if (parsed.memory_conversation === true) {
+      // Detect memory conversation — show Save to entry bar once confirmed
+      if (parsed.memory_conversation === true && !_agpMemoryMode) {
         _agpMemoryMode = true;
         _agpUpdateSaveBar();
       }
