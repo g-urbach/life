@@ -1417,6 +1417,22 @@
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
+    /* Save-to-entry bar — shown when conversation is memory-related */
+    #agpSaveBar {
+      display: none;
+      padding: 8px 14px 10px;
+      flex-shrink: 0;
+    }
+    #agpSaveBtn {
+      width: 100%; padding: 10px;
+      border-radius: 8px;
+      border: 1.5px solid var(--gold);
+      background: var(--gold);
+      color: var(--ink);
+      font-family: 'Lato', sans-serif; font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    #agpSaveBtn:hover { opacity: 0.85; }
     #agpInput {
       flex: 1;
       padding: 10px 14px;
@@ -1751,8 +1767,7 @@
 
     <!-- Buttons -->
     <div id="memButtons">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <button class="btn btn-primary mem-action-btn" id="memAITopicBtn" onclick="memInterviewMe()">💬 Interview me</button>
+      <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:10px">
         <button class="btn btn-ghost   mem-action-btn" id="memSpellBtn"   onclick="spellCheckMemory()">🔍 Review this entry</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -2494,6 +2509,9 @@
     <button class="agp-close" onclick="closeAskGethro()" aria-label="Close">✕</button>
   </div>
   <div id="agpLog"></div>
+  <div id="agpSaveBar">
+    <button id="agpSaveBtn" onclick="agpSaveToEntry()">📖 Save to entry</button>
+  </div>
   <div class="agp-input-row">
     <input id="agpInput" type="text" placeholder="Ask Gethro anything…"
       onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendToGethro()}"
@@ -2565,8 +2583,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.04';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Telegram notifications now include full conversation transcript for context (friction observations and feature suggestions).';
+  const APP_VERSION  = 'v3.05';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Piece 1: removed Interview me button; Gethro seeds a follow-up question when opened on Memories tab with content; memory conversations detected and Save to entry bar shown in panel footer.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -9896,6 +9914,7 @@
   var _agpMicActive   = false;
   var _agpRecognition = null;
   var _agpSending     = false;
+  var _agpMemoryMode  = false; // true when conversation is memory/story-related — shows Save to entry bar
 
   function openAskGethro() {
     var panel = document.getElementById('askGethroPanel');
@@ -9919,11 +9938,27 @@
     // Show opening message if log is empty
     if (!_gethroHistory.length) {
       var firstName = (userProfile.name || '').split(' ')[0] || '';
-      var opener = firstName
-        ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
-        : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
-      _agpAppendGethro(opener, null);
-      gethroSpeak(opener).catch(function(){});
+
+      // ── Memory-seeded opener: if user is on Memories tab with content, ask a question about it
+      var onMemTab = document.getElementById('panel-memories') &&
+                     document.getElementById('panel-memories').classList.contains('active');
+      var memTitle  = onMemTab ? (document.getElementById('memTitle')  || {}).value || '' : '';
+      var memAnswer = onMemTab ? (document.getElementById('memAnswer') || {}).value || '' : '';
+
+      if (onMemTab && (memTitle || memAnswer)) {
+        // Seed the history with internal context so Gethro has what to ask about, but
+        // only display the generated question — don't expose the system seed message.
+        _agpMemoryMode = true;
+        _agpUpdateSaveBar();
+        var seedCtx = (memTitle ? 'Title: ' + memTitle + '\n' : '') + (memAnswer ? memAnswer.slice(0, 400) : '');
+        _agpSeedMemoryQuestion(firstName, seedCtx);
+      } else {
+        var opener = firstName
+          ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
+          : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+        _agpAppendGethro(opener, null);
+        gethroSpeak(opener).catch(function(){});
+      }
     }
     setTimeout(function() {
       var inp = document.getElementById('agpInput');
@@ -9937,6 +9972,66 @@
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
     _agpStopMic();
+    // Reset memory mode so next open starts fresh
+    _agpMemoryMode = false;
+    _agpUpdateSaveBar();
+  }
+
+  // ── Save-bar visibility ──────────────────────────────────────────
+  // Shows the "Save to entry" bar when conversation is memory-related.
+  function _agpUpdateSaveBar() {
+    var bar = document.getElementById('agpSaveBar');
+    if (!bar) return;
+    bar.style.display = _agpMemoryMode ? 'block' : 'none';
+    // Update button label based on context: on Memories tab = "Add to this memory",
+    // elsewhere = "Save as new memory" (full flow wired in Piece 2).
+    var btn = document.getElementById('agpSaveBtn');
+    if (!btn) return;
+    var onMemTab = document.getElementById('panel-memories') &&
+                   document.getElementById('panel-memories').classList.contains('active');
+    var memTitle  = onMemTab ? (document.getElementById('memTitle')  || {}).value || '' : '';
+    var memAnswer = onMemTab ? (document.getElementById('memAnswer') || {}).value || '' : '';
+    var hasEntry  = onMemTab && (memTitle || memAnswer);
+    btn.textContent = hasEntry ? '\uD83D\uDCD6 Add to this memory' : '\uD83D\uDCD6 Save as new memory';
+  }
+
+  // ── Memory-seeded opening question ──────────────────────────────
+  // Called when Gethro opens on Memories tab with entry content.
+  // Makes an AI call to generate a warm follow-up question, speaks it, adds to log.
+  async function _agpSeedMemoryQuestion(firstName, entryContext) {
+    var typingEl = _agpAppendTyping();
+    try {
+      var nameStr = firstName ? firstName + '.' : 'you.';
+      var prompt =
+        'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
+        'The user just opened a conversation with you while they were writing this memory entry:\n\n' +
+        entryContext + '\n\n' +
+        'Ask ONE warm, specific follow-up question (max 20 words) that invites them to tell you more.\n' +
+        'Address them as ' + nameStr + '\n' +
+        'Show genuine curiosity about a detail in what they wrote.\n' +
+        'Return ONLY the question — no preamble, no JSON.';
+      var question = await callAI(prompt, { max_tokens: 80 });
+      question = question.trim().replace(/^["']|["']$/g, '');
+      if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
+      _agpAppendGethro(question, null);
+      // Seed history so follow-ups have context
+      _gethroHistory.push({ role: 'assistant', content: question });
+      gethroSpeak(question).catch(function(){});
+    } catch(err) {
+      if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
+      var fallback = firstName
+        ? 'Hi ' + firstName + ', I can see you\'re working on a memory. Tell me more — what stands out most about that time?'
+        : 'I can see you\'re working on a memory. Tell me more — what stands out most about that time?';
+      _agpAppendGethro(fallback, null);
+      _gethroHistory.push({ role: 'assistant', content: fallback });
+      gethroSpeak(fallback).catch(function(){});
+    }
+  }
+
+  // ── Save conversation to entry (stub — full flow in Piece 2) ────
+  // When user taps "Save to entry" / "Save as new memory" in panel footer.
+  function agpSaveToEntry() {
+    toast('Coming soon — this will add the conversation to your entry.');
   }
 
   // ── Send message ─────────────────────────────────────────────────
@@ -9997,7 +10092,7 @@
 
     var APP_KNOWLEDGE =
       'APP KNOWLEDGE — answer any how-to question using this:\n' +
-      '- MEMORIES TAB: Write or dictate a memory. Tap "Interview me" for Gethro to ask questions. Tap mic to dictate. Use "+ Add details" for chapter, date, location, people, photos. Tap "Done" to save.\n' +
+      '- MEMORIES TAB: Write or dictate a memory. Tap the Gethro button to start a conversation about your entry. Tap mic to dictate. Use "+ Add details" for chapter, date, location, people, photos. Tap "Done" to save.\n' +
       '- ENTRIES TAB: Browse, search, edit or delete saved memories. Use filters for chapter/person/location. Tap any entry to expand and edit.\n' +
       '- MY STORY TAB: Generate an AI-written memoir in 5 formats (Snapshot, Short, Full, Book Edition, Journal). Toggle Funny mode. Export as HTML or print as a physical book via Peecho.\n' +
       '- DASHBOARD: See story health, word count, people/places tiles. Click a chapter to filter entries. Gethro tile shows a daily observation.\n' +
@@ -10033,10 +10128,12 @@
       '{\n' +
       '  "reply": "Your warm in-character response to the user (always present)",\n' +
       '  "action": { "type": "action_name", "params": {} },\n' +
+      '  "memory_conversation": true,\n' +
       '  "observation": "optional: one friction point or feature idea you noticed"\n' +
       '}\n' +
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
+      'Set "memory_conversation": true when the conversation is about a personal story, memory, or life event the user has shared or is sharing. Omit it (or set false) for navigation, how-to, or app questions.\n' +
       'Keep reply under 60 words — warm and direct, not rambling.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
@@ -10067,6 +10164,13 @@
 
       // Speak the reply
       gethroSpeak(reply).catch(function(){});
+
+      // Detect memory conversation — show save bar when Gethro confirms we're discussing a story/memory.
+      // Once set true for a session it stays on (conversation is sticky — once we're in memory mode, stay there).
+      if (parsed.memory_conversation === true) {
+        _agpMemoryMode = true;
+        _agpUpdateSaveBar();
+      }
 
       // Route the action
       if (parsed.action && parsed.action.type) {
