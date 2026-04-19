@@ -2542,8 +2542,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v2.97';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro voice fix: add speechSynthesis primer synchronously in openAskGethro() and sendToGethro() to unlock browser/iOS autoplay policy before async TTS fetch. Without this primer in the gesture handler, audio.play() was blocked by autoplay policy on every reply.';
+  const APP_VERSION  = 'v2.98';
+  const DEPLOY_NOTES = APP_VERSION + ' — TTS debug build: full diagnostic logging on every gethroSpeak path (fetch status, blob size, audio.play resolve/reject, fallback). Telegram notifyDev on every failure path, not just first. _gethroFallbackNotified flag removed. _gethroFallback now waits for voices to load before speaking (Chrome async voices bug).';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3386,6 +3386,7 @@
     return new Promise(async function(resolve) {
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
+      dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
       try {
         // Pass session token in body (not header) to avoid CORS preflight.
         // Edge function verifies token is a valid logged-in user before calling OpenAI.
@@ -3393,40 +3394,69 @@
         try {
           var sess = await sb.auth.getSession();
           if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
-        } catch(e) { /* fall back to cached sessionToken */ }
+        } catch(e) { dbg('TTS', 'getSession err:', e.message); }
+        dbg('TTS', 'fetching TTS_PROXY, freshToken=' + (freshToken ? 'ok' : 'NULL'));
         var res = await fetch(TTS_PROXY_URL + '?apikey=' + encodeURIComponent(SUPABASE_ANON), {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken })
         });
-        if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
+        dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
+        if (!res.ok) {
+          var errBody = '';
+          try { errBody = await res.text(); } catch(e2) {}
+          throw new Error('TTS_PROXY ' + res.status + ': ' + errBody.slice(0, 200));
+        }
         var blob = await res.blob();
+        dbg('TTS', 'blob size=' + blob.size + ', type=' + blob.type);
+        if (!blob.size) throw new Error('TTS_PROXY returned empty blob');
         var url  = URL.createObjectURL(blob);
         var audio = new Audio(url);
         _gethroAudio = audio;
-        audio.onended = function() { URL.revokeObjectURL(url); _gethroAudio = null; resolve(); };
-        audio.onerror = function() { URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve); };
-        audio.play().catch(function() { URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve); });
+        audio.onended = function() { dbg('TTS', 'audio.onended ok'); URL.revokeObjectURL(url); _gethroAudio = null; resolve(); };
+        audio.onerror = function(e) {
+          var msg = e && e.message ? e.message : 'audio element error';
+          dbg('TTS', 'audio.onerror:', msg);
+          notifyDev('error', 'TTS', 'audio.onerror after blob: ' + msg);
+          URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve);
+        };
+        audio.play().then(function() {
+          dbg('TTS', 'audio.play() resolved');
+        }).catch(function(playErr) {
+          dbg('TTS', 'audio.play() rejected:', playErr.message);
+          notifyDev('error', 'TTS', 'audio.play() blocked: ' + playErr.message);
+          URL.revokeObjectURL(url); _gethroAudio = null; _gethroFallback(text, resolve);
+        });
       } catch(err) {
-        dbg('TTS', 'TTS_PROXY failed, falling back to browser TTS:', err.message);
-        // Notify dev on first TTS failure per session only — not on every call
-        if (!_gethroFallbackNotified) {
-          _gethroFallbackNotified = true;
-          notifyDev('error', 'TTS', 'tts-proxy failed, falling back to browser TTS: ' + err.message);
-          logActivity('tts_fallback', 'tts-proxy failed: ' + err.message, 'error', 'TTS');
-        }
+        dbg('TTS', 'TTS_PROXY error:', err.message);
+        notifyDev('error', 'TTS', 'gethroSpeak error: ' + err.message);
+        logActivity('tts_fallback', 'gethroSpeak error: ' + err.message, 'error', 'TTS');
         _gethroFallback(text, resolve);
       }
     });
   }
-  var _gethroFallbackNotified = false; // flag — notify once per session, not per call
+  // _gethroFallbackNotified removed — every failure now logs individually so we
+  // can see exactly which path and how often it fails.
   function _gethroFallback(text, resolve) {
-    if (!window.speechSynthesis) { resolve(); return; }
-    speechSynthesis.cancel();
-    var utt = new SpeechSynthesisUtterance(text);
-    utt.lang = 'en-AU'; utt.rate = 0.92; utt.pitch = 1.0;
-    utt.onend = resolve; utt.onerror = resolve;
-    speechSynthesis.speak(utt);
+    dbg('TTS', '_gethroFallback called');
+    if (!window.speechSynthesis) { dbg('TTS', 'speechSynthesis unavailable'); resolve(); return; }
+    // Voices may be empty on first call (Chrome loads async) — wait if needed
+    function _speak() {
+      var voices = speechSynthesis.getVoices();
+      dbg('TTS', '_speak voices=' + voices.length);
+      speechSynthesis.cancel();
+      var utt = new SpeechSynthesisUtterance(text);
+      utt.lang = 'en-AU'; utt.rate = 0.92; utt.pitch = 1.0;
+      utt.onend = function() { dbg('TTS', 'fallback onend ok'); resolve(); };
+      utt.onerror = function(e) { dbg('TTS', 'fallback onerror:', e.error); resolve(); };
+      speechSynthesis.speak(utt);
+    }
+    if (speechSynthesis.getVoices().length > 0) {
+      _speak();
+    } else {
+      speechSynthesis.onvoiceschanged = function() { speechSynthesis.onvoiceschanged = null; _speak(); };
+      setTimeout(function() { speechSynthesis.onvoiceschanged = null; _speak(); }, 1000);
+    }
   }
   // Legacy alias — speakAndWait now routes through Gethro
   function speakAndWait(text) { return gethroSpeak(text); }
