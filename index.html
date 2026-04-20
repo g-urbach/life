@@ -2583,7 +2583,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.07';
+  const APP_VERSION  = 'v3.08';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -9871,18 +9871,23 @@
     'What would you want your family to know?',
     'Every story is worth telling',
   ];
-  var _memHeadingIdx  = Math.floor((Date.now() / 3600000)) % MEM_HEADINGS.length;
+  var _memHeadingIdx  = Math.floor(Math.random() * MEM_HEADINGS.length);
   var _memHeadingTimer = null;
 
   function _startMemHeadingRotation() {
     var el = document.getElementById('memSectionTitle');
     if (!el) return;
+    // Pick a fresh random heading each time the entry screen is presented
+    _memHeadingIdx = Math.floor(Math.random() * MEM_HEADINGS.length);
     el.textContent = MEM_HEADINGS[_memHeadingIdx];
     clearInterval(_memHeadingTimer);
     _memHeadingTimer = setInterval(function() {
       var memPanel = document.getElementById('panel-memories');
       if (!memPanel || !memPanel.classList.contains('active')) return;
-      _memHeadingIdx = (_memHeadingIdx + 1) % MEM_HEADINGS.length;
+      // Pick a different random heading (avoid repeating the current one)
+      var nextIdx;
+      do { nextIdx = Math.floor(Math.random() * MEM_HEADINGS.length); } while (nextIdx === _memHeadingIdx && MEM_HEADINGS.length > 1);
+      _memHeadingIdx = nextIdx;
       el.style.opacity = '0';
       el.style.transition = 'opacity 0.5s';
       setTimeout(function() {
@@ -9971,7 +9976,7 @@
         var msg = firstName
           ? 'Great first memory, ' + firstName + '! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.'
           : 'Great first memory! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.';
-        openAskGethro();
+        openAskGethro(true); // skipGreeting — nudge message IS the opener
         _agpAppendGethro(msg, null);
         _gethroHistory.push({ role: 'assistant', content: msg });
         gethroSpeak(msg).catch(function(){});
@@ -9986,7 +9991,7 @@
         var msg = firstName
           ? 'Did you know, ' + firstName + '? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.'
           : 'Did you know? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.';
-        openAskGethro();
+        openAskGethro(true); // skipGreeting — nudge message IS the opener
         _agpAppendGethro(msg, null);
         _gethroHistory.push({ role: 'assistant', content: msg });
         gethroSpeak(msg).catch(function(){});
@@ -10127,7 +10132,9 @@
   var _agpMemoryMode         = false; // true while panel open + memory-related
   var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
 
-  function openAskGethro() {
+  // skipGreeting: pass true when opening programmatically (e.g. nudge messages) to
+  // suppress the generic "Hi [name]" opener — the caller appends its own message instead.
+  function openAskGethro(skipGreeting) {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
@@ -10150,7 +10157,7 @@
       var log = document.getElementById('agpLog');
       if (log) log.scrollTop = log.scrollHeight;
     }, 50);
-    if (!_gethroHistory.length) {
+    if (!_gethroHistory.length && !skipGreeting) {
       // Fresh session — no history yet
       var firstName = (userProfile.name || '').split(' ')[0] || '';
       // Memory-seeded opener: if on Memories tab with content, ask about it
