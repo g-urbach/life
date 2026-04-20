@@ -930,7 +930,7 @@
     .empty-icon { font-size: 3rem; margin-bottom: 12px; }
 
     /* ── REMINDER ── */
-    #reminder { background: linear-gradient(135deg, var(--surface2), var(--warm)); border: 1px solid var(--border); border-left: 4px solid var(--gold); padding: 14px 20px; border-radius: 0 8px 8px 0; margin-bottom: 28px; font-size: 0.88rem; color: var(--text-light); display: none; }
+    #reminder { display: none; } /* reminder banner removed v3.06 — replaced by rolling heading */
 
     .warning-box { background: rgba(201,123,110,0.08); border: 2px solid var(--rose); border-radius: 10px; padding: 24px; margin-bottom: 20px; }
 
@@ -1651,7 +1651,7 @@
 
   <!-- RECORD (merged Talk + Voice Memo + Typed Entry) -->
   <div class="panel active" id="panel-memories">
-    <h2 class="section-title">Tell Gethro a Memory</h2>
+    <h2 class="section-title" id="memSectionTitle">Tell Gethro a Memory</h2>
 
     <!-- AI question box (shown during AI conversation) -->
     <div id="aiQuestionBox" style="display:none;margin-bottom:18px">
@@ -1771,7 +1771,7 @@
         <button class="btn btn-ghost   mem-action-btn" id="memSpellBtn"   onclick="spellCheckMemory()">🔍 Review this entry</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <button class="btn btn-secondary mem-action-btn" id="memSaveNewBtn" onclick="memDone()">✓ Done</button>
+        <button class="btn btn-secondary mem-action-btn" id="memSaveNewBtn" onclick="memDone()">✓ Save</button>
         <button class="btn btn-ghost     mem-action-btn" id="memNewBtn"     onclick="memNewEntry()">✚ New entry</button>
       </div>
       <!-- Hidden save button kept for programmatic use by autosave/AI flows -->
@@ -2583,8 +2583,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.05';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro Piece 1+2: removed Interview me; memory-seeded opener when Gethro opens on Memories tab with content; Save to entry flow with AI consolidation and raw transcript options (reuses AI Review memSpellPanel).';
+  const APP_VERSION  = 'v3.07';
+  const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -2907,7 +2907,9 @@
         await _checkDisclaimerVersion();
         await loadEntries();
         await loadBookSettings();
-        showReminder();
+        await loadFeatureUsage(); // Supabase-backed feature counters
+        // showReminder() removed v3.06 — rolling heading on Memories tab replaces it
+        _startMemHeadingRotation();
         renderDashboard();
         draftRestore();
       }
@@ -2930,6 +2932,8 @@
       var fab = document.getElementById('askGethroFab');
       if (fab) fab.style.display = 'none';
       closeAskGethro();
+      _agpPendingMemoryConvo = false; // discard any unsaved memory convo on sign-out
+      _featureUsage = {}; // clear feature cache on sign-out
     }
     memCheckButtons();
   }
@@ -3259,6 +3263,8 @@
   ].join('\n');
   const DB_URL              = SUPABASE_URL + '/rest/v1/life_entries';
   const DB_SETTINGS_URL     = SUPABASE_URL + '/rest/v1/life_settings';
+  const DB_FEATURE_URL      = SUPABASE_URL + '/rest/v1/life_feature_usage';
+  const DB_CONVERSATIONS_URL = SUPABASE_URL + '/rest/v1/life_conversations';
   const DB_DISCLAIMER_URL   = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
   const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/rest/v1/life_activity_log'; // usage tracking
 
@@ -3757,7 +3763,7 @@
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name === 'help')     { /* help tab — no input to focus */ }
     if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);
-    if (name === 'memories') populateTagDropdowns('rec');
+    if (name === 'memories') { populateTagDropdowns('rec'); _startMemHeadingRotation(); }
     if (name === 'story')    renderBookDetails();
     // Autosave draft: start ticker when entering memories, stop when leaving
     if (name === 'memories') { draftStartTicker(); }
@@ -3816,7 +3822,9 @@
     recDeepContext = '';
     recCurQuestion = '';
     logActivity('entry_saved', null, 'info', 'DB');
-    toast('Memory saved');
+    featTrackSave();
+    featCheckNudge();
+    toast('Memory saved ✓');
   }
 
   // ── New entry: warn if unsaved content, then clear ───────────────
@@ -4271,6 +4279,7 @@
   async function runAIReview(text, tags, panel, entryId) {
     panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
     logActivity('ai_review_run', null, 'info', 'AI');
+    featTrackReview();
     try {
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
       const hasTitle    = !!tags.title;
@@ -9846,6 +9855,207 @@
     r.style.display = 'block';
   }
 
+  // ── Rolling Memories heading ─────────────────────────────────────
+  // Rotates the Memories tab h2 through warm, varied prompts.
+  // Changes every 8 seconds when the Memories panel is visible.
+  // Seeds from day+hour so the heading feels fresh each session.
+  var MEM_HEADINGS = [
+    'Tell Gethro a memory',
+    "What's on your mind?",
+    'Let\u2019s capture a moment from your past',
+    'Tell Gethro a story',
+    'What happened today worth remembering?',
+    'Share a memory, big or small',
+    'What\u2019s a story only you could tell?',
+    'A moment, a memory, a thought \u2014 anything',
+    'What would you want your family to know?',
+    'Every story is worth telling',
+  ];
+  var _memHeadingIdx  = Math.floor((Date.now() / 3600000)) % MEM_HEADINGS.length;
+  var _memHeadingTimer = null;
+
+  function _startMemHeadingRotation() {
+    var el = document.getElementById('memSectionTitle');
+    if (!el) return;
+    el.textContent = MEM_HEADINGS[_memHeadingIdx];
+    clearInterval(_memHeadingTimer);
+    _memHeadingTimer = setInterval(function() {
+      var memPanel = document.getElementById('panel-memories');
+      if (!memPanel || !memPanel.classList.contains('active')) return;
+      _memHeadingIdx = (_memHeadingIdx + 1) % MEM_HEADINGS.length;
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.5s';
+      setTimeout(function() {
+        el.textContent = MEM_HEADINGS[_memHeadingIdx];
+        el.style.opacity = '1';
+      }, 500);
+    }, 8000);
+  }
+
+  // ── Feature usage — Supabase-backed ─────────────────────────────
+  // Replaces localStorage counters. Loaded on login into _featureUsage cache.
+  // All reads are from the in-memory cache (fast, no round-trips mid-session).
+  // Writes upsert to life_feature_usage (fire-and-forget, non-blocking).
+  //
+  // Features tracked:
+  //   entry_saved           — memDone() each save
+  //   gethro_interview      — _agpSeedMemoryQuestion() + memInterviewMe()
+  //   ai_review             — spellCheckMemory()
+  //   gethro_convo_save     — agpSaveToEntry() accepted
+  //   gethro_opened         — openAskGethro()
+  //
+  var _featureUsage = {};  // { feature: { count, last_used_at } }
+
+  async function loadFeatureUsage() {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(
+        SUPABASE_URL + '/rest/v1/life_feature_usage?user_id=eq.' + currentUser.id,
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) { dbgWarn('FEAT', 'loadFeatureUsage failed:', res.status); return; }
+      var rows = await res.json();
+      _featureUsage = {};
+      (rows || []).forEach(function(r) {
+        _featureUsage[r.feature] = { count: r.count, last_used_at: r.last_used_at };
+      });
+      dbg('FEAT', 'Loaded feature usage:', JSON.stringify(_featureUsage));
+    } catch(err) { dbgWarn('FEAT', 'loadFeatureUsage error:', err.message); }
+  }
+
+  // Increment in cache and upsert to Supabase (fire-and-forget)
+  function featUpsert(feature) {
+    if (!currentUser) return;
+    // Update in-memory cache immediately
+    if (!_featureUsage[feature]) _featureUsage[feature] = { count: 0 };
+    _featureUsage[feature].count++;
+    _featureUsage[feature].last_used_at = new Date().toISOString();
+    var count = _featureUsage[feature].count;
+    // Upsert to Supabase (non-blocking — failure doesn't affect UX)
+    fetch(SUPABASE_URL + '/rest/v1/life_feature_usage', {
+      method: 'POST',
+      headers: Object.assign({}, getAuthHeaders(), {
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      }),
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        feature: feature,
+        count: count,
+        last_used_at: new Date().toISOString()
+      })
+    }).catch(function(err) { dbgWarn('FEAT', 'featUpsert failed for ' + feature + ':', err.message); });
+  }
+
+  function featCount(feature) {
+    return (_featureUsage[feature] || {}).count || 0;
+  }
+
+  // Convenience trackers — called at the point of each feature use
+  function featTrackInterview()   { featUpsert('gethro_interview'); }
+  function featTrackReview()      { featUpsert('ai_review'); }
+  function featTrackSave()        { featUpsert('entry_saved'); }
+  function featTrackConvoSave()   { featUpsert('gethro_convo_save'); }
+  function featTrackGethroOpen()  { featUpsert('gethro_opened'); }
+
+  // Called from memDone after featTrackSave() — checks nudge thresholds
+  // Reads from in-memory cache so no DB round-trip needed
+  function featCheckNudge() {
+    var saves      = featCount('entry_saved');
+    var interviews = featCount('gethro_interview');
+    var reviews    = featCount('ai_review');
+
+    if (saves === 1 && interviews === 0) {
+      // First ever save, never chatted with Gethro — introduce the interview feature
+      setTimeout(function() {
+        var firstName = (userProfile.name || '').split(' ')[0] || '';
+        var msg = firstName
+          ? 'Great first memory, ' + firstName + '! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.'
+          : 'Great first memory! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.';
+        openAskGethro();
+        _agpAppendGethro(msg, null);
+        _gethroHistory.push({ role: 'assistant', content: msg });
+        gethroSpeak(msg).catch(function(){});
+      }, 800);
+      return;
+    }
+
+    if (saves === 2 && reviews === 0) {
+      // Second save, never used AI Review — explain it
+      setTimeout(function() {
+        var firstName = (userProfile.name || '').split(' ')[0] || '';
+        var msg = firstName
+          ? 'Did you know, ' + firstName + '? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.'
+          : 'Did you know? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.';
+        openAskGethro();
+        _agpAppendGethro(msg, null);
+        _gethroHistory.push({ role: 'assistant', content: msg });
+        gethroSpeak(msg).catch(function(){});
+      }, 800);
+      return;
+    }
+  }
+
+  // ── Conversation persistence — Supabase-backed ───────────────────
+  // Each Gethro panel session is a conversation row in life_conversations.
+  // Started on first message, updated on each exchange, closed on panel close.
+  // Linked to a memory entry when seeded from the Memories tab.
+  //
+  var _currentConvoId   = null;  // uuid of the active conversation row
+  var _convoEntryId     = null;  // entry_id when seeded from a memory (for linking)
+  var _convoContext     = 'general'; // 'memory_entry' | 'general'
+
+  // Start a new conversation row in Supabase
+  async function _convoStart(context, entryId) {
+    if (!currentUser) return;
+    _convoContext = context || 'general';
+    _convoEntryId = entryId || null;
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/life_conversations', {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=representation' }),
+        body: JSON.stringify({
+          user_id:    currentUser.id,
+          context:    _convoContext,
+          entry_id:   _convoEntryId,
+          messages:   [],
+          saved_to_entry: false
+        })
+      });
+      if (!res.ok) { dbgWarn('CONVO', 'Start failed:', res.status); return; }
+      var rows = await res.json();
+      _currentConvoId = rows[0] && rows[0].id ? rows[0].id : null;
+      dbg('CONVO', 'Started conversation:', _currentConvoId, 'context:', _convoContext);
+    } catch(err) { dbgWarn('CONVO', 'Start error:', err.message); }
+  }
+
+  // Append messages to the conversation (called after each exchange)
+  // Patches the full messages array — simple and avoids jsonb append complexity
+  function _convoAppendMessages(messages) {
+    if (!_currentConvoId || !currentUser || !messages.length) return;
+    // Fire-and-forget — never blocks the UI
+    fetch(SUPABASE_URL + '/rest/v1/life_conversations?id=eq.' + _currentConvoId + '&user_id=eq.' + currentUser.id, {
+      method: 'PATCH',
+      headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({
+        messages: messages,
+        last_message_at: new Date().toISOString()
+      })
+    }).catch(function(err) { dbgWarn('CONVO', 'Append failed:', err.message); });
+  }
+
+  // Mark conversation as saved (or not) when panel closes
+  function _convoClose(savedToEntry) {
+    if (!_currentConvoId || !currentUser) return;
+    fetch(SUPABASE_URL + '/rest/v1/life_conversations?id=eq.' + _currentConvoId + '&user_id=eq.' + currentUser.id, {
+      method: 'PATCH',
+      headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ saved_to_entry: !!savedToEntry })
+    }).catch(function(err) { dbgWarn('CONVO', 'Close failed:', err.message); });
+    _currentConvoId = null;
+    _convoEntryId   = null;
+    _convoContext   = 'general';
+  }
+
   // ── PWA Install Prompt ───────────────────────────────────────────
   // Android: capture the native beforeinstallprompt event and show our banner.
   // iOS: detect mobile Safari and show a manual "Add to Home Screen" overlay once,
@@ -9914,12 +10124,14 @@
   var _agpMicActive   = false;
   var _agpRecognition = null;
   var _agpSending     = false;
-  var _agpMemoryMode  = false; // true when conversation is memory-related
+  var _agpMemoryMode         = false; // true while panel open + memory-related
+  var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
 
   function openAskGethro() {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
+    featTrackGethroOpen();
     // Prime browser audio on the user gesture — required for iOS and Chrome desktop autoplay policy.
     _primeAudioContext();
     if (window.speechSynthesis) {
@@ -9928,13 +10140,18 @@
     }
     panel.classList.add('open');
     if (fab) fab.classList.add('panel-open');
+    // Restore memory mode if we had a pending convo
+    if (_agpPendingMemoryConvo) {
+      _agpMemoryMode = true;
+      _agpUpdateSaveBar();
+    }
     // Scroll log to bottom
     setTimeout(function() {
       var log = document.getElementById('agpLog');
       if (log) log.scrollTop = log.scrollHeight;
     }, 50);
-    // Show opening message if log is empty
     if (!_gethroHistory.length) {
+      // Fresh session — no history yet
       var firstName = (userProfile.name || '').split(' ')[0] || '';
       // Memory-seeded opener: if on Memories tab with content, ask about it
       var onMemTab  = !!(document.getElementById('panel-memories') &&
@@ -9945,14 +10162,20 @@
         _agpMemoryMode = true;
         _agpUpdateSaveBar();
         var seedCtx = (memTitle ? 'Title: ' + memTitle + '\n' : '') + memAnswer.slice(0, 400);
+        _convoStart('memory_entry', null); // start persisted conversation
         _agpSeedMemoryQuestion(firstName, seedCtx);
       } else {
         var opener = firstName
           ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
           : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+        _convoStart('general', null); // start persisted conversation
         _agpAppendGethro(opener, null);
         gethroSpeak(opener).catch(function(){});
       }
+    } else if (_agpPendingMemoryConvo) {
+      // Returning after closing mid-memory-conversation — prompt to save
+      _agpPendingMemoryConvo = false; // consume the flag
+      _agpShowResumePrompt();
     }
     setTimeout(function() {
       var inp = document.getElementById('agpInput');
@@ -9966,8 +10189,79 @@
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
     _agpStopMic();
+    // If we were in a memory conversation and haven't saved yet, set pending flag
+    // so the next open() can prompt the user to save it.
+    if (_agpMemoryMode && _gethroHistory.length) {
+      _agpPendingMemoryConvo = true;
+    }
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
+    if (!_agpPendingMemoryConvo) {
+      // Only close the convo row if we're not keeping it pending for next open
+      _convoClose(false);
+    }
+  }
+
+  // ── Navigate-away resume prompt (Piece 3) ────────────────────────
+  // Called when the panel reopens after being closed mid-memory-conversation.
+  // Appends a yes/no prompt into the chat log — no new UI elements needed.
+  function _agpShowResumePrompt() {
+    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var prompt = firstName
+      ? 'We were talking about a memory, ' + firstName + '. Would you like me to add that conversation to your entry?'
+      : 'We were talking about a memory. Would you like me to add that conversation to your entry?';
+
+    // Append Gethro message with two inline action buttons
+    var log = document.getElementById('agpLog');
+    if (!log) return;
+    var div = document.createElement('div');
+    div.className = 'agp-msg-gethro';
+    var nameDiv = document.createElement('div');
+    nameDiv.className = 'agp-name';
+    nameDiv.textContent = 'GETHRO';
+    div.appendChild(nameDiv);
+    var textDiv = document.createElement('div');
+    textDiv.textContent = prompt;
+    div.appendChild(textDiv);
+
+    // Yes button — triggers the full save flow
+    var yesBtn = document.createElement('button');
+    yesBtn.className = 'agp-action-btn';
+    yesBtn.style.marginTop = '10px';
+    yesBtn.style.marginRight = '8px';
+    yesBtn.textContent = 'Yes, add it';
+    yesBtn.onclick = function() {
+      div.remove();
+      agpSaveToEntry();
+    };
+    div.appendChild(yesBtn);
+
+    // No button — dismisses cleanly, clears history
+    var noBtn = document.createElement('button');
+    noBtn.className = 'agp-action-btn';
+    noBtn.style.marginTop = '10px';
+    noBtn.style.background = 'none';
+    noBtn.style.color = 'var(--text-light)';
+    noBtn.style.borderColor = 'var(--border)';
+    noBtn.textContent = 'No thanks';
+    noBtn.onclick = function() {
+      div.remove();
+      _gethroHistory = [];
+      _agpMemoryMode = false;
+      _agpUpdateSaveBar();
+      // Show normal greeting so panel doesn't feel empty
+      var firstName2 = (userProfile.name || '').split(' ')[0] || '';
+      var opener = firstName2
+        ? 'No worries. What can I help you with, ' + firstName2 + '?'
+        : 'No worries. What else can I help you with?';
+      _agpAppendGethro(opener, null);
+      gethroSpeak(opener).catch(function(){});
+    };
+    div.appendChild(noBtn);
+
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    gethroSpeak(prompt).catch(function(){});
   }
 
   // ── Save-bar visibility ─────────────────────────────────────────
@@ -10009,6 +10303,7 @@
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
+      featTrackInterview();
       gethroSpeak(question).catch(function(){});
     } catch(err) {
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
@@ -10018,6 +10313,47 @@
       _agpAppendGethro(fallback, null);
       _gethroHistory.push({ role: 'assistant', content: fallback });
       gethroSpeak(fallback).catch(function(){});
+    }
+  }
+
+  // ── Auto-suggest tags from conversation (Piece 2 extension) ────────
+  // Called after agpAcceptConsolidated() populates the textarea.
+  // Runs a quick AI hygiene call and pre-fills any empty tag fields
+  // using the same applyAIReviewTags() path the Review button uses.
+  // Non-blocking — tag fill failure never breaks the save flow.
+  async function _agpAutoFillTags(consolidated) {
+    try {
+      var existingTitle = ((document.getElementById('memTitle') || {}).value || '').trim();
+      var existingTags  = readTags('rec');
+
+      var prompt =
+        'You are a memoir editor. Based on this memoir passage, suggest metadata tags.\n' +
+        'PASSAGE:\n' + consolidated.slice(0, 600) + '\n\n' +
+        'Return ONLY a valid JSON object with these optional fields (omit any you cannot confidently determine):\n' +
+        '{"title":"short evocative title if not already set","chapter":"broad life chapter e.g. Family, Childhood, Career","year":"decade like 1980s or year like 1985","people":"first names comma-separated","location":"specific place"}\n' +
+        'CRITICAL: return raw JSON only, no markdown, no prose. If a field is already set, omit it.';
+
+      var raw   = (await callAI(prompt, { max_tokens: 150 })).trim();
+      var clean = raw.replace(/```json|```/g, '').trim();
+      var match = clean.match(/\{[\s\S]*\}/);
+      var tags  = {};
+      try { tags = JSON.parse(match ? match[0] : clean); } catch(e) { return; }
+
+      // Only fill fields that are empty — never overwrite user input
+      var toApply = {};
+      if (!existingTitle && tags.title)                        toApply.title    = tags.title;
+      if (!existingTags.chapter && tags.chapter)               toApply.chapter  = tags.chapter;
+      if (!existingTags.year && tags.year)                     toApply.year     = tags.year;
+      if (!existingTags.people && tags.people)                 toApply.people   = tags.people;
+      if (!existingTags.location && tags.location)             toApply.location = tags.location;
+
+      if (!Object.keys(toApply).length) return; // nothing to fill
+
+      // applyAIReviewTags with entryId=null targets the Memories form
+      await applyAIReviewTags(toApply, null, null);
+      dbg('AGP-TAGS', 'Auto-filled:', JSON.stringify(toApply));
+    } catch(err) {
+      dbgWarn('AGP-TAGS', 'Auto-fill failed (non-critical):', err.message);
     }
   }
 
@@ -10036,6 +10372,9 @@
       return (m.role === 'assistant' ? 'Gethro' : 'You') + ': ' + m.content;
     }).join('\n');
 
+    _agpPendingMemoryConvo = false; // saved — no need to prompt on next open
+    _convoClose(true);  // mark conversation as saved_to_entry=true
+    featTrackConvoSave();
     closeAskGethro();
     showPanel('memories', null, 0);
 
@@ -10113,6 +10452,9 @@
     _userHasTyped = true;
     memCheckButtons();
     draftSave();
+
+    // Auto-fill tags from the consolidated text (non-blocking)
+    if (!useRaw) _agpAutoFillTags(text).catch(function(){});
 
     panel.style.display = 'none';
     delete panel.dataset.consolidated;
@@ -10256,6 +10598,7 @@
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(reply, parsed.action || null);
       _gethroHistory.push({ role: 'assistant', content: reply });
+      _convoAppendMessages(_gethroHistory); // persist to Supabase
 
       // Speak the reply
       gethroSpeak(reply).catch(function(){});
