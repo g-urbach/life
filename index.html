@@ -1704,27 +1704,38 @@
       <div id="memDetailsPanel" style="display:none;margin-top:10px">
         <div class="tag-panel" id="memTagPanel">
 
-          <!-- Row 1: Chapter | Date (free text) -->
+          <!-- Row 1: Chapter | When | Location -->
           <div class="tag-field">
             <label>📚 Chapter</label>
             <select id="recTagChapter" onchange="handleNewTagOption(this,'recTagChapterCustom')"><option value="">Not specified</option></select>
             <input type="text" id="recTagChapterCustom" placeholder="Type a chapter..." style="margin-top:6px;display:none">
           </div>
           <div class="tag-field">
-            <label>🗓️ When <span style="font-weight:400;font-size:0.85em;color:var(--text-light)">— be as specific or vague as you like</span></label>
+            <label>🗓️ When <span style="font-weight:400;font-size:0.8em;color:var(--text-light)">— specific or vague</span></label>
             <input type="text" id="recTagDate" placeholder="e.g. 1987, Summer 1985, early 70s…"
               style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.95rem;background:var(--surface);color:var(--text)">
+          </div>
+          <div class="tag-field">
+            <label>📍 Location</label>
+            <select id="recTagLocation" onchange="handleNewTagOption(this,'recTagLocationCustom')"><option value="">Not specified</option></select>
+            <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
           </div>
 
           <!-- Hidden era field — kept for data compatibility, not shown -->
           <input type="hidden" id="recTagYear">
           <input type="hidden" id="recTagYearCustom">
 
-          <!-- Row 2: Location | People | References -->
+          <!-- Row 2: Photos | People | References -->
           <div class="tag-field">
-            <label>📍 Location</label>
-            <select id="recTagLocation" onchange="handleNewTagOption(this,'recTagLocationCustom')"><option value="">Not specified</option></select>
-            <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+            <label>📷 Photos</label>
+            <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
+              <button type="button" onclick="document.getElementById('recPhotoInput').click()"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Add photo
+              </button>
+            </div>
+            <input type="file" id="recPhotoInput" accept="image/*" multiple style="display:none" onchange="handleRecPhotos(this)">
+            <span id="recPhotoCount" style="display:none"></span>
           </div>
           <div class="tag-field">
             <label>👥 People</label>
@@ -1746,19 +1757,6 @@
             </div>
             <input type="hidden" id="recTagRef">
             <input type="hidden" id="recTagRefUrl">
-          </div>
-
-          <!-- Row 3: Photos (full width) -->
-          <div class="tag-field" style="grid-column:1/-1">
-            <label>📷 Photos</label>
-            <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
-              <button type="button" onclick="document.getElementById('recPhotoInput').click()"
-                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
-                ＋ Add photo
-              </button>
-            </div>
-            <input type="file" id="recPhotoInput" accept="image/*" multiple style="display:none" onchange="handleRecPhotos(this)">
-            <span id="recPhotoCount" style="display:none"></span>
           </div>
 
         </div>
@@ -2587,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.11';
+  const APP_VERSION  = 'v3.13';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -7303,6 +7301,56 @@
     } catch(err) { dbgErr('DB', 'saveEntryText threw:', err.message); toast('Error: ' + err.message); }
   }
 
+  // Opens an existing entry in the Memories tab for continued writing/interview.
+  // Pre-fills title, answer and tags, sets recLastParentId so any new save is
+  // linked as a follow-up. Then auto-opens Gethro, which seeds from the content
+  // exactly as it does when the user clicks Gethro with content already in the tab.
+  function openEntryInMemories(entryId) {
+    const e = entries.find(function(en) { return en.id === entryId; });
+    if (!e) return;
+
+    // Reset form cleanly first
+    memResetForm(false);
+    draftClear();
+
+    // Pre-fill title and answer
+    const titleEl  = document.getElementById('memTitle');
+    const answerEl = document.getElementById('memAnswer');
+    if (titleEl)  titleEl.value  = e.title  || '';
+    if (answerEl) answerEl.value = e.answer || '';
+
+    // Mark as user content so autosave and unsaved-guard arm correctly
+    _userHasTyped = true;
+
+    // Pre-fill tags — open details panel so user can see them
+    populateTagDropdowns('rec');
+    const tags = getEntryTags(e);
+    restoreSelectOrCustom('recTagChapter', 'recTagChapterCustom', tags.chapter || '');
+    restoreSelectOrCustom('recTagLocation', 'recTagLocationCustom', tags.location || '');
+    var dateEl = document.getElementById('recTagDate');
+    if (dateEl) dateEl.value = tags.date || tags.year || '';
+    var peopleEl = document.getElementById('recTagPeople');
+    if (peopleEl) peopleEl.value = tags.people || '';
+
+    // Open the details panel so the user sees the pre-filled tags
+    var detailsPanel = document.getElementById('memDetailsPanel');
+    var detailsLabel = document.getElementById('memDetailsLabel');
+    var detailsIcon  = document.getElementById('memDetailsIcon');
+    var detailsToggle = document.getElementById('memDetailsToggle');
+    if (detailsPanel) detailsPanel.style.display = 'block';
+    if (detailsLabel) detailsLabel.textContent = 'Hide details';
+    if (detailsIcon)  detailsIcon.textContent  = '−';
+    if (detailsToggle) detailsToggle.style.borderStyle = 'solid';
+
+    // Link new saves as follow-ups to the original
+    recLastParentId = entryId;
+
+    // Switch to Memories tab then open Gethro — content in the tab causes
+    // Gethro to automatically seed from the entry (existing _agpSeedMemoryQuestion flow)
+    showPanel('memories', null, 0);
+    setTimeout(function() { openAskGethro(); }, 350);
+  }
+
   function goToEntry(safeId) {
     // Switch to Entries tab then scroll to the entry
     showPanel('entries', null, 3);
@@ -7444,6 +7492,7 @@
           <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
           <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
           <button onclick="editEntryText('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>
+          <button onclick="openEntryInMemories('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Continue in Memories</button>
         </div>` : ''}
         <div id="textedit-${e.id}" style="display:none;margin-top:10px">
           <textarea id="texteditarea-${e.id}" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">${e.answer}</textarea>
