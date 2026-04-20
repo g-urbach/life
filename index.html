@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.13';
+  const APP_VERSION  = 'v3.14';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -7492,7 +7492,7 @@
           <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
           <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
           <button onclick="editEntryText('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>
-          <button onclick="openEntryInMemories('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Continue in Memories</button>
+          <button onclick="openEntryInMemories('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>
         </div>` : ''}
         <div id="textedit-${e.id}" style="display:none;margin-top:10px">
           <textarea id="texteditarea-${e.id}" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">${e.answer}</textarea>
@@ -10226,9 +10226,10 @@
       if (onMemTab && (memTitle || memAnswer)) {
         _agpMemoryMode = true;
         _agpUpdateSaveBar();
-        var seedCtx = (memTitle ? 'Title: ' + memTitle + '\n' : '') + memAnswer.slice(0, 400);
+        var seedCtx = memAnswer.slice(0, 400);
         _convoStart('memory_entry', null); // start persisted conversation
-        _agpSeedMemoryQuestion(firstName, seedCtx);
+        // Pass title separately so 'Edit with Gethro' gets a warm titled opener
+        _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || '');
       } else {
         var opener = firstName
           ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
@@ -10372,21 +10373,38 @@
   // ── Memory-seeded opening question ───────────────────────────────
   // Called when panel opens on Memories tab with entry content.
   // Generates a warm follow-up question about what the user has written.
-  async function _agpSeedMemoryQuestion(firstName, entryContext) {
+  // entryTitle: optional — when set (coming from 'Edit with Gethro'), Gethro opens
+  // by warmly acknowledging the title then asking one specific question about the content.
+  async function _agpSeedMemoryQuestion(firstName, entryContext, entryTitle) {
     var typingEl = _agpAppendTyping();
     try {
       var nameStr = firstName ? firstName + '.' : 'you.';
-      var prompt =
-        'You are Gethro, a warm and curious personal story guide.\n' +
-        'The user is writing this memory entry:\n\n' +
-        entryContext + '\n\n' +
-        'Ask ONE warm specific follow-up question (max 20 words) about a detail in what they wrote.\n' +
-        'Address them as ' + nameStr + '\n' +
-        'Return ONLY the question, nothing else.';
+      var prompt;
+      if (entryTitle) {
+        // 'Edit with Gethro' mode — acknowledge title warmly then ask one specific question
+        prompt =
+          'You are Gethro, a warm and curious personal story guide.\n' +
+          'The user has opened this existing memory to continue writing it:\n' +
+          'TITLE: ' + entryTitle + '\n' +
+          'CONTENT: ' + entryContext + '\n\n' +
+          'Write ONE opening message (max 25 words) that: warmly acknowledges the title with personality ' +
+          '(e.g. a brief reaction like "Doughnuts — yum!"), then immediately asks one specific curious question about the content.\n' +
+          'Address them as ' + nameStr + '\n' +
+          'Do NOT use a greeting like Hi or Hello — jump straight in.\n' +
+          'Return ONLY the message, nothing else.';
+      } else {
+        // Standard seed — deepening question about what they are currently writing
+        prompt =
+          'You are Gethro, a warm and curious personal story guide.\n' +
+          'The user is writing this memory entry:\n\n' +
+          entryContext + '\n\n' +
+          'Ask ONE warm specific follow-up question (max 20 words) about a detail in what they wrote.\n' +
+          'Address them as ' + nameStr + '\n' +
+          'Return ONLY the question, nothing else.';
+      }
       var raw = (await callAI(prompt, { max_tokens: 80 })).trim();
-      // Clean up any quotes/trailing punctuation then ensure ends with ?
+      // Clean up any quotes/trailing punctuation
       var question = raw.replace(/^["']/, '').replace(/["'.]$/, '').trim();
-      if (!question.endsWith('?')) question += '?';
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
