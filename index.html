@@ -2506,7 +2506,11 @@
 <div id="askGethroPanel" role="dialog" aria-modal="true" aria-label="Ask Gethro">
   <div class="agp-header">
     <div class="agp-title"><span>🎙️</span> Gethro</div>
-    <button class="agp-close" onclick="closeAskGethro()" aria-label="Close">✕</button>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="gethroNewChat()" title="Start a new conversation" aria-label="New chat"
+        style="background:none;border:none;cursor:pointer;font-size:0.78rem;color:var(--text-light);padding:4px 8px;border-radius:6px;font-family:'Lato',sans-serif;line-height:1;white-space:nowrap">↺ New chat</button>
+      <button class="agp-close" onclick="closeAskGethro()" aria-label="Close">✕</button>
+    </div>
   </div>
   <div id="agpLog"></div>
   <div id="agpSaveBar">
@@ -2583,7 +2587,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.09';
+  const APP_VERSION  = 'v3.11';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -3365,7 +3369,17 @@
         dbg('DB', 'Entry saved, id:', saved[0].id);
         return saved[0].id;
       }
-    } catch(err) { dbgErr('DB', err.message); toast('Warning: could not save entry'); return false; }
+    } catch(err) {
+      dbgErr('DB', err.message);
+      // If offline, queue for retry when connection returns
+      if (!navigator.onLine) {
+        _offlineQueuePush(newEntry);
+        // Keep the in-memory entry so UI feels consistent
+        return 'offline';
+      }
+      toast('Warning: could not save entry');
+      return false;
+    }
     return true;
   }
 
@@ -3781,7 +3795,10 @@
   let recActive      = false;// AI conversation running
   let memMicActive   = false;// mic dictation active
   let _micPrimedStream = null; // getUserMedia stream kept alive on iOS during recognition session
-  let userMicPref    = false;// true = user wants mic on; respected by auto-start after questions
+  var MIC_PREF_KEY  = 'mls_mic_pref';
+  // Load persisted preference; default TRUE (voice on by default)
+  var userMicPref;
+  try { var _mp = localStorage.getItem(MIC_PREF_KEY); userMicPref = _mp === null ? true : _mp === '1'; } catch(e) { userMicPref = true; }
   let interviewActive = false;// true after first Interview me press; flips button label
   let _userHasTyped  = false;// true once user has personally entered content (blocks autosave on AI-only prompts)
 
@@ -4054,7 +4071,15 @@
       if (overlay) overlay.style.display = 'flex';
       return;
     }
-    if (memMicActive) { userMicPref = false; stopMemMic(); } else { userMicPref = true; startMemMic(); }
+    if (memMicActive) {
+      userMicPref = false;
+      try { localStorage.setItem(MIC_PREF_KEY, '0'); } catch(e) {}
+      stopMemMic();
+    } else {
+      userMicPref = true;
+      try { localStorage.setItem(MIC_PREF_KEY, '1'); } catch(e) {}
+      startMemMic();
+    }
   }
 
   function setMemStatus(state, text) {
@@ -6106,7 +6131,8 @@
         </div>
         <div class="tag-field">
           <label>🗓️ Date</label>
-          <input type="date" id="${prefix}_${entryId}TagDate"
+          <input type="text" id="${prefix}_${entryId}TagDate"
+            placeholder="e.g. 1987, Summer 1985, early 70s…"
             style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-size:0.85rem;background:var(--surface);color:var(--text)">
         </div>
 
@@ -10192,6 +10218,28 @@
     }
   }
 
+  // Reset the Gethro panel to a fresh conversation without closing it.
+  // Discards history, pending flags, and shows a new greeting.
+  function gethroNewChat() {
+    _agpStopMic();
+    _agpPendingMemoryConvo = false;
+    _agpMemoryMode = false;
+    _agpUpdateSaveBar();
+    _convoClose(false);
+    _gethroHistory = [];
+    var log = document.getElementById('agpLog');
+    if (log) log.innerHTML = '';
+    // Start fresh — show greeting
+    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var opener = firstName
+      ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
+      : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+    _convoStart('general', null);
+    _agpAppendGethro(opener, null);
+    _gethroHistory.push({ role: 'assistant', content: opener });
+    gethroSpeak(opener).catch(function(){});
+  }
+
   // ── Navigate-away resume prompt (Piece 3) ────────────────────────
   // Called when the panel reopens after being closed mid-memory-conversation.
   // Appends a yes/no prompt into the chat log — no new UI elements needed.
@@ -10550,7 +10598,7 @@
       '  filter_text         — free-text search across all entries. params: { query: "word or phrase" }. Use this when user asks about a topic (e.g. "show me stories about my cat" → filter_text with query="cat").\n' +
       '  new_memory          — start a new memory. params: { title?: "...", chapter?: "..." }\n' +
       '  generate_story      — generate story. params: { mode: "blurb|short|extended|chapters|journal" }\n' +
-      '  capture_feedback    — user wants to suggest a feature. params: { feedback: "their words" }\n\n' +
+      '  review_entry        — review / spell-check the current entry (runs the AI Review tool on whatever is in the Memories tab)\n  capture_feedback    — user wants to suggest a feature. params: { feedback: "their words" }\n\n' +
       'RESPOND WITH VALID JSON ONLY — no markdown, no prose outside JSON:\n' +
       '{\n' +
       '  "reply": "Your warm in-character response to the user (always present)",\n' +
@@ -10560,7 +10608,7 @@
       '}\n' +
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
-      'Set "memory_conversation": true when the conversation is about a personal story or life event. Omit for navigation/how-to questions.\n' +
+      'Set "memory_conversation": true ONLY when discussing a personal story or life event the user is actively writing or sharing. Do NOT set it for navigation, app-feature questions, reviewing entries, or any action that routes elsewhere.\n' +
       'Keep reply under 60 words — warm and direct, not rambling.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
@@ -10630,7 +10678,7 @@
 
     // Navigation actions: close the panel first so user lands on the destination cleanly.
     var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard',
-                      'filter_person','filter_chapter','filter_location','filter_text','new_memory','generate_story'];
+                      'filter_person','filter_chapter','filter_location','filter_text','new_memory','review_entry','generate_story'];
     if (navActions.indexOf(action.type) !== -1) {
       setTimeout(function() { closeAskGethro(); }, delay - 200);
     }
@@ -10672,6 +10720,12 @@
             if (chEl) chEl.value = p.chapter;
           }
           _userHasTyped = false;
+        }, delay); break;
+      case 'review_entry':
+        // Navigate to Memories tab then run the AI review on the current entry
+        setTimeout(function() {
+          showPanel('memories', null, 0);
+          setTimeout(function() { spellCheckMemory(); }, 300);
         }, delay); break;
       case 'generate_story':
         var mode = p.mode || 'short';
@@ -10817,6 +10871,60 @@
   window.addEventListener('online',  updateOnlineStatus);
   window.addEventListener('offline', updateOnlineStatus);
   updateOnlineStatus(); // check on load in case already offline
+
+  // ── Offline save queue ───────────────────────────────────────────
+  // If a save fails while offline, the entry is stored here and retried
+  // automatically when the device comes back online.
+  var OFFLINE_QUEUE_KEY = 'mls_offline_queue';
+
+  function _offlineQueueLoad() {
+    try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch(e) { return []; }
+  }
+  function _offlineQueueSave(q) {
+    try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q)); } catch(e) {}
+  }
+  function _offlineQueuePush(entry) {
+    var q = _offlineQueueLoad();
+    q.push(entry);
+    _offlineQueueSave(q);
+    dbg('OFFLINE', 'Queued entry for retry. Queue length:', q.length);
+    toast('Saved locally — will sync when back online');
+  }
+  async function _offlineQueueFlush() {
+    if (!navigator.onLine) return;
+    var q = _offlineQueueLoad();
+    if (!q.length) return;
+    dbg('OFFLINE', 'Flushing offline queue, entries:', q.length);
+    var remaining = [];
+    for (var i = 0; i < q.length; i++) {
+      var item = q[i];
+      try {
+        var res = await fetch(DB_URL, {
+          method: 'POST',
+          headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+          body: JSON.stringify(item)
+        });
+        if (res.ok) {
+          dbg('OFFLINE', 'Queued entry synced OK');
+        } else {
+          dbgWarn('OFFLINE', 'Queued entry sync failed, status:', res.status, '— re-queuing');
+          remaining.push(item);
+        }
+      } catch(err) {
+        dbgWarn('OFFLINE', 'Queued entry sync threw:', err.message, '— re-queuing');
+        remaining.push(item);
+      }
+    }
+    _offlineQueueSave(remaining);
+    if (remaining.length < q.length) {
+      var synced = q.length - remaining.length;
+      toast(synced + ' offline entr' + (synced === 1 ? 'y' : 'ies') + ' synced ✓');
+      // Reload entries from server so synced entries appear
+      if (!remaining.length) fetchEntries();
+    }
+  }
+  // Flush queue whenever device comes back online
+  window.addEventListener('online', function() { setTimeout(_offlineQueueFlush, 1000); });
 
   // ── PWA Manifest (injected inline — no separate manifest.json file needed) ──
   // Cloudflare Pages serves index.html only; we inject the manifest as a blob URL
