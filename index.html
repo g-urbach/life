@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.18';
+  const APP_VERSION  = 'v3.19';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -10249,7 +10249,9 @@
       _gethroHistory = [];
       var log = document.getElementById('agpLog');
       if (log) log.innerHTML = '';
-      _agpMemoryMode = true;
+      // Don't show gold bar yet — wait until user has actually said something
+      // _agpMemoryMode set to true in sendToGethro after first user message
+      _agpMemoryMode = false;
       _agpUpdateSaveBar();
       var seedCtx = memAnswer.slice(0, 800);
       _convoStart('memory_entry', null);
@@ -10614,6 +10616,27 @@
     var inp  = document.getElementById('agpInput');
     var text = (inp ? inp.value.trim() : '');
     if (!text) return;
+
+    // ── 'next' shortcut: ask a fresh question about the current memory ──
+    var nextPhrases = ['next','next question','another question','ask me another',
+                       'different question','ask another','keep going','continue'];
+    if (nextPhrases.indexOf(text.toLowerCase().trim()) !== -1) {
+      if (inp) inp.value = '';
+      _agpStopMic();
+      _agpAppendUser(text);
+      // Re-seed a fresh question from the current entry content
+      var firstName = (userProfile.name || '').split(' ')[0] || '';
+      var memTitle  = (document.getElementById('memTitle')  || {}).value || '';
+      var memAnswer = (document.getElementById('memAnswer') || {}).value || '';
+      // Include conversation so far so Gethro doesn't repeat covered topics
+      var convoSoFar = _gethroHistory.slice(-8).map(function(m) {
+        return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
+      }).join('\n');
+      var seedCtx = (memAnswer.slice(0, 600) + '\n\nCONVERSATION SO FAR (do NOT repeat any of these topics):\n' + convoSoFar).slice(0, 1000);
+      await _agpSeedMemoryQuestion(firstName, seedCtx, '');
+      return;
+    }
+
     // Prime browser audio on user gesture — unlocks audio for Gethro's reply.
     _primeAudioContext();
     if (window.speechSynthesis) {
@@ -10624,6 +10647,21 @@
     _agpStopMic();
     _agpAppendUser(text);
     _gethroHistory.push({ role: 'user', content: text });
+
+    // ── Issue 3: show gold bar only once user has said something ────
+    // If we're in a memory conversation context (seeded from entry), arm the
+    // save bar now that the user has actually contributed to the conversation.
+    if (!_agpMemoryMode) {
+      var onMemTab = !!(document.getElementById('panel-memories') &&
+                        document.getElementById('panel-memories').classList.contains('active'));
+      var hasEntry = onMemTab && ((document.getElementById('memTitle') || {}).value ||
+                                  (document.getElementById('memAnswer') || {}).value);
+      if (hasEntry || _convoContext === 'memory_entry') {
+        _agpMemoryMode = true;
+        _agpUpdateSaveBar();
+      }
+    }
+
     await _agpCallGethro();
   }
 
@@ -10711,6 +10749,7 @@
       'Keep reply under 60 words — warm and direct, not rambling.\n' +
       'ALWAYS end your reply with one specific question to keep the conversation going — never make a statement without following it with a question.\n' +
       'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, food, feelings). Do not drift to adjacent topics — e.g. if talking about food and dad, keep questions about that specific food experience, not dad in general.\n' +
+      'CRITICAL — never repeat yourself: read the full conversation history before asking a question. Never ask about something the user has already answered or that is already established in the conversation.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
     // Build messages array: system + history
@@ -10783,6 +10822,48 @@
     var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard',
                       'filter_person','filter_chapter','filter_location','filter_text','new_memory','review_entry','generate_story'];
     if (navActions.indexOf(action.type) !== -1) {
+      // Issue 4: if gold bar is showing and user has spoken, check before navigating
+      var userHasSpoken = _gethroHistory.some(function(m) { return m.role === 'user'; });
+      if (_agpMemoryMode && userHasSpoken) {
+        // Intercept navigation — ask if they want to save first
+        var log = document.getElementById('agpLog');
+        if (log) {
+          var div = document.createElement('div');
+          div.className = 'agp-msg-gethro';
+          var nameDiv = document.createElement('div');
+          nameDiv.className = 'agp-name'; nameDiv.textContent = 'Gethro';
+          div.appendChild(nameDiv);
+          var textDiv = document.createElement('div');
+          textDiv.textContent = 'Before I take you there — would you like to save our conversation to your memory first?';
+          div.appendChild(textDiv);
+          var savedAction = action; // capture for closure
+          var yesBtn = document.createElement('button');
+          yesBtn.className = 'agp-action-btn'; yesBtn.style.marginTop = '10px'; yesBtn.style.marginRight = '8px';
+          yesBtn.textContent = 'Yes, save first';
+          yesBtn.onclick = function() {
+            div.remove();
+            agpSaveToEntry().then(function() {
+              setTimeout(function() { closeAskGethro(); }, delay - 200);
+              _agpRoute(savedAction);
+            });
+          };
+          div.appendChild(yesBtn);
+          var noBtn = document.createElement('button');
+          noBtn.className = 'agp-action-btn'; noBtn.style.marginTop = '10px';
+          noBtn.style.background = 'none'; noBtn.style.color = 'var(--text-light)'; noBtn.style.borderColor = 'var(--border)';
+          noBtn.textContent = 'No, just go';
+          noBtn.onclick = function() {
+            div.remove();
+            setTimeout(function() { closeAskGethro(); }, delay - 200);
+            _agpRoute(savedAction);
+          };
+          div.appendChild(noBtn);
+          log.appendChild(div);
+          log.scrollTop = log.scrollHeight;
+          gethroSpeak('Before I take you there — would you like to save our conversation to your memory first?').catch(function(){});
+        }
+        return; // don't navigate yet — wait for button click
+      }
       setTimeout(function() { closeAskGethro(); }, delay - 200);
     }
 
