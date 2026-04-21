@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.16';
+  const APP_VERSION  = 'v3.17';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -4319,7 +4319,8 @@
         'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
         'Return ONLY this JSON. Use true/false for booleans, short plain strings for notes.\n' +
         'CRITICAL: if you cannot confidently determine a value, use a blank string "" — NEVER use the word "empty" as a value.\n' +
-        '{"spelling_ok":true,"spelling_notes":"list specific errors or blank",' +
+        'SPELLING: check every word carefully. Common memoir misspellings include food names, place names, and proper nouns. If ANY word is misspelled, set spelling_ok to false and list the specific errors.\n' +
+        '{"spelling_ok":true,"spelling_notes":"list specific misspelled words or blank",' +
         '"grammar_ok":true,"grammar_notes":"specific issues or blank",' +
         '"length_ok":true,"length_notes":"too short or good or rich",' +
         '"voice_ok":true,"voice_notes":"specific clarity issues or blank",' +
@@ -10215,29 +10216,36 @@
       var log = document.getElementById('agpLog');
       if (log) log.scrollTop = log.scrollHeight;
     }, 50);
-    if (!_gethroHistory.length && !skipGreeting) {
-      // Fresh session — no history yet
-      var firstName = (userProfile.name || '').split(' ')[0] || '';
-      // Memory-seeded opener: if on Memories tab with content, ask about it
-      var onMemTab  = !!(document.getElementById('panel-memories') &&
-                         document.getElementById('panel-memories').classList.contains('active'));
-      var memTitle  = onMemTab ? ((document.getElementById('memTitle')  || {}).value  || '') : '';
-      var memAnswer = onMemTab ? ((document.getElementById('memAnswer') || {}).value || '') : '';
-      if (onMemTab && (memTitle || memAnswer)) {
-        _agpMemoryMode = true;
-        _agpUpdateSaveBar();
-        var seedCtx = memAnswer.slice(0, 800); // more context so AI reads the full entry before asking
-        _convoStart('memory_entry', null); // start persisted conversation
-        // Pass title separately so 'Edit with Gethro' gets a warm titled opener
-        _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || '');
-      } else {
-        var opener = firstName
-          ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
-          : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
-        _convoStart('general', null); // start persisted conversation
-        _agpAppendGethro(opener, null);
-        gethroSpeak(opener).catch(function(){});
-      }
+    // Check if Memories tab has content — this takes priority over history
+    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var onMemTab  = !!(document.getElementById('panel-memories') &&
+                       document.getElementById('panel-memories').classList.contains('active'));
+    var memTitle  = onMemTab ? ((document.getElementById('memTitle')  || {}).value  || '') : '';
+    var memAnswer = onMemTab ? ((document.getElementById('memAnswer') || {}).value || '') : '';
+    var hasMemContent = onMemTab && (memTitle || memAnswer);
+
+    if (hasMemContent && !skipGreeting) {
+      // Always re-seed from Memories content — even if there is existing history.
+      // Content on the page takes priority so user always gets a contextual opener.
+      _gethroHistory = [];
+      var log = document.getElementById('agpLog');
+      if (log) log.innerHTML = '';
+      _agpMemoryMode = true;
+      _agpUpdateSaveBar();
+      var seedCtx = memAnswer.slice(0, 800);
+      _convoStart('memory_entry', null);
+      _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || '');
+    } else if (!_gethroHistory.length && !skipGreeting) {
+      // Fresh session, no Memories content — generic opener
+      var opener = firstName
+        ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
+        : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+      _convoStart('general', null);
+      _agpAppendGethro(opener, null);
+      gethroSpeak(opener).catch(function(){}).finally(function() {
+        // Auto-start mic after speaking so user can reply hands-free
+        if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
+      });
     } else if (_agpPendingMemoryConvo) {
       // Returning after closing mid-memory-conversation — prompt to save
       _agpPendingMemoryConvo = false; // consume the flag
@@ -10412,7 +10420,9 @@
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
       featTrackInterview();
-      gethroSpeak(question).catch(function(){});
+      gethroSpeak(question).catch(function(){}).finally(function() {
+        if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
+      });
     } catch(err) {
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       var fallback = firstName
@@ -10708,8 +10718,10 @@
       _gethroHistory.push({ role: 'assistant', content: reply });
       _convoAppendMessages(_gethroHistory); // persist to Supabase
 
-      // Speak the reply
-      gethroSpeak(reply).catch(function(){});
+      // Speak the reply then auto-start mic for hands-free flow
+      gethroSpeak(reply).catch(function(){}).finally(function() {
+        if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
+      });
 
       // Detect memory conversation — show Save to entry bar once confirmed
       if (parsed.memory_conversation === true && !_agpMemoryMode) {
