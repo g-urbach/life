@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.19';
+  const APP_VERSION  = 'v3.20';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -10716,13 +10716,19 @@
       '- SIGN OUT: Top-right corner of the app.\n' +
       '- FORGOT PASSWORD: On the sign-in screen, tap "Forgot password".\n';
 
+    // In memory conversation mode, suppress the entries summary to prevent Gethro
+    // from drifting to unrelated entries (e.g. mentioning Zuma when stuck on croissants).
+    // Only send entries context when Gethro is in general chat mode.
+    var entriesContext = _agpMemoryMode
+      ? 'CURRENT MEMORY TOPIC: Stay focused on the current conversation — do not reference other entries or topics.'
+      : ('RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' + matchedSnippets);
+
     var systemPrompt =
       'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
       'You speak in first person: warm, unhurried, curious. You remember what you have been told.\n' +
       'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
       'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
-      'RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' +
-      matchedSnippets + '\n\n' +
+      entriesContext + '\n\n' +
       APP_KNOWLEDGE + '\n' +
       'APP ACTIONS YOU CAN TRIGGER (include in your JSON response when appropriate):\n' +
       '  navigate_memories   — open the Memories (write) tab\n' +
@@ -10750,6 +10756,7 @@
       'ALWAYS end your reply with one specific question to keep the conversation going — never make a statement without following it with a question.\n' +
       'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, food, feelings). Do not drift to adjacent topics — e.g. if talking about food and dad, keep questions about that specific food experience, not dad in general.\n' +
       'CRITICAL — never repeat yourself: read the full conversation history before asking a question. Never ask about something the user has already answered or that is already established in the conversation.\n' +
+      'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard (e.g. "Chris Auntie" may be a mishearing). If a name or reference seems odd or the user says they do not know it, treat it as a speech-to-text error, acknowledge it lightly, and move on — never dwell on it or keep asking about it.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
     // Build messages array: system + history
@@ -10992,6 +10999,11 @@
     if (_agpMicActive) { _agpStopMic(); } else { _agpStartMic(); }
   }
 
+  // AGP mic state for continuous mode
+  var _agpAccumulated = '';  // finals accumulated across continuous results
+  var _agpSilenceTimer = null; // fires sendToGethro after silence
+  var _agpSilenceMs = 2200;  // ms of silence before auto-send (tune here)
+
   function _agpStartMic() {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return toast('Speech not supported in this browser');
@@ -11001,46 +11013,72 @@
       var primer = new SpeechSynthesisUtterance('');
       speechSynthesis.speak(primer); speechSynthesis.cancel();
     }
+    var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
     var rec = new SR();
-    rec.lang = 'en-AU'; rec.continuous = false; rec.interimResults = true;
+    rec.lang = 'en-AU';
+    rec.continuous = true;      // keep listening — don't cut off mid-sentence
+    rec.interimResults = isIOS; // iOS: live preview; Android: finals only (avoids repeats)
     _agpRecognition = rec;
     _agpMicActive = true;
+    _agpAccumulated = '';
     var btn = document.getElementById('agpMicBtn');
     if (btn) { btn.classList.add('listening'); btn.textContent = '⏹'; }
     var inp = document.getElementById('agpInput');
 
     rec.onresult = function(e) {
-      var transcript = '';
-      for (var i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript;
-      if (inp) inp.value = transcript;
+      // With continuous=true, results are cumulative — start from resultIndex
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          _agpAccumulated += (_agpAccumulated ? ' ' : '') + e.results[i][0].transcript.trim();
+        } else {
+          interim += e.results[i][0].transcript;
+        }
+      }
+      if (inp) inp.value = _agpAccumulated + (interim ? ' ' + interim : '');
+      // Reset silence timer on every result — send after silence_ms of no new speech
+      if (_agpSilenceTimer) clearTimeout(_agpSilenceTimer);
+      if (_agpAccumulated) {
+        _agpSilenceTimer = setTimeout(function() {
+          _agpSilenceTimer = null;
+          if (_agpMicActive && _agpAccumulated) {
+            _agpStopMic();
+            sendToGethro();
+          }
+        }, _agpSilenceMs);
+      }
     };
     rec.onend = function() {
-      _agpMicActive = false;
-      var btn2 = document.getElementById('agpMicBtn');
-      if (btn2) { btn2.classList.remove('listening'); btn2.textContent = '🎙️'; }
-      // 1.5s pause before auto-send — gives user time to continue speaking naturally.
-      // If they keep talking, the next mic cycle will pick it up.
-      var inp2 = document.getElementById('agpInput');
-      if (inp2 && inp2.value.trim()) {
+      // continuous=true: onend only fires on abort or unexpected drop
+      if (_agpMicActive) {
+        // Unexpected drop — restart as safety net
+        dbgWarn('GETHRO_MIC', 'Unexpected onend — restarting');
         setTimeout(function() {
-          // Only send if mic hasn't been restarted and input still has content
-          var inp3 = document.getElementById('agpInput');
-          if (inp3 && inp3.value.trim() && !_agpMicActive) sendToGethro();
-        }, 1500);
+          if (_agpMicActive) {
+            try { rec.start(); } catch(e) { dbgWarn('GETHRO_MIC', 'restart failed:', e.message); }
+          }
+        }, 400);
+      } else {
+        // Normal stop (from _agpStopMic or silence timer)
+        var btn2 = document.getElementById('agpMicBtn');
+        if (btn2) { btn2.classList.remove('listening'); btn2.textContent = '🎙️'; }
       }
     };
     rec.onerror = function(e) {
       if (e.error === 'aborted' || e.error === 'no-speech') return;
-      _agpMicActive = false;
-      var btn3 = document.getElementById('agpMicBtn');
-      if (btn3) { btn3.classList.remove('listening'); btn3.textContent = '🎙️'; }
+      dbgWarn('GETHRO_MIC', 'onerror:', e.error);
+      if (_agpMicActive) setTimeout(function() {
+        try { rec.start(); } catch(err) { dbgWarn('GETHRO_MIC', 'restart after error failed'); }
+      }, 400);
     };
     try { rec.start(); } catch(e) { dbgWarn('GETHRO_MIC', e.message); }
   }
 
   function _agpStopMic() {
+    if (_agpSilenceTimer) { clearTimeout(_agpSilenceTimer); _agpSilenceTimer = null; }
     if (_agpRecognition) { try { _agpRecognition.abort(); } catch(e){} _agpRecognition = null; }
     _agpMicActive = false;
+    _agpAccumulated = '';
     var btn = document.getElementById('agpMicBtn');
     if (btn) { btn.classList.remove('listening'); btn.textContent = '🎙️'; }
   }
