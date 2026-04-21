@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.17';
+  const APP_VERSION  = 'v3.18';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -4384,6 +4384,25 @@
       try {
         const reconRaw = (await callAI(reconPrompt, { max_tokens: 600 })).trim();
         r.reconstruction = reconRaw === 'CLEAN' ? '' : reconRaw;
+        // If reconstruction changed the text and hygiene call said spelling was OK,
+        // cross-check: run a dedicated spell check on the original vs reconstruction.
+        // This catches cases where Groq JSON mode misses misspellings.
+        if (r.spelling.ok && r.reconstruction) {
+          const origWords = text.toLowerCase().split(/\s+/);
+          const reconWords = r.reconstruction.toLowerCase().split(/\s+/);
+          // Find words in original not in reconstruction (potential misspellings)
+          const changed = origWords.filter(function(w) {
+            var clean = w.replace(/[^a-z]/g, '');
+            return clean.length > 3 && !reconWords.some(function(r2) { return r2.replace(/[^a-z]/g,'') === clean; });
+          });
+          if (changed.length > 0) {
+            // Reconstruction fixed something — flag spelling as needing attention
+            r.spelling.ok = false;
+            r.spelling.notes = r.spelling.notes || ('Possible errors: ' + [...new Set(changed)].slice(0,3).join(', '));
+            // Use the reconstruction as the spelling fix
+            if (!r.spelling.fixed) r.spelling.fixed = r.reconstruction;
+          }
+        }
       } catch(e) {
         dbgWarn('AI-REVIEW', 'Reconstruction failed:', e.message);
         r.reconstruction = '';
@@ -4434,7 +4453,7 @@
       html += row(r.voice?.ok,    'Clarity',  r.voice?.notes);
       html += row(hasTitle,    'Title',    !hasTitle    ? (r.suggestTitle    ? 'Suggested: ' + r.suggestTitle    : 'Not set — give this memory a title') : '', false);
       html += row(hasChapter,  'Chapter',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — broad life chapter e.g. Family') : '', false);
-      html += row(hasEra,      'Era',      !hasEra      ? (r.suggestEra      ? 'Suggested: ' + r.suggestEra      : 'Not set — when did this happen?') : '', false);
+      // Era row intentionally removed — date is now freetext 'When' field, not era/decade
       html += row(hasPeople,   'People',   !hasPeople   ? (r.suggestPeople   ? 'Suggested: ' + r.suggestPeople   : 'Not set — who was there?') : '', !hasPeople);
       html += row(hasLocation, 'Location', !hasLocation ? (r.suggestLocation ? 'Suggested: ' + r.suggestLocation : 'Not set — where did this happen?') : '', !hasLocation);
       if (r.suggestReference || hasRef) html += row(hasRef, 'Reference', !hasRef && r.suggestReference ? 'Suggested: ' + r.suggestReference : '', !hasRef);
@@ -4444,7 +4463,7 @@
       const sugTags = {};
       if (!hasTitle    && r.suggestTitle)      sugTags.title     = r.suggestTitle;
       if (!hasChapter  && r.suggestChapter)  sugTags.chapter   = r.suggestChapter;
-      if (!hasEra      && r.suggestEra)      sugTags.year      = r.suggestEra;
+      // Era/year suggestion intentionally removed from tag suggestions
       if (!hasPeople   && r.suggestPeople)   sugTags.people    = r.suggestPeople;
       if (!hasLocation && r.suggestLocation) sugTags.location  = r.suggestLocation;
       if (!hasRef      && r.suggestReference) sugTags.reference = r.suggestReference;
@@ -10690,6 +10709,8 @@
       'If no observation, omit the observation field.\n' +
       'Set "memory_conversation": true ONLY when discussing a personal story or life event the user is actively writing or sharing. Do NOT set it for navigation, app-feature questions, reviewing entries, or any action that routes elsewhere.\n' +
       'Keep reply under 60 words — warm and direct, not rambling.\n' +
+      'ALWAYS end your reply with one specific question to keep the conversation going — never make a statement without following it with a question.\n' +
+      'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, food, feelings). Do not drift to adjacent topics — e.g. if talking about food and dad, keep questions about that specific food experience, not dad in general.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
     // Build messages array: system + history
@@ -10916,9 +10937,16 @@
       _agpMicActive = false;
       var btn2 = document.getElementById('agpMicBtn');
       if (btn2) { btn2.classList.remove('listening'); btn2.textContent = '🎙️'; }
-      // Auto-send if they spoke something
+      // 1.5s pause before auto-send — gives user time to continue speaking naturally.
+      // If they keep talking, the next mic cycle will pick it up.
       var inp2 = document.getElementById('agpInput');
-      if (inp2 && inp2.value.trim()) sendToGethro();
+      if (inp2 && inp2.value.trim()) {
+        setTimeout(function() {
+          // Only send if mic hasn't been restarted and input still has content
+          var inp3 = document.getElementById('agpInput');
+          if (inp3 && inp3.value.trim() && !_agpMicActive) sendToGethro();
+        }, 1500);
+      }
     };
     rec.onerror = function(e) {
       if (e.error === 'aborted' || e.error === 'no-speech') return;
