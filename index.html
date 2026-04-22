@@ -1725,7 +1725,7 @@
           <input type="hidden" id="recTagYear">
           <input type="hidden" id="recTagYearCustom">
 
-          <!-- Row 2: Photos | People | References -->
+          <!-- Row 2: Photos | Sounds | People | References -->
           <div class="tag-field">
             <label>📷 Photos</label>
             <div id="recPhotoStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
@@ -1733,9 +1733,28 @@
                 style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
                 ＋ Add photo
               </button>
+              <button type="button" onclick="document.getElementById('recPhotoCapture').click()"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                📸 Take photo
+              </button>
             </div>
             <input type="file" id="recPhotoInput" accept="image/*" multiple style="display:none" onchange="handleRecPhotos(this)">
+            <input type="file" id="recPhotoCapture" accept="image/*" capture="environment" style="display:none" onchange="handleRecPhotos(this)">
             <span id="recPhotoCount" style="display:none"></span>
+          </div>
+          <div class="tag-field" style="grid-column:1/-1">
+            <label>🎵 Sounds <span style="font-weight:400;font-size:0.8em;color:var(--text-light)">— voice memo, music, anything worth keeping</span></label>
+            <div id="recAudioStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
+              <button type="button" onclick="document.getElementById('recAudioInput').click()"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Upload audio
+              </button>
+              <button type="button" id="recAudioRecordBtn" onclick="toggleAudioRecording()"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ⏺ Record now
+              </button>
+            </div>
+            <input type="file" id="recAudioInput" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm" multiple style="display:none" onchange="handleRecAudios(this)">
           </div>
           <div class="tag-field">
             <label>👥 People</label>
@@ -2585,7 +2604,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.22';
+  const APP_VERSION  = 'v3.23';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -2595,7 +2614,10 @@
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
   const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/tts-proxy';    // Gethro voice
   const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — change here to swap voice globally
-  const STORAGE_URL   = SUPABASE_URL + '/storage/v1/object/life-photos';
+  const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
+  const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
+  const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
+  const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -3324,7 +3346,7 @@
     } catch(err) { dbgErr('DB','Load error:', err.message); }
   }
 
-  async function addEntry(category, answer, question = null, photoUrl = null, photoDesc = null, tags = null, parentEntryId = null) {
+  async function addEntry(category, answer, question = null, photoUrl = null, photoDesc = null, tags = null, parentEntryId = null, audioUrl = null) {
     if (!currentUser) return false;
 
     const cleanQ = question ? question.replace(/\s*\[tags: .+?\]/, '').trim() || null : null;
@@ -3337,6 +3359,7 @@
       timestamp:            new Date().toISOString(),
       photo_url:            photoUrl || null,
       photo_ai_description: photoDesc || null,
+      audio_url:            audioUrl  || null,
       era:                  tags?.year     || null,
       location:             tags?.location || null,
       people:               tags?.people   || null,
@@ -3436,6 +3459,41 @@
     if (!uploadRes.ok) { dbgErr('PHOTO', 'Upload failed:', uploadRes.status); return null; }
     const desc = await describePhoto(file); // describe from original for best AI quality
     return { path, desc };
+  }
+
+  // ── Audio upload ─────────────────────────────────────────────────
+  // Uploads an audio Blob/File to the life-audio bucket.
+  // Returns { path } on success, null on failure.
+  async function uploadAudioFile(file) {
+    if (!file || !currentUser) return null;
+    if (file.size > AUDIO_MAX_BYTES) { toast('Audio too large — max 5MB'); return null; }
+    var ext = 'webm';
+    if (file.type.includes('mp3') || file.name?.endsWith('.mp3')) ext = 'mp3';
+    else if (file.type.includes('mp4') || file.name?.endsWith('.m4a')) ext = 'm4a';
+    else if (file.type.includes('wav') || file.name?.endsWith('.wav')) ext = 'wav';
+    else if (file.type.includes('ogg') || file.name?.endsWith('.ogg')) ext = 'ogg';
+    var path = currentUser.id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.' + ext;
+    var res = await fetch(AUDIO_STORAGE_URL + '/' + path, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': file.type || 'audio/webm', 'x-upsert': 'true' },
+      body: file
+    });
+    if (!res.ok) { dbgErr('AUDIO', 'Upload failed:', res.status); return null; }
+    return { path };
+  }
+
+  async function getSignedAudioUrl(path) {
+    if (!path) return null;
+    try {
+      var res = await fetch(AUDIO_STORAGE_SIGN + '/' + path, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresIn: 3600 })
+      });
+      if (!res.ok) return null;
+      var data = await res.json();
+      return data.signedURL || data.signedUrl || null;
+    } catch(e) { return null; }
   }
 
   // ── Gethro voice (OpenAI TTS via TTS_PROXY edge function) ──────
@@ -3786,6 +3844,7 @@
 
   // State
   let recPhotos      = [];   // [{file, preview, caption}] queued photos
+  let recAudios      = [];   // [{file, preview, caption, recorded}] queued audio clips
   let recLastTags    = {};   // carries forward between entries
   let recDeepContext  = '';   // last Q+A for go-deeper
   let recLastParentId = null;  // parent entry id when in AI conversation chain
@@ -4109,6 +4168,8 @@
     if (!keepTags) resetTagFields('rec');
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
     recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = [];
     renderRecPhotoStrip();
     if (memMicActive) stopMemMic();
     setMemStatus('idle', '');
@@ -4242,7 +4303,7 @@
   // ── Save current form as an entry, return id ──────────────────────
   async function memSaveCurrentEntry() {
     const { title, answer, tags } = memReadEntry();
-    if (!answer && !title && !recPhotos.length) return null;
+    if (!answer && !title && !recPhotos.length && !recAudios.length) return null;
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
     // Link to parent if we're in a follow-up conversation
@@ -4254,6 +4315,13 @@
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
         const up = await uploadPhotoFile(recPhotos[i].file);
         if (up) await addEntry(fullTags.chapter || 'Unspecified', recPhotos[i].caption || title || 'Photo', recCurQuestion || null, up.path, up.desc, fullTags, eid);
+      }
+    }
+    if (eid && recAudios.length) {
+      for (let i = 0; i < recAudios.length; i++) {
+        toast('Uploading audio ' + (i+1) + ' of ' + recAudios.length + '...');
+        const au = await uploadAudioFile(recAudios[i].file);
+        if (au) await addEntry(fullTags.chapter || 'Unspecified', recAudios[i].caption || title || 'Audio', recCurQuestion || null, null, null, fullTags, eid, au.path);
       }
     }
     recLastTags = { ...tags };
@@ -4733,7 +4801,9 @@
     document.getElementById('memTitle').value  = '';
     recTranscript = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = []; renderRecPhotoStrip();
+    recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = []; renderRecPhotoStrip();
 
     // Pause mic briefly while AI thinks, then speak question, then resume
     if (memMicActive) stopMemMic();
@@ -4807,7 +4877,9 @@
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = []; renderRecPhotoStrip();
+    recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = []; renderRecPhotoStrip();
     await memAskQuestion('new');
   }
 
@@ -4822,7 +4894,9 @@
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = []; renderRecPhotoStrip();
+    recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = []; renderRecPhotoStrip();
     resetTagFields('rec');
     await memAskQuestion('new');
   }
@@ -4839,7 +4913,9 @@
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = []; renderRecPhotoStrip();
+    recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = []; renderRecPhotoStrip();
     resetTagFields('rec');
     await memAskQuestion('deep');
   }
@@ -4853,7 +4929,9 @@
     document.getElementById('memAnswer').value = '';
     document.getElementById('memTitle').value  = '';
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = []; renderRecPhotoStrip();
+    recPhotos = [];
+    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
+    recAudios = []; renderRecPhotoStrip();
     setMemStatus('idle', '');
     recCurQuestion = '';
     applyTagDefaults('rec', recLastTags);
@@ -4957,6 +5035,102 @@
     recPhotos.splice(idx, 1);
     renderRecPhotoStrip();
     memCheckButtons();
+  }
+
+  // ── Audio clip state ────────────────────────────────────────────
+  var _audioRecorder    = null;
+  var _audioRecording   = false;
+  var _audioChunks      = [];
+
+  function handleRecAudios(input) {
+    Array.from(input.files).forEach(function(file) {
+      if (file.size > AUDIO_MAX_BYTES) { toast(file.name + ' too large — max 5MB'); return; }
+      recAudios.push({ file: file, preview: URL.createObjectURL(file), caption: '', recorded: false });
+    });
+    input.value = '';
+    renderRecAudioStrip();
+    memCheckButtons();
+  }
+
+  function renderRecAudioStrip() {
+    var strip = document.getElementById('recAudioStrip');
+    if (!strip) return;
+    var uploadBtn = '<button type="button" onclick="document.getElementById(\'recAudioInput\').click()" ' +
+      'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">' +
+      '\uFF0B Upload audio</button>';
+    var recLabel = _audioRecording ? '\u23F9 Stop recording' : '\u23FA Record now';
+    var recordBtn = '<button type="button" onclick="toggleAudioRecording()" ' +
+      'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed ' +
+      (_audioRecording ? 'var(--rose);color:var(--rose)' : 'var(--border);color:var(--text-light)') +
+      ';cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">' +
+      recLabel + '</button>';
+    if (!recAudios.length) { strip.innerHTML = uploadBtn + ' ' + recordBtn; return; }
+    var items = recAudios.map(function(a, i) {
+      return '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;max-width:180px">' +
+        '<div style="position:relative;display:flex;align-items:center;gap:4px;background:var(--surface2);border:2px solid var(--gold);border-radius:6px;padding:4px 8px">' +
+          '<span style="font-size:1rem">\uD83C\uDFB5</span>' +
+          '<audio src="' + a.preview + '" controls style="height:24px;min-width:100px;max-width:140px"></audio>' +
+          '<button onclick="removeRecAudio(' + i + ')" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:9px;cursor:pointer;line-height:16px;text-align:center">\u2715</button>' +
+        '</div>' +
+        '<input type="text" placeholder="Caption..." value="' + (a.caption||'') + '" ' +
+          'oninput="recAudios[' + i + '].caption=this.value" ' +
+          'style="font-size:0.68rem;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:100%;box-sizing:border-box">' +
+      '</div>';
+    }).join('');
+    strip.innerHTML = items + uploadBtn + ' ' + recordBtn;
+    memCheckButtons();
+  }
+
+  function removeRecAudio(idx) {
+    if (recAudios[idx] && recAudios[idx].preview) URL.revokeObjectURL(recAudios[idx].preview);
+    recAudios.splice(idx, 1);
+    renderRecAudioStrip();
+    memCheckButtons();
+  }
+
+  async function toggleAudioRecording() {
+    if (_audioRecording) {
+      if (_audioRecorder && _audioRecorder.state !== 'inactive') _audioRecorder.stop();
+      return;
+    }
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+                   : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+                   : MediaRecorder.isTypeSupported('audio/mp4')  ? 'audio/mp4'
+                   : '';
+      var opts = mimeType ? { mimeType: mimeType } : {};
+      _audioChunks = [];
+      _audioRecorder = new MediaRecorder(stream, opts);
+      _audioRecording = true;
+      renderRecAudioStrip();
+
+      _audioRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) _audioChunks.push(e.data);
+      };
+      _audioRecorder.onstop = function() {
+        _audioRecording = false;
+        stream.getTracks().forEach(function(t) { t.stop(); });
+        if (!_audioChunks.length) { renderRecAudioStrip(); return; }
+        var finalType = mimeType || 'audio/webm';
+        var blob = new Blob(_audioChunks, { type: finalType });
+        _audioChunks = [];
+        if (blob.size > AUDIO_MAX_BYTES) { toast('Recording too large — max 5MB'); renderRecAudioStrip(); return; }
+        var ext = finalType.includes('mp4') ? 'm4a' : 'webm';
+        var file = new File([blob], 'recording_' + Date.now() + '.' + ext, { type: finalType });
+        recAudios.push({ file: file, preview: URL.createObjectURL(blob), caption: '', recorded: true });
+        renderRecAudioStrip();
+        memCheckButtons();
+        toast('Recording saved — add a caption if you like');
+      };
+      _audioRecorder.start();
+      toast('Recording… tap Stop recording when done');
+    } catch(err) {
+      _audioRecording = false;
+      dbgWarn('AUDIO', 'Recording failed:', err.message);
+      toast('Could not access microphone — ' + err.message);
+      renderRecAudioStrip();
+    }
   }
 
   // ── Photos ───────────────────────────────────────────────────────
@@ -7453,6 +7627,14 @@
     await Promise.all(photoEntries.map(async p => {
       if (p.photo_url) photoUrlCache[p.photo_url] = await getSignedUrl(p.photo_url);
     }));
+    // Pre-fetch signed audio URLs
+    const audioUrlCache = {};
+    const audioChildren = filtered.flatMap(e =>
+      real.filter(c => c.parent_entry_id === e.id && c.audio_url)
+    );
+    await Promise.all(audioChildren.map(async a => {
+      if (a.audio_url) audioUrlCache[a.audio_url] = await getSignedAudioUrl(a.audio_url);
+    }));
 
     list.innerHTML = filtered.map(e => {
       const tags    = getEntryTags(e);
@@ -7485,11 +7667,28 @@
           }</div>`
         : '';
 
+      // Gather audio clips for this entry
+      const entryAudios = real.filter(c => c.parent_entry_id === e.id && c.audio_url);
+      const audioStripHtml = entryAudios.length
+        ? '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">' +
+          entryAudios.map(function(a) {
+            var aUrl = audioUrlCache[a.audio_url] || '';
+            var cap  = a.answer && a.answer !== 'Audio' ? a.answer : '';
+            return '<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 10px;border-left:3px solid var(--gold)">' +
+              '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDFB5</span>' +
+              (aUrl ? '<audio src="' + aUrl + '" controls style="flex:1;height:32px"></audio>' :
+                '<span style="font-size:0.8rem;color:var(--text-light);flex:1">Audio unavailable</span>') +
+              (cap ? '<span style="font-size:0.78rem;color:var(--text-light);font-style:italic;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + cap + '</span>' : '') +
+            '</div>';
+          }).join('') + '</div>'
+        : '';
+
       const wc = e.answer ? e.answer.trim().split(/\s+/).filter(Boolean).length : 0;
       const wcLabel = wc < 50 ? '🔴' : wc < 150 ? '🟡' : '🟢';
       const wcBadge = wc > 0 ? `<span style="font-size:0.72rem;color:var(--text-light);margin-left:auto;padding-right:6px" title="${wc} words">${wcLabel} ${wc}w</span>` : '';
 
-      return `<div class="entry-card ${hasPhotos ? 'type-photo' : ''}" id="${safeId}">
+      const hasAudio = entryAudios.length > 0;
+      return `<div class="entry-card ${hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : ''}" id="${safeId}">
         <div class="entry-meta">
           <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
           ${wcBadge}
@@ -7497,6 +7696,7 @@
           ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
         </div>
         ${photoStripHtml}
+        ${audioStripHtml}
         ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
         ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
         <p class="entry-text">${renderEntryAnswer(e.answer)}</p>
