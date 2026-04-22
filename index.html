@@ -2585,7 +2585,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.20';
+  const APP_VERSION  = 'v3.22';
   const DEPLOY_NOTES = APP_VERSION + ' — Feature tracking + conversations moved to Supabase (life_feature_usage, life_conversations). Cross-device nudges, message persistence, convo saved_to_entry flag.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
@@ -7352,15 +7352,8 @@
     var peopleEl = document.getElementById('recTagPeople');
     if (peopleEl) peopleEl.value = tags.people || '';
 
-    // Open the details panel so the user sees the pre-filled tags
-    var detailsPanel = document.getElementById('memDetailsPanel');
-    var detailsLabel = document.getElementById('memDetailsLabel');
-    var detailsIcon  = document.getElementById('memDetailsIcon');
-    var detailsToggle = document.getElementById('memDetailsToggle');
-    if (detailsPanel) detailsPanel.style.display = 'block';
-    if (detailsLabel) detailsLabel.textContent = 'Hide details';
-    if (detailsIcon)  detailsIcon.textContent  = '−';
-    if (detailsToggle) detailsToggle.style.borderStyle = 'solid';
+    // Leave details panel closed — tags are pre-filled silently.
+    // User can expand '+ Add details' if they want to review or change them.
 
     // Link new saves as follow-ups to the original
     recLastParentId = entryId;
@@ -10255,7 +10248,8 @@
       _agpUpdateSaveBar();
       var seedCtx = memAnswer.slice(0, 800);
       _convoStart('memory_entry', null);
-      _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || '');
+      // Small delay so panel animation completes before seed question appears
+      setTimeout(function() { _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || ''); }, 100);
     } else if (!_gethroHistory.length && !skipGreeting) {
       // Fresh session, no Memories content — generic opener
       var opener = firstName
@@ -10514,6 +10508,11 @@
     _agpPendingMemoryConvo = false; // saved — no need to prompt on next open
     _convoClose(true);  // mark conversation as saved_to_entry=true
     featTrackConvoSave();
+    // Clear history and memory mode BEFORE closeAskGethro so it doesn't
+    // re-set _agpPendingMemoryConvo = true (which triggers the resume prompt).
+    _gethroHistory = [];
+    _agpMemoryMode = false;
+    _agpUpdateSaveBar();
     closeAskGethro();
     showPanel('memories', null, 0);
 
@@ -10571,7 +10570,8 @@
   // ── Accept handler: appends chosen version to memAnswer ──────────
   // Mirrors acceptReconstruction() — same append-to-textarea pattern.
   // useRaw=false -> AI consolidated prose. useRaw=true -> raw transcript.
-  function agpAcceptConsolidated(useRaw) {
+  // Auto-saves after user accepts either version — no extra button press needed.
+  async function agpAcceptConsolidated(useRaw) {
     var panel = document.getElementById('memSpellPanel');
     if (!panel) return;
     var text     = useRaw ? (panel.dataset.transcript || '') : (panel.dataset.consolidated || '');
@@ -10582,17 +10582,14 @@
     if (!ta) return;
 
     if (hasEntry && ta.value.trim()) {
-      // Append to existing content with blank-line separator
       ta.value = ta.value.trimEnd() + '\n\n' + text;
     } else {
       ta.value = text;
     }
 
     _userHasTyped = true;
-    memCheckButtons();
-    draftSave();
 
-    // Auto-fill tags from the consolidated text (non-blocking)
+    // Auto-fill tags from consolidated text (non-blocking, runs before save)
     if (!useRaw) _agpAutoFillTags(text).catch(function(){});
 
     panel.style.display = 'none';
@@ -10600,14 +10597,13 @@
     delete panel.dataset.transcript;
     delete panel.dataset.hasEntry;
 
-    var msg = hasEntry
-      ? 'Added to your entry \u2014 edit as you like, then tap Done.'
-      : 'Entry filled in \u2014 add a title and tap Done to save.';
-    toast(msg);
+    // Clear Gethro log and history immediately
+    _gethroHistory = [];
+    var log = document.getElementById('agpLog');
+    if (log) log.innerHTML = '';
 
-    ta.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
+    // Auto-save via memDone — saves, clears form, resets state. No extra tap needed.
+    await memDone();
   }
 
   // ── Send message ─────────────────────────────────────────────────
