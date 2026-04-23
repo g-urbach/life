@@ -1734,7 +1734,7 @@
       <span class="tab-label">Memories</span>
     </button>
     <button class="tab-btn" id="tab-1" onclick="showPanel('dashboard', null, 1)">
-      <span class="tab-icon">🏠</span>
+      <span class="tab-icon" style="position:relative">🏠<span id="dashResponsesBadge" style="display:none;position:absolute;top:-4px;right:-6px;width:8px;height:8px;border-radius:50%;background:var(--rose);border:1px solid var(--surface)"></span></span>
       <span class="tab-label">Dashboard</span>
     </button>
     <button class="tab-btn" id="tab-2" onclick="showPanel('story', null, 2)">
@@ -1797,7 +1797,8 @@
     <!-- Spell check result -->
     <div id="memSpellPanel" class="improve-panel-mem" style="display:none;margin-bottom:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;font-size:1rem;line-height:1.8"></div>
 
-    <!-- Details accordion — collapsed by default -->
+    <!-- Existing media/feedback panel — shown when editing an existing entry via "Edit with Gethro" -->
+    <div id="memExistingMediaPanel" style="display:none;margin-bottom:16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px"></div>
     <div style="margin-bottom:20px">
       <button type="button" onclick="memToggleDetails()" id="memDetailsToggle"
         style="width:100%;padding:10px 16px;border:1px dashed var(--border);border-radius:8px;background:none;font-family:'Lato',sans-serif;font-size:0.88rem;color:var(--text-light);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"
@@ -2771,8 +2772,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.28';
-  const DEPLOY_NOTES = APP_VERSION + ' — Responses Dashboard tile (Step 7). loadResponsesTile() fetches unimported life_share_feedback on dashboard load. Shows commenter name, time, entry context, message text, media flags. Import creates child entry (linked to original, category=Responses, title=From Name). Delete removes permanently. Tile hides when no unimported responses remain.';
+  const APP_VERSION  = 'v3.30';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix: audio children excluded from Community Feedback block (were double-rendering in audio strip + feedback). Fix: deleteChildEntry simplified — no fragile prefix re-open, just refreshes panel. Fix: existing photos, audio and feedback replies now visible + deletable from Memories tab when editing via Edit with Gethro (memExistingMediaPanel). Fix: deleteChildEntry on Memories tab clears panel correctly. Feature: red dot notification badge on Dashboard nav tab when unread responses exist — clears when all imported/deleted.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3538,10 +3539,17 @@
 
       if (!feedback.length) {
         tile.style.display = 'none';
+        _agpPendingResponseCount = 0;
+        var badge = document.getElementById('dashResponsesBadge');
+        if (badge) badge.style.display = 'none';
         return;
       }
 
       tile.style.display = 'block';
+      _agpPendingResponseCount = feedback.length;
+      // Show red dot on Dashboard nav tab
+      var badge = document.getElementById('dashResponsesBadge');
+      if (badge) badge.style.display = 'inline-block';
       countEl.textContent = feedback.length + (feedback.length === 1 ? ' new response' : ' new responses');
 
       // Look up entry titles for context
@@ -3638,14 +3646,12 @@
       });
       if (!saveRes.ok) throw new Error('entry save failed');
 
-      // Mark feedback as imported
+      // Remove the feedback row from DB — use DELETE (owner policy exists) rather than
+      // PATCH to imported=true (no UPDATE RLS policy, so PATCH silently fails causing
+      // the row to reappear on next dashboard load).
       await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
-        method: 'PATCH',
-        headers: Object.assign({}, getAuthHeaders(), {
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        }),
-        body: JSON.stringify({ imported: true })
+        method: 'DELETE',
+        headers: getAuthHeaders()
       });
 
       toast(commenterName + '\u2019s response imported \u2713');
@@ -3658,10 +3664,13 @@
       var remaining = document.getElementById('dashResponsesList');
       if (remaining && !remaining.children.length) {
         document.getElementById('dashResponsesTile').style.display = 'none';
+        _agpPendingResponseCount = 0;
+        var b = document.getElementById('dashResponsesBadge'); if (b) b.style.display = 'none';
       } else {
         var countEl = document.getElementById('dashResponsesCount');
         if (countEl && remaining) {
           var n = remaining.children.length;
+          _agpPendingResponseCount = n;
           countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
         }
       }
@@ -3689,10 +3698,13 @@
       var remaining = document.getElementById('dashResponsesList');
       if (remaining && !remaining.children.length) {
         document.getElementById('dashResponsesTile').style.display = 'none';
+        _agpPendingResponseCount = 0;
+        var b = document.getElementById('dashResponsesBadge'); if (b) b.style.display = 'none';
       } else {
         var countEl = document.getElementById('dashResponsesCount');
         if (countEl && remaining) {
           var n = remaining.children.length;
+          _agpPendingResponseCount = n;
           countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
         }
       }
@@ -3700,6 +3712,26 @@
       dbgWarn('DASH', 'deleteResponse error:', e.message);
       toast('Could not delete \u2014 try again');
     }
+  }
+
+  // Import an already-imported child reply as a standalone memory.
+  // Called from the "Import as memory" button on community feedback blocks in Entries.
+  // Navigates to Memories tab, pre-fills title + answer, ready for the user to save.
+  async function importChildAsMemory(childEntryId) {
+    if (!childEntryId) return;
+    var child = entries.find(function(e) { return e.id === childEntryId; });
+    if (!child) { toast('Entry not found'); return; }
+    var parent = child.parent_entry_id ? entries.find(function(e) { return e.id === child.parent_entry_id; }) : null;
+    // Pre-fill Memories tab with the feedback text
+    showPanel('memories', null, 0);
+    setTimeout(function() {
+      var titleEl  = document.getElementById('memTitle');
+      var answerEl = document.getElementById('memAnswer');
+      if (titleEl)  titleEl.value  = child.title || (parent ? 'Response to: ' + (parent.title || 'a memory') : 'Imported response');
+      if (answerEl) { answerEl.value = child.answer || ''; answerEl.focus(); }
+      _userHasTyped = true;
+      toast('Response copied to Memories — edit and save when ready');
+    }, 300);
   }
 
   // Helper — escape HTML for safe insertion into innerHTML
@@ -5088,6 +5120,10 @@
     document.getElementById('memTitle').value  = '';
     document.getElementById('memAnswer').value = '';
     document.getElementById('aiQuestionBox').style.display  = 'none';
+
+    // Hide the existing-media panel (shown when editing a saved entry via "Edit with Gethro")
+    var emp = document.getElementById('memExistingMediaPanel');
+    if (emp) { emp.style.display = 'none'; emp.innerHTML = ''; }
 
     if (!keepTags) resetTagFields('rec');
     recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
@@ -7254,8 +7290,7 @@
       const panel = document.getElementById('edit-' + entryId) || document.getElementById('redit-' + entryId) || document.getElementById('cdedit-' + entryId);
       if (panel) panel.style.display = 'none';
       // Refresh whichever panel is active
-      if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries(); if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
-      else renderTimeline();
+      _refreshActivePanel();
     } catch(err) { dbgErr('DB', 'saveEntryTags threw:', err.message); toast('Error: ' + err.message); }
   }
 
@@ -7339,13 +7374,25 @@
     if (!entryId) return '';
     // Find existing photo children for this entry
     const photoChildren = entries.filter(e => e.parent_entry_id === entryId && e.photo_url);
+    // Find existing audio children for this entry
+    const audioChildren = entries.filter(e => e.parent_entry_id === entryId && e.audio_url && !e.photo_url);
     const photosHtml = photoChildren.length
       ? photoChildren.map((p, i) =>
           `<div style="display:flex;flex-direction:column;gap:4px;align-items:center" id="ephoto-${entryId}-${i}">
             <div style="position:relative;display:inline-block">
               <div id="ephoto-thumb-${entryId}-${i}" style="width:56px;height:56px;border-radius:6px;border:2px solid var(--gold);background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:1.2rem">📷</div>
+              <button onclick="deleteChildEntry('${p.id}','${entryId}','${prefix}')" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:9px;cursor:pointer;line-height:18px;text-align:center" title="Delete photo">✕</button>
             </div>
             <span style="font-size:0.68rem;color:var(--text-light);width:56px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.answer?.substring(0,12)||'Photo'}</span>
+          </div>`
+        ).join('')
+      : '';
+    const audiosHtml = audioChildren.length
+      ? audioChildren.map((a, i) =>
+          `<div id="eaudio-${entryId}-${i}" style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:6px 10px;border-left:3px solid var(--gold);position:relative">
+            <span style="font-size:1rem;flex-shrink:0">🎵</span>
+            <span style="font-size:0.78rem;color:var(--text-light);flex:1">${a.answer && a.answer !== 'Audio' ? a.answer : 'Audio clip'}</span>
+            <button onclick="deleteChildEntry('${a.id}','${entryId}','${prefix}')" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:0.8rem;padding:2px 6px;flex-shrink:0" title="Delete audio">✕ Delete</button>
           </div>`
         ).join('')
       : '';
@@ -7413,6 +7460,7 @@
           </div>
           <input type="file" id="${prefix}PhotoInput${entryId}" accept="image/*" multiple style="display:none"
             onchange="handleEditPanelPhotos(this,'${entryId}','${prefix}')">
+          ${audiosHtml ? '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">' + audiosHtml + '</div>' : ''}
         </div>
 
         <!-- Save / Cancel -->
@@ -7464,6 +7512,25 @@
       _editPanelPhotos[entryId].splice(idx, 1);
     }
     renderEditPanelPhotoStrip(entryId, prefix);
+  }
+
+  // ── Delete a child entry (photo or audio) attached to a parent entry ──────
+  // Called from the ✕ button on existing photo/audio thumbs in buildEditPanel.
+  async function deleteChildEntry(childId, parentId, prefix) {
+    if (!childId || !currentUser) return;
+    if (!confirm('Delete this attachment? This cannot be undone.')) return;
+    try {
+      var res = await fetch(DB_URL + '?id=eq.' + childId + '&user_id=eq.' + currentUser.id, {
+        method: 'DELETE', headers: getAuthHeaders()
+      });
+      if (!res.ok) { toast('Could not delete — try again'); return; }
+      // Remove from local entries array
+      entries = entries.filter(function(e) { return e.id !== childId; });
+      toast('Attachment deleted ✓');
+      // Refresh the active panel — the panel re-renders cleanly with the child removed.
+      // The edit panel will close as part of the re-render; user can re-open if needed.
+      _refreshActivePanel();
+    } catch(e) { dbgErr('DELETE-CHILD', e.message); toast('Error deleting attachment'); }
   }
 
   async function loadEditPanelPhotoThumbs(entryId) {
@@ -7590,7 +7657,8 @@
   function _refreshActivePanel() {
     if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries();
     else if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
-    else renderTimeline();
+    // renderTimeline() is not called here — timelineList element does not exist in the HTML.
+    // Memories tab has no list to refresh (the entry being saved is now persisted via autosave).
   }
 
   // ── The Essentials ──────────────────────────────────────────────
@@ -8585,6 +8653,63 @@
     // Link new saves as follow-ups to the original
     recLastParentId = entryId;
 
+    // ── Show existing attached media + community feedback for this entry ──
+    // Gives the user visibility of what's already saved so they don't add duplicates,
+    // and lets them delete attachments or feedback replies from the Memories tab too.
+    var emp = document.getElementById('memExistingMediaPanel');
+    if (emp) {
+      var photoKids = entries.filter(function(c) { return c.parent_entry_id === entryId && c.photo_url; });
+      var audioKids = entries.filter(function(c) { return c.parent_entry_id === entryId && c.audio_url && !c.photo_url; });
+      var feedbackKids = entries.filter(function(c) { return c.parent_entry_id === entryId && !c.photo_url && !c.audio_url; });
+      var hasAny = e.photo_url || photoKids.length || audioKids.length || feedbackKids.length;
+      if (hasAny) {
+        var html = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>';
+        // Own photo
+        if (e.photo_url) {
+          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+            '<span style="font-size:1rem">📷</span>' +
+            '<span style="font-size:0.82rem;color:var(--text);flex:1">Entry photo</span>' +
+          '</div>';
+        }
+        // Child photos
+        photoKids.forEach(function(p) {
+          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+            '<span style="font-size:1rem">📷</span>' +
+            '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(p.answer && p.answer !== 'Photo' ? p.answer : 'Attached photo') + '</span>' +
+            (p.id ? '<button onclick="deleteChildEntry(\'' + p.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+          '</div>';
+        });
+        // Child audio
+        audioKids.forEach(function(a) {
+          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
+            '<span style="font-size:1rem">🎵</span>' +
+            '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(a.answer && a.answer !== 'Audio' ? a.answer : 'Audio clip') + '</span>' +
+            (a.id ? '<button onclick="deleteChildEntry(\'' + a.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+          '</div>';
+        });
+        // Community feedback replies
+        if (feedbackKids.length) {
+          html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>';
+          feedbackKids.forEach(function(cr) {
+            html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+                '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(cr.title || 'Response') + '</span>' +
+                (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+              '</div>' +
+              '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml((cr.answer || '').substring(0, 80)) + ((cr.answer || '').length > 80 ? '\u2026' : '') + '</p>' +
+            '</div>';
+          });
+          html += '</div>';
+        }
+        emp.innerHTML = html;
+        emp.style.display = 'block';
+      } else {
+        emp.style.display = 'none';
+        emp.innerHTML = '';
+      }
+    }
+
     // Switch to Memories tab then open Gethro — content in the tab causes
     // Gethro to automatically seed from the entry (existing _agpSeedMemoryQuestion flow)
     showPanel('memories', null, 0);
@@ -8628,10 +8753,15 @@
     const isPhotoAttachment = e => !!e.parent_entry_id && !!e.photo_url &&
       (!e.answer || PHOTO_STUBS.has(e.answer.toLowerCase().trim()) || e.answer.trim().length < 25);
 
+    // Non-photo, non-audio child entries (feedback responses, AI conversation saves) —
+    // suppress from top-level list; rendered inline under their parent as "Community Feedback".
+    // Audio-only children are already rendered in the audio strip — exclude them here.
+    const isChildReply = e => !!e.parent_entry_id && !isPhotoAttachment(e) && !e.audio_url;
+
     let filtered = (filter
       ? real.filter(e => (e.chapter || '') === filter)
       : real
-    ).filter(e => !isPhotoAttachment(e));
+    ).filter(e => !isPhotoAttachment(e) && !isChildReply(e));
 
     if (_entriesTypeFilter === 'photos') {
       filtered = filtered.filter(e =>
@@ -8741,38 +8871,67 @@
       const wcBadge = wc > 0 ? `<span style="font-size:0.72rem;color:var(--text-light);margin-left:auto;padding-right:6px" title="${wc} words">${wcLabel} ${wc}w</span>` : '';
 
       const hasAudio = entryAudios.length > 0;
-      return `<div class="entry-card ${hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : ''}" id="${safeId}">
-        <div class="entry-meta">
-          <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
-          ${wcBadge}
-          <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}</span>
-          ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
-        </div>
-        ${photoStripHtml}
-        ${audioStripHtml}
-        ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
-        ${cleanQ && cleanQ !== 'Tell me about this photo' ? `<p class="entry-q">"${cleanQ}"</p>` : ''}
-        <p class="entry-text">${renderEntryAnswer(e.answer)}</p>
-        ${tagHtml}
-        ${e.id ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="improve-btn" onclick="improveEntry('${e.id}')">🔍 AI Review</button>
-          <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
-          <button onclick="editEntryText('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>
-          <button onclick="openEntryInMemories('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>
-          <button onclick="showShareConsent('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--sage);color:var(--sage);cursor:pointer">🔗 Share</button>
-        </div>` : ''}
-        <div id="sharelinks-indicator-${e.id}"></div>
-        <div id="sharelinks-panel-${e.id}" style="display:none"></div>
-        <div id="textedit-${e.id}" style="display:none;margin-top:10px">
-          <textarea id="texteditarea-${e.id}" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">${e.answer}</textarea>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="saveEntryText('${e.id}')">💾 Save</button>
-            <button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById('textedit-${e.id}').style.display='none'">Cancel</button>
-          </div>
-        </div>
-        ${improvePanel}
-        ${editPanel}
-      </div>`;
+
+      // Community feedback replies — non-photo, non-audio children linked to this entry
+      // (imported feedback responses, AI convo saves). Rendered indented below.
+      const childReplies = real.filter(c => c.parent_entry_id === e.id && !isPhotoAttachment(c) && !c.audio_url);
+      const childRepliesHtml = childReplies.length
+        ? '<div style="margin-top:14px;border-left:3px solid var(--sage);padding-left:12px">' +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;margin-bottom:8px;text-transform:uppercase">Community Feedback</div>' +
+            childReplies.map(function(cr) {
+              var crDeleteId = cr.id ? ("'" + cr.id + "'") : 'null';
+              var crDate = new Date(cr.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
+              var crName = cr.title || 'Response';
+              return '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">' +
+                  '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(crName) + '</span>' +
+                  '<span style="font-size:0.72rem;color:var(--text-light)">' + crDate + '</span>' +
+                '</div>' +
+                '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(cr.answer || '') + '</p>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button onclick="importChildAsMemory(\'' + (cr.id||'') + '\')" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                    '\u2193 Import as memory' +
+                  '</button>' +
+                  (cr.id ? '<button onclick="deleteEntry(' + crDeleteId + ')" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+                '</div>' +
+              '</div>';
+            }).join('') +
+          '</div>'
+        : '';
+
+      return '<div class="entry-card ' + (hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : '') + '" id="' + safeId + '">' +
+        '<div class="entry-meta">' +
+          '<span class="entry-cat">' + (e.chapter || e.category || 'Unspecified') + '</span>' +
+          wcBadge +
+          '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>' +
+          (e.id ? '<button class="entry-delete-btn" onclick="deleteEntry(' + deleteId + ')" title="Delete">✕</button>' : '') +
+        '</div>' +
+        photoStripHtml +
+        audioStripHtml +
+        (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + escHtml(e.title) + '</p>' : '') +
+        (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
+        '<p class="entry-text">' + renderEntryAnswer(e.answer) + '</p>' +
+        tagHtml +
+        (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button class="improve-btn" onclick="improveEntry(\'' + e.id + '\')">🔍 AI Review</button>' +
+          '<button onclick="toggleEditTags(\'' + e.id + '\',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos') + '</button>' +
+          '<button onclick="editEntryText(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>' +
+          '<button onclick="openEntryInMemories(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>' +
+          '<button onclick="showShareConsent(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--sage);color:var(--sage);cursor:pointer">🔗 Share</button>' +
+        '</div>' : '') +
+        '<div id="sharelinks-indicator-' + e.id + '"></div>' +
+        '<div id="sharelinks-panel-' + e.id + '" style="display:none"></div>' +
+        '<div id="textedit-' + e.id + '" style="display:none;margin-top:10px">' +
+          '<textarea id="texteditarea-' + e.id + '" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:\'Lato\',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">' + escHtml(e.answer) + '</textarea>' +
+          '<div style="display:flex;gap:8px;margin-top:8px">' +
+            '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="saveEntryText(\'' + e.id + '\')">💾 Save</button>' +
+            '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px" onclick="document.getElementById(\'textedit-' + e.id + '\').style.display=\'none\'">Cancel</button>' +
+          '</div>' +
+        '</div>' +
+        improvePanel +
+        editPanel +
+        childRepliesHtml +
+      '</div>';
     }).join('');
 
     // Register tags and populate dropdowns
@@ -10212,8 +10371,7 @@
     const cat = entries.find(e => e.id === entryId)?.category || 'Unspecified';
     await addEntry(cat, 'Photo attached to entry', null, up.path, up.desc, null, entryId);
     toast('Photo added ✓');
-    if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries(); if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
-    else renderTimeline();
+    _refreshActivePanel();
   }
 
   // ── Delete ───────────────────────────────────────────────────────
@@ -11461,6 +11619,7 @@
   var _agpSending     = false;
   var _agpMemoryMode         = false; // true while panel open + memory-related
   var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
+  var _agpPendingResponseCount = 0;   // set by loadResponsesTile when unread responses exist; Gethro mentions them on open
 
   // skipGreeting: pass true when opening programmatically (e.g. nudge messages) to
   // suppress the generic "Hi [name]" opener — the caller appends its own message instead.
@@ -11510,12 +11669,21 @@
       // Small delay so panel animation completes before seed question appears
       setTimeout(function() { _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || ''); }, 100);
     } else if (!_gethroHistory.length && !skipGreeting) {
-      // Fresh session, no Memories content — generic opener
-      var opener = firstName
-        ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
-        : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+      // Fresh session, no Memories content — generic opener.
+      // If there are unread share responses, Gethro mentions them first.
+      var opener;
+      if (_agpPendingResponseCount > 0) {
+        var rWord = _agpPendingResponseCount === 1 ? 'response' : 'responses';
+        opener = firstName
+          ? 'Hi ' + firstName + '. You have ' + _agpPendingResponseCount + ' new ' + rWord + ' from someone you shared a memory with — head to the Dashboard to read ' + (_agpPendingResponseCount === 1 ? 'it' : 'them') + '. What else can I help you with?'
+          : 'You have ' + _agpPendingResponseCount + ' new ' + rWord + ' from someone you shared a memory with — head to the Dashboard to read ' + (_agpPendingResponseCount === 1 ? 'it' : 'them') + '. What else can I help you with?';
+      } else {
+        opener = firstName
+          ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
+          : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+      }
       _convoStart('general', null);
-      _agpAppendGethro(opener, null);
+      _agpAppendGethro(opener, _agpPendingResponseCount > 0 ? { type: 'navigate_dashboard', params: {} } : null);
       gethroSpeak(opener).catch(function(){}).finally(function() {
         // Auto-start mic after speaking so user can reply hands-free
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
