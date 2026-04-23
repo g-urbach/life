@@ -2144,6 +2144,18 @@
         </div>
       </div>
 
+      <!-- ⓪ RESPONSES TILE — shown when share feedback exists -->
+      <div class="dash-tile dash-tile-wide" id="dashResponsesTile" style="display:none;min-height:auto;padding:16px 20px;border-left:3px solid var(--sage)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:1.3rem">💬</span>
+            <span style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--sage)">Responses</span>
+          </div>
+          <span id="dashResponsesCount" style="font-size:0.78rem;color:var(--text-light)"></span>
+        </div>
+        <div id="dashResponsesList" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div>
+
       <!-- ① YOUR STORY -->
       <div class="dash-tile dash-tile-wide dash-super" onclick="toggleSuper('story')" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
@@ -2759,8 +2771,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.27';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share link creation (Step 5) + management UI (Step 6). Share button on entry cards opens consent dialog with optional label. Token inserted to life_share_tokens, link copied to clipboard. Link indicator chip on card shows active count + response count. Management panel lists links with days left, responses, Copy and Revoke per link. loadAllShareIndicators() fires after renderEntries.';
+  const APP_VERSION  = 'v3.28';
+  const DEPLOY_NOTES = APP_VERSION + ' — Responses Dashboard tile (Step 7). loadResponsesTile() fetches unimported life_share_feedback on dashboard load. Shows commenter name, time, entry context, message text, media flags. Import creates child entry (linked to original, category=Responses, title=From Name). Delete removes permanently. Tile hides when no unimported responses remain.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3498,6 +3510,217 @@
     } catch(e) {
       dbgWarn('SHARE', 'loadAllShareIndicators error:', e.message);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // RESPONSES TILE — Dashboard (Step 7)
+  // Shows unimported feedback from share links. Owner can Import or Delete.
+  // ══════════════════════════════════════════════════════════════════
+
+  async function loadResponsesTile() {
+    if (!currentUser) return;
+    var tile = document.getElementById('dashResponsesTile');
+    var list = document.getElementById('dashResponsesList');
+    var countEl = document.getElementById('dashResponsesCount');
+    if (!tile || !list) return;
+
+    try {
+      // Fetch all unimported feedback for this owner, newest first
+      var res = await fetch(
+        DB_SHARE_FEEDBACK_URL +
+        '?owner_id=eq.' + currentUser.id +
+        '&imported=eq.false' +
+        '&order=created_at.desc',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var feedback = await res.json();
+
+      if (!feedback.length) {
+        tile.style.display = 'none';
+        return;
+      }
+
+      tile.style.display = 'block';
+      countEl.textContent = feedback.length + (feedback.length === 1 ? ' new response' : ' new responses');
+
+      // Look up entry titles for context
+      var entryIds = [...new Set(feedback.map(function(f) { return f.entry_id; }).filter(Boolean))];
+      var entryMap = {};
+      entries.forEach(function(e) { if (entryIds.includes(e.id)) entryMap[e.id] = e; });
+
+      list.innerHTML = feedback.map(function(f) {
+        var entry = entryMap[f.entry_id];
+        var entryTitle = entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory';
+        var timeAgo = formatTimeAgo(f.created_at);
+        var hasMedia = f.photo_url || f.audio_url || f.video_url;
+        var mediaNote = '';
+        if (f.photo_url && f.photo_url !== '(pending)') mediaNote += ' \uD83D\uDDBC\uFE0F';
+        else if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
+        if (f.audio_url) mediaNote += ' \uD83C\uDFB5';
+        if (f.video_url) mediaNote += ' \uD83C\uDF9E\uFE0F';
+
+        return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
+          '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
+            '<div>' +
+              '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name) + '</span>' +
+              '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
+            '</div>' +
+            '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(entryTitle) + '\u201d</span>' +
+          '</div>' +
+          (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
+          (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + ' <em>(media upload coming soon)</em></p>' : '') +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button onclick="importResponse(\'' + f.id + '\',\'' + (f.entry_id||'') + '\',\'' + escHtml(f.commenter_name).replace(/'/g,'\\\'') + '\')" ' +
+              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+              '\u2193 Import as memory' +
+            '</button>' +
+            '<button onclick="deleteResponse(\'' + f.id + '\')" ' +
+              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
+              'Delete' +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+    } catch(e) {
+      dbgWarn('DASH', 'loadResponsesTile error:', e.message);
+    }
+  }
+
+  // Import a feedback response as a child entry linked to the original
+  async function importResponse(feedbackId, entryId, commenterName) {
+    var row = document.getElementById('response-row-' + feedbackId);
+    var feedback = null;
+
+    // Get the full feedback row to access text
+    try {
+      var res = await fetch(
+        DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId,
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) throw new Error('fetch failed');
+      var rows = await res.json();
+      feedback = rows[0];
+    } catch(e) {
+      toast('Could not load response \u2014 try again');
+      return;
+    }
+
+    if (!feedback) return;
+
+    // Find the parent entry for context
+    var parentEntry = entries.find(function(e) { return e.id === entryId; });
+    var parentTitle = parentEntry ? (parentEntry.title || 'a memory') : 'a memory';
+
+    // Disable buttons while saving
+    if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+
+    try {
+      // Create child entry — same pattern as AI conversation children
+      var childEntry = {
+        user_id:         currentUser.id,
+        category:        (parentEntry && parentEntry.chapter) ? parentEntry.chapter : 'Responses',
+        question:        'Response from ' + commenterName + ' on \u201c' + parentTitle + '\u201d',
+        answer:          feedback.text || '(no text)',
+        parent_entry_id: entryId || null,
+        title:           'From ' + commenterName,
+        timestamp:       feedback.created_at || new Date().toISOString()
+      };
+
+      var saveRes = await fetch(DB_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), {
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        }),
+        body: JSON.stringify(childEntry)
+      });
+      if (!saveRes.ok) throw new Error('entry save failed');
+
+      // Mark feedback as imported
+      await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
+        method: 'PATCH',
+        headers: Object.assign({}, getAuthHeaders(), {
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        }),
+        body: JSON.stringify({ imported: true })
+      });
+
+      toast(commenterName + '\u2019s response imported \u2713');
+
+      // Remove the row and reload entries
+      if (row) row.remove();
+      await fetchEntries();
+
+      // Re-check if tile should still be visible
+      var remaining = document.getElementById('dashResponsesList');
+      if (remaining && !remaining.children.length) {
+        document.getElementById('dashResponsesTile').style.display = 'none';
+      } else {
+        var countEl = document.getElementById('dashResponsesCount');
+        if (countEl && remaining) {
+          var n = remaining.children.length;
+          countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
+        }
+      }
+
+    } catch(e) {
+      dbgWarn('DASH', 'importResponse error:', e.message);
+      toast('Could not import \u2014 try again');
+      if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+    }
+  }
+
+  // Permanently delete a feedback response
+  async function deleteResponse(feedbackId) {
+    if (!confirm('Delete this response? It cannot be undone.')) return;
+    var row = document.getElementById('response-row-' + feedbackId);
+    try {
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) throw new Error('delete failed');
+      toast('Response deleted');
+      if (row) row.remove();
+      // Check if tile should hide
+      var remaining = document.getElementById('dashResponsesList');
+      if (remaining && !remaining.children.length) {
+        document.getElementById('dashResponsesTile').style.display = 'none';
+      } else {
+        var countEl = document.getElementById('dashResponsesCount');
+        if (countEl && remaining) {
+          var n = remaining.children.length;
+          countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
+        }
+      }
+    } catch(e) {
+      dbgWarn('DASH', 'deleteResponse error:', e.message);
+      toast('Could not delete \u2014 try again');
+    }
+  }
+
+  // Helper — escape HTML for safe insertion into innerHTML
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // Helper — human-readable time ago
+  function formatTimeAgo(isoString) {
+    if (!isoString) return '';
+    var diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
+    if (diff < 60)   return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    var days = Math.floor(diff / 86400);
+    return days === 1 ? 'yesterday' : days + ' days ago';
   }
 
   // ── Init ─────────────────────────────────────────────────────────
@@ -7788,6 +8011,8 @@
     renderPrompts();
     // Gethro tile — daily observation, always last so it has full entries context
     try { renderGethroTile(real); } catch(e) { dbgWarn('DASH', 'Gethro tile failed:', e.message); }
+    // Responses tile — load feedback from Supabase (async, fire-and-forget)
+    loadResponsesTile();
   }
 
   function openDashDialog(which) {
