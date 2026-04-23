@@ -2557,6 +2557,45 @@
   </div>
 </div>
 
+<!-- SHARE CONSENT DIALOG -->
+<div id="shareConsentOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+    <div style="font-size:1.5rem;margin-bottom:10px;text-align:center">🌐</div>
+    <h3 style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin-bottom:8px;text-align:center">Create a public link</h3>
+    <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin-bottom:6px;text-align:center">
+      Anyone with the link can view this memory and leave a response.
+    </p>
+    <p style="font-size:0.85rem;color:var(--text-light);line-height:1.6;margin-bottom:18px;text-align:center">
+      The link expires in <strong style="color:var(--text)">30 days</strong>. You can remove it at any time.<br>
+      Don't share personal information about others without their permission.
+    </p>
+    <div style="margin-bottom:18px">
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Label (optional)</label>
+      <input id="shareConsentLabel" type="text" placeholder="e.g. Family group"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+    </div>
+    <div style="display:flex;gap:10px">
+      <button onclick="hideShareConsent()" class="btn btn-ghost" style="flex:1;font-size:0.85rem">Cancel</button>
+      <button onclick="confirmCreateShareLink()" id="shareConsentConfirmBtn" class="btn btn-primary" style="flex:2;font-size:0.85rem">Create share link</button>
+    </div>
+  </div>
+</div>
+
+<!-- SHARE LINK MANAGEMENT PANEL -->
+<div id="shareLinksOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:480px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);max-height:80vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text)">Active share links</h3>
+      <button onclick="hideShareLinks()" style="background:none;border:none;font-size:1.2rem;color:var(--text-light);cursor:pointer;line-height:1">✕</button>
+    </div>
+    <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:16px" id="shareLinksEntryTitle"></p>
+    <div id="shareLinksBody" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
+      <div style="text-align:center;padding:20px;color:var(--text-light);font-size:0.88rem">Loading…</div>
+    </div>
+    <button onclick="showShareConsent(_shareLinksEntryId)" class="btn btn-ghost" style="width:100%;font-size:0.85rem">＋ Create another link</button>
+  </div>
+</div>
+
 <!-- DISCLAIMER -->
 <div id="disclaimerOverlay" style="display:none">
   <div id="disclaimerBox">
@@ -2720,8 +2759,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.26';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share mode (Step 4). ?share=<token> detected on load: app shell hidden, share page shown. loadSharePage() fetches entry via SHARE_PROXY, renders title/text/photos/audio/meta. Feedback form: name + message + photo/voice/video attachments (media upload wired in Step 7). VIDEO_STORAGE_URL/SIGN constants added.';
+  const APP_VERSION  = 'v3.27';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share link creation (Step 5) + management UI (Step 6). Share button on entry cards opens consent dialog with optional label. Token inserted to life_share_tokens, link copied to clipboard. Link indicator chip on card shows active count + response count. Management panel lists links with days left, responses, Copy and Revoke per link. loadAllShareIndicators() fires after renderEntries.';
 
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
@@ -3225,6 +3264,242 @@
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // SHARE LINK MANAGEMENT — Steps 5 & 6
+  // ══════════════════════════════════════════════════════════════════
+
+  var _shareConsentEntryId = null; // entry being shared when consent dialog is open
+  var _shareLinksEntryId   = null; // entry whose links panel is open
+  var _shareTokensCache    = {};   // entryId -> [{id,token,label,expires_at,feedback_count}]
+
+  // ── Step 5: Create share link flow ──────────────────────────────
+
+  function showShareConsent(entryId) {
+    _shareConsentEntryId = entryId;
+    document.getElementById('shareConsentLabel').value = '';
+    document.getElementById('shareConsentOverlay').style.display = 'flex';
+    setTimeout(function() { document.getElementById('shareConsentLabel').focus(); }, 80);
+  }
+
+  function hideShareConsent() {
+    document.getElementById('shareConsentOverlay').style.display = 'none';
+    _shareConsentEntryId = null;
+  }
+
+  async function confirmCreateShareLink() {
+    if (!_shareConsentEntryId) return;
+    var entryId = _shareConsentEntryId;
+    var label   = (document.getElementById('shareConsentLabel').value || '').trim() || null;
+    var btn     = document.getElementById('shareConsentConfirmBtn');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+      var res = await fetch(DB_SHARE_TOKENS_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), {
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        }),
+        body: JSON.stringify({
+          user_id:  currentUser.id,
+          entry_id: entryId,
+          label:    label
+        })
+      });
+
+      if (!res.ok) {
+        var err = await res.text();
+        throw new Error('Insert failed: ' + err);
+      }
+
+      var rows = await res.json();
+      var newToken = rows[0];
+
+      hideShareConsent();
+
+      var link = 'https://lifetold.app/?share=' + newToken.token;
+      try {
+        await navigator.clipboard.writeText(link);
+        toast('Link copied \u2713 \u2014 expires in 30 days');
+      } catch(e) {
+        // Clipboard API blocked (e.g. non-https dev) — show the link in a prompt
+        window.prompt('Copy this link:', link);
+      }
+
+      // Refresh the indicator on the entry card
+      await refreshShareIndicator(entryId);
+
+    } catch(e) {
+      dbgWarn('SHARE', 'createShareLink error:', e.message);
+      toast('Could not create link \u2014 please try again');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create share link';
+    }
+  }
+
+  // ── Step 6: Share link management UI ────────────────────────────
+
+  // Fetch tokens for an entry and update the indicator chip on the card
+  async function refreshShareIndicator(entryId) {
+    try {
+      var res = await fetch(
+        DB_SHARE_TOKENS_URL + '?entry_id=eq.' + entryId +
+        '&expires_at=gt.' + new Date().toISOString() +
+        '&order=created_at.desc',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var tokens = await res.json();
+      _shareTokensCache[entryId] = tokens;
+      renderShareIndicator(entryId, tokens);
+    } catch(e) {
+      dbgWarn('SHARE', 'refreshShareIndicator error:', e.message);
+    }
+  }
+
+  function renderShareIndicator(entryId, tokens) {
+    var el = document.getElementById('sharelinks-indicator-' + entryId);
+    if (!el) return;
+    if (!tokens || !tokens.length) {
+      el.innerHTML = '';
+      return;
+    }
+    var count = tokens.length;
+    var totalResponses = tokens.reduce(function(sum, t) { return sum + (t.feedback_count || 0); }, 0);
+    var label = count === 1 ? '1 link active' : count + ' links active';
+    if (totalResponses > 0) label += ' \u00b7 ' + totalResponses + (totalResponses === 1 ? ' response' : ' responses');
+    el.innerHTML = '<div style="margin-top:8px">' +
+      '<button onclick="showShareLinks(\'' + entryId + '\')" ' +
+        'style="font-size:0.72rem;padding:3px 10px;border-radius:10px;background:rgba(107,153,120,0.12);border:1px solid var(--sage);color:var(--sage);cursor:pointer;font-family:\'Lato\',sans-serif">' +
+        '\uD83D\uDD17 ' + label +
+      '</button>' +
+    '</div>';
+  }
+
+  async function showShareLinks(entryId) {
+    _shareLinksEntryId = entryId;
+    var entry = entries.find(function(e) { return e.id === entryId; });
+    var titleEl = document.getElementById('shareLinksEntryTitle');
+    if (titleEl) titleEl.textContent = (entry && entry.title) ? '\u201c' + entry.title + '\u201d' : 'This memory';
+    document.getElementById('shareLinksOverlay').style.display = 'flex';
+    await loadShareLinksPanel(entryId);
+  }
+
+  function hideShareLinks() {
+    document.getElementById('shareLinksOverlay').style.display = 'none';
+    _shareLinksEntryId = null;
+  }
+
+  async function loadShareLinksPanel(entryId) {
+    var body = document.getElementById('shareLinksBody');
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-light);font-size:0.88rem">Loading\u2026</div>';
+
+    try {
+      var res = await fetch(
+        DB_SHARE_TOKENS_URL + '?entry_id=eq.' + entryId + '&order=created_at.desc',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) throw new Error('fetch failed');
+      var tokens = await res.json();
+
+      // Separate active vs expired
+      var now = new Date();
+      var active  = tokens.filter(function(t) { return new Date(t.expires_at) > now; });
+      var expired = tokens.filter(function(t) { return new Date(t.expires_at) <= now; });
+
+      if (!tokens.length) {
+        body.innerHTML = '<p style="text-align:center;color:var(--text-light);font-size:0.88rem;padding:16px 0">No links yet.</p>';
+        return;
+      }
+
+      function renderTokenRow(t, isExpired) {
+        var daysLeft = Math.max(0, Math.ceil((new Date(t.expires_at) - now) / 86400000));
+        var daysLabel = isExpired ? '<span style="color:var(--rose);font-size:0.75rem">Expired</span>'
+                                  : '<span style="color:var(--text-light);font-size:0.75rem">' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left</span>';
+        var respLabel = t.feedback_count ? '<span style="color:var(--sage);font-size:0.75rem">' + t.feedback_count + (t.feedback_count === 1 ? ' response' : ' responses') + '</span>' : '<span style="color:var(--text-light);font-size:0.75rem">No responses</span>';
+        var copyBtn = isExpired ? '' : '<button onclick="copyShareLink(\'' + t.token + '\')" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Copy link</button>';
+        var revokeBtn = isExpired ? '' : '<button onclick="revokeShareLink(\'' + t.id + '\',\'' + entryId + '\')" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer">Revoke</button>';
+        return '<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;' + (isExpired ? 'opacity:0.5' : '') + '">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+            '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + (t.label || '(no label)') + '</span>' +
+            '<div style="display:flex;gap:6px">' + copyBtn + revokeBtn + '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:10px">' + daysLabel + respLabel + '</div>' +
+        '</div>';
+      }
+
+      var html = '';
+      if (active.length) {
+        html += active.map(function(t) { return renderTokenRow(t, false); }).join('');
+      }
+      if (expired.length) {
+        html += '<p style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin:12px 0 6px">Expired</p>';
+        html += expired.map(function(t) { return renderTokenRow(t, true); }).join('');
+      }
+      body.innerHTML = html;
+
+    } catch(e) {
+      body.innerHTML = '<p style="text-align:center;color:var(--rose);font-size:0.88rem;padding:16px 0">Could not load links.</p>';
+      dbgWarn('SHARE', 'loadShareLinksPanel error:', e.message);
+    }
+  }
+
+  function copyShareLink(token) {
+    var link = 'https://lifetold.app/?share=' + token;
+    try {
+      navigator.clipboard.writeText(link).then(function() { toast('Link copied \u2713'); });
+    } catch(e) {
+      window.prompt('Copy this link:', link);
+    }
+  }
+
+  async function revokeShareLink(tokenId, entryId) {
+    if (!confirm('Remove this link? Anyone with it will no longer be able to view the memory.')) return;
+    try {
+      var res = await fetch(DB_SHARE_TOKENS_URL + '?id=eq.' + tokenId, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) throw new Error('delete failed');
+      toast('Link removed');
+      await loadShareLinksPanel(entryId);
+      await refreshShareIndicator(entryId);
+    } catch(e) {
+      toast('Could not remove link \u2014 try again');
+      dbgWarn('SHARE', 'revokeShareLink error:', e.message);
+    }
+  }
+
+  // Load share indicators for all visible entries (called after renderEntries)
+  async function loadAllShareIndicators() {
+    if (!currentUser) return;
+    // Fetch all non-expired tokens for this user in one query
+    try {
+      var res = await fetch(
+        DB_SHARE_TOKENS_URL + '?user_id=eq.' + currentUser.id +
+        '&expires_at=gt.' + new Date().toISOString(),
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var tokens = await res.json();
+      // Group by entry_id
+      var byEntry = {};
+      tokens.forEach(function(t) {
+        if (!byEntry[t.entry_id]) byEntry[t.entry_id] = [];
+        byEntry[t.entry_id].push(t);
+      });
+      // Render indicator for each entry that has tokens
+      Object.keys(byEntry).forEach(function(eid) {
+        _shareTokensCache[eid] = byEntry[eid];
+        renderShareIndicator(eid, byEntry[eid]);
+      });
+    } catch(e) {
+      dbgWarn('SHARE', 'loadAllShareIndicators error:', e.message);
+    }
+  }
+
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
     dbg('INIT', APP_VERSION + ' starting...');
@@ -3710,6 +3985,8 @@
   ].join('\n');
   const DB_URL              = SUPABASE_URL + '/rest/v1/life_entries';
   const DB_SETTINGS_URL     = SUPABASE_URL + '/rest/v1/life_settings';
+  const DB_SHARE_TOKENS_URL   = SUPABASE_URL + '/rest/v1/life_share_tokens';
+  const DB_SHARE_FEEDBACK_URL = SUPABASE_URL + '/rest/v1/life_share_feedback';
   const DB_FEATURE_URL      = SUPABASE_URL + '/rest/v1/life_feature_usage';
   const DB_CONVERSATIONS_URL = SUPABASE_URL + '/rest/v1/life_conversations';
   const DB_DISCLAIMER_URL   = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
@@ -8257,7 +8534,10 @@
           <button onclick="toggleEditTags('${e.id}',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">${hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos'}</button>
           <button onclick="editEntryText('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>
           <button onclick="openEntryInMemories('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>
+          <button onclick="showShareConsent('${e.id}')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--sage);color:var(--sage);cursor:pointer">🔗 Share</button>
         </div>` : ''}
+        <div id="sharelinks-indicator-${e.id}"></div>
+        <div id="sharelinks-panel-${e.id}" style="display:none"></div>
         <div id="textedit-${e.id}" style="display:none;margin-top:10px">
           <textarea id="texteditarea-${e.id}" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">${e.answer}</textarea>
           <div style="display:flex;gap:8px;margin-top:8px">
@@ -8273,6 +8553,9 @@
     // Register tags and populate dropdowns
     filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
+
+    // Load share link indicators for all visible entries (fire-and-forget)
+    setTimeout(loadAllShareIndicators, 0);
   }
 
   // Unified AI Review for any saved entry
