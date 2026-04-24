@@ -2778,8 +2778,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.34';
-  const DEPLOY_NOTES = APP_VERSION + ' — Four fixes: (1) Duplicate entry bug: fetchEntries() was undefined — replaced with loadEntries() + renderReviewEntries(); added deduplication guard in renderReviewEntries by id. (2) Share: writer note/question field added to share consent dialog — stored as life_share_tokens.note (DB migration needed: ALTER TABLE life_share_tokens ADD COLUMN IF NOT EXISTS note text); displayed as gold callout on share page; SHARE_PROXY must return note in get_entry response. (3) Gethro persona: all three prompt sites updated to investigative journalist style — fact-seeking questions (who/what/where/when), not feelings. (4) Error logger: Telegram (real-time) + Supabase life_activity_log (source of truth).';
+  const APP_VERSION  = 'v3.35';
+  const DEPLOY_NOTES = APP_VERSION + ' — Three fixes on top of v3.34: (1) Duplicate entry: broadened isImportedFeedback to also match question.startsWith("Response from ") — catches imported feedback children that may have been title-edited. (2) Photo height cap: single photos max 260px tall, multi-photos max 200px — prevents tall portrait images dominating the card. (3) SW blob/manifest noise confirmed suppressed from logs. Sign-in WARN volume is manual testing reloads, not a bug. (1) Duplicate entry bug: fetchEntries() was undefined — replaced with loadEntries() + renderReviewEntries(); added deduplication guard in renderReviewEntries by id. (2) Share: writer note/question field added to share consent dialog — stored as life_share_tokens.note (DB migration needed: ALTER TABLE life_share_tokens ADD COLUMN IF NOT EXISTS note text); displayed as gold callout on share page; SHARE_PROXY must return note in get_entry response. (3) Gethro persona: all three prompt sites updated to investigative journalist style — fact-seeking questions (who/what/where/when), not feelings. (4) Error logger: Telegram (real-time) + Supabase life_activity_log (source of truth).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8840,8 +8840,15 @@
     // Gethro conversation saves have a user-supplied title or null — never "From ".
     // This is the ONLY safe discriminator; filtering by parent_entry_id alone incorrectly
     // captures AI conversation follow-ups and suppresses them from the top-level list.
+    // Two reliable discriminators (either sufficient):
+    //   1. title starts "From " — set by importResponse()
+    //   2. question starts "Response from " — set by importResponse()
+    // Gethro conversation saves never use either pattern.
     const isImportedFeedback = e => !!e.parent_entry_id && !e.audio_url && !e.photo_url
-      && !!(e.title && e.title.startsWith('From '));
+      && (
+        !!(e.title && e.title.startsWith('From '))
+        || !!(e.question && e.question.startsWith('Response from '))
+      );
 
     // isChildReply: same predicate — used to suppress from top-level filtered list
     const isChildReply = isImportedFeedback;
@@ -8927,13 +8934,17 @@
         ...real.filter(c => c.parent_entry_id === e.id && c.photo_url)
       ];
       const hasPhotos = entryPhotos.length > 0;
+      // Photos: cap height so tall/portrait images don't dominate the card.
+      // Single photo: full card width, max 260px tall. Multiple: 50% width each, max 200px tall.
       const photoStripHtml = hasPhotos
         ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${
             entryPhotos.map(p => {
               const url = photoUrlCache[p.photo_url] || '';
-              const maxW = entryPhotos.length === 1 ? '100%' : 'calc(50% - 3px)';
-              return `<div style="flex:1;min-width:120px;max-width:${maxW};border-radius:8px;overflow:hidden;background:var(--surface2);aspect-ratio:4/3">` +
-                (url ? `<img src="${url}" alt="photo" style="width:100%;height:100%;object-fit:cover;display:block">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:1.5rem">📷</div>') +
+              const isSingle = entryPhotos.length === 1;
+              const maxW = isSingle ? '100%' : 'calc(50% - 3px)';
+              const maxH = isSingle ? '260px' : '200px';
+              return `<div style="flex:1;min-width:120px;max-width:${maxW};max-height:${maxH};border-radius:8px;overflow:hidden;background:var(--surface2);">` +
+                (url ? `<img src="${url}" alt="photo" style="width:100%;height:100%;max-height:${maxH};object-fit:cover;display:block">` : '<div style="display:flex;align-items:center;justify-content:center;height:160px;font-size:1.5rem">📷</div>') +
                 '</div>';
             }).join('')
           }</div>`
