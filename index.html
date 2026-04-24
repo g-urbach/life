@@ -1487,6 +1487,7 @@
       <div style="font-size:2.5rem;margin-bottom:16px">🔒</div>
       <p style="font-size:1.05rem;color:var(--text);margin-bottom:8px">This link is no longer active.</p>
       <p style="font-size:0.88rem;color:var(--text-light)">It may have expired or been removed by the owner.</p>
+      <p id="shareErrorDetail" style="font-size:0.72rem;color:var(--text-light);margin-top:12px;font-family:monospace;word-break:break-all"></p>
     </div>
 
     <!-- Entry content -->
@@ -1912,7 +1913,7 @@
       <!-- Hidden save button kept for programmatic use by autosave/AI flows -->
       <button id="memSaveBtn"   onclick="memSave()"        style="display:none"></button>
       <button id="memCancelBtn" onclick="memCancel()"      style="display:none"></button>
-      <button id="memAIConvBtn" onclick="memAIConversation()" style="display:none"></button>
+
     </div>
 
   </div>
@@ -2778,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.36';
-  const DEPLOY_NOTES = APP_VERSION + ' — Photos: object-fit:contain so whole image shows uncropped, max-height capped. Duplicate entry: confirmed two genuine DB rows with identical content — not a render bug. SQL to diagnose: SELECT id,title,answer,timestamp,chapter,parent_entry_id FROM life_entries WHERE user_id=auth.uid() AND title=\'Almond Croissant Delight\' ORDER BY timestamp; — delete the duplicate row directly in Supabase Table Editor. (1) Duplicate entry: broadened isImportedFeedback to also match question.startsWith("Response from ") — catches imported feedback children that may have been title-edited. (2) Photo height cap: single photos max 260px tall, multi-photos max 200px — prevents tall portrait images dominating the card. (3) SW blob/manifest noise confirmed suppressed from logs. Sign-in WARN volume is manual testing reloads, not a bug. (1) Duplicate entry bug: fetchEntries() was undefined — replaced with loadEntries() + renderReviewEntries(); added deduplication guard in renderReviewEntries by id. (2) Share: writer note/question field added to share consent dialog — stored as life_share_tokens.note (DB migration needed: ALTER TABLE life_share_tokens ADD COLUMN IF NOT EXISTS note text); displayed as gold callout on share page; SHARE_PROXY must return note in get_entry response. (3) Gethro persona: all three prompt sites updated to investigative journalist style — fact-seeking questions (who/what/where/when), not feelings. (4) Error logger: Telegram (real-time) + Supabase life_activity_log (source of truth).';
+  const APP_VERSION  = 'v3.37';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Removed memAIConversation(): legacy function that saved the current entry then created a child entry for AI follow-up, producing confusing duplicate-looking chains. Removed hidden memAIConvBtn button, recLastParentId state var and all usages. memInterviewMe() inline Q&A is the correct path and is unaffected. memSaveCurrentEntry() now always saves standalone (no parent_entry_id). openEntryInMemories() no longer links saves as children. (2) Share link error hardening: loadSharePage() now fires notifyDev(warn) to Telegram on both proxy errors and JS exceptions. Added shareErrorDetail element showing raw error and token prefix to help diagnose whether the issue is token not found, expired, or a proxy failure.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3064,9 +3065,13 @@
       var data = await res.json();
 
       if (!res.ok || data.error) {
+        var errDetail = (data && data.error) ? data.error : ('HTTP ' + res.status);
         document.getElementById('shareLoading').style.display = 'none';
         document.getElementById('shareError').style.display   = 'block';
-        dbg('SHARE', 'Token error:', data.error);
+        // Show diagnostic in the error box so visitors can report it
+        var diagEl = document.getElementById('shareErrorDetail');
+        if (diagEl) diagEl.textContent = 'Error: ' + errDetail + ' (token: ' + token.substring(0,8) + '…)';
+        notifyDev('warn', 'SHARE', 'loadSharePage failed — ' + errDetail + ' — token: ' + token);
         return;
       }
 
@@ -3135,9 +3140,11 @@
       document.getElementById('shareContent').style.display = 'block';
 
     } catch(e) {
-      dbgWarn('SHARE', 'loadSharePage error:', e.message);
+      notifyDev('warn', 'SHARE', 'loadSharePage exception: ' + e.message + ' — token: ' + token);
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareError').style.display   = 'block';
+      var diagEl = document.getElementById('shareErrorDetail');
+      if (diagEl) diagEl.textContent = 'Error: ' + e.message;
     }
   }
 
@@ -4863,8 +4870,7 @@
   let recAudios      = [];   // [{file, preview, caption, recorded}] queued audio clips
   let recVideos      = [];   // [{file, preview, caption, recorded}] queued video clips (10s max)
   let recLastTags    = {};   // carries forward between entries
-  let recDeepContext  = '';   // last Q+A for go-deeper
-  let recLastParentId = null;  // parent entry id when in AI conversation chain
+  let recDeepContext  = '';   // last Q+A for go-deeper (used by interview mode)
   let recCurQuestion = '';   // current AI question
   let recActive      = false;// AI conversation running
   let memMicActive   = false;// mic dictation active
@@ -4907,7 +4913,6 @@
     if (label) label.textContent = 'Add details — chapter, date, people, photos…';
     var toggle = document.getElementById('memDetailsToggle');
     if (toggle) toggle.style.borderStyle = 'dashed';
-    recLastParentId = null;
     interviewActive = false;
     memSetInterviewBtn(false);
     recDeepContext = '';
@@ -4936,7 +4941,6 @@
     if (label) label.textContent = 'Add details — chapter, date, people, photos…';
     var toggle = document.getElementById('memDetailsToggle');
     if (toggle) toggle.style.borderStyle = 'dashed';
-    recLastParentId = null;
     interviewActive = false;
     memSetInterviewBtn(false);
     recDeepContext = '';
@@ -5198,7 +5202,6 @@
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recDeepContext  = '';
-    recLastParentId = null;
     recActive = false;
     _userHasTyped = false;
     memCheckButtons();
@@ -5332,7 +5335,7 @@
     // Link to parent if we're in a follow-up conversation
     // In interview mode questions are embedded inline in the answer — don't save as separate question field
     const entryQuestion = interviewActive ? null : (recCurQuestion || null);
-    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, recLastParentId);
+    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, null);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
@@ -5348,8 +5351,6 @@
       }
     }
     recLastTags = { ...tags };
-    // After saving a follow-up, the new entry becomes the parent for further follow-ups
-    if (recLastParentId && eid) recLastParentId = eid;
     return eid;
   }
 
@@ -5361,7 +5362,6 @@
       const eid = await memSaveCurrentEntry();
       if (eid) {
         toast('Saved ✓');
-        recLastParentId = null;
         recCurQuestion  = '';
         document.getElementById('aiQuestionBox').style.display = 'none';
         memResetForm(true);
@@ -5723,7 +5723,6 @@
     const eid = await memSaveCurrentEntry();
     if (eid) {
       toast('Saved ✓ — ready for next memory');
-      recLastParentId = null;
       recCurQuestion  = '';
       document.getElementById('aiQuestionBox').style.display = 'none';
       memResetForm(false); // false = also clear tags for a truly fresh entry
@@ -5792,50 +5791,6 @@
     memSetInterviewBtn(true);
   }
 
-  // ── AI Conversation ───────────────────────────────────────────────
-  // Saves current entry, then asks a follow-up question above the textarea.
-  // User answers normally and saves — linked as a child of the original.
-  async function memAIConversation() {
-    if (!currentUser) return toast('Please sign in first');
-    const { title, answer } = memReadEntry();
-
-    // Prime iOS speech engine immediately on user tap (required for gesture context)
-    if (window.speechSynthesis) {
-      _primeAudioContext();
-      const primer = new SpeechSynthesisUtterance('');
-      speechSynthesis.speak(primer);
-      speechSynthesis.cancel();
-    }
-
-    // If empty, ask a fresh question
-    if (!answer && !title) {
-      await memAINewTopic();
-      return;
-    }
-
-    setMemStatus('speaking', 'Gethro is thinking of a follow-up…');
-
-    const parentId = await memSaveCurrentEntry();
-    recLastParentId = parentId || null;
-    recDeepContext = (title ? 'Title: ' + title + '\n' : '') + 'A: ' + (answer || title);
-
-    // Clear form but keep mic running — just reset the transcript
-    document.getElementById('memAnswer').value = '';
-    document.getElementById('memTitle').value  = '';
-    recTranscript = '';
-    recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = [];
-    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    recAudios = [];
-    recVideos.forEach(v => { if (v.preview) URL.revokeObjectURL(v.preview); });
-    recVideos = []; renderUnifiedMediaStrip();
-
-    // Pause mic briefly while AI thinks, then speak question, then resume
-    if (memMicActive) stopMemMic();
-    await memAskFollowUp();
-  }
-
-  // Ask a single follow-up question, display it, keep normal buttons
   // ── Append a question inline into the textarea ───────────────────
   // Format: divider line, then "AI Question:", then name label in CAPS.
   // Plain textarea cannot render bold — CAPS name provides clear visual rhythm.
@@ -8688,9 +8643,8 @@
   }
 
   // Opens an existing entry in the Memories tab for continued writing/interview.
-  // Pre-fills title, answer and tags, sets recLastParentId so any new save is
-  // linked as a follow-up. Then auto-opens Gethro, which seeds from the content
-  // exactly as it does when the user clicks Gethro with content already in the tab.
+  // Pre-fills title, answer and tags. Saves from this tab create new standalone entries.
+  // Then auto-opens Gethro, which seeds from the content.
   function openEntryInMemories(entryId) {
     try {
     const e = entries.find(function(en) { return en.id === entryId; });
@@ -8721,9 +8675,6 @@
 
     // Leave details panel closed — tags are pre-filled silently.
     // User can expand '+ Add details' if they want to review or change them.
-
-    // Link new saves as follow-ups to the original
-    recLastParentId = entryId;
 
     // ── Show existing attached media + community feedback for this entry ──
     // Gives the user visibility of what's already saved so they don't add duplicates,
