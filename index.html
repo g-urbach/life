@@ -1495,6 +1495,7 @@
       <!-- Entry card -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
+        <div id="shareEntryNote" style="display:none;background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:16px;font-size:0.9rem;color:var(--text);line-height:1.6;font-style:italic"></div>
         <div id="shareEntryPhotos" style="margin-bottom:14px"></div>
         <div id="shareEntryAudios" style="margin-bottom:14px"></div>
         <div id="shareEntryText" style="font-size:0.95rem;color:var(--text);line-height:1.8;white-space:pre-wrap"></div>
@@ -2587,6 +2588,11 @@
       <input id="shareConsentLabel" type="text" placeholder="e.g. Family group"
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
     </div>
+    <div style="margin-bottom:18px">
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">A note or question for recipients (optional)</label>
+      <textarea id="shareConsentNote" rows="3" placeholder="e.g. I can't remember the name of that cafe we used to go to — any ideas?"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.5;box-sizing:border-box"></textarea>
+    </div>
     <div style="display:flex;gap:10px">
       <button onclick="hideShareConsent()" class="btn btn-ghost" style="flex:1;font-size:0.85rem">Cancel</button>
       <button onclick="confirmCreateShareLink()" id="shareConsentConfirmBtn" class="btn btn-primary" style="flex:2;font-size:0.85rem">Create share link</button>
@@ -2772,8 +2778,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.33';
-  const DEPLOY_NOTES = APP_VERSION + ' — Error handling completeness pass. life_activity_log now receives ALL errors+warnings (was Telegram-only). logActivity extended with level, area, platform, src_line, src_line_dev columns (migration SQL in project memory). dbgErr now calls logActivity as well as notifyDev — Supabase is source of truth, Telegram is subset. _LOG_LINE_OFFSET constant added (~820) so error payloads include src_line_dev = raw_line + offset = approximate line in annotated dev file. window.onerror and unhandledrejection pass line numbers through. Noise filter: mic onend + network-changed suppressed.';
+  const APP_VERSION  = 'v3.34';
+  const DEPLOY_NOTES = APP_VERSION + ' — Four fixes: (1) Duplicate entry bug: fetchEntries() was undefined — replaced with loadEntries() + renderReviewEntries(); added deduplication guard in renderReviewEntries by id. (2) Share: writer note/question field added to share consent dialog — stored as life_share_tokens.note (DB migration needed: ALTER TABLE life_share_tokens ADD COLUMN IF NOT EXISTS note text); displayed as gold callout on share page; SHARE_PROXY must return note in get_entry response. (3) Gethro persona: all three prompt sites updated to investigative journalist style — fact-seeking questions (who/what/where/when), not feelings. (4) Error logger: Telegram (real-time) + Supabase life_activity_log (source of truth).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3071,6 +3077,13 @@
       document.getElementById('shareSubheading').textContent =
         'A memory from ' + data.ownerFirstName;
 
+      // Writer's note / question (if owner set one when creating the share link)
+      var noteEl = document.getElementById('shareEntryNote');
+      if (data.note) {
+        noteEl.textContent = data.note;
+        noteEl.style.display = 'block';
+      }
+
       // Title
       var titleEl = document.getElementById('shareEntryTitle');
       titleEl.textContent = entry.title || '';
@@ -3333,6 +3346,7 @@
   function showShareConsent(entryId) {
     _shareConsentEntryId = entryId;
     document.getElementById('shareConsentLabel').value = '';
+    document.getElementById('shareConsentNote').value  = '';
     document.getElementById('shareConsentOverlay').style.display = 'flex';
     setTimeout(function() { document.getElementById('shareConsentLabel').focus(); }, 80);
   }
@@ -3346,6 +3360,7 @@
     if (!_shareConsentEntryId) return;
     var entryId = _shareConsentEntryId;
     var label   = (document.getElementById('shareConsentLabel').value || '').trim() || null;
+    var note    = (document.getElementById('shareConsentNote').value  || '').trim() || null;
     var btn     = document.getElementById('shareConsentConfirmBtn');
     btn.disabled = true;
     btn.textContent = 'Creating…';
@@ -3360,7 +3375,8 @@
         body: JSON.stringify({
           user_id:  currentUser.id,
           entry_id: entryId,
-          label:    label
+          label:    label,
+          note:     note
         })
       });
 
@@ -3701,7 +3717,9 @@
 
       // Remove the row and reload entries
       if (row) row.remove();
-      await fetchEntries();
+      // fetchEntries was undefined — use loadEntries (full DB reload) then re-render
+      await loadEntries();
+      if (document.getElementById('panel-entries').classList.contains('active')) renderReviewEntries();
 
       // Re-check if tile should still be visible
       var remaining = document.getElementById('dashResponsesList');
@@ -5841,10 +5859,11 @@
     if (!recDeepContext) return;
     try {
       const prompt =
-        'You are a warm, curious biographer in conversation with someone recording their life story.\n\n' +
+        'You are Gethro, a sharp investigative journalist helping someone record their life story.\n\n' +
         'WHAT THEY JUST SHARED:\n' + recDeepContext + '\n\n' +
-        'Ask ONE specific follow-up question (max 15 words) that digs into the most interesting detail. ' +
-        'Be warm and show genuine curiosity. Return ONLY the question.';
+        'Ask ONE specific follow-up question (max 15 words) that digs for a concrete fact not yet stated — ' +
+        'a name, a date, a place, a sequence of events, or exactly what happened. ' +
+        'Avoid questions about feelings or emotions. Return ONLY the question.';
       const question = await callAI(prompt);
       recCurQuestion = question;
       // Append inline — no separate question box needed
@@ -8800,8 +8819,14 @@
     const clearBtn = document.getElementById('reviewSearchClear');
     if (clearBtn) clearBtn.style.display = search ? 'block' : 'none';
 
+    // Deduplicate by id — guards against double-push in entries array (e.g. stale optimistic push)
+    const seenIds = new Set();
     const real = [...entries]
-      .filter(e => !e.category.startsWith('_profile') && !e.category.startsWith('_essentials'))
+      .filter(e => {
+        if (e.id && seenIds.has(e.id)) return false;
+        if (e.id) seenIds.add(e.id);
+        return !e.category.startsWith('_profile') && !e.category.startsWith('_essentials');
+      })
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     // Pure photo-attachment children (short answer, has photo_url, has a parent)
@@ -11914,25 +11939,25 @@
       if (entryTitle) {
         // 'Edit with Gethro' mode — acknowledge title warmly then ask a question NOT already answered
         prompt =
-          'You are Gethro, a warm and curious personal story guide.\n' +
+          'You are Gethro, a sharp and curious personal story guide.\n' +
           'The user has opened this existing memory to continue writing it:\n' +
           'TITLE: ' + entryTitle + '\n' +
           'EXISTING CONTENT (read this carefully — do NOT ask about anything already covered here):\n' +
           entryContext + '\n\n' +
-          'Write ONE opening message (max 25 words) that: warmly acknowledges the title with personality ' +
-          '(e.g. a brief reaction like "Doughnuts — yum!"), then asks one specific curious question ' +
-          'that digs DEEPER into something not yet explained in the content — a when, where, who, or feeling.\n' +
+          'Write ONE opening message (max 25 words) that: briefly acknowledges the title, then asks one specific fact-seeking question ' +
+          'that digs DEEPER into something not yet explained — a who, when, where, or what happened next. Avoid asking about feelings.\n' +
           'Address them as ' + nameStr + '\n' +
           'Do NOT use a greeting like Hi or Hello — jump straight in.\n' +
           'Do NOT ask about anything already mentioned or answered in the existing content.\n' +
           'Return ONLY the message, nothing else.';
       } else {
-        // Standard seed — deepening question about what they are currently writing
+        // Standard seed — fact-seeking question about what they are currently writing
         prompt =
-          'You are Gethro, a warm and curious personal story guide.\n' +
+          'You are Gethro, a sharp investigative journalist helping someone record their life story.\n' +
           'The user is writing this memory entry:\n\n' +
           entryContext + '\n\n' +
-          'Ask ONE warm specific follow-up question (max 20 words) about a detail in what they wrote.\n' +
+          'Ask ONE specific fact-seeking question (max 20 words) about a concrete detail not yet stated — ' +
+          'a name, a date, a place, or exactly what happened. Avoid asking about feelings.\n' +
           'Address them as ' + nameStr + '\n' +
           'Return ONLY the question, nothing else.';
       }
@@ -12228,8 +12253,9 @@
       : ('RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' + matchedSnippets);
 
     var systemPrompt =
-      'You are Gethro, a warm and curious personal story guide inside LifeTold, a memoir app.\n' +
-      'You speak in first person: warm, unhurried, curious. You remember what you have been told.\n' +
+      'You are Gethro, a sharp and curious personal story guide inside LifeTold, a memoir app.\n' +
+      'You speak in first person: direct, curious, focused on uncovering the facts of a story.\n' +
+      'Your style is investigative journalist, not counsellor — you dig for specifics: names, dates, places, events, sequences, what actually happened. You care less about how things felt and more about what exactly occurred. When you ask a question, make it concrete and fact-seeking — not "how did that make you feel?" but "who was there?", "what year was that?", "what happened next?", "where exactly were you?".\n' +
       'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
       'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
       entriesContext + '\n\n' +
@@ -12248,7 +12274,7 @@
       '  review_entry        — review / spell-check the current entry (runs the AI Review tool on whatever is in the Memories tab)\n  capture_feedback    — user wants to suggest a feature. params: { feedback: "their words" }\n\n' +
       'RESPOND WITH VALID JSON ONLY — no markdown, no prose outside JSON:\n' +
       '{\n' +
-      '  "reply": "Your warm in-character response to the user (always present)",\n' +
+      '  "reply": "Your in-character response to the user (always present)",\n' +
       '  "action": { "type": "action_name", "params": {} },\n' +
       '  "memory_conversation": true,\n' +
       '  "observation": "optional: one friction point or feature idea you noticed"\n' +
@@ -12256,9 +12282,9 @@
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
       'Set "memory_conversation": true ONLY when discussing a personal story or life event the user is actively writing or sharing. Do NOT set it for navigation, app-feature questions, reviewing entries, or any action that routes elsewhere.\n' +
-      'Keep reply under 60 words — warm and direct, not rambling.\n' +
-      'ALWAYS end your reply with one specific question to keep the conversation going — never make a statement without following it with a question.\n' +
-      'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, food, feelings). Do not drift to adjacent topics — e.g. if talking about food and dad, keep questions about that specific food experience, not dad in general.\n' +
+      'Keep reply under 60 words — direct and specific, not rambling.\n' +
+      'ALWAYS end your reply with one specific fact-seeking question — who, what, where, when, or what happened next. Not "how did that feel?"\n' +
+      'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, events, sequence). Do not drift to adjacent topics.\n' +
       'CRITICAL — never repeat yourself: read the full conversation history before asking a question. Never ask about something the user has already answered or that is already established in the conversation.\n' +
       'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard (e.g. "Chris Auntie" may be a mishearing). If a name or reference seems odd or the user says they do not know it, treat it as a speech-to-text error, acknowledge it lightly, and move on — never dwell on it or keep asking about it.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
