@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.37';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Removed memAIConversation(): legacy function that saved the current entry then created a child entry for AI follow-up, producing confusing duplicate-looking chains. Removed hidden memAIConvBtn button, recLastParentId state var and all usages. memInterviewMe() inline Q&A is the correct path and is unaffected. memSaveCurrentEntry() now always saves standalone (no parent_entry_id). openEntryInMemories() no longer links saves as children. (2) Share link error hardening: loadSharePage() now fires notifyDev(warn) to Telegram on both proxy errors and JS exceptions. Added shareErrorDetail element showing raw error and token prefix to help diagnose whether the issue is token not found, expired, or a proxy failure.';
+  const APP_VERSION  = 'v3.38';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Deploy regression tests: removed dead test cases for memAIConvBtn and memAIConversation() (retired v3.37). Deploy file bumped to deploy-v34. (2) logActivity() crash in share-page context fixed: sb was undefined (share mode skips auth init), causing all logActivity calls to throw before reaching the fetch. Fixed by guarding with sb null-check and falling back to direct fetch with anon key. Supabase is now the source of truth for share page errors as intended. (3) share_load_failed and share_load_exception now logged to both Telegram (notifyDev) AND Supabase (logActivity) — matching the architecture. (4) DB migration required: DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log; CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)); — allows unauthenticated share-page inserts.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -2935,6 +2935,11 @@
   //   area    — uppercase area tag e.g. 'AUTH','AI','RENDER' (default 'APP')
   //   srcLine — raw browser line number (optional, from window.onerror col 4)
   // ⚠️  Schema migration required for v3.33 — see project memory DB section.
+  // ⚠️  RLS migration required for unauthenticated share-page logging (v3.38):
+  //     DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log;
+  //     CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (
+  //       user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)
+  //     );
   function logActivity(action, detail, level, area, srcLine) {
     var platform = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
       ? (/iPad|tablet/i.test(navigator.userAgent) ? 'tablet' : 'mobile')
@@ -2954,9 +2959,7 @@
       src_line:     rawLine,
       src_line_dev: devLine
     };
-    // Must use live session JWT — anon key fails RLS (bug fixed v2.74)
-    sb.auth.getSession().then(function(result) {
-      var token = (result.data && result.data.session) ? result.data.session.access_token : SUPABASE_ANON;
+    function _doInsert(token) {
       fetch(DB_ACTIVITY_LOG_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + token, 'Prefer': 'return=minimal' },
@@ -2964,6 +2967,17 @@
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
       });
+    }
+    // sb is not initialised in share-page context (no auth) — use anon key directly.
+    // RLS must allow null user_id inserts: see migration note above.
+    if (!sb || typeof sb.auth === 'undefined') {
+      _doInsert(SUPABASE_ANON);
+      return;
+    }
+    // Must use live session JWT — anon key fails RLS for authenticated users (bug fixed v2.74)
+    sb.auth.getSession().then(function(result) {
+      var token = (result.data && result.data.session) ? result.data.session.access_token : SUPABASE_ANON;
+      _doInsert(token);
     }).catch(function(err) {
       console.warn('[ACTIVITY] getSession failed:', err.message);
     });
@@ -3072,6 +3086,7 @@
         var diagEl = document.getElementById('shareErrorDetail');
         if (diagEl) diagEl.textContent = 'Error: ' + errDetail + ' (token: ' + token.substring(0,8) + '…)';
         notifyDev('warn', 'SHARE', 'loadSharePage failed — ' + errDetail + ' — token: ' + token);
+        logActivity('share_load_failed', errDetail + ' — token: ' + token, 'warn', 'SHARE');
         return;
       }
 
@@ -3141,6 +3156,7 @@
 
     } catch(e) {
       notifyDev('warn', 'SHARE', 'loadSharePage exception: ' + e.message + ' — token: ' + token);
+      logActivity('share_load_exception', e.message + ' — token: ' + token, 'warn', 'SHARE');
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareError').style.display   = 'block';
       var diagEl = document.getElementById('shareErrorDetail');
