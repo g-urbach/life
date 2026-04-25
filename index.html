@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.38';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Deploy regression tests: removed dead test cases for memAIConvBtn and memAIConversation() (retired v3.37). Deploy file bumped to deploy-v34. (2) logActivity() crash in share-page context fixed: sb was undefined (share mode skips auth init), causing all logActivity calls to throw before reaching the fetch. Fixed by guarding with sb null-check and falling back to direct fetch with anon key. Supabase is now the source of truth for share page errors as intended. (3) share_load_failed and share_load_exception now logged to both Telegram (notifyDev) AND Supabase (logActivity) — matching the architecture. (4) DB migration required: DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log; CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)); — allows unauthenticated share-page inserts.';
+  const APP_VERSION  = 'v3.39';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Pending share responses now shown inline on entry cards (gold left-border section with Import/Delete buttons) — no longer need to visit Dashboard to see new responses. Pre-fetches all unimported feedback in one query before card render. (2) deleteEntry() hardened: confirm dialog now shows entry date alongside title so identical-title entries are distinguishable. logActivity fires immediately on initiation (before undo window) with action entry_delete_initiated, and again on commit with entry_delete_committed — giving a full audit trail showing whether a delete was committed or undone. Undo toast text updated to show tap Undo to restore. (3) SHARE_PROXY hardened: all DB errors (tokenErr, entryErr, insertErr) now logged to console with full detail (message, code, hint, details) — visible in Supabase Edge Function logs. Missing SUPABASE_SERVICE_ROLE_KEY now returns 500 immediately. note field returned in get_entry response. See SHARE_PROXY_hardened.ts for updated edge function — must be deployed separately via: supabase functions deploy SHARE_PROXY';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -7643,9 +7643,31 @@
 
   function deleteEntry(entryId) {
     if (!currentUser) return;
-    // Find and snapshot the entry before removing from local array
     var entry = entries.find(function(e){ return e.id === entryId; });
     if (!entry) return;
+
+    // Count children (photos, audio, feedback imports) — warn if deleting a parent
+    var childCount = entries.filter(function(e){ return e.parent_entry_id === entryId; }).length;
+    var title = entry.title || (entry.answer ? entry.answer.substring(0, 50) + (entry.answer.length > 50 ? '…' : '') : 'this entry');
+
+    // Always show the date so identical-title entries are distinguishable in the confirm dialog
+    var entryDate = entry.timestamp
+      ? new Date(entry.timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '';
+
+    var msg = 'Delete "' + title + '"?' + (entryDate ? '\nDate: ' + entryDate : '');
+    if (childCount > 0) {
+      msg += '\n\nThis entry has ' + childCount + ' attached item' + (childCount === 1 ? '' : 's') +
+        ' (photos, audio or responses). Attachments will NOT be auto-deleted — remove them separately first if needed.';
+    }
+    msg += '\n\nPress OK to delete. You have 10 seconds to Undo.';
+
+    if (!confirm(msg)) return;
+
+    // Log immediately — before the undo window — so we always have an audit trail
+    // even if the user undoes. The commit/undo state is tracked separately.
+    logActivity('entry_delete_initiated', 'id:' + entryId + ' title:' + title + (entryDate ? ' date:' + entryDate : ''), 'info', 'ENTRIES');
+
     // If there is already a pending undo, commit it immediately before starting a new one
     if (_undoTimer) { clearTimeout(_undoTimer); _commitDelete(); }
     _undoEntryId = entryId;
@@ -7654,8 +7676,8 @@
     entries = entries.filter(function(e){ return e.id !== entryId; });
     _refreshActivePanel();
     // Show undo toast for 10 seconds
-    var msg = document.getElementById('undoToastMsg');
-    if (msg) msg.textContent = '♻️ Entry deleted';
+    var msg2 = document.getElementById('undoToastMsg');
+    if (msg2) msg2.textContent = '♻️ Entry deleted — tap Undo to restore';
     var ut = document.getElementById('undoToast');
     if (ut) ut.classList.add('show');
     _undoTimer = setTimeout(function(){ _commitDelete(); }, 10000);
@@ -7685,6 +7707,7 @@
     var ut = document.getElementById('undoToast');
     if (ut) ut.classList.remove('show');
     if (!id || !currentUser) return;
+    logActivity('entry_delete_committed', 'id:' + id, 'info', 'ENTRIES');
     fetch(DB_URL + '?id=eq.' + id + '&user_id=eq.' + currentUser.id, {
       method: 'DELETE', headers: getAuthHeaders()
     }).catch(function(err){ dbgErr('DELETE', err.message); });
@@ -8881,11 +8904,25 @@
       if (a.audio_url) audioUrlCache[a.audio_url] = await getSignedAudioUrl(a.audio_url);
     }));
 
+    // Pre-fetch pending (unimported) feedback for all entries in one query
+    // so we can show responses inline on cards without per-card fetches.
+    let _pendingFeedbackByEntry = {};
+    try {
+      var fbRes = await fetch(
+        DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id + '&imported=eq.false&order=created_at.asc',
+        { headers: getAuthHeaders() }
+      );
+      if (fbRes.ok) {
+        var fbRows = await fbRes.json();
+        fbRows.forEach(function(f) {
+          if (!_pendingFeedbackByEntry[f.entry_id]) _pendingFeedbackByEntry[f.entry_id] = [];
+          _pendingFeedbackByEntry[f.entry_id].push(f);
+        });
+      }
+    } catch(fbFetchErr) { /* non-fatal — cards still render without feedback */ }
+
     list.innerHTML = filtered.map(e => {
       try {
-        const tags    = getEntryTags(e);
-        const hasTags = Object.keys(tags).length > 0;
-        const cleanQ  = cleanQuestion(e.question);
         const safeId  = 'rev-' + (e.id || e.timestamp.replace(/[:.+]/g,'-'));
         const deleteId = e.id ? "'" + e.id + "'" : 'null';
 
@@ -8970,6 +9007,41 @@
           '</div>'
         : '';
 
+      // Pending (unimported) share feedback — shown inline on the entry card
+      const pendingFb = _pendingFeedbackByEntry[e.id] || [];
+      const pendingFbHtml = pendingFb.length
+        ? '<div style="margin-top:14px;border-left:3px solid var(--gold);padding-left:12px">' +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:8px">' +
+              '💬 ' + pendingFb.length + (pendingFb.length === 1 ? ' new response' : ' new responses') +
+            '</div>' +
+            pendingFb.map(function(f) {
+              var safeId   = f.id ? "'" + f.id + "'" : 'null';
+              var safeEid  = e.id ? "'" + e.id + "'" : 'null';
+              var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+              var fbDate   = new Date(f.created_at).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
+              var mediaNote = (f.photo_url ? ' 🖼️' : '') + (f.audio_url ? ' 🎵' : '') + (f.video_url ? ' 🎬' : '');
+              return '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+                  '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
+                  '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
+                '</div>' +
+                (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
+                (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + '</p>' : '') +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\')" ' +
+                    'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                    '↓ Import as memory' +
+                  '</button>' +
+                  '<button onclick="deleteResponse(' + safeId + ')" ' +
+                    'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
+                    'Delete' +
+                  '</button>' +
+                '</div>' +
+              '</div>';
+            }).join('') +
+          '</div>'
+        : '';
+
       return '<div class="entry-card ' + (hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : '') + '" id="' + safeId + '">' +
         '<div class="entry-meta">' +
           '<span class="entry-cat">' + (e.chapter || e.category || 'Unspecified') + '</span>' +
@@ -9001,6 +9073,7 @@
         '</div>' +
         improvePanel +
         editPanel +
+        pendingFbHtml +
         childRepliesHtml +
       '</div>';
       } catch(cardErr) {
