@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.42';
-  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Edit with Gethro → Save no longer creates a duplicate entry — save now PATCHes the existing entry (PATCH branch in memSaveCurrentEntry keyed on _memEditEntryId). (2) Share question/note now shown in owner Active share links panel under each link label. Note: share page display requires SHARE_PROXY edge fn to return note: tokenRow.note in get_entry response.';
+  const APP_VERSION  = 'v3.43';
+  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) memDone() now calls memResetForm() so community feedback panel clears on save. (2) Accept button added to feedback rows in the Edit with Gethro memory panel (alongside Delete). (3) Closing/minimising Gethro now stops the main textarea mic if it was running.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4946,8 +4946,10 @@
   // ── Done: save and clear ─────────────────────────────────────────
   async function memDone() {
     await memSaveCurrentEntry();
-    document.getElementById('memTitle').value  = '';
-    document.getElementById('memAnswer').value = '';
+    // memResetForm handles: clearing title/answer, hiding memExistingMediaPanel,
+    // resetting tags, clearing media arrays, stopping mic, clearing _memEditEntryId
+    memResetForm(false);
+    // Close the details accordion explicitly (memResetForm doesn't touch it)
     var panel = document.getElementById('memDetailsPanel');
     if (panel) panel.style.display = 'none';
     var icon  = document.getElementById('memDetailsIcon');
@@ -4958,8 +4960,6 @@
     if (toggle) toggle.style.borderStyle = 'dashed';
     interviewActive = false;
     memSetInterviewBtn(false);
-    recDeepContext = '';
-    recCurQuestion = '';
     logActivity('entry_saved', null, 'info', 'DB');
     featTrackSave();
     featCheckNudge();
@@ -8859,7 +8859,10 @@
             html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(cr.title || 'Response') + '</span>' +
-                (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+                '<div style="display:flex;gap:6px">' +
+                  (cr.id ? '<button onclick="importResponse(\'' + cr.id + '\',\'' + entryId + '\',\'' + escHtml((cr.title || '').replace('From ','')).replace(/'/g,'\\\'') + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' : '') +
+                  (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+                '</div>' +
               '</div>' +
               '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml((cr.answer || '').substring(0, 80)) + ((cr.answer || '').length > 80 ? '\u2026' : '') + '</p>' +
             '</div>';
@@ -11976,6 +11979,9 @@
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
     _agpStopMic();
+    // Also stop the main textarea mic if it was running — minimising Gethro
+    // should not leave a ghost recording session active in the background
+    if (memMicActive) stopMemMic();
     // If we were in a memory conversation and haven't saved yet, set pending flag
     // so the next open() can prompt the user to save it.
     if (_agpMemoryMode && _gethroHistory.length) {
