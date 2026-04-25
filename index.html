@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.41';
-  const DEPLOY_NOTES = APP_VERSION + ' — Feedback UX polish: (1) Import as memory renamed to Accept (simpler intent); Delete button retained post-accept. (2) Feedback cards now show the question being answered (from parent entry question field) above the responder text — both on Dashboard responses tile and inline entry cards. (3) AI Review now incorporates accepted feedback: child reply entries ("From X") are passed to runAIReview and included in reconstruction prompt so the AI can weave in reader corrections/details. (4) Share button on entry cards now matches the neutral ghost style of Edit text / Edit tags & photos buttons — was incorrectly using sage green which read as disabled.';
+  const APP_VERSION  = 'v3.42';
+  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Edit with Gethro → Save no longer creates a duplicate entry — save now PATCHes the existing entry (PATCH branch in memSaveCurrentEntry keyed on _memEditEntryId). (2) Share question/note now shown in owner Active share links panel under each link label. Note: share page display requires SHARE_PROXY edge fn to return note: tokenRow.note in get_entry response.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3521,6 +3521,7 @@
             '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + (t.label || '(no label)') + '</span>' +
             '<div style="display:flex;gap:6px">' + copyBtn + revokeBtn + '</div>' +
           '</div>' +
+          (t.note ? '<p style="font-size:0.8rem;color:var(--text-light);font-style:italic;margin:0 0 6px;line-height:1.5">\u201c' + escHtml(t.note) + '\u201d</p>' : '') +
           '<div style="display:flex;gap:10px">' + daysLabel + respLabel + '</div>' +
         '</div>';
       }
@@ -4922,6 +4923,7 @@
   try { var _mp = localStorage.getItem(MIC_PREF_KEY); userMicPref = _mp === null ? true : _mp === '1'; } catch(e) { userMicPref = true; }
   let interviewActive = false;// true after first Interview me press; flips button label
   let _userHasTyped  = false;// true once user has personally entered content (blocks autosave on AI-only prompts)
+  let _memEditEntryId = null; // set when editing an existing entry via "Edit with Gethro" — triggers PATCH instead of POST on save
 
   // ── Enable/disable buttons based on content ───────────────────────
   function memCheckButtons() {
@@ -5245,6 +5247,7 @@
     recDeepContext  = '';
     recActive = false;
     _userHasTyped = false;
+    _memEditEntryId = null; // clear edit mode — next save will be a fresh insert
     memCheckButtons();
     populateTagDropdowns('rec');
     draftClear(); // draft saved — wipe the autosave
@@ -5368,15 +5371,76 @@
   }
 
   // ── Save current form as an entry, return id ──────────────────────
+  // If _memEditEntryId is set (user came via "Edit with Gethro"), PATCHes the
+  // existing entry instead of inserting a new one, preventing duplicates.
   async function memSaveCurrentEntry() {
     const { title, answer, tags } = memReadEntry();
     if (!answer && !title && !recPhotos.length && !recAudios.length) return null;
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
-    // Link to parent if we're in a follow-up conversation
-    // In interview mode questions are embedded inline in the answer — don't save as separate question field
     const entryQuestion = interviewActive ? null : (recCurQuestion || null);
-    const eid   = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, null);
+
+    // ── Edit mode: PATCH existing entry ──────────────────────────────
+    if (_memEditEntryId) {
+      const editId = _memEditEntryId;
+      const patch = {
+        answer:    text,
+        title:     fullTags.title    || null,
+        category:  fullTags.chapter  || 'Unspecified',
+        chapter:   fullTags.chapter  || null,
+        location:  fullTags.location || null,
+        people:    fullTags.people   || null,
+        era:       fullTags.year     || null,
+        reference:     fullTags.reference     || null,
+        reference_url: fullTags.reference_url || null,
+      };
+      // Only overwrite question if one was explicitly asked in this session
+      if (entryQuestion) patch.question = entryQuestion;
+      // date field (free-text "when it happened")
+      const dateVal = fullTags.date || fullTags.year || null;
+      if (dateVal !== undefined) patch.date = dateVal;
+      try {
+        const res = await fetch(DB_URL + '?id=eq.' + editId + '&user_id=eq.' + currentUser.id, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch)
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          dbgErr('DB', 'Edit PATCH failed:', res.status, errText);
+          toast('Could not save edit — please try again');
+          return null;
+        }
+        // Update local cache so the Entries tab reflects the change immediately
+        const cached = entries.find(function(en) { return en.id === editId; });
+        if (cached) { Object.assign(cached, patch); }
+        dbg('DB', 'Entry edited (PATCH), id:', editId);
+        recLastTags = { ...tags };
+        // New photos/audio added during an edit session are still attached as children
+        if (recPhotos.length) {
+          for (let i = 0; i < recPhotos.length; i++) {
+            toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
+            const up = await uploadPhotoFile(recPhotos[i].file);
+            if (up) await addEntry(fullTags.chapter || 'Unspecified', recPhotos[i].caption || title || 'Photo', null, up.path, up.desc, fullTags, editId);
+          }
+        }
+        if (recAudios.length) {
+          for (let i = 0; i < recAudios.length; i++) {
+            toast('Uploading audio ' + (i+1) + ' of ' + recAudios.length + '...');
+            const au = await uploadAudioFile(recAudios[i].file);
+            if (au) await addEntry(fullTags.chapter || 'Unspecified', recAudios[i].caption || title || 'Audio', null, null, null, fullTags, editId, au.path);
+          }
+        }
+        return editId;
+      } catch(err) {
+        dbgErr('DB', 'memSaveCurrentEntry (edit) threw:', err.message);
+        toast('Could not save edit — ' + err.message);
+        return null;
+      }
+    }
+
+    // ── New entry mode: POST ──────────────────────────────────────────
+    const eid = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, null);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
@@ -8730,7 +8794,8 @@
     memResetForm(false);
     draftClear();
 
-    // Pre-fill title and answer
+    // Mark this as an edit session — save will PATCH this entry instead of inserting a new one
+    _memEditEntryId = entryId;
     const titleEl  = document.getElementById('memTitle');
     const answerEl = document.getElementById('memAnswer');
     if (titleEl)  titleEl.value  = e.title  || '';
