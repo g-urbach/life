@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.40';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) importResponse() duplicate-entry bug fixed: added _importingFeedbackIds Set as an idempotency guard — if the same feedbackId is already being imported (e.g. double-tap, or Import clicked from both Dashboard tile and inline card button simultaneously), the second call returns immediately. Lock released on both success and error. Also added already-imported check after fetching the feedback row — if feedback.imported is true the row was already processed and no child entry is created. (2) deleteEntry() double-delete bug fixed: removed the silent _commitDelete() auto-fire when a second delete was initiated while the undo toast was still showing. Now blocks the second delete with a toast message telling the user to resolve the pending delete first. This was the root cause of two entries being deleted with one confirm dialog. (3) renderReviewEntries() render error fixed: tags/hasTags/cleanQ declarations were dropped from the try{} block opening when pendingFbHtml was inserted in v3.39, causing ReferenceError: tags is not defined on every card. Restored all three declarations.';
+  const APP_VERSION  = 'v3.41';
+  const DEPLOY_NOTES = APP_VERSION + ' — Feedback UX polish: (1) Import as memory renamed to Accept (simpler intent); Delete button retained post-accept. (2) Feedback cards now show the question being answered (from parent entry question field) above the responder text — both on Dashboard responses tile and inline entry cards. (3) AI Review now incorporates accepted feedback: child reply entries ("From X") are passed to runAIReview and included in reconstruction prompt so the AI can weave in reader corrections/details. (4) Share button on entry cards now matches the neutral ghost style of Edit text / Edit tags & photos buttons — was incorrectly using sage green which read as disabled.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3649,6 +3649,11 @@
         else if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
         if (f.audio_url) mediaNote += ' \uD83C\uDFB5';
         if (f.video_url) mediaNote += ' \uD83C\uDF9E\uFE0F';
+        // Show the question being answered (from parent entry's question field, if any)
+        var entryQuestion = (entry && entry.question) ? cleanQuestion(entry.question) : '';
+        var questionHtml = entryQuestion
+          ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 6px">\u201c' + escHtml(entryQuestion) + '\u201d</p>'
+          : '';
 
         return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
@@ -3658,12 +3663,13 @@
             '</div>' +
             '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(entryTitle) + '\u201d</span>' +
           '</div>' +
+          questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
           (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + ' <em>(media upload coming soon)</em></p>' : '') +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
             '<button onclick="importResponse(\'' + f.id + '\',\'' + (f.entry_id||'') + '\',\'' + escHtml(f.commenter_name).replace(/'/g,'\\\'') + '\')" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-              '\u2193 Import as memory' +
+              '\u2714 Accept' +
             '</button>' +
             '<button onclick="deleteResponse(\'' + f.id + '\')" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
@@ -5425,12 +5431,19 @@
   }
 
   // ── Core AI Review — used by both Memories and Review/Chapter detail ──────
-  async function runAIReview(text, tags, panel, entryId) {
+  async function runAIReview(text, tags, panel, entryId, feedbackReplies) {
     panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
     logActivity('ai_review_run', null, 'info', 'AI');
     featTrackReview();
     try {
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
+      // Build optional feedback context block for prompts
+      const fbReplies = feedbackReplies && feedbackReplies.length ? feedbackReplies : [];
+      const feedbackContext = fbReplies.length
+        ? '\n\nACCEPTED FEEDBACK FROM READERS:\n' + fbReplies.map(function(fb) {
+            return '- ' + (fb.title || 'Reader') + ': ' + (fb.answer || '');
+          }).join('\n')
+        : '';
       const hasTitle    = !!tags.title;
       const hasChapter  = !!tags.chapter;
       const hasEra      = !!(tags.year || tags.date);
@@ -5441,7 +5454,7 @@
       // ── Call 1: Structured hygiene check (NO free text fields — avoids JSON escaping issues) ──
       const hygienePrompt =
         'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no prose.\n\n' +
-        'ENTRY TEXT:\n' + text.substring(0, 800) + '\n\n' +
+        'ENTRY TEXT:\n' + text.substring(0, 800) + feedbackContext + '\n\n' +
         'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
         'Return ONLY this JSON. Use true/false for booleans, short plain strings for notes.\n' +
         'CRITICAL: if you cannot confidently determine a value, use a blank string "" — NEVER use the word "empty" as a value.\n' +
@@ -5505,8 +5518,9 @@
         'Rewrite this memoir entry as a clean, coherent paragraph. ' +
         'Preserve ALL facts and the person\'s warm personal voice exactly. ' +
         'Fix rambling, repetition, and speech-to-text errors. ' +
+        (feedbackContext ? 'Where the accepted reader feedback below offers useful detail or corrections, incorporate it naturally into the rewrite. ' : '') +
         'If the original is already clean and clear, reply with exactly: CLEAN\n\n' +
-        'ENTRY:\n' + text;
+        'ENTRY:\n' + text + feedbackContext;
       try {
         const reconRaw = (await callAI(reconPrompt, { max_tokens: 600 })).trim();
         r.reconstruction = reconRaw === 'CLEAN' ? '' : reconRaw;
@@ -9009,6 +9023,8 @@
       const childReplies = real.filter(c => c.parent_entry_id === e.id
         && !c.audio_url && !c.photo_url
         && c.title && c.title.startsWith('From '));
+      // Get parent entry question for context
+      const childReplyQuestion = cleanQuestion(e.question || '');
       const childRepliesHtml = childReplies.length
         ? '<div style="margin-top:14px;border-left:3px solid var(--sage);padding-left:12px">' +
             '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;margin-bottom:8px;text-transform:uppercase">Community Feedback</div>' +
@@ -9021,11 +9037,9 @@
                   '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(crName) + '</span>' +
                   '<span style="font-size:0.72rem;color:var(--text-light)">' + crDate + '</span>' +
                 '</div>' +
+                (childReplyQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(childReplyQuestion) + '\u201d</p>' : '') +
                 '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(cr.answer || '') + '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                  '<button onclick="importChildAsMemory(\'' + (cr.id||'') + '\')" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                    '\u2193 Import as memory' +
-                  '</button>' +
                   (cr.id ? '<button onclick="deleteEntry(' + crDeleteId + ')" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
                 '</div>' +
               '</div>';
@@ -9035,6 +9049,8 @@
 
       // Pending (unimported) share feedback — shown inline on the entry card
       const pendingFb = _pendingFeedbackByEntry[e.id] || [];
+      // Question being answered — from parent entry's question field
+      const entryQuestion = cleanQuestion(e.question || '');
       const pendingFbHtml = pendingFb.length
         ? '<div style="margin-top:14px;border-left:3px solid var(--gold);padding-left:12px">' +
             '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:8px">' +
@@ -9051,12 +9067,13 @@
                   '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                   '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
                 '</div>' +
+                (entryQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(entryQuestion) + '\u201d</p>' : '') +
                 (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
                 (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + '</p>' : '') +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                   '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\')" ' +
                     'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                    '↓ Import as memory' +
+                    '\u2714 Accept' +
                   '</button>' +
                   '<button onclick="deleteResponse(' + safeId + ')" ' +
                     'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
@@ -9086,7 +9103,7 @@
           '<button onclick="toggleEditTags(\'' + e.id + '\',true)" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos') + '</button>' +
           '<button onclick="editEntryText(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>' +
           '<button onclick="openEntryInMemories(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>' +
-          '<button onclick="showShareConsent(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--sage);color:var(--sage);cursor:pointer">🔗 Share</button>' +
+          '<button onclick="showShareConsent(\'' + e.id + '\')" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">🔗 Share</button>' +
         '</div>' : '') +
         '<div id="sharelinks-indicator-' + e.id + '"></div>' +
         '<div id="sharelinks-panel-' + e.id + '" style="display:none"></div>' +
@@ -9135,7 +9152,12 @@
     if (!panel) return;
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
     panel.style.display = 'block';
-    await runAIReview(entry.answer, getEntryTags(entry), panel, entryId);
+    // Gather accepted feedback (child entries with "From " title) to include in AI review
+    const feedbackReplies = entries.filter(function(c) {
+      return c.parent_entry_id === entryId && !c.audio_url && !c.photo_url
+        && c.title && c.title.startsWith('From ');
+    });
+    await runAIReview(entry.answer, getEntryTags(entry), panel, entryId, feedbackReplies);
   }
 
   async function improveEntryInDetail(entryId) {
