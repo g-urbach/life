@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.39';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Pending share responses now shown inline on entry cards (gold left-border section with Import/Delete buttons) — no longer need to visit Dashboard to see new responses. Pre-fetches all unimported feedback in one query before card render. (2) deleteEntry() hardened: confirm dialog now shows entry date alongside title so identical-title entries are distinguishable. logActivity fires immediately on initiation (before undo window) with action entry_delete_initiated, and again on commit with entry_delete_committed — giving a full audit trail showing whether a delete was committed or undone. Undo toast text updated to show tap Undo to restore. (3) SHARE_PROXY hardened: all DB errors (tokenErr, entryErr, insertErr) now logged to console with full detail (message, code, hint, details) — visible in Supabase Edge Function logs. Missing SUPABASE_SERVICE_ROLE_KEY now returns 500 immediately. note field returned in get_entry response. See SHARE_PROXY_hardened.ts for updated edge function — must be deployed separately via: supabase functions deploy SHARE_PROXY';
+  const APP_VERSION  = 'v3.40';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) importResponse() duplicate-entry bug fixed: added _importingFeedbackIds Set as an idempotency guard — if the same feedbackId is already being imported (e.g. double-tap, or Import clicked from both Dashboard tile and inline card button simultaneously), the second call returns immediately. Lock released on both success and error. Also added already-imported check after fetching the feedback row — if feedback.imported is true the row was already processed and no child entry is created. (2) deleteEntry() double-delete bug fixed: removed the silent _commitDelete() auto-fire when a second delete was initiated while the undo toast was still showing. Now blocks the second delete with a toast message telling the user to resolve the pending delete first. This was the root cause of two entries being deleted with one confirm dialog. (3) renderReviewEntries() render error fixed: tags/hasTags/cleanQ declarations were dropped from the try{} block opening when pendingFbHtml was inserted in v3.39, causing ReferenceError: tags is not defined on every card. Restored all three declarations.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3679,7 +3679,14 @@
   }
 
   // Import a feedback response as a child entry linked to the original
+  // Track in-flight imports to prevent double-tap duplicates
+  const _importingFeedbackIds = new Set();
+
   async function importResponse(feedbackId, entryId, commenterName) {
+    // Idempotency guard — block re-entry if this feedbackId is already being imported
+    if (_importingFeedbackIds.has(feedbackId)) return;
+    _importingFeedbackIds.add(feedbackId);
+
     var row = document.getElementById('response-row-' + feedbackId);
     var feedback = null;
 
@@ -3697,7 +3704,17 @@
       return;
     }
 
-    if (!feedback) return;
+    if (!feedback) { _importingFeedbackIds.delete(feedbackId); return; }
+
+    // Guard: check if already imported (row deleted) — prevents duplicate if
+    // user somehow triggers import twice (e.g. Dashboard + inline card button)
+    if (feedback.imported) {
+      toast('Already imported');
+      _importingFeedbackIds.delete(feedbackId);
+      await loadEntries();
+      renderReviewEntries();
+      return;
+    }
 
     // Find the parent entry for context
     var parentEntry = entries.find(function(e) { return e.id === entryId; });
@@ -3737,6 +3754,7 @@
       });
 
       toast(commenterName + '\u2019s response imported \u2713');
+      _importingFeedbackIds.delete(feedbackId);
 
       // Remove the row and reload entries
       if (row) row.remove();
@@ -3760,6 +3778,7 @@
       }
 
     } catch(e) {
+      _importingFeedbackIds.delete(feedbackId);
       dbgWarn('DASH', 'importResponse error:', e.message);
       toast('Could not import \u2014 try again');
       if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
@@ -7668,8 +7687,12 @@
     // even if the user undoes. The commit/undo state is tracked separately.
     logActivity('entry_delete_initiated', 'id:' + entryId + ' title:' + title + (entryDate ? ' date:' + entryDate : ''), 'info', 'ENTRIES');
 
-    // If there is already a pending undo, commit it immediately before starting a new one
-    if (_undoTimer) { clearTimeout(_undoTimer); _commitDelete(); }
+    // Safety: if a delete is already pending, block a new one until the user
+    // resolves it (undo or wait). Silent auto-commit caused double-deletes.
+    if (_undoTimer) {
+      toast('⚠️ A delete is already pending — tap Undo to cancel it, or wait 10 seconds.');
+      return;
+    }
     _undoEntryId = entryId;
     _undoEntry   = entry;
     // Remove from local state and re-render immediately — feels instant
