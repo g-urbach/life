@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.45';
-  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Memory panel now always fetches pending feedback async (panel shows even with 0 accepted entries). (2) Share note (life_share_tokens.note) now shown above responses in Dashboard, Entries, and Memory panel — all three fetches use PostgREST embed select=*,life_share_tokens(note). (3) After Accept/Delete in memory panel, openEntryInMemories() is called inline to refresh the whole panel so accepted entries appear under Community Feedback correctly.';
+  const APP_VERSION  = 'v3.46';
+  const DEPLOY_NOTES = APP_VERSION + ' — UX consistency: question shown once as section header (not repeated per-row) in all three surfaces (Dashboard, Entries, Memories). Accepted feedback rendered first (above pending) in Entries and Memories. Accept button renamed to Accept feedback everywhere.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3674,7 +3674,7 @@
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
             '<button onclick="importResponse(\'' + f.id + '\',\'' + (f.entry_id||'') + '\',\'' + escHtml(f.commenter_name).replace(/'/g,'\\\'') + '\')" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-              '\u2714 Accept' +
+              '\u2714 Accept feedback' +
             '</button>' +
             '<button onclick="deleteResponse(\'' + f.id + '\')" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
@@ -8863,8 +8863,10 @@
       });
       // Already-accepted community feedback (child entries) — Delete only
       if (feedbackKids.length) {
+        var acceptedQuestion = cleanQuestion(e.question || '');
         html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
-          '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>';
+          '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>' +
+          (acceptedQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(acceptedQuestion) + '\u201d</p>' : '');
         feedbackKids.forEach(function(cr) {
           html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
@@ -8904,24 +8906,26 @@
             return;
           }
 
+          // Determine shared question — prefer share note from first row
+          var sharedNote = (pendingFb[0].life_share_tokens && pendingFb[0].life_share_tokens.note)
+            ? pendingFb[0].life_share_tokens.note : null;
+
           var pfHtml = '<div id="mem-pending-fb-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
-            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>';
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>' +
+            (sharedNote ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedNote) + '\u201d</p>' : '');
 
           pendingFb.forEach(function(f) {
             var safeId   = f.id  ? "'" + f.id  + "'" : 'null';
             var safeEid  = entryId ? "'" + entryId + "'" : 'null';
             var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
-            // Share note — the question/prompt set by the owner when creating the share link
-            var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
             pfHtml += '<div id="response-row-' + f.id + '" style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                 '<div style="display:flex;gap:6px">' +
-                  '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' +
+                  '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept feedback</button>' +
                   '<button onclick="deleteResponse(' + safeId + ');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
                 '</div>' +
               '</div>' +
-              (shareNote ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 4px">\u201c' + escHtml(shareNote) + '\u201d</p>' : '') +
               (f.text ? '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml(f.text.substring(0, 120)) + (f.text.length > 120 ? '\u2026' : '') + '</p>' : '') +
             '</div>';
           });
@@ -9153,11 +9157,23 @@
       const childReplies = real.filter(c => c.parent_entry_id === e.id
         && !c.audio_url && !c.photo_url
         && c.title && c.title.startsWith('From '));
-      // Get parent entry question for context
-      const childReplyQuestion = cleanQuestion(e.question || '');
+
+      // Pending (unimported) share feedback — shown inline on the entry card
+      const pendingFb = _pendingFeedbackByEntry[e.id] || [];
+
+      // Determine the question to show — prefer share note from first pending row,
+      // fall back to entry's own question field. Shown once as a section header.
+      const entryQuestion = cleanQuestion(e.question || '');
+      const firstShareNote = pendingFb.length && pendingFb[0].life_share_tokens && pendingFb[0].life_share_tokens.note
+        ? pendingFb[0].life_share_tokens.note
+        : null;
+      const sharedQuestion = firstShareNote || entryQuestion;
+
+      // ── Accepted community feedback (rendered first — they're part of the entry) ──
       const childRepliesHtml = childReplies.length
         ? '<div style="margin-top:14px;border-left:3px solid var(--sage);padding-left:12px">' +
-            '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;margin-bottom:8px;text-transform:uppercase">Community Feedback</div>' +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;margin-bottom:6px;text-transform:uppercase">Community Feedback</div>' +
+            (sharedQuestion && !pendingFb.length ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedQuestion) + '\u201d</p>' : '') +
             childReplies.map(function(cr) {
               var crDeleteId = cr.id ? ("'" + cr.id + "'") : 'null';
               var crDate = new Date(cr.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
@@ -9167,7 +9183,6 @@
                   '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(crName) + '</span>' +
                   '<span style="font-size:0.72rem;color:var(--text-light)">' + crDate + '</span>' +
                 '</div>' +
-                (childReplyQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(childReplyQuestion) + '\u201d</p>' : '') +
                 '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(cr.answer || '') + '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                   (cr.id ? '<button onclick="deleteEntry(' + crDeleteId + ')" style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
@@ -9177,36 +9192,30 @@
           '</div>'
         : '';
 
-      // Pending (unimported) share feedback — shown inline on the entry card
-      const pendingFb = _pendingFeedbackByEntry[e.id] || [];
-      // Question being answered — from parent entry's question field
-      const entryQuestion = cleanQuestion(e.question || '');
+      // ── Pending responses (rendered after accepted, with shared question as header) ──
       const pendingFbHtml = pendingFb.length
         ? '<div style="margin-top:14px;border-left:3px solid var(--gold);padding-left:12px">' +
-            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:8px">' +
-              '💬 ' + pendingFb.length + (pendingFb.length === 1 ? ' new response' : ' new responses') +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">' +
+              '\uD83D\uDCAC ' + pendingFb.length + (pendingFb.length === 1 ? ' new response' : ' new responses') +
             '</div>' +
+            (sharedQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedQuestion) + '\u201d</p>' : '') +
             pendingFb.map(function(f) {
               var safeId   = f.id ? "'" + f.id + "'" : 'null';
               var safeEid  = e.id ? "'" + e.id + "'" : 'null';
               var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
               var fbDate   = new Date(f.created_at).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
-              var mediaNote = (f.photo_url ? ' 🖼️' : '') + (f.audio_url ? ' 🎵' : '') + (f.video_url ? ' 🎬' : '');
-              // Share note — the question/prompt the owner set for respondents
-              var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
-              var questionDisplay = shareNote || entryQuestion; // prefer share note over Gethro question
+              var mediaNote = (f.photo_url ? ' \uD83D\uDDBC\uFE0F' : '') + (f.audio_url ? ' \uD83C\uDFB5' : '') + (f.video_url ? ' \uD83C\uDF9E\uFE0F' : '');
               return '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
                 '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                   '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                   '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
                 '</div>' +
-                (questionDisplay ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(questionDisplay) + '\u201d</p>' : '') +
                 (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
                 (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + '</p>' : '') +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                   '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\')" ' +
                     'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                    '\u2714 Accept' +
+                    '\u2714 Accept feedback' +
                   '</button>' +
                   '<button onclick="deleteResponse(' + safeId + ')" ' +
                     'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
@@ -9249,8 +9258,8 @@
         '</div>' +
         improvePanel +
         editPanel +
-        pendingFbHtml +
         childRepliesHtml +
+        pendingFbHtml +
       '</div>';
       } catch(cardErr) {
         // One bad card must not wipe the whole list — render a visible error placeholder
