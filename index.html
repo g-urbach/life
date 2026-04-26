@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.44';
-  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Pending share feedback in memory panel now fetched from life_share_feedback (correct table) and shown with real Accept+Delete buttons. Already-imported feedbackKids show Delete only. (2) closeAskGethro now calls gethroCancel()+speechSynthesis.cancel() to kill in-flight TTS; _agpStartMic guards on panel.open so .finally() callbacks cannot restart mic after panel is closed.';
+  const APP_VERSION  = 'v3.45';
+  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Memory panel now always fetches pending feedback async (panel shows even with 0 accepted entries). (2) Share note (life_share_tokens.note) now shown above responses in Dashboard, Entries, and Memory panel — all three fetches use PostgREST embed select=*,life_share_tokens(note). (3) After Accept/Delete in memory panel, openEntryInMemories() is called inline to refresh the whole panel so accepted entries appear under Community Feedback correctly.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3614,6 +3614,7 @@
         DB_SHARE_FEEDBACK_URL +
         '?owner_id=eq.' + currentUser.id +
         '&imported=eq.false' +
+        '&select=*,life_share_tokens(note)' +
         '&order=created_at.desc',
         { headers: getAuthHeaders() }
       );
@@ -3650,10 +3651,13 @@
         else if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
         if (f.audio_url) mediaNote += ' \uD83C\uDFB5';
         if (f.video_url) mediaNote += ' \uD83C\uDF9E\uFE0F';
-        // Show the question being answered (from parent entry's question field, if any)
+        // Show the question being answered — prefer share note (what owner set for respondents)
+        // over Gethro entry question
+        var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
         var entryQuestion = (entry && entry.question) ? cleanQuestion(entry.question) : '';
-        var questionHtml = entryQuestion
-          ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 6px">\u201c' + escHtml(entryQuestion) + '\u201d</p>'
+        var questionDisplay = shareNote || entryQuestion;
+        var questionHtml = questionDisplay
+          ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 6px">\u201c' + escHtml(questionDisplay) + '\u201d</p>'
           : '';
 
         return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
@@ -8818,102 +8822,121 @@
     // User can expand '+ Add details' if they want to review or change them.
 
     // ── Show existing attached media + community feedback for this entry ──
-    // Gives the user visibility of what's already saved so they don't add duplicates,
-    // and lets them delete attachments or feedback replies from the Memories tab too.
     var emp = document.getElementById('memExistingMediaPanel');
     if (emp) {
       var photoKids = entries.filter(function(c) { return c.parent_entry_id === entryId && c.photo_url; });
       var audioKids = entries.filter(function(c) { return c.parent_entry_id === entryId && c.audio_url && !c.photo_url; });
       var feedbackKids = entries.filter(function(c) { return c.parent_entry_id === entryId && !c.photo_url && !c.audio_url && c.title && c.title.startsWith('From '); });
-      var hasAny = e.photo_url || photoKids.length || audioKids.length || feedbackKids.length;
-      if (hasAny) {
-        var html = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>';
-        // Own photo
-        if (e.photo_url) {
-          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
-            '<span style="font-size:1rem">📷</span>' +
-            '<span style="font-size:0.82rem;color:var(--text);flex:1">Entry photo</span>' +
-          '</div>';
-        }
-        // Child photos
-        photoKids.forEach(function(p) {
-          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
-            '<span style="font-size:1rem">📷</span>' +
-            '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(p.answer && p.answer !== 'Photo' ? p.answer : 'Attached photo') + '</span>' +
-            (p.id ? '<button onclick="deleteChildEntry(\'' + p.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+      var hasStaticContent = e.photo_url || photoKids.length || audioKids.length || feedbackKids.length;
+
+      // Always render static content now; async pending feedback will append afterwards.
+      // Panel is shown unconditionally — pending fetch may add content even if hasStaticContent is false.
+      var html = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>';
+
+      if (!hasStaticContent) {
+        // Placeholder — pending fetch may replace this
+        html += '<div id="mem-static-placeholder-' + entryId + '" style="font-size:0.82rem;color:var(--text-light);font-style:italic">Loading responses…</div>';
+      }
+
+      // Own photo
+      if (e.photo_url) {
+        html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+          '<span style="font-size:1rem">📷</span>' +
+          '<span style="font-size:0.82rem;color:var(--text);flex:1">Entry photo</span>' +
+        '</div>';
+      }
+      // Child photos
+      photoKids.forEach(function(p) {
+        html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+          '<span style="font-size:1rem">📷</span>' +
+          '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(p.answer && p.answer !== 'Photo' ? p.answer : 'Attached photo') + '</span>' +
+          (p.id ? '<button onclick="deleteChildEntry(\'' + p.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+        '</div>';
+      });
+      // Child audio
+      audioKids.forEach(function(a) {
+        html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
+          '<span style="font-size:1rem">🎵</span>' +
+          '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(a.answer && a.answer !== 'Audio' ? a.answer : 'Audio clip') + '</span>' +
+          (a.id ? '<button onclick="deleteChildEntry(\'' + a.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+        '</div>';
+      });
+      // Already-accepted community feedback (child entries) — Delete only
+      if (feedbackKids.length) {
+        html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
+          '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>';
+        feedbackKids.forEach(function(cr) {
+          html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+              '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(cr.title || 'Response') + '</span>' +
+              (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+            '</div>' +
+            '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml((cr.answer || '').substring(0, 80)) + ((cr.answer || '').length > 80 ? '\u2026' : '') + '</p>' +
           '</div>';
         });
-        // Child audio
-        audioKids.forEach(function(a) {
-          html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
-            '<span style="font-size:1rem">🎵</span>' +
-            '<span style="font-size:0.82rem;color:var(--text);flex:1">' + escHtml(a.answer && a.answer !== 'Audio' ? a.answer : 'Audio clip') + '</span>' +
-            (a.id ? '<button onclick="deleteChildEntry(\'' + a.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
-          '</div>';
-        });
-        // Community feedback replies (already-imported child entries) — Delete only
-        if (feedbackKids.length) {
-          html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
-            '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>';
-          feedbackKids.forEach(function(cr) {
-            html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+        html += '</div>';
+      }
+
+      emp.innerHTML = html;
+      emp.style.display = 'block';
+
+      // ── Pending (unaccepted) share feedback — fetched from life_share_feedback ──
+      // Uses PostgREST embed to pull the share note from life_share_tokens in one request.
+      // Renders into a dedicated sub-panel; after Accept the whole emp is refreshed.
+      (async function() {
+        try {
+          var fbRes = await fetch(
+            DB_SHARE_FEEDBACK_URL + '?entry_id=eq.' + entryId + '&owner_id=eq.' + currentUser.id +
+            '&select=*,life_share_tokens(note)&order=created_at.asc',
+            { headers: getAuthHeaders() }
+          );
+          // Remove loading placeholder regardless
+          var placeholder = document.getElementById('mem-static-placeholder-' + entryId);
+          if (placeholder) placeholder.remove();
+
+          if (!fbRes.ok) {
+            if (!hasStaticContent) emp.style.display = 'none';
+            return;
+          }
+          var pendingFb = await fbRes.json();
+          if (!pendingFb || !pendingFb.length) {
+            if (!hasStaticContent) emp.style.display = 'none';
+            return;
+          }
+
+          var pfHtml = '<div id="mem-pending-fb-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
+            '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>';
+
+          pendingFb.forEach(function(f) {
+            var safeId   = f.id  ? "'" + f.id  + "'" : 'null';
+            var safeEid  = entryId ? "'" + entryId + "'" : 'null';
+            var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+            // Share note — the question/prompt set by the owner when creating the share link
+            var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
+            pfHtml += '<div id="response-row-' + f.id + '" style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
-                '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(cr.title || 'Response') + '</span>' +
-                (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
+                '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
+                '<div style="display:flex;gap:6px">' +
+                  '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' +
+                  '<button onclick="deleteResponse(' + safeId + ');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
+                '</div>' +
               '</div>' +
-              '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml((cr.answer || '').substring(0, 80)) + ((cr.answer || '').length > 80 ? '\u2026' : '') + '</p>' +
+              (shareNote ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 4px">\u201c' + escHtml(shareNote) + '\u201d</p>' : '') +
+              (f.text ? '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml(f.text.substring(0, 120)) + (f.text.length > 120 ? '\u2026' : '') + '</p>' : '') +
             '</div>';
           });
-          html += '</div>';
-        }
-        emp.innerHTML = html;
-        emp.style.display = 'block';
+          pfHtml += '</div>';
 
-        // ── Pending (unaccepted) share feedback — fetched separately ──
-        // These are life_share_feedback rows (not yet imported as child entries).
-        // Rendered asynchronously into a dedicated sub-panel inside emp.
-        (async function() {
-          try {
-            var fbRes = await fetch(
-              DB_SHARE_FEEDBACK_URL + '?entry_id=eq.' + entryId + '&owner_id=eq.' + currentUser.id + '&order=created_at.asc',
-              { headers: getAuthHeaders() }
-            );
-            if (!fbRes.ok) return;
-            var pendingFb = await fbRes.json();
-            if (!pendingFb || !pendingFb.length) return;
-            var pfHtml = '<div id="mem-pending-fb-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
-              '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>';
-            pendingFb.forEach(function(f) {
-              var safeId  = f.id  ? "'" + f.id  + "'" : 'null';
-              var safeEid = f.entry_id ? "'" + f.entry_id + "'" : 'null';
-              var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
-              pfHtml += '<div id="response-row-' + f.id + '" style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
-                  '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
-                  '<div style="display:flex;gap:6px">' +
-                    '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' +
-                    '<button onclick="deleteResponse(' + safeId + ')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
-                  '</div>' +
-                '</div>' +
-                (f.text ? '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml(f.text.substring(0, 120)) + (f.text.length > 120 ? '\u2026' : '') + '</p>' : '') +
-              '</div>';
-            });
-            pfHtml += '</div>';
-            // Append into the existing panel (may still be visible)
-            if (emp && emp.style.display !== 'none') {
-              emp.innerHTML += pfHtml;
-            } else if (emp) {
-              emp.innerHTML = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>' + pfHtml;
-              emp.style.display = 'block';
-            }
-          } catch(pfErr) {
-            dbgWarn('MEM', 'pending feedback fetch failed:', pfErr.message);
-          }
-        })();
-      } else {
-        emp.style.display = 'none';
-        emp.innerHTML = '';
-      }
+          // Append pending section into the panel — it's already visible
+          if (emp) emp.innerHTML += pfHtml;
+
+        } catch(pfErr) {
+          dbgWarn('MEM', 'pending feedback fetch failed:', pfErr.message);
+          var ph = document.getElementById('mem-static-placeholder-' + entryId);
+          if (ph) ph.remove();
+          if (!hasStaticContent) emp.style.display = 'none';
+        }
+      })();
     }
 
     // Switch to Memories tab then open Gethro — content in the tab causes
@@ -9053,7 +9076,7 @@
     let _pendingFeedbackByEntry = {};
     try {
       var fbRes = await fetch(
-        DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id + '&imported=eq.false&order=created_at.asc',
+        DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id + '&imported=eq.false&select=*,life_share_tokens(note)&order=created_at.asc',
         { headers: getAuthHeaders() }
       );
       if (fbRes.ok) {
@@ -9169,12 +9192,15 @@
               var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
               var fbDate   = new Date(f.created_at).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
               var mediaNote = (f.photo_url ? ' 🖼️' : '') + (f.audio_url ? ' 🎵' : '') + (f.video_url ? ' 🎬' : '');
+              // Share note — the question/prompt the owner set for respondents
+              var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
+              var questionDisplay = shareNote || entryQuestion; // prefer share note over Gethro question
               return '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
                 '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                   '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                   '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
                 '</div>' +
-                (entryQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(entryQuestion) + '\u201d</p>' : '') +
+                (questionDisplay ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 5px">\u201c' + escHtml(questionDisplay) + '\u201d</p>' : '') +
                 (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
                 (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + '</p>' : '') +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
