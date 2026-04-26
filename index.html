@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.43';
-  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) memDone() now calls memResetForm() so community feedback panel clears on save. (2) Accept button added to feedback rows in the Edit with Gethro memory panel (alongside Delete). (3) Closing/minimising Gethro now stops the main textarea mic if it was running.';
+  const APP_VERSION  = 'v3.44';
+  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: (1) Pending share feedback in memory panel now fetched from life_share_feedback (correct table) and shown with real Accept+Delete buttons. Already-imported feedbackKids show Delete only. (2) closeAskGethro now calls gethroCancel()+speechSynthesis.cancel() to kill in-flight TTS; _agpStartMic guards on panel.open so .finally() callbacks cannot restart mic after panel is closed.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8851,7 +8851,7 @@
             (a.id ? '<button onclick="deleteChildEntry(\'' + a.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
           '</div>';
         });
-        // Community feedback replies
+        // Community feedback replies (already-imported child entries) — Delete only
         if (feedbackKids.length) {
           html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
             '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>';
@@ -8859,10 +8859,7 @@
             html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(cr.title || 'Response') + '</span>' +
-                '<div style="display:flex;gap:6px">' +
-                  (cr.id ? '<button onclick="importResponse(\'' + cr.id + '\',\'' + entryId + '\',\'' + escHtml((cr.title || '').replace('From ','')).replace(/'/g,'\\\'') + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' : '') +
-                  (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
-                '</div>' +
+                (cr.id ? '<button onclick="deleteChildEntry(\'' + cr.id + '\',\'' + entryId + '\',\'mem\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
               '</div>' +
               '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml((cr.answer || '').substring(0, 80)) + ((cr.answer || '').length > 80 ? '\u2026' : '') + '</p>' +
             '</div>';
@@ -8871,6 +8868,48 @@
         }
         emp.innerHTML = html;
         emp.style.display = 'block';
+
+        // ── Pending (unaccepted) share feedback — fetched separately ──
+        // These are life_share_feedback rows (not yet imported as child entries).
+        // Rendered asynchronously into a dedicated sub-panel inside emp.
+        (async function() {
+          try {
+            var fbRes = await fetch(
+              DB_SHARE_FEEDBACK_URL + '?entry_id=eq.' + entryId + '&owner_id=eq.' + currentUser.id + '&order=created_at.asc',
+              { headers: getAuthHeaders() }
+            );
+            if (!fbRes.ok) return;
+            var pendingFb = await fbRes.json();
+            if (!pendingFb || !pendingFb.length) return;
+            var pfHtml = '<div id="mem-pending-fb-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
+              '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>';
+            pendingFb.forEach(function(f) {
+              var safeId  = f.id  ? "'" + f.id  + "'" : 'null';
+              var safeEid = f.entry_id ? "'" + f.entry_id + "'" : 'null';
+              var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+              pfHtml += '<div id="response-row-' + f.id + '" style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+                  '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
+                  '<div style="display:flex;gap:6px">' +
+                    '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept</button>' +
+                    '<button onclick="deleteResponse(' + safeId + ')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
+                  '</div>' +
+                '</div>' +
+                (f.text ? '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml(f.text.substring(0, 120)) + (f.text.length > 120 ? '\u2026' : '') + '</p>' : '') +
+              '</div>';
+            });
+            pfHtml += '</div>';
+            // Append into the existing panel (may still be visible)
+            if (emp && emp.style.display !== 'none') {
+              emp.innerHTML += pfHtml;
+            } else if (emp) {
+              emp.innerHTML = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>' + pfHtml;
+              emp.style.display = 'block';
+            }
+          } catch(pfErr) {
+            dbgWarn('MEM', 'pending feedback fetch failed:', pfErr.message);
+          }
+        })();
       } else {
         emp.style.display = 'none';
         emp.innerHTML = '';
@@ -11978,9 +12017,14 @@
     var fab   = document.getElementById('askGethroFab');
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
+    // Stop Gethro mic AND cancel any in-flight TTS audio immediately.
+    // Without gethroCancel(), a speak() that's already in-flight will finish
+    // playing, then its .finally() calls _agpStartMic() and restarts the mic
+    // even though the panel is closed.
     _agpStopMic();
-    // Also stop the main textarea mic if it was running — minimising Gethro
-    // should not leave a ghost recording session active in the background
+    gethroCancel();
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    // Also stop the main textarea mic if it was running
     if (memMicActive) stopMemMic();
     // If we were in a memory conversation and haven't saved yet, set pending flag
     // so the next open() can prompt the user to save it.
@@ -11990,7 +12034,6 @@
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
     if (!_agpPendingMemoryConvo) {
-      // Only close the convo row if we're not keeping it pending for next open
       _convoClose(false);
     }
   }
@@ -12706,6 +12749,10 @@
   var _agpSilenceMs = 2200;  // ms of silence before auto-send (tune here)
 
   function _agpStartMic() {
+    // Guard: don't start mic if the panel is not open — this prevents in-flight
+    // gethroSpeak().finally() callbacks from reactivating the mic after close.
+    var panel = document.getElementById('askGethroPanel');
+    if (!panel || !panel.classList.contains('open')) return;
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return toast('Speech not supported in this browser');
     _agpStopMic();
