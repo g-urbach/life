@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.46';
-  const DEPLOY_NOTES = APP_VERSION + ' — UX consistency: question shown once as section header (not repeated per-row) in all three surfaces (Dashboard, Entries, Memories). Accepted feedback rendered first (above pending) in Entries and Memories. Accept button renamed to Accept feedback everywhere.';
+  const APP_VERSION  = 'v3.47';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Question now always shown as header in accepted Community Feedback section regardless of pending state. (2) Memories AI Review now passes feedbackReplies (accepted feedback children) into runAIReview — incorporates reader corrections in reconstruction. (3) importResponse now PATCHes commenter first name into parent entry people tag on accept. (4) AI review hygiene prompt hints responder names into suggest_people.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3755,6 +3755,27 @@
         body: JSON.stringify(childEntry)
       });
       if (!saveRes.ok) throw new Error('entry save failed');
+
+      // ── Add commenter name to parent entry's people tag ──────────────────
+      // Merge commenterName into existing people field (comma-separated), deduplicating.
+      if (entryId && parentEntry) {
+        var existingPeople = (parentEntry.people || '').split(',').map(function(n) { return n.trim(); }).filter(Boolean);
+        var firstName = commenterName.split(' ')[0]; // use first name only
+        if (!existingPeople.some(function(n) { return n.toLowerCase() === firstName.toLowerCase(); })) {
+          existingPeople.push(firstName);
+          var newPeople = existingPeople.join(', ');
+          try {
+            await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+              method: 'PATCH',
+              headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ people: newPeople })
+            });
+            parentEntry.people = newPeople; // update local cache
+          } catch(tagErr) {
+            dbgWarn('DB', 'Could not update people tag after accept:', tagErr.message);
+          }
+        }
+      }
 
       // Remove the feedback row from DB — use DELETE (owner policy exists) rather than
       // PATCH to imported=true (no UPDATE RLS policy, so PATCH silently fails causing
@@ -5494,7 +5515,15 @@
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
     btn.textContent = '⏳ Reviewing...'; btn.disabled = true;
     panel.style.display = 'block';
-    await runAIReview(text, readTags('rec'), panel, null);
+    // If editing an existing entry, gather its accepted feedback replies so AI review
+    // can incorporate them (same as improveEntry in the Entries tab)
+    const memFeedbackReplies = _memEditEntryId
+      ? entries.filter(function(c) {
+          return c.parent_entry_id === _memEditEntryId && !c.audio_url && !c.photo_url
+            && c.title && c.title.startsWith('From ');
+        })
+      : [];
+    await runAIReview(text, readTags('rec'), panel, _memEditEntryId || null, memFeedbackReplies);
     btn.textContent = '🔍 AI Review'; btn.disabled = false;
   }
 
@@ -5512,6 +5541,10 @@
             return '- ' + (fb.title || 'Reader') + ': ' + (fb.answer || '');
           }).join('\n')
         : '';
+      // Names of people who responded — suggest including them in the people tag
+      const responderNames = fbReplies.map(function(fb) {
+        return fb.title ? fb.title.replace(/^From /, '').split(' ')[0] : '';
+      }).filter(Boolean);
       const hasTitle    = !!tags.title;
       const hasChapter  = !!tags.chapter;
       const hasEra      = !!(tags.year || tags.date);
@@ -5534,7 +5567,7 @@
         '"suggest_title":"a short evocative title for this specific memory e.g. Dad and the old shed or blank if already set",' +
         '"suggest_chapter":"broad life chapter like Family or Childhood or Career or Challenges — NOT a specific event name",' +
         '"suggest_era":"decade like 1980s or year like 1985 only if clearly inferable from text",' +
-        '"suggest_people":"first names of people mentioned in text — comma separated — or blank",' +
+        '"suggest_people":"first names of people mentioned in text' + (responderNames.length ? ' (also consider including responders: ' + responderNames.join(', ') + ')' : '') + ' — comma separated — or blank",' +
         '"suggest_location":"specific place mentioned in text or blank",' +
         '"suggest_reference":"broad historical or cultural context if relevant e.g. World War 2 or blank"}';
 
@@ -9173,7 +9206,7 @@
       const childRepliesHtml = childReplies.length
         ? '<div style="margin-top:14px;border-left:3px solid var(--sage);padding-left:12px">' +
             '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;margin-bottom:6px;text-transform:uppercase">Community Feedback</div>' +
-            (sharedQuestion && !pendingFb.length ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedQuestion) + '\u201d</p>' : '') +
+            (sharedQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedQuestion) + '\u201d</p>' : '') +
             childReplies.map(function(cr) {
               var crDeleteId = cr.id ? ("'" + cr.id + "'") : 'null';
               var crDate = new Date(cr.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
