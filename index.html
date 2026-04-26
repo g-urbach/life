@@ -2779,8 +2779,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.47';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Question now always shown as header in accepted Community Feedback section regardless of pending state. (2) Memories AI Review now passes feedbackReplies (accepted feedback children) into runAIReview — incorporates reader corrections in reconstruction. (3) importResponse now PATCHes commenter first name into parent entry people tag on accept. (4) AI review hygiene prompt hints responder names into suggest_people.';
+  const APP_VERSION  = 'v3.48';
+  const DEPLOY_NOTES = APP_VERSION + ' — AI Review fixes: (1) feedbackContext now includes [in response to: question] per answer so AI knows Chantilly is a cafe name. (2) suggest_people always includes responders even when people tag already set; sugTags merges them in. (3) Cancel button added to AI Review panel; _aiReviewAborted flag checked between each AI call. (4) Memories panel question shown once via placeholder backfilled from async share note fetch; pending section omits question if accepted section already shows it.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5525,11 +5525,19 @@
       : [];
     await runAIReview(text, readTags('rec'), panel, _memEditEntryId || null, memFeedbackReplies);
     btn.textContent = '🔍 AI Review'; btn.disabled = false;
+    if (_aiReviewAborted) { panel.style.display = 'none'; }
   }
+
+  let _aiReviewAborted = false; // set to true when user cancels AI review
 
   // ── Core AI Review — used by both Memories and Review/Chapter detail ──────
   async function runAIReview(text, tags, panel, entryId, feedbackReplies) {
-    panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>';
+    _aiReviewAborted = false;
+    panel.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+      '<span style="color:var(--text-light);font-style:italic">🔍 Running AI review...</span>' +
+      '<button onclick="_aiReviewAborted=true;this.closest(\'[id]\').style.display=\'none\'" ' +
+        'style="font-size:0.72rem;padding:2px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif">✕ Cancel</button>' +
+    '</div>';
     logActivity('ai_review_run', null, 'info', 'AI');
     featTrackReview();
     try {
@@ -5537,11 +5545,16 @@
       // Build optional feedback context block for prompts
       const fbReplies = feedbackReplies && feedbackReplies.length ? feedbackReplies : [];
       const feedbackContext = fbReplies.length
-        ? '\n\nACCEPTED FEEDBACK FROM READERS:\n' + fbReplies.map(function(fb) {
-            return '- ' + (fb.title || 'Reader') + ': ' + (fb.answer || '');
+        ? '\n\nACCEPTED FEEDBACK FROM READERS:\n' +
+          'These responses were collected via a share link asking a specific question about this memory.\n' +
+          fbReplies.map(function(fb) {
+            // Include the child entry question which contains context about what was asked
+            var q = fb.question ? fb.question : '';
+            return '- ' + (fb.title || 'Reader') + ': "' + (fb.answer || '') + '"' + (q ? ' [in response to: ' + q + ']' : '');
           }).join('\n')
         : '';
-      // Names of people who responded — suggest including them in the people tag
+      // Names of people who responded — always suggest adding them to people tag,
+      // even if people tag is already set (they should be merged in)
       const responderNames = fbReplies.map(function(fb) {
         return fb.title ? fb.title.replace(/^From /, '').split(' ')[0] : '';
       }).filter(Boolean);
@@ -5567,11 +5580,14 @@
         '"suggest_title":"a short evocative title for this specific memory e.g. Dad and the old shed or blank if already set",' +
         '"suggest_chapter":"broad life chapter like Family or Childhood or Career or Challenges — NOT a specific event name",' +
         '"suggest_era":"decade like 1980s or year like 1985 only if clearly inferable from text",' +
-        '"suggest_people":"first names of people mentioned in text' + (responderNames.length ? ' (also consider including responders: ' + responderNames.join(', ') + ')' : '') + ' — comma separated — or blank",' +
+        '"suggest_people":"' + (responderNames.length
+          ? 'Always include these responder names (they engaged with this memory): ' + responderNames.join(', ') + '. Also add any other first names mentioned in the text. Return all as comma-separated first names.'
+          : 'first names of people mentioned in text — comma separated — or blank') + '",' +
         '"suggest_location":"specific place mentioned in text or blank",' +
         '"suggest_reference":"broad historical or cultural context if relevant e.g. World War 2 or blank"}';
 
       const hygieneRaw   = await callAI(hygienePrompt, { max_tokens: 400 });
+      if (_aiReviewAborted) return;
       const hygieneClean = hygieneRaw.replace(/```json|```/g,'').trim();
       dbg('AI-REVIEW', 'Hygiene response:', hygieneClean.substring(0,200));
 
@@ -5606,6 +5622,7 @@
 
       // ── Call 2: Spelling fix (only if needed, plain text — no JSON) ──
       if (!r.spelling.ok) {
+        if (_aiReviewAborted) return;
         const fixPrompt =
           'Fix ONLY the spelling errors in this text. Preserve every word, fact and the person\'s exact voice. ' +
           'Return ONLY the corrected text, nothing else:\n\n' + text;
@@ -5615,6 +5632,7 @@
       }
 
       // ── Call 3: Reconstruction (plain text — no JSON) ──
+      if (_aiReviewAborted) return;
       const reconPrompt =
         'Rewrite this memoir entry as a clean, coherent paragraph. ' +
         'Preserve ALL facts and the person\'s warm personal voice exactly. ' +
@@ -5695,7 +5713,13 @@
       html += row(hasTitle,    'Title',    !hasTitle    ? (r.suggestTitle    ? 'Suggested: ' + r.suggestTitle    : 'Not set — give this memory a title') : '', false);
       html += row(hasChapter,  'Chapter',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — broad life chapter e.g. Family') : '', false);
       // Era row intentionally removed — date is now freetext 'When' field, not era/decade
-      html += row(hasPeople,   'People',   !hasPeople   ? (r.suggestPeople   ? 'Suggested: ' + r.suggestPeople   : 'Not set — who was there?') : '', !hasPeople);
+      // People: show suggestion even when already set, if there are responders to add
+      const existingPeopleArr = (tags.people || '').split(',').map(function(n){return n.trim().toLowerCase();}).filter(Boolean);
+      const newResponders = responderNames.filter(function(n){ return !existingPeopleArr.includes(n.toLowerCase()); });
+      const peopleNote = hasPeople
+        ? (newResponders.length ? 'Add responders: ' + newResponders.join(', ') : '')
+        : (r.suggestPeople ? 'Suggested: ' + r.suggestPeople : 'Not set — who was there?');
+      html += row(hasPeople && !newResponders.length, 'People', peopleNote, !hasPeople);
       html += row(hasLocation, 'Location', !hasLocation ? (r.suggestLocation ? 'Suggested: ' + r.suggestLocation : 'Not set — where did this happen?') : '', !hasLocation);
       if (r.suggestReference || hasRef) html += row(hasRef, 'Reference', !hasRef && r.suggestReference ? 'Suggested: ' + r.suggestReference : '', !hasRef);
       html += '</div>';
@@ -5705,7 +5729,14 @@
       if (!hasTitle    && r.suggestTitle)      sugTags.title     = r.suggestTitle;
       if (!hasChapter  && r.suggestChapter)  sugTags.chapter   = r.suggestChapter;
       // Era/year suggestion intentionally removed from tag suggestions
-      if (!hasPeople   && r.suggestPeople)   sugTags.people    = r.suggestPeople;
+      // People: suggest AI value if no tag yet, OR merge in new responders if tag exists
+      if (!hasPeople && r.suggestPeople) {
+        sugTags.people = r.suggestPeople;
+      } else if (newResponders.length) {
+        // Merge new responders into existing people tag
+        const merged = (tags.people ? tags.people + ', ' : '') + newResponders.join(', ');
+        sugTags.people = merged;
+      }
       if (!hasLocation && r.suggestLocation) sugTags.location  = r.suggestLocation;
       if (!hasRef      && r.suggestReference) sugTags.reference = r.suggestReference;
 
@@ -8896,10 +8927,10 @@
       });
       // Already-accepted community feedback (child entries) — Delete only
       if (feedbackKids.length) {
-        var acceptedQuestion = cleanQuestion(e.question || '');
-        html += '<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
+        html += '<div id="mem-feedback-section-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
           '<div style="font-size:0.72rem;font-weight:700;color:var(--sage);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Community Feedback</div>' +
-          (acceptedQuestion ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(acceptedQuestion) + '\u201d</p>' : '');
+          // Question placeholder — will be filled in by async fetch if share note is found
+          '<div id="mem-feedback-question-' + entryId + '"></div>';
         feedbackKids.forEach(function(cr) {
           html += '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
@@ -8943,9 +8974,19 @@
           var sharedNote = (pendingFb[0].life_share_tokens && pendingFb[0].life_share_tokens.note)
             ? pendingFb[0].life_share_tokens.note : null;
 
+          // Backfill question into the accepted section placeholder (shown once, above both sections)
+          if (sharedNote) {
+            var qPlaceholder = document.getElementById('mem-feedback-question-' + entryId);
+            if (qPlaceholder) {
+              qPlaceholder.innerHTML = '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedNote) + '\u201d</p>';
+            }
+          }
+
+          // Pending section — question already shown above in accepted section, so omit it here
           var pfHtml = '<div id="mem-pending-fb-' + entryId + '" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">' +
             '<div style="font-size:0.72rem;font-weight:700;color:var(--gold-dark);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">\uD83D\uDCAC ' + pendingFb.length + ' Pending Response' + (pendingFb.length > 1 ? 's' : '') + '</div>' +
-            (sharedNote ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedNote) + '\u201d</p>' : '');
+            // Only show question here if there is NO accepted section (no feedbackKids)
+            (!feedbackKids.length && sharedNote ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 8px">\u201c' + escHtml(sharedNote) + '\u201d</p>' : '');
 
           pendingFb.forEach(function(f) {
             var safeId   = f.id  ? "'" + f.id  + "'" : 'null';
@@ -9333,6 +9374,7 @@
         && c.title && c.title.startsWith('From ');
     });
     await runAIReview(entry.answer, getEntryTags(entry), panel, entryId, feedbackReplies);
+    if (_aiReviewAborted) panel.style.display = 'none';
   }
 
   async function improveEntryInDetail(entryId) {
