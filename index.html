@@ -2785,8 +2785,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.52';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share fixes: (1) memories Accept now properly awaits importResponse+loadEntries before re-rendering panel — no more Gethro popup on accept. (2) Toast changed from "imported" to "Feedback accepted". (3) Share page subheading now reads "John is writing about X and was hoping you could help answer a question" (or "would really value your feedback" if no note). (4) Share via buttons added — Web Share API on mobile (covers WhatsApp/SMS/etc), desktop falls back to WhatsApp+Email links; Copy link always shown.';
+  const APP_VERSION  = 'v3.53';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Share buttons: replaced Web Share API with direct URL scheme links (WhatsApp, SMS, Email) + copy with execCommand fallback for non-HTTPS. (2) Share page uses ownerName (full name) with fallback to ownerFirstName — requires SHARE_PROXY to return ownerName: profile.name. (3) In my own words now shows only user responses, not Gethro questions or unanswered prompts.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3099,13 +3099,16 @@
       var entry = data.entry;
       _shareEntryTitle = entry.title || 'a memory';
 
+      // Use full name if available (ownerName from updated edge fn), fall back to first name
+      var ownerDisplay = data.ownerName || data.ownerFirstName || 'Someone';
+
       // Subheading — contextual intro using owner name, entry title, and note
       var entryTitleShort = (entry.title || '').substring(0, 40);
       var subheading;
       if (data.note) {
-        subheading = data.ownerFirstName + ' is writing about \u201c' + entryTitleShort + '\u201d and was hoping you could help answer a question.';
+        subheading = ownerDisplay + ' is writing about \u201c' + entryTitleShort + '\u201d and was hoping you could help answer a question.';
       } else {
-        subheading = data.ownerFirstName + ' is writing about \u201c' + entryTitleShort + '\u201d and would really value your feedback.';
+        subheading = ownerDisplay + ' is writing about \u201c' + entryTitleShort + '\u201d and would really value your feedback.';
       }
       document.getElementById('shareSubheading').textContent = subheading;
 
@@ -3166,37 +3169,44 @@
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
 
-      // Bug 4: Share via app buttons — injected after content loads so we have the URL
+      // Share via app buttons — injected after content loads so we have the URL
       var shareUrl = window.location.href;
-      var shareTitle = data.ownerFirstName + '\u2019s memory' + (entry.title ? ': ' + entry.title : '');
+      var shareTitle = ownerDisplay + '\u2019s memory' + (entry.title ? ': ' + entry.title : '');
       var shareText  = data.note
-        ? data.ownerFirstName + ' asked: \u201c' + data.note + '\u201d \u2014 can you help?'
-        : data.ownerFirstName + ' shared a memory and would love your feedback.';
+        ? ownerDisplay + ' asked: \u201c' + data.note + '\u201d \u2014 can you help?'
+        : ownerDisplay + ' shared a memory and would love your feedback.';
       var shareBtnsEl = document.getElementById('shareViaButtons');
       if (shareBtnsEl) {
-        var btns = '';
-        // Web Share API (mobile native sheet — covers WhatsApp, Messages, etc.)
-        if (navigator.share) {
-          btns += '<button onclick="navigator.share({title:' + JSON.stringify(shareTitle) + ',text:' + JSON.stringify(shareText) + ',url:' + JSON.stringify(shareUrl) + '}).catch(function(){})" ' +
-            'style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-            '&#x1F4E4; Share this link</button>';
-        } else {
-          // Fallback individual buttons for desktop
-          var waText = encodeURIComponent(shareText + ' ' + shareUrl);
-          var emailSubj = encodeURIComponent(shareTitle);
-          var emailBody = encodeURIComponent(shareText + '\n\n' + shareUrl);
-          btns += '<a href="https://wa.me/?text=' + waText + '" target="_blank" ' +
-            'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-            '&#x1F4AC; WhatsApp</a>';
-          btns += '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" ' +
-            'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
-            '&#x2709;&#xFE0F; Email</a>';
-        }
-        // Copy to clipboard always shown
-        btns += '<button id="shareCopyBtn" onclick="navigator.clipboard.writeText(' + JSON.stringify(shareUrl) + ').then(function(){var b=document.getElementById(\'shareCopyBtn\');b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'Copy link\';},2000)}).catch(function(){alert(' + JSON.stringify(shareUrl) + ')})" ' +
+        var waText    = encodeURIComponent(shareText + '\n' + shareUrl);
+        var smsText   = encodeURIComponent(shareText + ' ' + shareUrl);
+        var emailSubj = encodeURIComponent(shareTitle);
+        var emailBody = encodeURIComponent(shareText + '\n\n' + shareUrl);
+
+        var btns = '<div style="text-align:center;margin-bottom:10px;font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Share this link</div>';
+        btns += '<div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">';
+        btns += '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" ' +
+          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+          '&#x1F4AC; WhatsApp</a>';
+        btns += '<a href="sms:?body=' + smsText + '" ' +
+          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#0B93F6;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+          '&#x1F4F1; SMS</a>';
+        btns += '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" ' +
+          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
+          '&#x2709;&#xFE0F; Email</a>';
+        // Copy link — with textarea fallback for non-HTTPS contexts
+        btns += '<button id="shareCopyBtn" onclick="(function(){'  +
+          'var url=' + JSON.stringify(shareUrl) + ';' +
+          'var b=document.getElementById(\'shareCopyBtn\');' +
+          'if(navigator.clipboard&&window.isSecureContext){' +
+          'navigator.clipboard.writeText(url).then(function(){b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'&#x1F517; Copy link\';},2000)});' +
+          '}else{' +
+          'var ta=document.createElement(\'textarea\');ta.value=url;ta.style.position=\'fixed\';ta.style.opacity=\'0\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);' +
+          'b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'&#x1F517; Copy link\';},2000);' +
+          '}})()" ' +
           'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem">&#x1F517; Copy link</button>';
+        btns += '</div>';
         shareBtnsEl.innerHTML = btns;
-        shareBtnsEl.style.display = 'flex';
+        shareBtnsEl.style.display = 'block';
       }
 
     } catch(e) {
@@ -12474,19 +12484,30 @@
       html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px" onclick="agpAcceptConsolidated(false)">\u2713 Use this version</button>';
       html += '</div>';
 
-      // Choice B: raw transcript
+      // Choice B: user's own words only — filter to answered exchanges only.
+      // Strip any trailing Gethro question that has no user answer after it,
+      // and show only the user's actual responses (not Gethro's questions).
+      var userOnlyLines = [];
+      var history = _gethroHistory || [];
+      for (var hi = 0; hi < history.length; hi++) {
+        if (history[hi].role === 'user') {
+          var userText = (history[hi].content || '').trim();
+          if (userText) userOnlyLines.push(userText);
+        }
+      }
+      var userOnlyTranscript = userOnlyLines.join('\n\n');
+
       html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
       html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:6px">In my own words \u2014 word for word</p>';
-      var transcriptHtml = transcript.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+      var transcriptHtml = userOnlyTranscript.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
       html += '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.82rem;line-height:1.6;color:var(--text-light);margin-bottom:10px;max-height:120px;overflow-y:auto">' + transcriptHtml + '</div>';
-      html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 14px" onclick="agpAcceptConsolidated(true)">\u2713 Use conversation as-is</button>';
+      html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 14px" onclick="agpAcceptConsolidated(true)">\u2713 Use my words</button>';
       html += '</div>';
 
       panel.innerHTML = html;
-      // Stash both versions on the panel element — same pattern as acceptReconstruction()
-      panel.dataset.consolidated = consolidated;
-      panel.dataset.transcript   = transcript;
-      panel.dataset.hasEntry     = hasEntry ? '1' : '0';
+      panel.dataset.consolidated    = consolidated;
+      panel.dataset.transcript      = userOnlyTranscript; // "In my own words" uses filtered user-only text
+      panel.dataset.hasEntry        = hasEntry ? '1' : '0';
 
     } catch(err) {
       panel.innerHTML = '<span style="color:var(--rose)">Couldn\u2019t write that up \u2014 try again.</span>';
