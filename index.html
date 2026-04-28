@@ -1503,6 +1503,9 @@
         <div id="shareEntryMeta" style="margin-top:14px;font-size:0.78rem;color:var(--text-light);display:flex;gap:12px;flex-wrap:wrap"></div>
       </div>
 
+      <!-- Share via buttons (populated by JS after load) -->
+      <div id="shareViaButtons" style="display:none;gap:10px;flex-wrap:wrap;margin-bottom:24px;justify-content:center"></div>
+
       <!-- Feedback form -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave a response</h3>
@@ -2782,8 +2785,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.51';
-  const DEPLOY_NOTES = APP_VERSION + ' — Prompt audit v3.51: all non-funny AI prompts now explicitly forbid invention/embellishment. Tightened: Gethro follow-up (removed emotional focus), agpSaveToEntry (no warm embellishment, feelings only if stated), duplicate merge (no warm/vivid language), chapter consolidation (same). story strictNote already enforced. Funny mode exempted throughout.';
+  const APP_VERSION  = 'v3.52';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share fixes: (1) memories Accept now properly awaits importResponse+loadEntries before re-rendering panel — no more Gethro popup on accept. (2) Toast changed from "imported" to "Feedback accepted". (3) Share page subheading now reads "John is writing about X and was hoping you could help answer a question" (or "would really value your feedback" if no note). (4) Share via buttons added — Web Share API on mobile (covers WhatsApp/SMS/etc), desktop falls back to WhatsApp+Email links; Copy link always shown.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3096,9 +3099,15 @@
       var entry = data.entry;
       _shareEntryTitle = entry.title || 'a memory';
 
-      // Subheading
-      document.getElementById('shareSubheading').textContent =
-        'A memory from ' + data.ownerFirstName;
+      // Subheading — contextual intro using owner name, entry title, and note
+      var entryTitleShort = (entry.title || '').substring(0, 40);
+      var subheading;
+      if (data.note) {
+        subheading = data.ownerFirstName + ' is writing about \u201c' + entryTitleShort + '\u201d and was hoping you could help answer a question.';
+      } else {
+        subheading = data.ownerFirstName + ' is writing about \u201c' + entryTitleShort + '\u201d and would really value your feedback.';
+      }
+      document.getElementById('shareSubheading').textContent = subheading;
 
       // Writer's note / question (if owner set one when creating the share link)
       var noteEl = document.getElementById('shareEntryNote');
@@ -3156,6 +3165,39 @@
       // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
+
+      // Bug 4: Share via app buttons — injected after content loads so we have the URL
+      var shareUrl = window.location.href;
+      var shareTitle = data.ownerFirstName + '\u2019s memory' + (entry.title ? ': ' + entry.title : '');
+      var shareText  = data.note
+        ? data.ownerFirstName + ' asked: \u201c' + data.note + '\u201d \u2014 can you help?'
+        : data.ownerFirstName + ' shared a memory and would love your feedback.';
+      var shareBtnsEl = document.getElementById('shareViaButtons');
+      if (shareBtnsEl) {
+        var btns = '';
+        // Web Share API (mobile native sheet — covers WhatsApp, Messages, etc.)
+        if (navigator.share) {
+          btns += '<button onclick="navigator.share({title:' + JSON.stringify(shareTitle) + ',text:' + JSON.stringify(shareText) + ',url:' + JSON.stringify(shareUrl) + '}).catch(function(){})" ' +
+            'style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+            '&#x1F4E4; Share this link</button>';
+        } else {
+          // Fallback individual buttons for desktop
+          var waText = encodeURIComponent(shareText + ' ' + shareUrl);
+          var emailSubj = encodeURIComponent(shareTitle);
+          var emailBody = encodeURIComponent(shareText + '\n\n' + shareUrl);
+          btns += '<a href="https://wa.me/?text=' + waText + '" target="_blank" ' +
+            'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+            '&#x1F4AC; WhatsApp</a>';
+          btns += '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" ' +
+            'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
+            '&#x2709;&#xFE0F; Email</a>';
+        }
+        // Copy to clipboard always shown
+        btns += '<button id="shareCopyBtn" onclick="navigator.clipboard.writeText(' + JSON.stringify(shareUrl) + ').then(function(){var b=document.getElementById(\'shareCopyBtn\');b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'Copy link\';},2000)}).catch(function(){alert(' + JSON.stringify(shareUrl) + ')})" ' +
+          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem">&#x1F517; Copy link</button>';
+        shareBtnsEl.innerHTML = btns;
+        shareBtnsEl.style.display = 'flex';
+      }
 
     } catch(e) {
       notifyDev('warn', 'SHARE', 'loadSharePage exception: ' + e.message + ' — token: ' + token);
@@ -3723,7 +3765,7 @@
     // Guard: check if already imported (row deleted) — prevents duplicate if
     // user somehow triggers import twice (e.g. Dashboard + inline card button)
     if (feedback.imported) {
-      toast('Already imported');
+      toast('Already accepted');
       _importingFeedbackIds.delete(feedbackId);
       await loadEntries();
       renderReviewEntries();
@@ -3795,7 +3837,7 @@
         headers: getAuthHeaders()
       });
 
-      toast(commenterName + '\u2019s response imported \u2713');
+      toast('Feedback accepted ✓');
       _importingFeedbackIds.delete(feedbackId);
 
       // Remove the row and reload entries
@@ -9017,8 +9059,8 @@
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                 '<div style="display:flex;gap:6px">' +
-                  '<button onclick="importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept feedback</button>' +
-                  '<button onclick="deleteResponse(' + safeId + ');openEntryInMemories(\'' + entryId + '\')" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
+                  '<button onclick="(async()=>{await importResponse(' + safeId + ',' + safeEid + ',\'' + safeName + '\');await loadEntries();openEntryInMemories(\'' + entryId + '\');})()" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept feedback</button>' +
+                  '<button onclick="(async()=>{await deleteResponse(' + safeId + ');await loadEntries();openEntryInMemories(\'' + entryId + '\');})()" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
                 '</div>' +
               '</div>' +
               (f.text ? '<p style="font-size:0.82rem;color:var(--text-light);margin:0;line-height:1.5">' + escHtml(f.text.substring(0, 120)) + (f.text.length > 120 ? '\u2026' : '') + '</p>' : '') +
