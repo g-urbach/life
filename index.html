@@ -1503,9 +1503,6 @@
         <div id="shareEntryMeta" style="margin-top:14px;font-size:0.78rem;color:var(--text-light);display:flex;gap:12px;flex-wrap:wrap"></div>
       </div>
 
-      <!-- Share via buttons (populated by JS after load) -->
-      <div id="shareViaButtons" style="display:none;gap:10px;flex-wrap:wrap;margin-bottom:24px;justify-content:center"></div>
-
       <!-- Feedback form -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave a response</h3>
@@ -2785,8 +2782,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.53';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Share buttons: replaced Web Share API with direct URL scheme links (WhatsApp, SMS, Email) + copy with execCommand fallback for non-HTTPS. (2) Share page uses ownerName (full name) with fallback to ownerFirstName — requires SHARE_PROXY to return ownerName: profile.name. (3) In my own words now shows only user responses, not Gethro questions or unanswered prompts.';
+  const APP_VERSION  = 'v3.54';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Share sheet moved to owner side: after creating link, _showShareSheet() pops up with WhatsApp/SMS/Email/Copy grid. Removed from public recipient page entirely. (2) Share page subheading uses ownerName (full name) from edge fn, falls back to ownerFirstName. Edge fn needs ownerName: profile.name added to get_entry return.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3169,46 +3166,6 @@
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
 
-      // Share via app buttons — injected after content loads so we have the URL
-      var shareUrl = window.location.href;
-      var shareTitle = ownerDisplay + '\u2019s memory' + (entry.title ? ': ' + entry.title : '');
-      var shareText  = data.note
-        ? ownerDisplay + ' asked: \u201c' + data.note + '\u201d \u2014 can you help?'
-        : ownerDisplay + ' shared a memory and would love your feedback.';
-      var shareBtnsEl = document.getElementById('shareViaButtons');
-      if (shareBtnsEl) {
-        var waText    = encodeURIComponent(shareText + '\n' + shareUrl);
-        var smsText   = encodeURIComponent(shareText + ' ' + shareUrl);
-        var emailSubj = encodeURIComponent(shareTitle);
-        var emailBody = encodeURIComponent(shareText + '\n\n' + shareUrl);
-
-        var btns = '<div style="text-align:center;margin-bottom:10px;font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Share this link</div>';
-        btns += '<div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">';
-        btns += '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" ' +
-          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-          '&#x1F4AC; WhatsApp</a>';
-        btns += '<a href="sms:?body=' + smsText + '" ' +
-          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:#0B93F6;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-          '&#x1F4F1; SMS</a>';
-        btns += '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" ' +
-          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
-          '&#x2709;&#xFE0F; Email</a>';
-        // Copy link — with textarea fallback for non-HTTPS contexts
-        btns += '<button id="shareCopyBtn" onclick="(function(){'  +
-          'var url=' + JSON.stringify(shareUrl) + ';' +
-          'var b=document.getElementById(\'shareCopyBtn\');' +
-          'if(navigator.clipboard&&window.isSecureContext){' +
-          'navigator.clipboard.writeText(url).then(function(){b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'&#x1F517; Copy link\';},2000)});' +
-          '}else{' +
-          'var ta=document.createElement(\'textarea\');ta.value=url;ta.style.position=\'fixed\';ta.style.opacity=\'0\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);' +
-          'b.textContent=\'✓ Copied!\';setTimeout(function(){b.textContent=\'&#x1F517; Copy link\';},2000);' +
-          '}})()" ' +
-          'style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem">&#x1F517; Copy link</button>';
-        btns += '</div>';
-        shareBtnsEl.innerHTML = btns;
-        shareBtnsEl.style.display = 'block';
-      }
-
     } catch(e) {
       notifyDev('warn', 'SHARE', 'loadSharePage exception: ' + e.message + ' — token: ' + token);
       logActivity('share_load_exception', e.message + ' — token: ' + token, 'warn', 'SHARE');
@@ -3469,13 +3426,9 @@
       hideShareConsent();
 
       var link = 'https://lifetold.app/?share=' + newToken.token;
-      try {
-        await navigator.clipboard.writeText(link);
-        toast('Link copied \u2713 \u2014 expires in 30 days');
-      } catch(e) {
-        // Clipboard API blocked (e.g. non-https dev) — show the link in a prompt
-        window.prompt('Copy this link:', link);
-      }
+
+      // Show share sheet overlay so owner can send via WhatsApp, SMS, Email or copy
+      _showShareSheet(link, note);
 
       // Refresh the indicator on the entry card
       await refreshShareIndicator(entryId);
@@ -3490,6 +3443,59 @@
   }
 
   // ── Step 6: Share link management UI ────────────────────────────
+
+  // ── Share sheet — shown to owner after link creation ─────────────
+  function _showShareSheet(link, note) {
+    var existing = document.getElementById('shareSheetOverlay');
+    if (existing) existing.remove();
+
+    var shareMsg = note
+      ? 'I\u2019d love your help answering a question about one of my memories: \u201c' + note + '\u201d'
+      : 'I\u2019d love your feedback on one of my memories.';
+    var fullMsg  = shareMsg + '\n' + link;
+    var waText    = encodeURIComponent(fullMsg);
+    var smsText   = encodeURIComponent(fullMsg);
+    var emailSubj = encodeURIComponent('A memory I\u2019d love your thoughts on');
+    var emailBody = encodeURIComponent(shareMsg + '\n\n' + link);
+
+    var ov = document.createElement('div');
+    ov.id = 'shareSheetOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;display:flex;align-items:flex-end;justify-content:center';
+    ov.innerHTML =
+      '<div style="background:var(--bg);border-radius:18px 18px 0 0;padding:28px 24px 36px;width:100%;max-width:520px;box-shadow:0 -4px 24px rgba(0,0,0,0.12)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">' +
+          '<p style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">Share your link</p>' +
+          '<button onclick="document.getElementById(\'shareSheetOverlay\').remove()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">\u00d7</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">' +
+          '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+            '<span style="font-size:1.6rem">&#x1F4AC;</span>WhatsApp</a>' +
+          '<a href="sms:?body=' + smsText + '" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:#0B93F6;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
+            '<span style="font-size:1.6rem">&#x1F4F1;</span>SMS</a>' +
+          '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
+            '<span style="font-size:1.6rem">&#x2709;&#xFE0F;</span>Email</a>' +
+          '<button id="sscopybtn" onclick="(function(){' +
+            'var url=' + JSON.stringify(link) + ';' +
+            'var b=document.getElementById(\'sscopybtn\');' +
+            'if(navigator.clipboard&&window.isSecureContext){' +
+              'navigator.clipboard.writeText(url).then(function(){b.innerHTML=\'<span style="font-size:1.6rem">&#x2713;</span>Copied!\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1200)});' +
+            '}else{' +
+              'var ta=document.createElement(\'textarea\');ta.value=url;ta.style.position=\'fixed\';ta.style.opacity=\'0\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);' +
+              'b.innerHTML=\'<span style="font-size:1.6rem">&#x2713;</span>Copied!\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1200);' +
+            '}' +
+          '})()" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem;border:1px solid var(--border)">' +
+            '<span style="font-size:1.6rem">&#x1F517;</span>Copy link</button>' +
+        '</div>' +
+        '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.75rem;color:var(--text-light);word-break:break-all;text-align:center">' + escHtml(link) + '</div>' +
+      '</div>';
+
+    ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+  }
 
   // Fetch tokens for an entry and update the indicator chip on the card
   async function refreshShareIndicator(entryId) {
