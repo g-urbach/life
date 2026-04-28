@@ -2782,8 +2782,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.49';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) feedbackContext now labelled ACCEPTED READER RESPONSES with explicit instruction to treat as direct factual answers not commentary; reconstruction prompt instructs AI to weave in as story facts not "a reader mentioned". (2) Cancel button moved outside runAIReview panel into the button row (entries: cancel-review-{id}, memories: memCancelReviewBtn) — shown on review start, hidden on completion/cancel.';
+  const APP_VERSION  = 'v3.51';
+  const DEPLOY_NOTES = APP_VERSION + ' — Prompt audit v3.51: all non-funny AI prompts now explicitly forbid invention/embellishment. Tightened: Gethro follow-up (removed emotional focus), agpSaveToEntry (no warm embellishment, feelings only if stated), duplicate merge (no warm/vivid language), chapter consolidation (same). story strictNote already enforced. Funny mode exempted throughout.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3704,10 +3704,10 @@
     var row = document.getElementById('response-row-' + feedbackId);
     var feedback = null;
 
-    // Get the full feedback row to access text
+    // Get the full feedback row including share note from token
     try {
       var res = await fetch(
-        DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId,
+        DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*,life_share_tokens(note)',
         { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error('fetch failed');
@@ -3734,15 +3734,22 @@
     var parentEntry = entries.find(function(e) { return e.id === entryId; });
     var parentTitle = parentEntry ? (parentEntry.title || 'a memory') : 'a memory';
 
+    // Share note = the actual question asked to respondents. Store this on the child
+    // entry's question field so AI Review can use it for proper context later.
+    var shareNote = (feedback.life_share_tokens && feedback.life_share_tokens.note)
+      ? feedback.life_share_tokens.note
+      : null;
+
     // Disable buttons while saving
     if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
 
     try {
-      // Create child entry — same pattern as AI conversation children
+      // Create child entry — question field stores the share note (what was asked),
+      // NOT a generic "Response from X on Y" string, so AI Review has proper context.
       var childEntry = {
         user_id:         currentUser.id,
         category:        (parentEntry && parentEntry.chapter) ? parentEntry.chapter : 'Responses',
-        question:        'Response from ' + commenterName + ' on \u201c' + parentTitle + '\u201d',
+        question:        shareNote || ('Response from ' + commenterName + ' on \u201c' + parentTitle + '\u201d'),
         answer:          feedback.text || '(no text)',
         parent_entry_id: entryId || null,
         title:           'From ' + commenterName,
@@ -5545,10 +5552,19 @@
       // Build optional feedback context block for prompts
       const fbReplies = feedbackReplies && feedbackReplies.length ? feedbackReplies : [];
       const feedbackContext = fbReplies.length
-        ? '\n\nACCEPTED READER RESPONSES (direct factual answers to a question asked about this memory — incorporate as facts, not as "reader comments"):\n' +
+        ? '\n\nFACTUAL ADDITIONS FROM FAMILY/FRIENDS:\n' +
+          'These are real answers collected from people who know this story. ' +
+          'Each line is: WHO answered WHAT to the question ASKED.\n' +
+          'Use ONLY these exact facts — do not invent details, do not add interpretation.\n' +
           fbReplies.map(function(fb) {
-            var q = fb.question ? fb.question : '';
-            return '- ' + (fb.title || 'Reader') + ' answered: "' + (fb.answer || '') + '"' + (q ? ' [question asked: ' + q + ']' : '');
+            // fb.question now stores the share note (the actual question asked)
+            var q = fb.question && !fb.question.startsWith('Response from')
+              ? fb.question
+              : null;
+            var who = (fb.title || 'Someone').replace(/^From /, '');
+            return q
+              ? who + ' was asked \u201c' + q + '\u201d and answered: \u201c' + (fb.answer || '') + '\u201d'
+              : who + ' added: \u201c' + (fb.answer || '') + '\u201d';
           }).join('\n')
         : '';
       // Names of people who responded — always suggest adding them to people tag,
@@ -5633,15 +5649,17 @@
       if (_aiReviewAborted) return;
       const reconPrompt =
         'Rewrite this memoir entry as a clean, coherent paragraph in the author\'s voice. ' +
-        'Preserve ALL facts and the person\'s warm personal voice exactly. ' +
-        'Fix rambling, repetition, and speech-to-text errors. ' +
+        'Preserve ALL facts from the original exactly — do not add, invent, or embellish anything. ' +
+        'Fix rambling, repetition, and speech-to-text errors only. ' +
         (fbReplies.length
-          ? 'IMPORTANT: The "ACCEPTED READER RESPONSES" below are DIRECT FACTUAL ANSWERS to a specific question that was asked about this memory. ' +
-            'They are NOT commentary or opinions about the writing — they are real facts (names, places, details) that belong in the story. ' +
-            'Weave these facts naturally into the rewrite as part of the memory itself. ' +
-            'For example, if someone answered "Goodfields" to the question "What was dad\'s favourite cafe?", write "Dad\'s favourite cafe was Goodfields" — do not say "a reader mentioned Goodfields". '
+          ? 'FACTUAL ADDITIONS: The section below labelled "FACTUAL ADDITIONS FROM FAMILY/FRIENDS" contains real facts provided by people who know this story. ' +
+            'Weave each fact into the rewrite as a concrete detail in the story. ' +
+            'For example: if G1 was asked "What was dad\'s favourite cafe?" and answered "Goodfields", write "Dad\'s favourite cafe was Goodfields" — state it as plain fact. ' +
+            'STRICT RULES: (1) Do NOT say "a reader mentioned" or "some people shared" — these are story facts not comments. ' +
+            '(2) Do NOT invent any details not present in the original or the factual additions. ' +
+            '(3) If an answer seems unrelated (e.g. "Choo choo"), include it only if the question makes the meaning clear, otherwise omit it. '
           : '') +
-        'If the original is already clean and clear with no feedback to add, reply with exactly: CLEAN\n\n' +
+        'If the original is already clean and there are no factual additions to incorporate, reply with exactly: CLEAN\n\n' +
         'ENTRY:\n' + text + feedbackContext;
       try {
         const reconRaw = (await callAI(reconPrompt, { max_tokens: 600 })).trim();
@@ -6129,7 +6147,7 @@
         prompt =
           'You are a warm, curious biographer in conversation with someone recording their life story.\n\n' +
           'THE MOST RECENT EXCHANGE:\n' + context + '\n\n' +
-          'Ask ONE specific follow-up question (max 15 words). Focus on the most interesting or emotional detail. Show genuine curiosity. Do NOT introduce a new topic. Return ONLY the question.';
+          'Ask ONE specific follow-up question (max 15 words). Focus on the most concrete unstated fact — a name, date, place, or what happened next. Do NOT ask about feelings or emotions. Return ONLY the question.';
       } else {
         const coveredQuestions = realEntries.map(e => e.question).filter(Boolean).concat(recCurQuestion ? [recCurQuestion] : []).join('\n');
         const coveredText = realEntries.slice(-40).map(e => (e.question || '') + ' ' + e.answer.slice(0,60)).join(' ').toLowerCase();
@@ -10212,8 +10230,9 @@
     try {
       var combined='Entry A: '+(eA.title||'Untitled')+'\n'+(eA.answer||'').trim()+'\n\n---\n\nEntry B: '+(eB.title||'Untitled')+'\n'+(eB.answer||'').trim();
       var wc=Math.min(500,((eA.answer||'').split(/\s+/).filter(Boolean).length+(eB.answer||'').split(/\s+/).filter(Boolean).length)+60);
-      var prompt='You are a warm, skilled biographer helping someone write their memoir.\n\n'+
-        'Below are 2 journal entries about the same memory, captured twice. Merge into one rich, cohesive first-person memoir entry. Keep all specific names, dates, places and feelings. Warm and vivid. Roughly '+wc+' words.\n\nReturn ONLY the merged memoir text. No preamble, no title, no explanation.\n\n'+combined;
+      var prompt='You are a memoir editor helping someone write their life story.\n\n'+
+        'Below are 2 journal entries about the same memory, captured twice. Merge into one cohesive first-person memoir entry.\n' +
+        'RULES: Keep ALL specific names, dates, places and facts from both entries. Do NOT add, invent or embellish anything not stated. Do NOT add feelings unless they are explicitly stated. Roughly '+wc+' words.\n\nReturn ONLY the merged memoir text. No preamble, no title, no explanation.\n\n'+combined;
       var merged=await callAI(prompt);
       // Only set if user hasn't typed already
       if (_dupMergedEdits.answer===undefined) _dupMergedEdits.answer=merged;
@@ -10551,10 +10570,10 @@
         'Below are ' + groupEntries.length + ' separate journal entries about closely related memories or the same event.\n\n' +
         combined + '\n\n' +
         'Your task: Write a single, unified memoir entry that:\n' +
-        '- Combines all the detail and texture from each entry\n' +
+        '- Combines ALL the detail from each entry — do not omit any fact, name, date or place\n' +
         '- Reads as one cohesive, first-person narrative\n' +
-        '- Keeps all specific names, dates, places and feelings\n' +
-        '- Is warm, vivid and personal in tone\n' +
+        '- Does NOT add, invent or embellish anything not stated in the entries\n' +
+        '- Includes feelings only if explicitly stated in the entries\n' +
         '- Is roughly ' + targetWc + ' words\n\n' +
         'Return ONLY the merged memoir text. No preamble, no title, no explanation.';
       const merged = await callAI(prompt);
@@ -12397,8 +12416,9 @@
       var consolidatePrompt =
         'You are a warm memoir editor. Below is a conversation between a user and their AI companion Gethro about a personal memory.\n\n' +
         'CONVERSATION:\n' + transcript + '\n\n' +
-        'Rewrite ONLY what the user shared as ONE clean, warm prose paragraph (80–150 words). ' +
-        'Write in first person as the user. Preserve every specific fact, name, place, and feeling they mentioned. ' +
+        'Rewrite ONLY what the user shared as ONE clean first-person prose paragraph (80–150 words). ' +
+        'Preserve every specific fact, name, place, and date they mentioned — do NOT add, invent, or embellish anything. ' +
+        'If they mentioned a feeling, include it; do not add feelings they did not express. ' +
         'Ignore everything Gethro said. Return ONLY the paragraph, no preamble.';
       var consolidated = (await callAI(consolidatePrompt, { max_tokens: 300 })).trim();
 
