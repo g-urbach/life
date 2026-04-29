@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.62';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share form: question mode shows Leave your answer / Question / Answer; feedback mode (no note) shows Leave feedback / Your feedback with different placeholder. Question block fully suppressed when no note set.';
+  const APP_VERSION  = 'v3.63';
+  const DEPLOY_NOTES = APP_VERSION + ' — Gethro opener: _buildGethroOpener() replaces static greeting. Randomly picks greeting (time-aware), optional warmup phrase, 2 random topic suggestions from 16-item pool, and a feature nudge. Used in both openAskGethro() and gethroNewChat().';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -12216,6 +12216,82 @@
 
   // skipGreeting: pass true when opening programmatically (e.g. nudge messages) to
   // suppress the generic "Hi [name]" opener — the caller appends its own message instead.
+  // ── Varied Gethro opener — picks a warm greeting + 2 topic suggestions ──────
+  function _buildGethroOpener(firstName) {
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function pickN(arr, n) {
+      var copy = arr.slice(); var out = [];
+      for (var i = 0; i < n && copy.length; i++) {
+        var idx = Math.floor(Math.random() * copy.length);
+        out.push(copy.splice(idx, 1)[0]);
+      }
+      return out;
+    }
+
+    var hour = new Date().getHours();
+    var timeGreet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+    var greetings = firstName ? [
+      'Hi ' + firstName + '! Great to see you.',
+      timeGreet + ', ' + firstName + '.',
+      'Hey ' + firstName + ' — glad you\'re here.',
+      'Welcome back, ' + firstName + '.',
+      firstName + '! Ready to capture some memories?',
+      'Good to see you, ' + firstName + '.',
+    ] : [
+      'Hi there! Great to see you.',
+      timeGreet + '.',
+      'Hey — glad you\'re here.',
+      'Welcome back.',
+      'Ready to capture some memories?',
+    ];
+
+    var warmups = [
+      'Every story you tell matters.',
+      'The best time to write a memory is now.',
+      'Your story is worth telling.',
+      'Small details make the best memories.',
+      'Even five minutes of writing makes a difference.',
+      'The people who come after you will treasure this.',
+    ];
+
+    // Memory topics to suggest
+    var topics = [
+      { label: 'a childhood memory',           prompt: 'Tell me about a childhood memory' },
+      { label: 'someone who shaped you',        prompt: 'Tell me about someone who shaped who you are' },
+      { label: 'your first job',                prompt: 'Tell me about your first job' },
+      { label: 'a place that meant a lot',      prompt: 'Tell me about a place that meant a lot to you' },
+      { label: 'a family tradition',            prompt: 'Tell me about a family tradition' },
+      { label: 'your school days',              prompt: 'Tell me about your school days' },
+      { label: 'a meal you\'ll never forget',   prompt: 'Tell me about a meal you\'ll never forget' },
+      { label: 'a holiday or trip',             prompt: 'Tell me about a memorable holiday or trip' },
+      { label: 'a time you were proud',         prompt: 'Tell me about a time you felt really proud' },
+      { label: 'a tough time you got through',  prompt: 'Tell me about a tough time you got through' },
+      { label: 'a friendship',                  prompt: 'Tell me about an important friendship' },
+      { label: 'how you met your partner',      prompt: 'Tell me how you met your partner' },
+      { label: 'your parents',                  prompt: 'Tell me about your parents' },
+      { label: 'a hobby or passion',            prompt: 'Tell me about a hobby or passion you have or had' },
+      { label: 'something that made you laugh', prompt: 'Tell me about something that made you really laugh' },
+      { label: 'where you grew up',             prompt: 'Tell me about where you grew up' },
+    ];
+
+    // Feature nudges — showcase what Gethro can do
+    var featureNudges = [
+      'Or ask me to review an entry with AI.',
+      'Or ask me to share a memory with family.',
+      'Or ask me to find an old entry.',
+      'Or ask me to help you write something.',
+      'Or say "surprise me" and I\'ll pick a topic.',
+    ];
+
+    var chosenTopics = pickN(topics, 2);
+    var topicLine = 'How about ' + chosenTopics[0].label + ', or ' + chosenTopics[1].label + '?';
+    var featureLine = pick(featureNudges);
+    var warmup = Math.random() < 0.5 ? ' ' + pick(warmups) : '';
+
+    return pick(greetings) + warmup + ' What would you like to talk about? ' + topicLine + ' ' + featureLine;
+  }
+
   function openAskGethro(skipGreeting) {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
@@ -12262,8 +12338,7 @@
       // Small delay so panel animation completes before seed question appears
       setTimeout(function() { _agpSeedMemoryQuestion(firstName, seedCtx, memTitle || ''); }, 100);
     } else if (!_gethroHistory.length && !skipGreeting) {
-      // Fresh session, no Memories content — generic opener.
-      // If there are unread share responses, Gethro mentions them first.
+      // Fresh session — build a varied, contextual opener
       var opener;
       if (_agpPendingResponseCount > 0) {
         var rWord = _agpPendingResponseCount === 1 ? 'response' : 'responses';
@@ -12271,14 +12346,11 @@
           ? 'Hi ' + firstName + '. You have ' + _agpPendingResponseCount + ' new ' + rWord + ' from someone you shared a memory with — head to the Dashboard to read ' + (_agpPendingResponseCount === 1 ? 'it' : 'them') + '. What else can I help you with?'
           : 'You have ' + _agpPendingResponseCount + ' new ' + rWord + ' from someone you shared a memory with — head to the Dashboard to read ' + (_agpPendingResponseCount === 1 ? 'it' : 'them') + '. What else can I help you with?';
       } else {
-        opener = firstName
-          ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
-          : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+        opener = _buildGethroOpener(firstName);
       }
       _convoStart('general', null);
       _agpAppendGethro(opener, _agpPendingResponseCount > 0 ? { type: 'navigate_dashboard', params: {} } : null);
       gethroSpeak(opener).catch(function(){}).finally(function() {
-        // Auto-start mic after speaking so user can reply hands-free
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
       });
     } else if (_agpPendingMemoryConvo) {
@@ -12331,9 +12403,7 @@
     if (log) log.innerHTML = '';
     // Start fresh — show greeting
     var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
-    var opener = firstName
-      ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
-      : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
+    var opener = _buildGethroOpener(firstName);
     _convoStart('general', null);
     _agpAppendGethro(opener, null);
     _gethroHistory.push({ role: 'assistant', content: opener });
