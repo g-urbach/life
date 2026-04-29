@@ -1521,9 +1521,10 @@
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box">
           </div>
 
-          <!-- Message -->
+          <!-- Message — label and optional question echo set dynamically by JS -->
           <div style="margin-bottom:16px">
-            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
+            <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
+            <div id="shareFormQuestion" style="display:none;background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
             <textarea id="shareMessage" rows="4" placeholder="Share a memory, a thought, or a reaction…"
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
@@ -2782,8 +2783,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.54';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Share sheet moved to owner side: after creating link, _showShareSheet() pops up with WhatsApp/SMS/Email/Copy grid. Removed from public recipient page entirely. (2) Share page subheading uses ownerName (full name) from edge fn, falls back to ownerFirstName. Edge fn needs ownerName: profile.name added to get_entry return.';
+  const APP_VERSION  = 'v3.55';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share page: (1) Note/question shown in two places — in entry card AND above textarea in form; label changes to Your answer and placeholder to Type your answer here when note exists. (2) Share sheet redesigned: copy bar top, app icons (WhatsApp/Gmail/Facebook) below. Edge fn now returns ownerName (full name).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3109,11 +3110,22 @@
       }
       document.getElementById('shareSubheading').textContent = subheading;
 
-      // Writer's note / question (if owner set one when creating the share link)
+      // Writer's note / question — shown in TWO places:
+      // 1. In the entry card (already in HTML as shareEntryNote)
+      // 2. Above the textarea in the form (shareFormQuestion) so it's fresh when typing
       var noteEl = document.getElementById('shareEntryNote');
+      var formQEl = document.getElementById('shareFormQuestion');
+      var msgLabel = document.getElementById('shareMessageLabel');
+      var msgArea  = document.getElementById('shareMessage');
       if (data.note) {
         noteEl.textContent = data.note;
         noteEl.style.display = 'block';
+        if (formQEl) {
+          formQEl.textContent = data.note;
+          formQEl.style.display = 'block';
+        }
+        if (msgLabel) msgLabel.textContent = 'Your answer';
+        if (msgArea)  msgArea.placeholder  = 'Type your answer here…';
       }
 
       // Title
@@ -3452,45 +3464,66 @@
     var shareMsg = note
       ? 'I\u2019d love your help answering a question about one of my memories: \u201c' + note + '\u201d'
       : 'I\u2019d love your feedback on one of my memories.';
-    var fullMsg  = shareMsg + '\n' + link;
+    var fullMsg   = shareMsg + '\n' + link;
     var waText    = encodeURIComponent(fullMsg);
-    var smsText   = encodeURIComponent(fullMsg);
     var emailSubj = encodeURIComponent('A memory I\u2019d love your thoughts on');
     var emailBody = encodeURIComponent(shareMsg + '\n\n' + link);
+    var fbUrl     = encodeURIComponent(link);
 
     var ov = document.createElement('div');
     ov.id = 'shareSheetOverlay';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;display:flex;align-items:flex-end;justify-content:center';
+
     ov.innerHTML =
-      '<div style="background:var(--bg);border-radius:18px 18px 0 0;padding:28px 24px 36px;width:100%;max-width:520px;box-shadow:0 -4px 24px rgba(0,0,0,0.12)">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">' +
-          '<p style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">Share your link</p>' +
-          '<button onclick="document.getElementById(\'shareSheetOverlay\').remove()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">\u00d7</button>' +
+      '<div style="background:var(--bg);border-radius:18px 18px 0 0;padding:20px 20px 36px;width:100%;max-width:520px;box-shadow:0 -4px 24px rgba(0,0,0,0.15)">' +
+
+        // Header
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+          '<p style="font-size:0.85rem;font-weight:700;color:var(--text);margin:0;text-transform:uppercase;letter-spacing:0.06em">Share link</p>' +
+          '<button onclick="document.getElementById(\'shareSheetOverlay\').remove()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">\u00d7</button>' +
         '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">' +
-          '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
-            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:#25D366;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-            '<span style="font-size:1.6rem">&#x1F4AC;</span>WhatsApp</a>' +
-          '<a href="sms:?body=' + smsText + '" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
-            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:#0B93F6;color:#fff;text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:600">' +
-            '<span style="font-size:1.6rem">&#x1F4F1;</span>SMS</a>' +
-          '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
-            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text);text-decoration:none;font-family:\'Lato\',sans-serif;font-size:0.88rem">' +
-            '<span style="font-size:1.6rem">&#x2709;&#xFE0F;</span>Email</a>' +
+
+        // Copy bar (like OS share sheet top bar)
+        '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:20px">' +
+          '<span style="font-size:1rem;flex-shrink:0">&#x1F517;</span>' +
+          '<span style="font-size:0.78rem;color:var(--text-light);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(link) + '</span>' +
           '<button id="sscopybtn" onclick="(function(){' +
             'var url=' + JSON.stringify(link) + ';' +
             'var b=document.getElementById(\'sscopybtn\');' +
             'if(navigator.clipboard&&window.isSecureContext){' +
-              'navigator.clipboard.writeText(url).then(function(){b.innerHTML=\'<span style="font-size:1.6rem">&#x2713;</span>Copied!\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1200)});' +
+              'navigator.clipboard.writeText(url).then(function(){b.textContent=\'Copied!\';b.style.color=\'var(--sage)\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1000)});' +
             '}else{' +
-              'var ta=document.createElement(\'textarea\');ta.value=url;ta.style.position=\'fixed\';ta.style.opacity=\'0\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);' +
-              'b.innerHTML=\'<span style="font-size:1.6rem">&#x2713;</span>Copied!\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1200);' +
+              'var ta=document.createElement(\'textarea\');ta.value=url;ta.style.cssText=\'position:fixed;opacity:0\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);' +
+              'b.textContent=\'Copied!\';b.style.color=\'var(--sage)\';setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove();},1000);' +
             '}' +
-          '})()" ' +
-            'style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif;font-size:0.88rem;border:1px solid var(--border)">' +
-            '<span style="font-size:1.6rem">&#x1F517;</span>Copy link</button>' +
+          '})()" style="background:none;border:none;font-size:0.82rem;font-weight:700;color:var(--gold-dark);cursor:pointer;white-space:nowrap;font-family:\'Lato\',sans-serif;padding:0">Copy</button>' +
         '</div>' +
-        '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.75rem;color:var(--text-light);word-break:break-all;text-align:center">' + escHtml(link) + '</div>' +
+
+        // App icons row
+        '<div style="display:flex;justify-content:space-around;align-items:flex-start">' +
+
+          // WhatsApp
+          '<a href="https://wa.me/?text=' + waText + '" target="_blank" rel="noopener" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;width:72px">' +
+            '<div style="width:56px;height:56px;border-radius:14px;background:#25D366;display:flex;align-items:center;justify-content:center;font-size:1.8rem">&#x1F4AC;</div>' +
+            '<span style="font-size:0.72rem;color:var(--text);text-align:center;font-family:\'Lato\',sans-serif">WhatsApp</span>' +
+          '</a>' +
+
+          // Gmail
+          '<a href="mailto:?subject=' + emailSubj + '&body=' + emailBody + '" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;width:72px">' +
+            '<div style="width:56px;height:56px;border-radius:14px;background:#EA4335;display:flex;align-items:center;justify-content:center;font-size:1.8rem">&#x2709;&#xFE0F;</div>' +
+            '<span style="font-size:0.72rem;color:var(--text);text-align:center;font-family:\'Lato\',sans-serif">Gmail</span>' +
+          '</a>' +
+
+          // Facebook
+          '<a href="https://www.facebook.com/sharer/sharer.php?u=' + fbUrl + '" target="_blank" rel="noopener" onclick="setTimeout(function(){document.getElementById(\'shareSheetOverlay\').remove()},800)" ' +
+            'style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;width:72px">' +
+            '<div style="width:56px;height:56px;border-radius:14px;background:#1877F2;display:flex;align-items:center;justify-content:center;font-size:1.8rem">&#x1F426;</div>' +
+            '<span style="font-size:0.72rem;color:var(--text);text-align:center;font-family:\'Lato\',sans-serif">Facebook</span>' +
+          '</a>' +
+
+        '</div>' +
       '</div>';
 
     ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
