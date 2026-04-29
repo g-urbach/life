@@ -1493,10 +1493,9 @@
     <!-- Entry content -->
     <div id="shareContent" style="display:none">
 
-      <!-- Entry card -->
+      <!-- Entry card — no question shown here, it appears in the form below -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
-        <div id="shareEntryNote" style="display:none;background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:16px;font-size:0.9rem;color:var(--text);line-height:1.6;font-style:italic"></div>
         <div id="shareEntryPhotos" style="margin-bottom:14px"></div>
         <div id="shareEntryAudios" style="margin-bottom:14px"></div>
         <div id="shareEntryText" style="font-size:0.95rem;color:var(--text);line-height:1.8;white-space:pre-wrap"></div>
@@ -1521,10 +1520,15 @@
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box">
           </div>
 
-          <!-- Message — label and optional question echo set dynamically by JS -->
+          <!-- Message — Q/A layout when note exists, plain message when no note -->
           <div style="margin-bottom:16px">
+            <!-- Q row — only shown when owner set a question -->
+            <div id="shareFormQuestionWrap" style="display:none;margin-bottom:12px">
+              <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Q</label>
+              <div id="shareFormQuestion" style="background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
+            </div>
+            <!-- A label — changes between "A" and "Your message" -->
             <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
-            <div id="shareFormQuestion" style="display:none;background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
             <textarea id="shareMessage" rows="4" placeholder="Share a memory, a thought, or a reaction…"
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
@@ -1691,6 +1695,7 @@
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 Dark</button>
     <div id="userStatus">Not signed in</div>
+    <button class="btn btn-ghost" id="editProfileBtn" style="display:none;font-size:0.78rem;padding:8px 14px" onclick="showEditProfile()">✏️ Profile</button>
     <button class="btn btn-ghost" id="signOutBtn" style="display:none;font-size:0.78rem;padding:8px 14px" onclick="signOut()">Sign Out</button>
   </div>
 </header>
@@ -2688,8 +2693,12 @@
       <p style="font-size:0.95rem;color:var(--text-light);line-height:1.6;margin-bottom:4px">I'm going to help you tell your story — at your own pace, in your own words.</p>
       <p style="font-size:0.88rem;color:var(--text-light);line-height:1.5">Just tell me a little about yourself to get started.</p>
     </div>
-    <label for="onboardName">Your first name <span style="color:var(--rose)">*</span></label>
-    <input id="onboardName" type="text" placeholder="e.g. Geoff" autocomplete="given-name">
+    <label for="onboardFirstName">First name <span style="color:var(--rose)">*</span></label>
+    <input id="onboardFirstName" type="text" placeholder="e.g. Mary Lou" autocomplete="given-name">
+    <label for="onboardLastName" style="display:flex;align-items:center;justify-content:space-between">
+      Last name <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
+    </label>
+    <input id="onboardLastName" type="text" placeholder="e.g. Smith" autocomplete="family-name">
     <label for="onboardDob" style="display:flex;align-items:center;justify-content:space-between">
       Date of birth <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
     </label>
@@ -2800,8 +2809,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.58';
-  const DEPLOY_NOTES = APP_VERSION + ' — console.error intercept now calls both notifyDev (Telegram) AND logActivity (DB) so all errors go to both destinations, consistent with window.onerror and unhandledrejection handlers.';
+  const APP_VERSION  = 'v3.60';
+  const DEPLOY_NOTES = APP_VERSION + ' — Profile: split into first name + last name. Onboarding collects both, stores _profile_first_name, _profile_last_name, _profile_name (combined). loadEntries populates userProfile.firstName/lastName. All Gethro greetings use userProfile.firstName. Profile edit overlay added (header button). Edge fn reads _profile_first_name from life_entries. Backwards compat: legacy _profile_name-only users work via split fallback.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3153,22 +3162,16 @@
       }
       document.getElementById('shareSubheading').textContent = subheading;
 
-      // Writer's note / question — shown in TWO places:
-      // 1. In the entry card (already in HTML as shareEntryNote)
-      // 2. Above the textarea in the form (shareFormQuestion) so it's fresh when typing
-      var noteEl = document.getElementById('shareEntryNote');
-      var formQEl = document.getElementById('shareFormQuestion');
-      var msgLabel = document.getElementById('shareMessageLabel');
-      var msgArea  = document.getElementById('shareMessage');
+      // Note/question — shown only in the form as a proper Q/A layout
+      var formQWrap = document.getElementById('shareFormQuestionWrap');
+      var formQEl   = document.getElementById('shareFormQuestion');
+      var msgLabel  = document.getElementById('shareMessageLabel');
+      var msgArea   = document.getElementById('shareMessage');
       if (data.note) {
-        noteEl.textContent = data.note;
-        noteEl.style.display = 'block';
-        if (formQEl) {
-          formQEl.textContent = data.note;
-          formQEl.style.display = 'block';
-        }
-        if (msgLabel) msgLabel.textContent = 'Your answer';
-        if (msgArea)  msgArea.placeholder  = 'Type your answer here…';
+        if (formQWrap) formQWrap.style.display = 'block';
+        if (formQEl)   formQEl.textContent = data.note;
+        if (msgLabel)  msgLabel.textContent = 'A';
+        if (msgArea)   msgArea.placeholder  = 'Type your answer here…';
       }
 
       // Title
@@ -3479,10 +3482,12 @@
     var fullMsg = shareMsg + '\n' + link;
 
     if (method === 'whatsapp') {
-      window.open('https://wa.me/?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
+      // Use api.whatsapp.com instead of wa.me — better cert handling on desktop Chrome
+      window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
     } else if (method === 'gmail') {
-      window.location.href = 'mailto:?subject=' + encodeURIComponent('A memory I\u2019d love your thoughts on') +
-        '&body=' + encodeURIComponent(shareMsg + '\n\n' + link);
+      // window.open works better than location.href for mailto on desktop
+      window.open('mailto:?subject=' + encodeURIComponent('A memory I\u2019d love your thoughts on') +
+        '&body=' + encodeURIComponent(shareMsg + '\n\n' + link));
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
     } else { // copy
@@ -4131,6 +4136,7 @@
       document.getElementById('appShell').style.display = 'block';
       document.getElementById('userStatus').textContent = '✓ ' + currentUser.email;
       document.getElementById('signOutBtn').style.display = 'inline-block';
+      document.getElementById('editProfileBtn').style.display = 'inline-block';
       var fab = document.getElementById('askGethroFab');
       if (fab) fab.style.display = 'flex';
     } else {
@@ -4517,12 +4523,26 @@
       if (!res.ok) { handleAuthError(res); return; }
       const data = await res.json();
       entries = data || [];
-      const nameEntry = entries.find(e => e.category === '_profile_name');
-      const dobEntry  = entries.find(e => e.category === '_profile_dob');
-      const sexEntry  = entries.find(e => e.category === '_profile_sex');
-      userProfile.name = nameEntry?.answer ?? null;
-      userProfile.dob  = dobEntry?.answer  ?? null;
-      userProfile.sex  = sexEntry?.answer  ?? null;
+      const nameEntry      = entries.find(e => e.category === '_profile_name');
+      const firstNameEntry = entries.find(e => e.category === '_profile_first_name');
+      const lastNameEntry  = entries.find(e => e.category === '_profile_last_name');
+      const dobEntry       = entries.find(e => e.category === '_profile_dob');
+      const sexEntry       = entries.find(e => e.category === '_profile_sex');
+
+      // firstName: prefer dedicated entry, fall back to splitting _profile_name (legacy users)
+      const storedFirst = firstNameEntry?.answer?.trim() ?? null;
+      const storedLast  = lastNameEntry?.answer?.trim()  ?? null;
+      const storedFull  = nameEntry?.answer?.trim()       ?? null;
+      const derivedFirst = storedFirst || (storedFull ? storedFull.split(' ')[0] : null);
+      const derivedFull  = storedFirst
+        ? (storedLast ? storedFirst + ' ' + storedLast : storedFirst)
+        : storedFull;
+
+      userProfile.firstName = derivedFirst;
+      userProfile.lastName  = storedLast;
+      userProfile.name      = derivedFull;
+      userProfile.dob       = dobEntry?.answer  ?? null;
+      userProfile.sex       = sexEntry?.answer  ?? null;
       // Only name is required — DOB and sex are optional (privacy: user can skip)
       if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
@@ -4895,25 +4915,32 @@
   // ── Onboarding ───────────────────────────────────────────────────
   // ── Onboarding ───────────────────────────────────────────────────
   // Name is the only required field. DOB and sex are optional — user can skip them.
-  // T&Cs are always accepted BEFORE this overlay is shown (via _checkDisclaimerVersion).
   async function saveOnboarding() {
-    const name = document.getElementById('onboardName').value.trim();
-    const dob  = document.getElementById('onboardDob').value;
-    const sex  = document.getElementById('onboardSex').value;
-    if (!name) return toast('Please enter your name — Gethro needs to know what to call you!');
-    // Always save name; save DOB and sex only if provided
+    const firstName = document.getElementById('onboardFirstName').value.trim();
+    const lastName  = (document.getElementById('onboardLastName')?.value || '').trim();
+    const dob       = document.getElementById('onboardDob').value;
+    const sex       = document.getElementById('onboardSex').value;
+    if (!firstName) return toast('Please enter your first name — Gethro needs to know what to call you!');
+
+    const fullName = lastName ? firstName + ' ' + lastName : firstName;
+
+    // Save first name (required), last name (optional), and combined _profile_name for
+    // backwards compat (existing reads use _profile_name as fallback)
     const saves = [
-      fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_name',answer:name,question:'What is your name?',timestamp:new Date().toISOString()})}),
+      fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_first_name',answer:firstName,question:'What is your first name?',timestamp:new Date().toISOString()})}),
+      fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_name',answer:fullName,question:'What is your name?',timestamp:new Date().toISOString()})}),
     ];
+    if (lastName) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_last_name',answer:lastName,question:'What is your last name?',timestamp:new Date().toISOString()})}));
     if (dob) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_dob',answer:dob,question:'What is your date of birth?',timestamp:new Date().toISOString()})}));
     if (sex) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_sex',answer:sex,question:'What is your sex?',timestamp:new Date().toISOString()})}));
     await Promise.all(saves);
-    userProfile = { name, dob: dob || null, sex: sex || null };
+
+    userProfile = { name: fullName, firstName, lastName: lastName || null, dob: dob || null, sex: sex || null };
     document.getElementById('onboardingOverlay').style.display = 'none';
-    notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + name + ')');
-    logActivity('onboarding_complete', name, 'info', 'AUTH');
-    toast('Welcome, ' + name + '! 🎉');
-    _onboardGethroIntro(name);
+    notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + fullName + ')');
+    logActivity('onboarding_complete', fullName, 'info', 'AUTH');
+    toast('Welcome, ' + firstName + '! 🎉');
+    _onboardGethroIntro(firstName);
   }
 
   // Called after onboarding saves — Gethro speaks his welcome then shows ice-breaker cards.
@@ -8035,7 +8062,7 @@
     // Build candidate observations — each is { msg, action? }
     // action = optional HTML string for a button/link below the message
     const obs = [];
-    const name = (entries.find(e => e.category === '_profile_name')?.answer || '').split(' ')[0];
+    const name = userProfile.firstName || (entries.find(e => e.category === '_profile_name')?.answer || '').split(' ')[0];
 
     const totalWords   = real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
     const daysSinceLast = real.length
@@ -11995,7 +12022,7 @@
     if (saves === 1 && interviews === 0) {
       // First ever save, never chatted with Gethro — introduce the interview feature
       setTimeout(function() {
-        var firstName = (userProfile.name || '').split(' ')[0] || '';
+        var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var msg = firstName
           ? 'Great first memory, ' + firstName + '! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.'
           : 'Great first memory! Next time, try tapping the Gethro button before you save \u2014 I\u2019ll ask you questions that help bring the story to life. You can also just ask me anytime.';
@@ -12010,7 +12037,7 @@
     if (saves === 2 && reviews === 0) {
       // Second save, never used AI Review — explain it
       setTimeout(function() {
-        var firstName = (userProfile.name || '').split(' ')[0] || '';
+        var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var msg = firstName
           ? 'Did you know, ' + firstName + '? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.'
           : 'Did you know? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.';
@@ -12182,7 +12209,7 @@
       if (log) log.scrollTop = log.scrollHeight;
     }, 50);
     // Check if Memories tab has content — this takes priority over history
-    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     var onMemTab  = !!(document.getElementById('panel-memories') &&
                        document.getElementById('panel-memories').classList.contains('active'));
     var memTitle  = onMemTab ? ((document.getElementById('memTitle')  || {}).value  || '') : '';
@@ -12272,7 +12299,7 @@
     var log = document.getElementById('agpLog');
     if (log) log.innerHTML = '';
     // Start fresh — show greeting
-    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     var opener = firstName
       ? 'Hi ' + firstName + '. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.'
       : 'Hi there. What can I help you with? You can ask me to find memories, start writing, explain anything, or just have a chat.';
@@ -12286,7 +12313,7 @@
   // Called when the panel reopens after being closed mid-memory-conversation.
   // Appends a yes/no prompt into the chat log — no new UI elements needed.
   function _agpShowResumePrompt() {
-    var firstName = (userProfile.name || '').split(' ')[0] || '';
+    var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     var prompt = firstName
       ? 'We were talking about a memory, ' + firstName + '. Would you like me to add that conversation to your entry?'
       : 'We were talking about a memory. Would you like me to add that conversation to your entry?';
@@ -12330,7 +12357,7 @@
       _agpMemoryMode = false;
       _agpUpdateSaveBar();
       // Show normal greeting so panel doesn't feel empty
-      var firstName2 = (userProfile.name || '').split(' ')[0] || '';
+      var firstName2 = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
       var opener = firstName2
         ? 'No worries. What can I help you with, ' + firstName2 + '?'
         : 'No worries. What else can I help you with?';
@@ -12602,7 +12629,7 @@
       _agpStopMic();
       _agpAppendUser(text);
       // Re-seed a fresh question from the current entry content
-      var firstName = (userProfile.name || '').split(' ')[0] || '';
+      var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
       var memTitle  = (document.getElementById('memTitle')  || {}).value || '';
       var memAnswer = (document.getElementById('memAnswer') || {}).value || '';
       // Include conversation so far so Gethro doesn't repeat covered topics
@@ -12653,7 +12680,7 @@
       return [e.title || '', e.chapter || '', e.people || '', (e.answer || '').slice(0, 80)].filter(Boolean).join(' | ');
     }).join('\n');
     var totalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
-    var userName = (userProfile.name || '').split(' ')[0] || 'the user';
+    var userName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || 'the user';
 
     // Keyword-match entries against the user's latest message — gives Gethro
     // actual content for questions like "what do you think about my dog?"
@@ -13216,6 +13243,107 @@
     });
   });
 
+  // ── Profile edit ──────────────────────────────────────────────────
+  function showEditProfile() {
+    document.getElementById('profileEditFirstName').value = userProfile.firstName || '';
+    document.getElementById('profileEditLastName').value  = userProfile.lastName  || '';
+    document.getElementById('profileEditDob').value       = userProfile.dob       || '';
+    document.getElementById('profileEditSex').value       = userProfile.sex       || '';
+    document.getElementById('profileEditOverlay').style.display = 'flex';
+  }
+
+  async function saveProfileEdit() {
+    const firstName = document.getElementById('profileEditFirstName').value.trim();
+    const lastName  = document.getElementById('profileEditLastName').value.trim();
+    const dob       = document.getElementById('profileEditDob').value;
+    const sex       = document.getElementById('profileEditSex').value;
+    if (!firstName) return toast('First name is required');
+
+    const fullName = lastName ? firstName + ' ' + lastName : firstName;
+
+    // UPSERT each profile entry — update if exists, insert if not
+    async function upsertProfile(category, answer, question) {
+      const existing = entries.find(e => e.category === category);
+      if (existing) {
+        await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ answer })
+        });
+        existing.answer = answer;
+      } else {
+        const res = await fetch(DB_URL, {
+          method: 'POST',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ user_id: currentUser.id, category, answer, question, timestamp: new Date().toISOString() })
+        });
+        if (res.ok) { const rows = await res.json(); if (rows[0]) entries.push(rows[0]); }
+      }
+    }
+
+    try {
+      const saves = [
+        upsertProfile('_profile_first_name', firstName, 'What is your first name?'),
+        upsertProfile('_profile_name', fullName, 'What is your name?'),
+      ];
+      if (lastName || entries.find(e => e.category === '_profile_last_name')) {
+        saves.push(upsertProfile('_profile_last_name', lastName || '', 'What is your last name?'));
+      }
+      if (dob || entries.find(e => e.category === '_profile_dob')) {
+        saves.push(upsertProfile('_profile_dob', dob, 'What is your date of birth?'));
+      }
+      if (sex || entries.find(e => e.category === '_profile_sex')) {
+        saves.push(upsertProfile('_profile_sex', sex, 'What is your sex?'));
+      }
+      await Promise.all(saves);
+
+      userProfile.firstName = firstName;
+      userProfile.lastName  = lastName || null;
+      userProfile.name      = fullName;
+      userProfile.dob       = dob || null;
+      userProfile.sex       = sex || null;
+
+      document.getElementById('profileEditOverlay').style.display = 'none';
+      toast('Profile updated ✓');
+      logActivity('profile_updated', fullName, 'info', 'PROFILE');
+    } catch(err) {
+      dbgErr('PROFILE', 'saveProfileEdit error:', err.message);
+      toast('Could not save — please try again');
+    }
+  }
+
 </script>
+
+<!-- ── Profile Edit Overlay ─────────────────────────────────────── -->
+<div id="profileEditOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">Your profile</h3>
+      <button onclick="document.getElementById('profileEditOverlay').style.display='none'" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
+    </div>
+    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">First name <span style="color:var(--rose)">*</span></label>
+    <input id="profileEditFirstName" type="text" autocomplete="given-name"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Last name <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+    <input id="profileEditLastName" type="text" autocomplete="family-name"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+    <input id="profileEditDob" type="date"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Sex <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+    <select id="profileEditSex"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:24px">
+      <option value="">Prefer not to say</option>
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+      <option value="other">Other</option>
+    </select>
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('profileEditOverlay').style.display='none'" class="btn btn-ghost" style="flex:1">Cancel</button>
+      <button onclick="saveProfileEdit()" class="btn btn-primary" style="flex:2">Save</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
