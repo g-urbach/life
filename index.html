@@ -1498,13 +1498,14 @@
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
         <div id="shareEntryPhotos" style="margin-bottom:14px"></div>
         <div id="shareEntryAudios" style="margin-bottom:14px"></div>
+        <div id="shareEntryVideo" style="margin-bottom:14px"></div>
         <div id="shareEntryText" style="font-size:0.95rem;color:var(--text);line-height:1.8;white-space:pre-wrap"></div>
         <div id="shareEntryMeta" style="margin-top:14px;font-size:0.78rem;color:var(--text-light);display:flex;gap:12px;flex-wrap:wrap"></div>
       </div>
 
       <!-- Feedback form -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
-        <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave a response</h3>
+        <h3 id="shareFormHeading" style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave feedback</h3>
 
         <div id="shareFeedbackSuccess" style="display:none;text-align:center;padding:20px 0">
           <div style="font-size:2rem;margin-bottom:10px">💛</div>
@@ -1524,10 +1525,10 @@
           <div style="margin-bottom:16px">
             <!-- Q row — only shown when owner set a question -->
             <div id="shareFormQuestionWrap" style="display:none;margin-bottom:12px">
-              <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Q</label>
+              <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Question</label>
               <div id="shareFormQuestion" style="background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
             </div>
-            <!-- A label — changes between "A" and "Your message" -->
+            <!-- A label — changes between "Answer" and "Your message" -->
             <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
             <textarea id="shareMessage" rows="4" placeholder="Share a memory, a thought, or a reaction…"
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
@@ -2809,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.60';
-  const DEPLOY_NOTES = APP_VERSION + ' — Profile: split into first name + last name. Onboarding collects both, stores _profile_first_name, _profile_last_name, _profile_name (combined). loadEntries populates userProfile.firstName/lastName. All Gethro greetings use userProfile.firstName. Profile edit overlay added (header button). Edge fn reads _profile_first_name from life_entries. Backwards compat: legacy _profile_name-only users work via split fallback.';
+  const APP_VERSION  = 'v3.62';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share form: question mode shows Leave your answer / Question / Answer; feedback mode (no note) shows Leave feedback / Your feedback with different placeholder. Question block fully suppressed when no note set.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3162,16 +3163,25 @@
       }
       document.getElementById('shareSubheading').textContent = subheading;
 
-      // Note/question — shown only in the form as a proper Q/A layout
-      var formQWrap = document.getElementById('shareFormQuestionWrap');
-      var formQEl   = document.getElementById('shareFormQuestion');
-      var msgLabel  = document.getElementById('shareMessageLabel');
-      var msgArea   = document.getElementById('shareMessage');
+      // Note/question — shown only in the form as a proper Question/Answer layout
+      var formQWrap  = document.getElementById('shareFormQuestionWrap');
+      var formQEl    = document.getElementById('shareFormQuestion');
+      var msgLabel   = document.getElementById('shareMessageLabel');
+      var msgArea    = document.getElementById('shareMessage');
+      var formHeading = document.getElementById('shareFormHeading');
       if (data.note) {
-        if (formQWrap) formQWrap.style.display = 'block';
-        if (formQEl)   formQEl.textContent = data.note;
-        if (msgLabel)  msgLabel.textContent = 'A';
-        if (msgArea)   msgArea.placeholder  = 'Type your answer here…';
+        // Question mode
+        if (formQWrap)   formQWrap.style.display = 'block';
+        if (formQEl)     formQEl.textContent     = data.note;
+        if (msgLabel)    msgLabel.textContent    = 'Answer';
+        if (msgArea)     msgArea.placeholder     = 'Type your answer here\u2026';
+        if (formHeading) formHeading.textContent = 'Leave your answer';
+      } else {
+        // Feedback mode — no question set
+        if (formQWrap)   formQWrap.style.display = 'none';
+        if (msgLabel)    msgLabel.textContent    = 'Your feedback';
+        if (msgArea)     msgArea.placeholder     = 'Share a memory, a thought, or anything that comes to mind\u2026';
+        if (formHeading) formHeading.textContent = 'Leave feedback';
       }
 
       // Title
@@ -3180,12 +3190,17 @@
       if (!entry.title) titleEl.style.display = 'none';
 
       // Photos
+      // Photos — entry.photo_url is the single main photo
       var photosEl = document.getElementById('shareEntryPhotos');
-      if (data.photos && data.photos.length) {
+      if (entry.photo_url) {
+        photosEl.innerHTML = '<div style="margin-bottom:12px">' +
+          '<img src="' + escHtml(entry.photo_url) + '" alt="photo" style="width:100%;border-radius:8px;display:block;max-height:320px;object-fit:cover">' +
+        '</div>';
+      } else if (data.photos && data.photos.length) {
         photosEl.innerHTML = data.photos.map(function(p) {
           return '<div style="margin-bottom:12px">' +
             (p.signedUrl ? '<img src="' + p.signedUrl + '" alt="photo" style="width:100%;border-radius:8px;display:block">' : '') +
-            (p.answer ? '<p style="font-size:0.8rem;color:var(--text-light);margin-top:5px;font-style:italic">' + p.answer + '</p>' : '') +
+            (p.answer ? '<p style="font-size:0.8rem;color:var(--text-light);margin-top:5px;font-style:italic">' + escHtml(p.answer) + '</p>' : '') +
           '</div>';
         }).join('');
       } else {
@@ -3194,16 +3209,32 @@
 
       // Audio
       var audiosEl = document.getElementById('shareEntryAudios');
-      if (data.audios && data.audios.length) {
+      if (entry.audio_url) {
+        audiosEl.innerHTML = '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
+          '<p style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:0 0 6px">🎵 Audio</p>' +
+          '<audio src="' + escHtml(entry.audio_url) + '" controls style="width:100%;height:36px"></audio>' +
+        '</div>';
+      } else if (data.audios && data.audios.length) {
         audiosEl.innerHTML = data.audios.map(function(a) {
           return '<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:8px">' +
             '<span style="font-size:1.1rem">🎵</span>' +
             (a.signedUrl ? '<audio src="' + a.signedUrl + '" controls style="flex:1;height:28px"></audio>' : '') +
-            (a.answer ? '<span style="font-size:0.8rem;color:var(--text-light)">' + a.answer + '</span>' : '') +
+            (a.answer ? '<span style="font-size:0.8rem;color:var(--text-light)">' + escHtml(a.answer) + '</span>' : '') +
           '</div>';
         }).join('');
       } else {
         audiosEl.style.display = 'none';
+      }
+
+      // Video
+      var videoEl = document.getElementById('shareEntryVideo');
+      if (entry.video_url) {
+        videoEl.innerHTML = '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
+          '<p style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:0 0 6px">🎬 Video</p>' +
+          '<video src="' + escHtml(entry.video_url) + '" controls style="width:100%;border-radius:6px;max-height:280px"></video>' +
+        '</div>';
+      } else {
+        videoEl.style.display = 'none';
       }
 
       // Entry text
@@ -7799,7 +7830,7 @@
 
         <!-- Save / Cancel -->
         <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
-          <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${entryId}','${prefix}')">Save tags</button>
+          <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px" onclick="saveEntryTags('${entryId}','${prefix}')">Save</button>
           <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px" onclick="document.getElementById('${prefix}-${entryId}').style.display='none'">Cancel</button>
         </div>
       </div>`;
