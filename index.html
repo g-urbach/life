@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.63';
-  const DEPLOY_NOTES = APP_VERSION + ' — Gethro opener: _buildGethroOpener() replaces static greeting. Randomly picks greeting (time-aware), optional warmup phrase, 2 random topic suggestions from 16-item pool, and a feature nudge. Used in both openAskGethro() and gethroNewChat().';
+  const APP_VERSION  = 'v3.65';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share media fix: photos/audio/video are stored as child entries (parent_entry_id), not on the main entry row. Edge fn now fetches child entries and signs all media URLs. Frontend uses data.photos/audios/videos arrays.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3190,17 +3190,15 @@
       if (!entry.title) titleEl.style.display = 'none';
 
       // Photos
-      // Photos — entry.photo_url is the single main photo
+      // Photos — use signed array from edge fn (includes child entries)
       var photosEl = document.getElementById('shareEntryPhotos');
-      if (entry.photo_url) {
-        photosEl.innerHTML = '<div style="margin-bottom:12px">' +
-          '<img src="' + escHtml(entry.photo_url) + '" alt="photo" style="width:100%;border-radius:8px;display:block;max-height:320px;object-fit:cover">' +
-        '</div>';
-      } else if (data.photos && data.photos.length) {
-        photosEl.innerHTML = data.photos.map(function(p) {
+      var photoList = (data.photos && data.photos.length) ? data.photos
+        : (entry.photo_url ? [{ signedUrl: entry.photo_url, caption: '' }] : []);
+      if (photoList.length) {
+        photosEl.innerHTML = photoList.map(function(p) {
           return '<div style="margin-bottom:12px">' +
-            (p.signedUrl ? '<img src="' + p.signedUrl + '" alt="photo" style="width:100%;border-radius:8px;display:block">' : '') +
-            (p.answer ? '<p style="font-size:0.8rem;color:var(--text-light);margin-top:5px;font-style:italic">' + escHtml(p.answer) + '</p>' : '') +
+            '<img src="' + escHtml(p.signedUrl) + '" alt="photo" style="width:100%;border-radius:8px;display:block;max-height:320px;object-fit:cover">' +
+            (p.caption ? '<p style="font-size:0.8rem;color:var(--text-light);margin-top:5px;font-style:italic">' + escHtml(p.caption) + '</p>' : '') +
           '</div>';
         }).join('');
       } else {
@@ -3209,17 +3207,13 @@
 
       // Audio
       var audiosEl = document.getElementById('shareEntryAudios');
-      if (entry.audio_url) {
-        audiosEl.innerHTML = '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
-          '<p style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:0 0 6px">🎵 Audio</p>' +
-          '<audio src="' + escHtml(entry.audio_url) + '" controls style="width:100%;height:36px"></audio>' +
-        '</div>';
-      } else if (data.audios && data.audios.length) {
-        audiosEl.innerHTML = data.audios.map(function(a) {
-          return '<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:8px">' +
-            '<span style="font-size:1.1rem">🎵</span>' +
-            (a.signedUrl ? '<audio src="' + a.signedUrl + '" controls style="flex:1;height:28px"></audio>' : '') +
-            (a.answer ? '<span style="font-size:0.8rem;color:var(--text-light)">' + escHtml(a.answer) + '</span>' : '') +
+      var audioList = (data.audios && data.audios.length) ? data.audios
+        : (entry.audio_url ? [{ signedUrl: entry.audio_url, caption: '' }] : []);
+      if (audioList.length) {
+        audiosEl.innerHTML = audioList.map(function(a) {
+          return '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
+            (a.caption ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 6px;font-style:italic">' + escHtml(a.caption) + '</p>' : '') +
+            '<audio src="' + escHtml(a.signedUrl) + '" controls style="width:100%;height:36px"></audio>' +
           '</div>';
         }).join('');
       } else {
@@ -3228,11 +3222,15 @@
 
       // Video
       var videoEl = document.getElementById('shareEntryVideo');
-      if (entry.video_url) {
-        videoEl.innerHTML = '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
-          '<p style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:0 0 6px">🎬 Video</p>' +
-          '<video src="' + escHtml(entry.video_url) + '" controls style="width:100%;border-radius:6px;max-height:280px"></video>' +
-        '</div>';
+      var videoList = (data.videos && data.videos.length) ? data.videos
+        : (entry.video_url ? [{ signedUrl: entry.video_url, caption: '' }] : []);
+      if (videoList.length) {
+        videoEl.innerHTML = videoList.map(function(v) {
+          return '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:8px">' +
+            (v.caption ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 6px;font-style:italic">' + escHtml(v.caption) + '</p>' : '') +
+            '<video src="' + escHtml(v.signedUrl) + '" controls style="width:100%;border-radius:6px;max-height:280px"></video>' +
+          '</div>';
+        }).join('');
       } else {
         videoEl.style.display = 'none';
       }
