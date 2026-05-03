@@ -25,7 +25,7 @@
      Also update DEPLOY_NOTES text to describe what changed this build.
      ⚠️  FILENAME MUST MATCH APP_VERSION: deploy-v25 will BLOCK deploy if the filename
      doesn't contain the version (e.g. APP_VERSION 'v2.67' requires 'v2_67' in filename).
-     Current APP_VERSION: v3.65
+     Current APP_VERSION: v3.66
   2. If deploy.html was modified in any way, bump its version in BOTH the <title> AND
      the <h1> label (e.g. "deploy-v4" → "deploy-v5"). Output the new deploy
      filename in chat so Geoff knows which file to use. Also explicitly state
@@ -243,6 +243,22 @@
   Telegram is a SUBSET of Supabase — every Telegram message is also in life_activity_log.
   Not every Supabase log entry fires Telegram (low-level info events are Supabase-only).
 
+  DB Table: life_rate_limits (added v3.66)
+  Columns: user_id, tier (cheap|expensive), window_start, call_count, notified
+  RLS: users read own rows; edge function uses service_role (bypasses RLS)
+  Purpose: soft rate limiting for GETHRO_PROXY — logs + Telegram when exceeded, never blocks
+  SQL (run in Supabase SQL editor — already done if v3.66 deployed):
+    CREATE TABLE IF NOT EXISTS life_rate_limits (
+      user_id      uuid REFERENCES auth.users NOT NULL,
+      tier         text NOT NULL,
+      window_start timestamptz NOT NULL DEFAULT now(),
+      call_count   integer DEFAULT 0,
+      notified     boolean DEFAULT false,
+      PRIMARY KEY (user_id, tier)
+    );
+    ALTER TABLE life_rate_limits ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY "users read own" ON life_rate_limits FOR SELECT USING (user_id = auth.uid());
+
   ⚠️  DB MIGRATION NEEDED for v3.33 (run once in Supabase SQL editor):
     ALTER TABLE life_activity_log
       ADD COLUMN IF NOT EXISTS level    text,
@@ -273,7 +289,7 @@
   VERSIONING
   ----------
   Format: v[major].[minor] — major bumps for significant features, minor for fixes
-  Current: v3.65
+  Current: v3.66
   DEPLOY_NOTES constant in JS contains the commit message for each release.
   Version history tracked in deploy.html regression test logs.
 
@@ -507,7 +523,7 @@ Name:
   Every 10 builds (v1.50, v1.60, etc.) Claude will pause before coding and
   suggest 5 improvements not already on the backlog — covering code hygiene,
   usability, architecture, security, or features — for Geoff to prioritise.
-  Build counter: currently at v3.65 → next review at v3.50.
+  Build counter: currently at v3.66 → next review at v3.70.
 
 ------------DOUBLE CHECK WITH GEOFF BEFORE CHANGING ANYTHING ABOVE THIS LINE----------------------
 
@@ -534,7 +550,7 @@ Name:
     panel (max-height 75vh, rounded top corners, gold border). Chat log with Gethro-left /
     User-right message bubbles. Input row: text field + mic button + send button.
     AI call: passes system prompt (Gethro persona + entries summary + action catalogue) +
-    last 12 history messages to callAI(). Response parsed as JSON: { reply, action?, observation? }.
+    last 12 history messages to callGethro('chat'). Response parsed as JSON: { reply, action?, observation? }. (migrated to GETHRO_PROXY v3.66)
     Action router (_agpRoute): navigate_memories/entries/story/dashboard, filter_person/chapter/
     location, new_memory (pre-fills title + chapter), generate_story (mode param), capture_feedback
     (sends to Telegram via notifyDev). Friction observations logged to Telegram automatically.
@@ -764,14 +780,16 @@ Name:
   - Audio export — full story as downloadable mp3 (PREMIUM — real TTS cost at
     full story length, ~6-7c per export at OpenAI pricing. Premium anchor feature:
     "Download your life story as an audiobook, read by Gethro.")
-  - GETHRO_PROXY edge function (HIGH — IP protection + file size): move all AI
-    prompt logic server-side. Spec complete. 7 actions: chat, seed_question,
-    consolidate, hygiene, reconstruct, generate_story, auto_fill_tags.
-    Client sends structured data via callGethro(action, payload); server builds
-    all prompts and returns { ok, result }. Auth: Supabase JWT verified server-side,
-    rate-limited per user_id. Build order: chat first (smoke test) → seed_question
-    → hygiene/reconstruct → generate_story → consolidate/auto_fill_tags.
-    Effort: one focused session. Rollback: swap URL back to AI_PROXY.
+  - GETHRO_PROXY edge function (IN PROGRESS — v3.66 Phase 1 done):
+    Phase 1 DONE (v3.66): Edge fn deployed. JWT auth + two-tier rate limiting
+    (60/hr cheap, 10/hr expensive — soft warn via Telegram + life_activity_log).
+    callGethro() added to HTML. Ask Gethro chat action migrated. Deployer tests added.
+    life_rate_limits table created.
+    ⚠️  Confirm GROQ_API_KEY secret name matches what AI_PROXY uses — check in
+    Supabase dashboard before deploying. If different, update Deno.env.get() call.
+    Phase 2 (next): seed_question, reconstruct, hygiene — ~1 session.
+    Phase 3: generate_story, blurb, auto_fill_tags.
+    Phase 4: consolidate, duplicate_check, life_model, help_chat — retire callAI().
   - Entry linking (related entries): "see also" link between entries referencing
     same event from different angles. Low urgency but improves printed book flow.
   - Export data (JSON/CSV): one-click download of all entries. Data already in
@@ -811,11 +829,8 @@ Name:
     );
   ⚠️  DB MIGRATION NEEDED for v3.34 (run once in Supabase SQL editor):
     ALTER TABLE life_share_tokens ADD COLUMN IF NOT EXISTS note text;
-  ⚠️  SHARE_PROXY NEEDS UPDATE (still outstanding after v3.42):
-    get_entry response must include note: tokenRow.note in the returned payload.
-    Frontend already reads data.note correctly (loadSharePage line ~4167).
-    Owner's share links panel now shows the note (renderTokenRow — DONE v3.42).
-    Only the edge function return value is missing.
+  SHARE_PROXY note field: FIXED v3.66 — edge fn now selects and returns note field.
+    Frontend already reading data.note correctly. Both sides aligned.
     ALTER TABLE life_share_tokens ENABLE ROW LEVEL SECURITY;
     CREATE POLICY "owner only" ON life_share_tokens USING (user_id = auth.uid());
 
@@ -3877,8 +3892,8 @@ Name:
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.65';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share media fix: photos/audio/video are stored as child entries (parent_entry_id), not on the main entry row. Edge fn now fetches child entries and signs all media URLs. Frontend uses data.photos/audios/videos arrays.';
+  const APP_VERSION  = 'v3.66';
+  const DEPLOY_NOTES = APP_VERSION + ' — GETHRO_PROXY Phase 1: new edge function with JWT auth + two-tier rate limiting (60/hr cheap, 10/hr expensive). callGethro() added alongside callAI(). Ask Gethro chat action migrated to GETHRO_PROXY. life_rate_limits table added. Deployer tests added for GETHRO_PROXY.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3891,6 +3906,7 @@ Name:
   const SUPABASE_URL  = 'https://zygetlpgjkpyiyjquhfp.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5Z2V0bHBnamtweWl5anF1aGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNTk1NjcsImV4cCI6MjA4NjczNTU2N30.ZKb4tcjKGOU2XkRrEad3GxKLeRtKwdrdPlNwB9yvDeA';
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
+  const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
   const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/tts-proxy';    // Gethro voice
@@ -6008,6 +6024,31 @@ Name:
         throw err;
       }
     }
+  }
+
+  // ── callGethro — JWT-authenticated AI proxy (Phase 1+) ──────────
+  // Sends structured payload to GETHRO_PROXY edge function.
+  // Prompts are built server-side — client sends data, not prompt strings.
+  // callAI() remains for actions not yet migrated.
+  async function callGethro(action, payload = {}) {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+    const res = await Promise.race([
+      fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token,
+          'apikey': SUPABASE_ANON,
+        },
+        body: JSON.stringify({ action, ...payload }),
+      }),
+      new Promise((_,reject) => setTimeout(() => reject(new Error('Timed out after 45s')), 45000))
+    ]);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'GETHRO_PROXY error ' + res.status);
+    if (!data.ok) throw new Error(data.error || 'GETHRO_PROXY returned not-ok');
+    return data.result;
   }
 
   // ── Onboarding ───────────────────────────────────────────────────
@@ -13942,23 +13983,13 @@ Name:
       'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard (e.g. "Chris Auntie" may be a mishearing). If a name or reference seems odd or the user says they do not know it, treat it as a speech-to-text error, acknowledge it lightly, and move on — never dwell on it or keep asking about it.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
-    // Build messages array: system + history
-    var messages = [{ role: 'user', content: systemPrompt + '\n\nCONVERSATION:\n' +
-      historyToSend.slice(0, -1).map(function(m) { return m.role.toUpperCase() + ': ' + m.content; }).join('\n') +
-      '\n\nUSER: ' + historyToSend[historyToSend.length - 1].content
-    }];
-
+    // Pass full assembled context to GETHRO_PROXY — prompts are built server-side.
+    // systemPrompt is passed as-is; server wraps it with Gethro persona and returns parsed JSON.
     try {
-      var raw = await callAI(messages[0].content, { max_tokens: 300 });
-
-      // Parse JSON — strip any accidental markdown fences
-      var clean = raw.replace(/```json|```/g, '').trim();
-      var match  = clean.match(/\{[\s\S]*\}/);
-      var parsed = {};
-      try { parsed = JSON.parse(match ? match[0] : clean); } catch(e) {
-        // If JSON fails, treat entire response as a plain reply
-        parsed = { reply: raw.replace(/[{}"\[\]]/g,'').trim() };
-      }
+      var parsed = await callGethro('chat', {
+        systemPrompt: systemPrompt,
+        history: historyToSend,
+      });
 
       var reply = (parsed.reply || 'I had trouble with that — could you try again?').trim();
 
