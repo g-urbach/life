@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.66';
-  const DEPLOY_NOTES = APP_VERSION + ' — GETHRO_PROXY Phase 1: new edge function with JWT auth + two-tier rate limiting (60/hr cheap, 10/hr expensive). callGethro() added alongside callAI(). Ask Gethro chat action migrated to GETHRO_PROXY. life_rate_limits table added. Deployer tests added for GETHRO_PROXY.';
+  const APP_VERSION  = 'v3.67';
+  const DEPLOY_NOTES = APP_VERSION + ' — GETHRO_PROXY Phase 2: seed_question, hygiene, reconstruct migrated server-side. runAIReview() refactored to use callGethro(). memAskQuestion() and _agpSeedMemoryQuestion() migrated. Prompt strings removed from HTML.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5746,41 +5746,17 @@
       const hasLocation = !!tags.location;
       const hasRef      = !!tags.reference;
 
-      // ── Call 1: Structured hygiene check (NO free text fields — avoids JSON escaping issues) ──
-      const hygienePrompt =
-        'You are a memoir editor. Respond ONLY with a valid JSON object — no markdown, no prose.\n\n' +
-        'ENTRY TEXT:\n' + text.substring(0, 800) + feedbackContext + '\n\n' +
-        'EXISTING TAGS: ' + JSON.stringify(tags) + '\n\n' +
-        'Return ONLY this JSON. Use true/false for booleans, short plain strings for notes.\n' +
-        'CRITICAL: if you cannot confidently determine a value, use a blank string "" — NEVER use the word "empty" as a value.\n' +
-        'SPELLING: check every word carefully. Common memoir misspellings include food names, place names, and proper nouns. If ANY word is misspelled, set spelling_ok to false and list the specific errors.\n' +
-        '{"spelling_ok":true,"spelling_notes":"list specific misspelled words or blank",' +
-        '"grammar_ok":true,"grammar_notes":"specific issues or blank",' +
-        '"length_ok":true,"length_notes":"too short or good or rich",' +
-        '"voice_ok":true,"voice_notes":"specific clarity issues or blank",' +
-        '"suggest_title":"a short evocative title for this specific memory e.g. Dad and the old shed or blank if already set",' +
-        '"suggest_chapter":"broad life chapter like Family or Childhood or Career or Challenges — NOT a specific event name",' +
-        '"suggest_era":"decade like 1980s or year like 1985 only if clearly inferable from text",' +
-        '"suggest_people":"' + (responderNames.length
-          ? 'Always include these responder names (they engaged with this memory): ' + responderNames.join(', ') + '. Also add any other first names mentioned in the text. Return all as comma-separated first names.'
-          : 'first names of people mentioned in text — comma separated — or blank') + '",' +
-        '"suggest_location":"specific place mentioned in text or blank",' +
-        '"suggest_reference":"broad historical or cultural context if relevant e.g. World War 2 or blank"}';
-
-      const hygieneRaw   = await callAI(hygienePrompt, { max_tokens: 400 });
+      // ── Call 1: Structured hygiene check — prompt built server-side in GETHRO_PROXY ──
+      const hygieneRes = await callGethro('hygiene', {
+        text,
+        tags,
+        feedbackContext,
+        responderNames,
+      });
       if (_aiReviewAborted) return;
-      const hygieneClean = hygieneRaw.replace(/```json|```/g,'').trim();
-      dbg('AI-REVIEW', 'Hygiene response:', hygieneClean.substring(0,200));
-
-      let r = null;
-      for (const attempt of [
-        () => JSON.parse(hygieneClean),
-        () => JSON.parse(hygieneClean.match(/\{[^{}]*\}/)?.[0] || ''),
-        () => JSON.parse(hygieneClean.replace(/[\x00-\x1F\x7F]/g,' ').match(/\{[^{}]*\}/)?.[0] || ''),
-      ]) {
-        try { r = attempt(); if (r) break; } catch(e) { dbgWarn('AI-REVIEW', 'Parse failed:', e.message); }
-      }
-      if (!r) throw new Error('Could not parse hygiene response. Raw: ' + hygieneClean.substring(0,100));
+      dbg('AI-REVIEW', 'Hygiene response received from GETHRO_PROXY');
+      let r = hygieneRes.hygiene;
+      if (!r) throw new Error('hygiene action returned no result');
 
       // Strip AI filler — if the model returns "empty", "n/a", "none" treat as blank
       const cleanSuggest = (v) => {
@@ -5801,36 +5777,17 @@
       r.suggestLocation  = cleanSuggest(r.suggest_location);
       r.suggestReference = cleanSuggest(r.suggest_reference);
 
-      // ── Call 2: Spelling fix (only if needed, plain text — no JSON) ──
+      // ── Spelling fix — already computed server-side by GETHRO_PROXY hygiene action ──
       if (!r.spelling.ok) {
         if (_aiReviewAborted) return;
-        const fixPrompt =
-          'Fix ONLY the spelling errors in this text. Preserve every word, fact and the person\'s exact voice. ' +
-          'Return ONLY the corrected text, nothing else:\n\n' + text;
-        try {
-          r.spelling.fixed = (await callAI(fixPrompt, { max_tokens: 600 })).trim();
-        } catch(e) { dbgWarn('AI-REVIEW', 'Spelling fix failed:', e.message); }
+        if (hygieneRes.spellingFixed) r.spelling.fixed = hygieneRes.spellingFixed;
       }
 
-      // ── Call 3: Reconstruction (plain text — no JSON) ──
+      // ── Call 2: Reconstruction — prompt built server-side in GETHRO_PROXY ──
       if (_aiReviewAborted) return;
-      const reconPrompt =
-        'Rewrite this memoir entry as a clean, coherent paragraph in the author\'s voice. ' +
-        'Preserve ALL facts from the original exactly — do not add, invent, or embellish anything. ' +
-        'Fix rambling, repetition, and speech-to-text errors only. ' +
-        (fbReplies.length
-          ? 'FACTUAL ADDITIONS: The section below labelled "FACTUAL ADDITIONS FROM FAMILY/FRIENDS" contains real facts provided by people who know this story. ' +
-            'Weave each fact into the rewrite as a concrete detail in the story. ' +
-            'For example: if G1 was asked "What was dad\'s favourite cafe?" and answered "Goodfields", write "Dad\'s favourite cafe was Goodfields" — state it as plain fact. ' +
-            'STRICT RULES: (1) Do NOT say "a reader mentioned" or "some people shared" — these are story facts not comments. ' +
-            '(2) Do NOT invent any details not present in the original or the factual additions. ' +
-            '(3) If an answer seems unrelated (e.g. "Choo choo"), include it only if the question makes the meaning clear, otherwise omit it. '
-          : '') +
-        'If the original is already clean and there are no factual additions to incorporate, reply with exactly: CLEAN\n\n' +
-        'ENTRY:\n' + text + feedbackContext;
       try {
-        const reconRaw = (await callAI(reconPrompt, { max_tokens: 600 })).trim();
-        r.reconstruction = reconRaw === 'CLEAN' ? '' : reconRaw;
+        const reconRes = await callGethro('reconstruct', { text, feedbackContext });
+        r.reconstruction = reconRes.reconstruction || '';
         // If reconstruction changed the text and hygiene call said spelling was OK,
         // cross-check: run a dedicated spell check on the original vs reconstruction.
         // This catches cases where Groq JSON mode misses misspellings.
@@ -6182,13 +6139,8 @@
   async function memAskFollowUp() {
     if (!recDeepContext) return;
     try {
-      const prompt =
-        'You are Gethro, a sharp investigative journalist helping someone record their life story.\n\n' +
-        'WHAT THEY JUST SHARED:\n' + recDeepContext + '\n\n' +
-        'Ask ONE specific follow-up question (max 15 words) that digs for a concrete fact not yet stated — ' +
-        'a name, a date, a place, a sequence of events, or exactly what happened. ' +
-        'Avoid questions about feelings or emotions. Return ONLY the question.';
-      const question = await callAI(prompt);
+      const res = await callGethro('seed_question', { mode: 'follow_up', entryContext: recDeepContext });
+      const question = res.question;
       recCurQuestion = question;
       // Append inline — no separate question box needed
       memAppendQuestion(question);
@@ -6308,13 +6260,12 @@
       const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
       let prompt;
 
+      let question;
       if (isDeep) {
         const context = recDeepContext || realEntries.slice(-3)
           .map(e => (e.question ? 'Q: ' + e.question + '\n' : '') + 'A: ' + e.answer).join('\n\n');
-        prompt =
-          'You are a warm, curious biographer in conversation with someone recording their life story.\n\n' +
-          'THE MOST RECENT EXCHANGE:\n' + context + '\n\n' +
-          'Ask ONE specific follow-up question (max 15 words). Focus on the most concrete unstated fact — a name, date, place, or what happened next. Do NOT ask about feelings or emotions. Return ONLY the question.';
+        const res = await callGethro('seed_question', { mode: 'deep', entryContext: context });
+        question = res.question;
       } else {
         const coveredQuestions = realEntries.map(e => e.question).filter(Boolean).concat(recCurQuestion ? [recCurQuestion] : []).join('\n');
         const coveredText = realEntries.slice(-40).map(e => (e.question || '') + ' ' + e.answer.slice(0,60)).join(' ').toLowerCase();
@@ -6323,14 +6274,13 @@
           'travel','hobbies','proudest moment','regrets','hardest time',
           'mentor','beliefs','funniest memory','advice to younger self'];
         const uncovered = lifeAreas.filter(a => !a.split(' ').some(w => w.length > 3 && coveredText.includes(w)));
-        prompt =
-          'You are a warm biographer helping someone record their life story.\n\n' +
-          'QUESTIONS ALREADY ASKED — DO NOT REPEAT:\n' + (coveredQuestions || 'None yet.') + '\n\n' +
-          'UNCOVERED AREAS TO CHOOSE FROM:\n' + (uncovered.length ? uncovered.join(', ') : lifeAreas.slice(-8).join(', ')) + '\n\n' +
-          'Ask ONE short warm question about one uncovered area. Max 12 words. Return ONLY the question.';
+        const res = await callGethro('seed_question', {
+          mode: 'new',
+          coveredQuestions,
+          uncoveredAreas: uncovered.length ? uncovered : lifeAreas.slice(-8),
+        });
+        question = res.question;
       }
-
-      const question = await callAI(prompt);
       if (!recActive) return;
       recCurQuestion = question;
 
@@ -12522,36 +12472,14 @@
   async function _agpSeedMemoryQuestion(firstName, entryContext, entryTitle) {
     var typingEl = _agpAppendTyping();
     try {
-      var nameStr = firstName ? firstName + '.' : 'you.';
-      var prompt;
-      if (entryTitle) {
-        // 'Edit with Gethro' mode — acknowledge title warmly then ask a question NOT already answered
-        prompt =
-          'You are Gethro, a sharp and curious personal story guide.\n' +
-          'The user has opened this existing memory to continue writing it:\n' +
-          'TITLE: ' + entryTitle + '\n' +
-          'EXISTING CONTENT (read this carefully — do NOT ask about anything already covered here):\n' +
-          entryContext + '\n\n' +
-          'Write ONE opening message (max 25 words) that: briefly acknowledges the title, then asks one specific fact-seeking question ' +
-          'that digs DEEPER into something not yet explained — a who, when, where, or what happened next. Avoid asking about feelings.\n' +
-          'Address them as ' + nameStr + '\n' +
-          'Do NOT use a greeting like Hi or Hello — jump straight in.\n' +
-          'Do NOT ask about anything already mentioned or answered in the existing content.\n' +
-          'Return ONLY the message, nothing else.';
-      } else {
-        // Standard seed — fact-seeking question about what they are currently writing
-        prompt =
-          'You are Gethro, a sharp investigative journalist helping someone record their life story.\n' +
-          'The user is writing this memory entry:\n\n' +
-          entryContext + '\n\n' +
-          'Ask ONE specific fact-seeking question (max 20 words) about a concrete detail not yet stated — ' +
-          'a name, a date, a place, or exactly what happened. Avoid asking about feelings.\n' +
-          'Address them as ' + nameStr + '\n' +
-          'Return ONLY the question, nothing else.';
-      }
-      var raw = (await callAI(prompt, { max_tokens: 80 })).trim();
-      // Clean up any quotes/trailing punctuation
-      var question = raw.replace(/^["']/, '').replace(/["'.]$/, '').trim();
+      // Prompts built server-side in GETHRO_PROXY — send structured data only
+      var res = await callGethro('seed_question', {
+        mode: 'agp_seed',
+        firstName: firstName,
+        entryContext: entryContext,
+        entryTitle: entryTitle,
+      });
+      var question = res.question;
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
@@ -12580,18 +12508,9 @@
       var existingTitle = ((document.getElementById('memTitle') || {}).value || '').trim();
       var existingTags  = readTags('rec');
 
-      var prompt =
-        'You are a memoir editor. Based on this memoir passage, suggest metadata tags.\n' +
-        'PASSAGE:\n' + consolidated.slice(0, 600) + '\n\n' +
-        'Return ONLY a valid JSON object with these optional fields (omit any you cannot confidently determine):\n' +
-        '{"title":"short evocative title if not already set","chapter":"broad life chapter e.g. Family, Childhood, Career","year":"decade like 1980s or year like 1985","people":"first names comma-separated","location":"specific place"}\n' +
-        'CRITICAL: return raw JSON only, no markdown, no prose. If a field is already set, omit it.';
-
-      var raw   = (await callAI(prompt, { max_tokens: 150 })).trim();
-      var clean = raw.replace(/```json|```/g, '').trim();
-      var match = clean.match(/\{[\s\S]*\}/);
-      var tags  = {};
-      try { tags = JSON.parse(match ? match[0] : clean); } catch(e) { return; }
+      // Prompt built server-side — client sends text, server returns tag suggestions
+      var tagsRes = await callGethro('auto_fill_tags', { text: consolidated.slice(0, 600) });
+      var tags = tagsRes || {};
 
       // Only fill fields that are empty — never overwrite user input
       var toApply = {};
