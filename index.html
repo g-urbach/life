@@ -2359,18 +2359,46 @@
   </div>
   </div>
 
-  <!-- MY PEOPLE OVERLAY (Phase 1 shell) -->
+  <!-- MY PEOPLE OVERLAY (Phase 1 — tree layout) -->
   <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;overflow-y:auto">
-    <div style="max-width:680px;margin:0 auto;padding:24px 20px 60px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+    <div style="max-width:720px;margin:0 auto;padding:24px 20px 80px">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
         <button onclick="closeMyPeople()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px">&#10005;</button>
       </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 24px;text-align:center">
-        <div style="font-size:2.5rem;margin-bottom:16px">&#127795;</div>
-        <p style="font-family:'Playfair Display',serif;font-size:1.1rem;color:var(--text);margin-bottom:8px;font-weight:600">Your family tree is coming soon</p>
-        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;max-width:360px;margin:0 auto">Gethro will help you build your tree from the people you have already mentioned in your memories.</p>
+      <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:24px">Your family tree &amp; the people in your story.</p>
+
+      <!-- Expand-up button -->
+      <div id="mpExpandUpRow" style="display:none;text-align:center;margin-bottom:12px">
+        <button onclick="mpExpandUp()" style="background:none;border:1px solid var(--border);border-radius:20px;padding:6px 18px;font-size:0.78rem;color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif">
+          &#8593; Show older generations
+        </button>
       </div>
+
+      <!-- Tree container — generations rendered here -->
+      <div id="mpTreeContainer" style="display:flex;flex-direction:column;gap:0"></div>
+
+      <!-- Expand-down button -->
+      <div id="mpExpandDownRow" style="display:none;text-align:center;margin-top:12px">
+        <button onclick="mpExpandDown()" style="background:none;border:1px solid var(--border);border-radius:20px;padding:6px 18px;font-size:0.78rem;color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif">
+          &#8595; Show younger generations
+        </button>
+      </div>
+
+      <!-- Empty state (shown when no family members exist) -->
+      <div id="mpEmptyState" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 24px;text-align:center;margin-top:8px">
+        <div style="font-size:2.5rem;margin-bottom:16px">&#127795;</div>
+        <p style="font-family:'Playfair Display',serif;font-size:1.1rem;color:var(--text);margin-bottom:8px;font-weight:600">Your family tree is empty</p>
+        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;max-width:360px;margin:0 auto">Gethro will help you add people from your memories. Coming in the next step.</p>
+      </div>
+
+      <!-- Loading state -->
+      <div id="mpLoadingState" style="text-align:center;padding:48px 0;color:var(--text-light);font-size:0.88rem">
+        Loading your people&#8230;
+      </div>
+
     </div>
   </div>
 
@@ -2833,8 +2861,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.76';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 1 step 1+2: DB constants added (life_people + life_people_relationships), My People dashboard tile (shell, opens placeholder overlay).';
+  const APP_VERSION  = 'v3.77';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 1 step 3: full tree overlay with generation layout, expand up/down, compact cards, empty/loading states, node highlight on tap.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13220,14 +13248,305 @@
     });
   });
 
-  // ── My People ─────────────────────────────────────────────────────
-  function openMyPeople() {
+  // ── My People — Family Tree ───────────────────────────────────────
+  // State
+  var _mpPeople = [];        // all people rows from life_people
+  var _mpRels   = [];        // all relationship rows from life_people_relationships
+  var _mpMinGen = -1;        // lowest generation currently visible (negative = ancestors)
+  var _mpMaxGen =  1;        // highest generation currently visible (positive = descendants)
+  var _mpAllMinGen = -1;     // lowest generation that exists in data
+  var _mpAllMaxGen =  1;     // highest generation that exists in data
+
+  // Generation number mapping:
+  //  0 = the author (you)
+  // -1 = parents, -2 = grandparents, -3 = great-grandparents
+  // +1 = children, +2 = grandchildren, etc.
+
+  // Relationship type → generation offset from person_a to person_b
+  var MP_GEN_OFFSET = {
+    'parent_of':            -1,   // a is parent of b → b is one gen below a
+    'child_of':              1,
+    'grandparent_of':       -2,
+    'grandchild_of':         2,
+    'great_grandparent_of': -3,
+    'great_grandchild_of':   3,
+    'spouse_of':             0,
+    'sibling_of':            0,
+    'step_parent_of':       -1,
+    'step_child_of':         1,
+    'half_sibling_of':       0,
+  };
+
+  // Friendly label for relationship_type stored on person row
+  var MP_REL_LABEL = {
+    'parent':            'Parent',
+    'mother':            'Mother',
+    'father':            'Father',
+    'sibling':           'Sibling',
+    'brother':           'Brother',
+    'sister':            'Sister',
+    'spouse':            'Spouse',
+    'partner':           'Partner',
+    'child':             'Child',
+    'son':               'Son',
+    'daughter':          'Daughter',
+    'grandparent':       'Grandparent',
+    'grandmother':       'Grandmother',
+    'grandfather':       'Grandfather',
+    'grandchild':        'Grandchild',
+    'grandson':          'Grandson',
+    'granddaughter':     'Granddaughter',
+    'great_grandparent': 'Great-grandparent',
+    'great_grandchild':  'Great-grandchild',
+    'step_parent':       'Step-parent',
+    'step_child':        'Step-child',
+    'half_sibling':      'Half-sibling',
+    'aunt':              'Aunt',
+    'uncle':             'Uncle',
+    'cousin':            'Cousin',
+    'niece':             'Niece',
+    'nephew':            'Nephew',
+  };
+
+  async function openMyPeople() {
     document.getElementById('myPeopleOverlay').style.display = 'block';
     logActivity('my_people_opened', '', 'info', 'PEOPLE');
+    await _mpLoad();
   }
 
   function closeMyPeople() {
     document.getElementById('myPeopleOverlay').style.display = 'none';
+  }
+
+  async function _mpLoad() {
+    var loadEl  = document.getElementById('mpLoadingState');
+    var emptyEl = document.getElementById('mpEmptyState');
+    var treeEl  = document.getElementById('mpTreeContainer');
+    var upRow   = document.getElementById('mpExpandUpRow');
+    var downRow = document.getElementById('mpExpandDownRow');
+
+    loadEl.style.display  = 'block';
+    emptyEl.style.display = 'none';
+    treeEl.innerHTML      = '';
+    upRow.style.display   = 'none';
+    downRow.style.display = 'none';
+
+    try {
+      var headers = getAuthHeaders();
+      var [pRes, rRes] = await Promise.all([
+        fetch(DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id + '&bucket=eq.family&order=created_at.asc', { headers }),
+        fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id, { headers }),
+      ]);
+      _mpPeople = pRes.ok  ? await pRes.json()  : [];
+      _mpRels   = rRes.ok  ? await rRes.json()  : [];
+    } catch(e) {
+      dbgWarn('PEOPLE', 'Load failed: ' + e.message);
+      _mpPeople = [];
+      _mpRels   = [];
+    }
+
+    loadEl.style.display = 'none';
+
+    if (!_mpPeople.length) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    // Assign generation numbers
+    _mpAssignGenerations();
+
+    // Default visible range: -1 (parents) to +1 (children), anchored on gen 0 (you)
+    _mpMinGen = Math.max(_mpAllMinGen, -1);
+    _mpMaxGen = Math.min(_mpAllMaxGen,  1);
+    // Always show at least gen 0
+    if (_mpMinGen > 0) _mpMinGen = 0;
+    if (_mpMaxGen < 0) _mpMaxGen = 0;
+
+    _mpRender();
+  }
+
+  function _mpAssignGenerations() {
+    // Find the author node (bucket='family', relationship_type='self' or first inserted)
+    // Author is whoever has no parent_of relationship pointing at them — i.e. no one is their parent.
+    // Fallback: first person in list.
+    var genMap = {};  // person id → generation number
+
+    // Find author: person with relationship_type 'self', or lacking any incoming 'parent_of' rel
+    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+    if (!selfNode) {
+      // Pick person who is not the 'b' in any parent_of relationship
+      var childIds = new Set(_mpRels.filter(function(r) { return r.relationship_type === 'parent_of'; }).map(function(r) { return r.person_b_id; }));
+      selfNode = _mpPeople.find(function(p) { return !childIds.has(p.id); }) || _mpPeople[0];
+    }
+    genMap[selfNode.id] = 0;
+
+    // BFS outward from self using relationships
+    var queue = [selfNode.id];
+    var visited = new Set([selfNode.id]);
+    while (queue.length) {
+      var current = queue.shift();
+      var currentGen = genMap[current];
+      _mpRels.forEach(function(r) {
+        var offset = MP_GEN_OFFSET[r.relationship_type];
+        if (offset === undefined) return;
+        var otherId = null;
+        if (r.person_a_id === current) otherId = r.person_b_id;
+        else if (r.person_b_id === current) {
+          // reverse direction: invert offset
+          offset = -offset;
+          otherId = r.person_a_id;
+        }
+        if (!otherId || visited.has(otherId)) return;
+        genMap[otherId] = currentGen + offset;
+        visited.add(otherId);
+        queue.push(otherId);
+      });
+    }
+
+    // Any unconnected people: assign gen 0
+    _mpPeople.forEach(function(p) {
+      if (genMap[p.id] === undefined) genMap[p.id] = 0;
+    });
+
+    // Store gen on each person object
+    _mpPeople.forEach(function(p) { p._gen = genMap[p.id]; });
+
+    // Calculate total range
+    var gens = _mpPeople.map(function(p) { return p._gen; });
+    _mpAllMinGen = Math.min.apply(null, gens);
+    _mpAllMaxGen = Math.max.apply(null, gens);
+  }
+
+  function _mpRender() {
+    var treeEl  = document.getElementById('mpTreeContainer');
+    var upRow   = document.getElementById('mpExpandUpRow');
+    var downRow = document.getElementById('mpExpandDownRow');
+    treeEl.innerHTML = '';
+
+    // Show/hide expand buttons
+    upRow.style.display   = (_mpMinGen > _mpAllMinGen) ? 'block' : 'none';
+    downRow.style.display = (_mpMaxGen < _mpAllMaxGen) ? 'block' : 'none';
+
+    // Render each generation row from most-ancestor to most-descendant
+    for (var gen = _mpMinGen; gen <= _mpMaxGen; gen++) {
+      var people = _mpPeople.filter(function(p) { return p._gen === gen; });
+      if (!people.length) continue;
+      treeEl.appendChild(_mpBuildGenRow(gen, people));
+      // Connector line between generations (not after last row)
+      if (gen < _mpMaxGen) {
+        var connector = document.createElement('div');
+        connector.style.cssText = 'display:flex;justify-content:center;height:28px;align-items:center';
+        connector.innerHTML = '<div style="width:2px;height:100%;background:var(--border)"></div>';
+        treeEl.appendChild(connector);
+      }
+    }
+  }
+
+  function _mpBuildGenRow(gen, people) {
+    // Generation label
+    var genLabels = {
+      '-3': 'Great-grandparents',
+      '-2': 'Grandparents',
+      '-1': 'Parents',
+       '0': 'You',
+       '1': 'Children',
+       '2': 'Grandchildren',
+       '3': 'Great-grandchildren',
+    };
+    var label = genLabels[String(gen)] || (gen < 0 ? 'Generation ' + Math.abs(gen) + ' up' : 'Generation ' + gen + ' down');
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:8px';
+
+    // Label
+    var labelEl = document.createElement('div');
+    labelEl.style.cssText = 'font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);font-weight:700;margin-bottom:2px';
+    labelEl.textContent = label;
+    row.appendChild(labelEl);
+
+    // Cards row
+    var cardsRow = document.createElement('div');
+    cardsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:center';
+
+    people.forEach(function(person) {
+      cardsRow.appendChild(_mpBuildCard(person, gen === 0));
+    });
+
+    row.appendChild(cardsRow);
+    return row;
+  }
+
+  function _mpBuildCard(person, isSelf) {
+    var card = document.createElement('div');
+    var borderColor = isSelf ? 'var(--gold)' : 'var(--border)';
+    var bgColor     = isSelf ? 'rgba(201,169,110,0.08)' : 'var(--surface)';
+    card.style.cssText = 'background:' + bgColor + ';border:1.5px solid ' + borderColor + ';border-radius:12px;padding:12px 16px;min-width:120px;max-width:180px;cursor:pointer;transition:box-shadow 0.15s;user-select:none';
+    card.setAttribute('data-person-id', person.id);
+    card.onclick = function() { _mpSelectCard(person.id, card); };
+    card.onmouseover = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = '0 2px 12px rgba(0,0,0,0.12)'; };
+    card.onmouseout  = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = ''; };
+
+    // Name
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:0.88rem;font-weight:700;color:var(--text);font-family:\'Lato\',sans-serif;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    nameEl.textContent = person.name || '—';
+    card.appendChild(nameEl);
+
+    // Relationship label
+    var relText = person.relationship_label || MP_REL_LABEL[person.relationship_type] || person.relationship_type || '';
+    if (relText) {
+      var relEl = document.createElement('div');
+      relEl.style.cssText = 'font-size:0.72rem;color:var(--text-light);margin-bottom:2px';
+      relEl.textContent = relText;
+      card.appendChild(relEl);
+    }
+
+    // DOB
+    if (person.dob) {
+      var dobEl = document.createElement('div');
+      dobEl.style.cssText = 'font-size:0.68rem;color:var(--text-light);margin-top:4px';
+      var d = new Date(person.dob);
+      dobEl.textContent = 'b. ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+      card.appendChild(dobEl);
+    }
+
+    return card;
+  }
+
+  var _mpSelectedId = null;
+  function _mpSelectCard(personId, cardEl) {
+    // Deselect previously selected card
+    var prev = document.querySelector('.mp-selected');
+    if (prev) {
+      prev.classList.remove('mp-selected');
+      prev.style.boxShadow = '';
+      var prevPerson = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
+      var wasSelf = prevPerson && prevPerson._gen === 0;
+      prev.style.borderColor = wasSelf ? 'var(--gold)' : 'var(--border)';
+    }
+    if (_mpSelectedId === personId) {
+      // Tapping same card deselects
+      _mpSelectedId = null;
+      return;
+    }
+    _mpSelectedId = personId;
+    cardEl.classList.add('mp-selected');
+    cardEl.style.borderColor  = 'var(--sage)';
+    cardEl.style.boxShadow    = '0 0 0 3px rgba(122,158,126,0.25)';
+  }
+
+  function mpExpandUp() {
+    if (_mpMinGen > _mpAllMinGen) {
+      _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen - 1);
+      _mpRender();
+    }
+  }
+
+  function mpExpandDown() {
+    if (_mpMaxGen < _mpAllMaxGen) {
+      _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen + 1);
+      _mpRender();
+    }
   }
 
   // ── Profile edit ──────────────────────────────────────────────────
