@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.68';
-  const DEPLOY_NOTES = APP_VERSION + ' — deploy-v17: title fix (v12→v16 stale), _LOG_LINE_OFFSET now auto-patched by deployer each build (no more manual updates), RLS live test for anon logActivity insert (proves v3.38 migration applied), Phase 3 static test stubs (generate_story, blurb warnings). Project memory updated.';
+  const APP_VERSION  = 'v3.70';
+  const DEPLOY_NOTES = APP_VERSION + ' — deploy-v18: self-commit version-compare fix (was failing on file://), copyFailures no-failures bug fixed (always appended), button text updated to failures+warnings, RLS live test 400 handling + correct 2-step migration SQL (ALTER COLUMN DROP NOT NULL + policy). Project memory updated.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -2968,11 +2968,13 @@
   //   area    — uppercase area tag e.g. 'AUTH','AI','RENDER' (default 'APP')
   //   srcLine — raw browser line number (optional, from window.onerror col 4)
   // ⚠️  Schema migration required for v3.33 — see project memory DB section.
-  // ⚠️  RLS migration required for unauthenticated share-page logging (v3.38):
-  //     DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log;
-  //     CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (
-  //       user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)
-  //     );
+  // ⚠️  RLS + schema migration required for unauthenticated share-page logging (v3.38):
+  //     Step 1: ALTER TABLE life_activity_log ALTER COLUMN user_id DROP NOT NULL;
+  //     Step 2: DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log;
+  //             CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (
+  //               user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)
+  //             );
+  //     See project memory for full SQL. deploy-v18 live test 8 confirms when done.
   function logActivity(action, detail, level, area, srcLine) {
     var platform = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
       ? (/iPad|tablet/i.test(navigator.userAgent) ? 'tablet' : 'mobile')
@@ -6857,19 +6859,16 @@
   }
 
   async function suggestBlurb(btn) {
+    // ── Prompt built server-side in GETHRO_PROXY (blurb action, Phase 3) ──
     var real = entries.filter(function(e){ return !e.category.startsWith('_profile'); });
     if (real.length < 3) return toast('Add more memories first — AI needs at least 3 entries to suggest a blurb');
     if (btn) { btn.textContent = '⏳ Thinking…'; btn.disabled = true; }
     var sample = real.slice(0, 20).map(function(e){ return e.answer; }).join(' ').substring(0, 3000);
     var name   = userProfile.name || 'the author';
-    var prompt = 'Write a compelling back-cover blurb (2-3 sentences, max 60 words) for a personal memoir by ' + name + '. '
-      + 'Draw on these memoir entries to make it specific and warm. '
-      + 'Write in third person. Return only the blurb text, no quotes or preamble. '
-      + 'MEMOIR ENTRIES: ' + sample;
     try {
-      var blurb = await callAI(prompt, { max_tokens: 200 });
+      var res = await callGethro('blurb', { name: name, entries: sample });
       var el = document.getElementById('bdBlurb');
-      if (el) { el.value = blurb.trim(); bookDetailsChanged(); }
+      if (el) { el.value = (res.blurb || '').trim(); bookDetailsChanged(); }
       toast('✨ Blurb suggested — edit to taste, then Save');
     } catch(err) {
       dbgErr('BOOKSETTINGS', 'suggestBlurb failed:', err.message);
@@ -6952,6 +6951,9 @@
 
       const base  = profileContext;
       const funny = funnyMode; // read toggle state
+      // NOTE: prompt strings below are now UNUSED — kept for reference only.
+      // Prompts are built server-side in GETHRO_PROXY generate_story action (Phase 3).
+      // mode, funny, profileContext, entriesText, chapterText, wordCount are sent as data.
       const funnyPrefix = funny
         ? 'You are a brilliant comedy writer. Write in a warm, affectionate roast style — funny but never mean. Poke gentle fun, exaggerate for comic effect, use wit and irony. Include funny observations about the era they grew up in. '
         : '';
@@ -7067,19 +7069,29 @@
         return;
       }
 
-      const story = await callAI(prompt, { max_tokens: maxTok });
+      // ── Prompt built server-side in GETHRO_PROXY (generate_story action, Phase 3) ──
+      // Data assembly (profileContext, entriesText, chapterText) stays here.
+      // max_tokens is determined server-side per mode.
+      const storyRes = await callGethro('generate_story', {
+        mode,
+        funny,
+        profileContext,
+        entriesText,
+        chapterText,
+        wordCount,
+      });
+      const story = storyRes.story;
 
       let funnyCaptions = {};
       if (funny && photoEntries.length) {
+        // ── Funny captions — prompt built server-side (funny_caption action, Phase 3) ──
         await Promise.all(photoEntries.map(async (e) => {
           try {
-            const cap = await callAI(
-              'Write a witty one-liner caption for a photo in a funny memoir. Warm, not mean. 2 sentences max. ' +
-              (e.photo_ai_description ? 'Photo shows: ' + e.photo_ai_description + '\n' : '') +
-              'Person says: "' + e.answer + '"\nReturn only the caption.',
-              { max_tokens: 100 }
-            );
-            funnyCaptions[e.timestamp] = cap;
+            const capRes = await callGethro('funny_caption', {
+              photoDescription: e.photo_ai_description || '',
+              entryAnswer: e.answer || '',
+            });
+            funnyCaptions[e.timestamp] = capRes.caption || '';
           } catch(err) { dbgWarn('STORY','Caption failed'); }
         }));
       }
