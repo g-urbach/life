@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.70';
-  const DEPLOY_NOTES = APP_VERSION + ' — deploy-v18: self-commit version-compare fix (was failing on file://), copyFailures no-failures bug fixed (always appended), button text updated to failures+warnings, RLS live test 400 handling + correct 2-step migration SQL (ALTER COLUMN DROP NOT NULL + policy). Project memory updated.';
+  const APP_VERSION  = 'v3.71';
+  const DEPLOY_NOTES = APP_VERSION + ' — Phase 4 complete: consolidate, duplicate_check, help_chat, seed_question/chapter all migrated to callGethro(). mineEssentials stays callAI() pending life_model (Phase 5). deploy-v19: deployer self-commit simplified, live test 7 fixed (life_model), static chat-fallback warn removed.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -9730,14 +9730,9 @@
 
     setMemStatus('speaking', 'Gethro is thinking about ' + chapter + '...');
     try {
-      const history = entries.filter(e => !e.category.startsWith('_profile')).slice(-30)
-        .map(e => e.answer).join(' ');
-      const prompt =
-        'You are a warm biographer helping someone record their life story.\n\n' +
-        'Ask ONE specific question (max 12 words) about the "' + chapter + '" chapter of their life.\n' +
-        'Make it personal, warm and open-ended.\n' +
-        'Return ONLY the question.';
-      const question = await callAI(prompt);
+      // ── Prompt built server-side in GETHRO_PROXY (seed_question chapter mode, Phase 4) ──
+      const data = await callGethro('seed_question', { mode: 'chapter', chapter });
+      const question = data.question || '';
       recCurQuestion = question;
       document.getElementById('aiQuestionText').textContent  = question;
       document.getElementById('aiQuestionBox').style.display = 'block';
@@ -10054,30 +10049,18 @@
   // ── AI semantic judge — one prompt for all candidate pairs ────────
   async function _dupAIJudgePairs(candidates) {
     if (!candidates.length) return [];
-    var lines = candidates.map(function(c, idx) {
+    var pairs = candidates.map(function(c, idx) {
       var eA=(entries||[]).find(function(e){ return e.id===c.idA; });
       var eB=(entries||[]).find(function(e){ return e.id===c.idB; });
       if (!eA||!eB) return null;
       var snipA=((eA.title?eA.title+': ':'')+eA.answer||'').trim().slice(0,150);
       var snipB=((eB.title?eB.title+': ':'')+eB.answer||'').trim().slice(0,150);
-      return (idx+1)+'. A: "'+snipA+'"\n   B: "'+snipB+'"';
+      return { id: idx + 1, textA: snipA, textB: snipB };
     }).filter(Boolean);
 
-    var prompt =
-      'You are reviewing pairs of personal memoir journal entries.\n\n'+
-      'For each numbered pair, classify the relationship:\n'+
-      '- "duplicate": same memory or event captured twice (even if phrased differently)\n'+
-      '- "overlap": different events that share a repeated passage or sentence\n'+
-      '- "different": clearly different memories\n\n'+
-      'Reply ONLY with a JSON array, one object per pair in order:\n'+
-      '[{"id":1,"verdict":"duplicate"},{"id":2,"verdict":"different"},...]\n\n'+
-      'Pairs:\n\n'+lines.join('\n\n');
-
-    var raw = await callAI(prompt, { max_tokens: 400 });
-    var clean = raw.replace(/```json|```/g,'').trim();
-    var results;
-    try { results = JSON.parse(clean); }
-    catch(e) { var m=clean.match(/\[[\s\S]*\]/); results=m?JSON.parse(m[0]):[]; }
+    // ── Prompt built server-side in GETHRO_PROXY (duplicate_check action, Phase 4) ──
+    var data = await callGethro('duplicate_check', { pairs });
+    var results = data.results || [];
 
     var confirmed=[];
     results.forEach(function(r) {
@@ -10357,12 +10340,18 @@
     var accept=document.getElementById('dupAcceptMergeBtn');
     var regen=document.getElementById('dupRegenBtn');
     try {
-      var combined='Entry A: '+(eA.title||'Untitled')+'\n'+(eA.answer||'').trim()+'\n\n---\n\nEntry B: '+(eB.title||'Untitled')+'\n'+(eB.answer||'').trim();
       var wc=Math.min(500,((eA.answer||'').split(/\s+/).filter(Boolean).length+(eB.answer||'').split(/\s+/).filter(Boolean).length)+60);
-      var prompt='You are a memoir editor helping someone write their life story.\n\n'+
-        'Below are 2 journal entries about the same memory, captured twice. Merge into one cohesive first-person memoir entry.\n' +
-        'RULES: Keep ALL specific names, dates, places and facts from both entries. Do NOT add, invent or embellish anything not stated. Do NOT add feelings unless they are explicitly stated. Roughly '+wc+' words.\n\nReturn ONLY the merged memoir text. No preamble, no title, no explanation.\n\n'+combined;
-      var merged=await callAI(prompt);
+      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, Phase 4) ──
+      var data = await callGethro('consolidate', {
+        mode: 'draft',
+        sourceType: 'entries',
+        entries: [
+          { title: eA.title || 'Untitled', answer: eA.answer || '' },
+          { title: eB.title || 'Untitled', answer: eB.answer || '' },
+        ],
+        targetWordCount: wc,
+      });
+      var merged = data.merged || '';
       // Only set if user hasn't typed already
       if (_dupMergedEdits.answer===undefined) _dupMergedEdits.answer=merged;
       // Update the textarea and status
@@ -10690,23 +10679,15 @@
     const approveBtn = document.getElementById('consolidateApproveBtn');
     const regenBtn  = document.getElementById('consolidateRegenerateBtn');
     try {
-      const combined = groupEntries.map((e,i) =>
-        'Entry ' + (i+1) + ': ' + (e.title||'Untitled') + '\n' + (e.answer||'').trim()
-      ).join('\n\n---\n\n');
       const targetWc = Math.min(600, groupEntries.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) + 80);
-      const prompt =
-        'You are a warm, skilled biographer helping someone write their memoir.\n\n' +
-        'Below are ' + groupEntries.length + ' separate journal entries about closely related memories or the same event.\n\n' +
-        combined + '\n\n' +
-        'Your task: Write a single, unified memoir entry that:\n' +
-        '- Combines ALL the detail from each entry — do not omit any fact, name, date or place\n' +
-        '- Reads as one cohesive, first-person narrative\n' +
-        '- Does NOT add, invent or embellish anything not stated in the entries\n' +
-        '- Includes feelings only if explicitly stated in the entries\n' +
-        '- Is roughly ' + targetWc + ' words\n\n' +
-        'Return ONLY the merged memoir text. No preamble, no title, no explanation.';
-      const merged = await callAI(prompt);
-      textEl.value = merged;
+      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, Phase 4) ──
+      const data = await callGethro('consolidate', {
+        mode: 'draft',
+        sourceType: 'entries',
+        entries: groupEntries.map(e => ({ title: e.title || 'Untitled', answer: e.answer || '' })),
+        targetWordCount: targetWc,
+      });
+      textEl.value = data.merged || '';
       statusEl.textContent = '✓ Draft ready — edit title and text freely before saving';
       approveBtn.disabled = false;
       regenBtn.disabled = false;
@@ -11092,10 +11073,10 @@
     const uDiv = document.createElement('div'); uDiv.className = 'help-msg-user'; uDiv.textContent = q; log.appendChild(uDiv);
     const aDiv = document.createElement('div'); aDiv.className = 'help-msg-ai'; aDiv.textContent = '...'; log.appendChild(aDiv);
     log.scrollTop = log.scrollHeight;
-    const systemPrompt = 'You are Gethro, the warm and curious AI companion inside LifeTold — an app that helps people record and preserve their life story. You speak in first person as Gethro: warm, unhurried, genuinely interested. Answer in 2-4 sentences. If the user asks how to do something in the app, give clear simple guidance.';
     try {
-      const answer = await callAI(systemPrompt + '\n\nUser question: ' + q, { max_tokens: 200 });
-      aDiv.textContent = answer;
+      // ── System prompt built server-side in GETHRO_PROXY (help_chat action, Phase 4) ──
+      const data = await callGethro('help_chat', { question: q });
+      aDiv.textContent = data.answer || 'I had trouble with that one — try asking me again?';
     } catch(err) { aDiv.textContent = 'I had trouble with that one — try asking me again?'; }
     log.scrollTop = log.scrollHeight;
   }
@@ -12580,15 +12561,13 @@
     setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
 
     try {
-      // Same consolidation pattern as runAIReview() reconstruction call
-      var consolidatePrompt =
-        'You are a warm memoir editor. Below is a conversation between a user and their AI companion Gethro about a personal memory.\n\n' +
-        'CONVERSATION:\n' + transcript + '\n\n' +
-        'Rewrite ONLY what the user shared as ONE clean first-person prose paragraph (80–150 words). ' +
-        'Preserve every specific fact, name, place, and date they mentioned — do NOT add, invent, or embellish anything. ' +
-        'If they mentioned a feeling, include it; do not add feelings they did not express. ' +
-        'Ignore everything Gethro said. Return ONLY the paragraph, no preamble.';
-      var consolidated = (await callAI(consolidatePrompt, { max_tokens: 300 })).trim();
+      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, transcript mode, Phase 4) ──
+      var data = await callGethro('consolidate', {
+        mode: 'draft',
+        sourceType: 'transcript',
+        transcript: transcript,
+      });
+      var consolidated = (data.merged || '').trim();
 
       var modeLabel = hasEntry ? 'ADD TO THIS MEMORY' : 'SAVE AS NEW MEMORY';
       var html = '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:12px">' + modeLabel + '</p>';
