@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.72';
-  const DEPLOY_NOTES = APP_VERSION + ' — Phase 5 complete: life_model added to GETHRO_PROXY, mineEssentials migrated to callGethro(), callAI() fully retired. Deployer v20: self-commit fix (detect deployer by filename before resolveDestination), Test 7 updated to test life_model.';
+  const APP_VERSION  = 'v3.74';
+  const DEPLOY_NOTES = APP_VERSION + ' — Service worker fixed: extracted SW code to standalone sw.js (commit to repo root), replaced blob registration with /sw.js. Blob approach was broken on Cloudflare Pages. Cache bumped to lifetold-v2.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13171,41 +13171,14 @@
   })();
 
   // ── Service Worker registration ─────────────────────────────────────────────
-  // The SW is defined inline as a blob so we don't need a separate sw.js file.
-  // Strategy: network-first for all requests, falling back to cache when offline.
-  // Caches the app shell (index.html) on first load so the app opens offline.
+  // sw.js lives in the GitHub repo root (alongside index.html) and is served by
+  // Cloudflare Pages at /sw.js. The blob approach (v2.61–v3.72) failed on
+  // Cloudflare Pages — blob: URLs are rewritten and fail SW registration.
+  // Strategy: network-first for all GET requests, falling back to cache offline.
   if ('serviceWorker' in navigator) {
-    var swCode = [
-      "const CACHE = 'lifetold-v1';",
-      "const SHELL = ['/'];",
-      "self.addEventListener('install', e => {",
-      "  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));",
-      "  self.skipWaiting();",
-      "});",
-      "self.addEventListener('activate', e => {",
-      "  e.waitUntil(caches.keys().then(keys => Promise.all(",
-      "    keys.filter(k => k !== CACHE).map(k => caches.delete(k))",
-      "  )));",
-      "  self.clients.claim();",
-      "});",
-      "self.addEventListener('fetch', e => {",
-      "  if (e.request.method !== 'GET') return;",
-      "  e.respondWith(",
-      "    fetch(e.request).then(r => {",
-      "      var clone = r.clone();",
-      "      caches.open(CACHE).then(c => c.put(e.request, clone));",
-      "      return r;",
-      "    }).catch(() => caches.match(e.request))",
-      "  );",
-      "});",
-    ].join('\n');
-    try {
-      var swBlob = new Blob([swCode], { type: 'application/javascript' });
-      var swUrl  = URL.createObjectURL(swBlob);
-      navigator.serviceWorker.register(swUrl, { scope: '/' })
-        .then(function(reg) { dbg('PWA', 'Service worker registered, scope: ' + reg.scope); })
-        .catch(function(err) { dbgWarn('PWA', 'Service worker registration failed: ' + err); });
-    } catch(e) { dbgWarn('PWA', 'Service worker blob failed: ' + e); }
+    navigator.serviceWorker.register('/sw.js')
+      .then(function(reg) { dbg('PWA', 'Service worker registered, scope: ' + reg.scope); })
+      .catch(function(err) { dbgWarn('PWA', 'Service worker registration failed: ' + err); });
   }
 
   // Wire up button-enable listeners
