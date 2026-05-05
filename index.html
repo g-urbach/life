@@ -2366,9 +2366,21 @@
       <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
-        <button onclick="closeMyPeople()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px">&#10005;</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="mpOpenAddPerson()" style="background:var(--gold);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer">+ Add person</button>
+          <button onclick="closeMyPeople()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px">&#10005;</button>
+        </div>
       </div>
-      <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:24px">Your family tree &amp; the people in your story.</p>
+      <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:12px">Your family tree &amp; the people in your story.</p>
+
+      <!-- Selected person action bar — shown when a card is selected -->
+      <div id="mpActionBar" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin-bottom:16px;display:none;align-items:center;justify-content:space-between;gap:10px">
+        <span id="mpActionBarName" style="font-size:0.88rem;font-weight:700;color:var(--text);font-family:'Lato',sans-serif"></span>
+        <div style="display:flex;gap:8px">
+          <button onclick="mpEditSelected()" style="padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif">&#9998; Edit</button>
+          <button onclick="mpDeleteSelected()" style="padding:6px 14px;border:1px solid #fca5a5;border-radius:8px;background:none;font-size:0.8rem;cursor:pointer;color:var(--rose);font-family:'Lato',sans-serif">&#128465; Delete</button>
+        </div>
+      </div>
 
       <!-- Expand-up button -->
       <div id="mpExpandUpRow" style="display:none;text-align:center;margin-bottom:12px">
@@ -2391,7 +2403,8 @@
       <div id="mpEmptyState" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 24px;text-align:center;margin-top:8px">
         <div style="font-size:2.5rem;margin-bottom:16px">&#127795;</div>
         <p style="font-family:'Playfair Display',serif;font-size:1.1rem;color:var(--text);margin-bottom:8px;font-weight:600">Your family tree is empty</p>
-        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;max-width:360px;margin:0 auto">Gethro will help you add people from your memories. Coming in the next step.</p>
+        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;max-width:360px;margin:0 auto 20px">Add the people in your life — parents, siblings, children, and more. Tap a card to select it, then edit or delete.</p>
+        <button onclick="mpOpenAddPerson()" style="background:var(--gold);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer">+ Add your first family member</button>
       </div>
 
       <!-- Loading state -->
@@ -2399,6 +2412,82 @@
         Loading your people&#8230;
       </div>
 
+    </div>
+  </div>
+
+  <!-- MY PEOPLE — ADD / EDIT PERSON MODAL -->
+  <div id="mpPersonModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2000;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <h3 id="mpPersonModalTitle" style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">Add a person</h3>
+        <button onclick="mpClosePersonModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">&#10005;</button>
+      </div>
+
+      <!-- Name -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Name <span style="color:var(--rose)">*</span></label>
+      <input id="mpPersonName" type="text" placeholder="e.g. Margaret Urbach" autocomplete="off"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px">
+
+      <!-- Relationship type -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Relationship <span style="color:var(--rose)">*</span></label>
+      <select id="mpPersonRelType"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px"
+        onchange="mpPersonRelTypeChanged()">
+        <option value="">— Select —</option>
+        <optgroup label="Parents &amp; grandparents">
+          <option value="mother">Mother</option>
+          <option value="father">Father</option>
+          <option value="parent">Parent / step-parent</option>
+          <option value="grandmother">Grandmother</option>
+          <option value="grandfather">Grandfather</option>
+          <option value="great_grandparent">Great-grandparent</option>
+        </optgroup>
+        <optgroup label="Siblings">
+          <option value="sister">Sister</option>
+          <option value="brother">Brother</option>
+          <option value="half_sibling">Half-sibling</option>
+        </optgroup>
+        <optgroup label="Partner &amp; spouse">
+          <option value="spouse">Spouse / partner</option>
+        </optgroup>
+        <optgroup label="Children &amp; grandchildren">
+          <option value="daughter">Daughter</option>
+          <option value="son">Son</option>
+          <option value="child">Child / step-child</option>
+          <option value="granddaughter">Granddaughter</option>
+          <option value="grandson">Grandson</option>
+          <option value="great_grandchild">Great-grandchild</option>
+        </optgroup>
+        <optgroup label="Extended family">
+          <option value="aunt">Aunt</option>
+          <option value="uncle">Uncle</option>
+          <option value="cousin">Cousin</option>
+          <option value="niece">Niece</option>
+          <option value="nephew">Nephew</option>
+        </optgroup>
+        <optgroup label="Other">
+          <option value="other">Other (describe below)</option>
+        </optgroup>
+      </select>
+
+      <!-- Custom label (optional, shown for all) -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Custom label <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+      <input id="mpPersonRelLabel" type="text" placeholder="e.g. &quot;Mum's sister&quot; or &quot;Step-dad&quot;"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px">
+
+      <!-- Date of birth (optional) -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+      <input id="mpPersonDob" type="date"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:24px">
+
+      <!-- Error message -->
+      <div id="mpPersonError" style="display:none;background:#fff0f0;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:var(--rose);margin-bottom:16px"></div>
+
+      <!-- Buttons -->
+      <div style="display:flex;gap:10px">
+        <button onclick="mpClosePersonModal()" class="btn btn-ghost" style="flex:1">Cancel</button>
+        <button id="mpPersonSaveBtn" onclick="mpSavePerson()" class="btn btn-primary" style="flex:2">Save</button>
+      </div>
     </div>
   </div>
 
@@ -2861,8 +2950,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.77';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 1 step 3: full tree overlay with generation layout, expand up/down, compact cards, empty/loading states, node highlight on tap.';
+  const APP_VERSION  = 'v3.78';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 1 step 4: add/edit person flow — name, relationship type, custom label, DOB. Edit and delete from selected card. Saves to life_people via Supabase.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13524,15 +13613,23 @@
       var wasSelf = prevPerson && prevPerson._gen === 0;
       prev.style.borderColor = wasSelf ? 'var(--gold)' : 'var(--border)';
     }
+    var actionBar = document.getElementById('mpActionBar');
     if (_mpSelectedId === personId) {
       // Tapping same card deselects
       _mpSelectedId = null;
+      actionBar.style.display = 'none';
       return;
     }
     _mpSelectedId = personId;
     cardEl.classList.add('mp-selected');
     cardEl.style.borderColor  = 'var(--sage)';
     cardEl.style.boxShadow    = '0 0 0 3px rgba(122,158,126,0.25)';
+
+    // Show action bar
+    var person = _mpPeople.find(function(p) { return p.id === personId; });
+    var isSelf = person && person.relationship_type === 'self';
+    document.getElementById('mpActionBarName').textContent = person ? person.name : '';
+    actionBar.style.display = isSelf ? 'none' : 'flex';  // Don't show edit/delete for self node
   }
 
   function mpExpandUp() {
@@ -13549,7 +13646,248 @@
     }
   }
 
-  // ── Profile edit ──────────────────────────────────────────────────
+  // ── Add / Edit person ─────────────────────────────────────────────
+  var _mpEditingPersonId = null;   // null = adding new person
+
+  // Map of relationship_type → tree relationship_type for life_people_relationships
+  var MP_REL_TO_TREE = {
+    'mother':           'parent_of',   // self is parent of ... wait — need inverse
+    // The author is gen 0. We store a relationship FROM the person TO the author,
+    // or FROM the author TO the person. We use person_a=newPerson, person_b=author
+    // with the semantic type describing how person_a relates to person_b (person_a IS ___ OF person_b).
+    // But it is simpler to store: person_a=author, person_b=newPerson, type=xxx_of
+    // where type encodes how author relates to new person.
+    // Author → newPerson directions (stored as relationship from author's POV):
+    'mother':           'child_of',          // author is child of mother
+    'father':           'child_of',          // author is child of father
+    'parent':           'child_of',
+    'grandmother':      'grandchild_of',
+    'grandfather':      'grandchild_of',
+    'great_grandparent':'great_grandchild_of',
+    'sister':           'sibling_of',
+    'brother':          'sibling_of',
+    'half_sibling':     'half_sibling_of',
+    'spouse':           'spouse_of',
+    'daughter':         'parent_of',
+    'son':              'parent_of',
+    'child':            'parent_of',
+    'granddaughter':    'grandparent_of',
+    'grandson':         'grandparent_of',
+    'great_grandchild': 'great_grandparent_of',
+    'aunt':             null,    // no standard tree placement — family bucket but no gen offset
+    'uncle':            null,
+    'cousin':           null,
+    'niece':            null,
+    'nephew':           null,
+    'other':            null,
+  };
+
+  function mpOpenAddPerson() {
+    _mpEditingPersonId = null;
+    document.getElementById('mpPersonModalTitle').textContent = 'Add a person';
+    document.getElementById('mpPersonName').value     = '';
+    document.getElementById('mpPersonRelType').value  = '';
+    document.getElementById('mpPersonRelLabel').value = '';
+    document.getElementById('mpPersonDob').value      = '';
+    document.getElementById('mpPersonError').style.display = 'none';
+    document.getElementById('mpPersonSaveBtn').textContent = 'Save';
+    document.getElementById('mpPersonModal').style.display = 'flex';
+    setTimeout(function() { document.getElementById('mpPersonName').focus(); }, 50);
+  }
+
+  function mpEditSelected() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
+    if (!person) return;
+    _mpEditingPersonId = person.id;
+    document.getElementById('mpPersonModalTitle').textContent = 'Edit person';
+    document.getElementById('mpPersonName').value     = person.name || '';
+    document.getElementById('mpPersonRelType').value  = person.relationship_type || '';
+    document.getElementById('mpPersonRelLabel').value = person.relationship_label || '';
+    document.getElementById('mpPersonDob').value      = person.dob || '';
+    document.getElementById('mpPersonError').style.display = 'none';
+    document.getElementById('mpPersonSaveBtn').textContent = 'Save changes';
+    document.getElementById('mpPersonModal').style.display = 'flex';
+  }
+
+  function mpClosePersonModal() {
+    document.getElementById('mpPersonModal').style.display = 'none';
+    _mpEditingPersonId = null;
+  }
+
+  function mpPersonRelTypeChanged() {
+    // Could show/hide hint text in future — placeholder for now
+  }
+
+  async function mpSavePerson() {
+    var name     = (document.getElementById('mpPersonName').value || '').trim();
+    var relType  = document.getElementById('mpPersonRelType').value;
+    var relLabel = (document.getElementById('mpPersonRelLabel').value || '').trim();
+    var dob      = document.getElementById('mpPersonDob').value || null;
+    var errEl    = document.getElementById('mpPersonError');
+    var saveBtn  = document.getElementById('mpPersonSaveBtn');
+
+    errEl.style.display = 'none';
+    if (!name) {
+      errEl.textContent = 'Please enter a name.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!relType) {
+      errEl.textContent = 'Please select a relationship.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    var headers = getAuthHeaders();
+
+    try {
+      if (_mpEditingPersonId) {
+        // ── PATCH existing person ──────────────────────────────────
+        var patchBody = { name: name, relationship_type: relType, dob: dob };
+        if (relLabel) patchBody.relationship_label = relLabel;
+        else patchBody.relationship_label = null;
+
+        var patchRes = await fetch(DB_PEOPLE_URL + '?id=eq.' + _mpEditingPersonId + '&user_id=eq.' + currentUser.id, {
+          method: 'PATCH',
+          headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+          body: JSON.stringify(patchBody),
+        });
+        if (!patchRes.ok) throw new Error('Save failed (' + patchRes.status + ')');
+
+        // Update local cache
+        var localPerson = _mpPeople.find(function(p) { return p.id === _mpEditingPersonId; });
+        if (localPerson) {
+          localPerson.name               = name;
+          localPerson.relationship_type  = relType;
+          localPerson.relationship_label = relLabel || null;
+          localPerson.dob                = dob;
+        }
+        logActivity('people_edited', name, 'info', 'PEOPLE');
+
+      } else {
+        // ── POST new person ────────────────────────────────────────
+        var newPersonBody = {
+          user_id:            currentUser.id,
+          name:               name,
+          relationship_type:  relType,
+          dob:                dob,
+          bucket:             'family',
+        };
+        if (relLabel) newPersonBody.relationship_label = relLabel;
+
+        var postRes = await fetch(DB_PEOPLE_URL, {
+          method: 'POST',
+          headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+          body: JSON.stringify(newPersonBody),
+        });
+        if (!postRes.ok) throw new Error('Save failed (' + postRes.status + ')');
+        var newRows = await postRes.json();
+        var newPerson = newRows[0];
+
+        // Add to local cache
+        _mpPeople.push(newPerson);
+
+        // If this person has a mappable tree relationship, insert a relationship row
+        // linking the author (gen 0 = self node) to the new person.
+        var treeRelType = MP_REL_TO_TREE[relType];
+        var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+        if (!selfNode) {
+          // Self node may not exist yet — skip relationship insert but still show person
+          dbgWarn('PEOPLE', 'No self node found — skipping relationship insert');
+        } else if (treeRelType) {
+          // person_a = self/author, person_b = newPerson
+          // type = how the AUTHOR relates to the newPerson
+          var relBody = {
+            user_id:           currentUser.id,
+            person_a_id:       selfNode.id,
+            person_b_id:       newPerson.id,
+            relationship_type: treeRelType,
+          };
+          var relRes = await fetch(DB_PEOPLE_REL_URL, {
+            method: 'POST',
+            headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify(relBody),
+          });
+          if (relRes.ok) {
+            var relRows = await relRes.json();
+            if (relRows[0]) _mpRels.push(relRows[0]);
+          } else {
+            dbgWarn('PEOPLE', 'Relationship insert failed: ' + relRes.status + ' (person still saved)');
+          }
+        }
+        // For types with no tree placement (aunt, uncle, cousin, other) — person saved but no relationship row.
+        logActivity('people_added', name + ' (' + relType + ')', 'info', 'PEOPLE');
+      }
+
+      mpClosePersonModal();
+      // Re-assign generations and re-render with updated data
+      if (_mpPeople.length) {
+        _mpAssignGenerations();
+        _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen);
+        _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen);
+        document.getElementById('mpEmptyState').style.display = 'none';
+      }
+      _mpRender();
+      // Deselect
+      _mpSelectedId = null;
+      document.getElementById('mpActionBar').style.display = 'none';
+
+    } catch(e) {
+      errEl.textContent = e.message || 'Could not save — please try again.';
+      errEl.style.display = 'block';
+      dbgErr('PEOPLE', 'mpSavePerson error:', e.message);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = _mpEditingPersonId ? 'Save changes' : 'Save';
+    }
+  }
+
+  async function mpDeleteSelected() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
+    if (!person) return;
+    if (!confirm('Delete "' + person.name + '" from your family tree? This cannot be undone.')) return;
+
+    var headers = getAuthHeaders();
+    try {
+      // Delete relationship rows first (CASCADE should handle it, but belt-and-suspenders)
+      await fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id + '&or=(person_a_id.eq.' + person.id + ',person_b_id.eq.' + person.id + ')', {
+        method: 'DELETE', headers: headers,
+      });
+      // Delete person row
+      var delRes = await fetch(DB_PEOPLE_URL + '?id=eq.' + person.id + '&user_id=eq.' + currentUser.id, {
+        method: 'DELETE', headers: headers,
+      });
+      if (!delRes.ok) throw new Error('Delete failed (' + delRes.status + ')');
+
+      // Remove from local caches
+      _mpPeople = _mpPeople.filter(function(p) { return p.id !== person.id; });
+      _mpRels   = _mpRels.filter(function(r) { return r.person_a_id !== person.id && r.person_b_id !== person.id; });
+      _mpSelectedId = null;
+      document.getElementById('mpActionBar').style.display = 'none';
+
+      logActivity('people_deleted', person.name, 'info', 'PEOPLE');
+      toast(person.name + ' removed.');
+
+      if (!_mpPeople.length) {
+        document.getElementById('mpTreeContainer').innerHTML = '';
+        document.getElementById('mpExpandUpRow').style.display = 'none';
+        document.getElementById('mpExpandDownRow').style.display = 'none';
+        document.getElementById('mpEmptyState').style.display = 'block';
+        return;
+      }
+      _mpAssignGenerations();
+      _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen);
+      _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen);
+      _mpRender();
+
+    } catch(e) {
+      toast('Could not delete — please try again.');
+      dbgErr('PEOPLE', 'mpDeleteSelected error:', e.message);
+    }
+  }
   function showEditProfile() {
     document.getElementById('profileEditFirstName').value = userProfile.firstName || '';
     document.getElementById('profileEditLastName').value  = userProfile.lastName  || '';
