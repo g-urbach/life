@@ -2810,8 +2810,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.71';
-  const DEPLOY_NOTES = APP_VERSION + ' — Phase 4 complete: consolidate, duplicate_check, help_chat, seed_question/chapter all migrated to callGethro(). mineEssentials stays callAI() pending life_model (Phase 5). deploy-v19: deployer self-commit simplified, live test 7 fixed (life_model), static chat-fallback warn removed.';
+  const APP_VERSION  = 'v3.72';
+  const DEPLOY_NOTES = APP_VERSION + ' — Phase 5 complete: life_model added to GETHRO_PROXY, mineEssentials migrated to callGethro(), callAI() fully retired. Deployer v20: self-commit fix (detect deployer by filename before resolveDestination), Test 7 updated to test life_model.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4917,37 +4917,10 @@
   }
 
     // ── AI ────────────────────────────────────────────────────────────
-  async function callAI(prompt, extraParams = {}) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const response = await Promise.race([
-          fetch(AI_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_ANON, 'apikey': SUPABASE_ANON },
-            body: JSON.stringify({ prompt, ...extraParams })
-          }),
-          new Promise((_,reject) => setTimeout(() => reject(new Error('Timed out after 45s')), 45000))
-        ]);
-        if (!response.ok) { const t = await response.text(); throw new Error('HTTP ' + response.status + ': ' + t); }
-        const data    = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (!content) throw new Error('No content in response');
-        return content.trim();
-      } catch (err) {
-        if ((err.message.includes('429') || err.message.includes('rate')) && attempt < 3) {
-          if (attempt === 2) notifyDev('warn', 'AI', 'Groq rate limit hit — retrying attempt ' + attempt);
-          await new Promise(r => setTimeout(r, attempt * 8000)); continue;
-        }
-        if (err.message.includes('429') || err.message.includes('rate')) notifyDev('error', 'AI', 'Groq rate limit — all retries exhausted: ' + err.message);
-        throw err;
-      }
-    }
-  }
-
-  // ── callGethro — JWT-authenticated AI proxy (Phase 1+) ──────────
+  // ── callGethro — JWT-authenticated AI proxy (Phase 1–5, all actions) ────
   // Sends structured payload to GETHRO_PROXY edge function.
   // Prompts are built server-side — client sends data, not prompt strings.
-  // callAI() remains for actions not yet migrated.
+  // callAI() retired in Phase 5 (life_model — mineEssentials).
   async function callGethro(action, payload = {}) {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) throw new Error('Not authenticated');
@@ -8687,31 +8660,12 @@
     const allText = real.map(e => e.answer).join('\n');
     const alreadyConfirmed = Object.keys(_essentials).filter(k => _essentials[k]?.confirmed);
 
-    const prompt =
-      'Read these memoir entries and extract the person\'s essentials. ' +
-      'Return ONLY a valid JSON object — no prose, no markdown.\n\n' +
-      'ENTRIES:\n' + allText.substring(0, 4000) + '\n\n' +
-      (alreadyConfirmed.length ? 'Already confirmed (skip these): ' + alreadyConfirmed.join(', ') + '\n\n' : '') +
-      'Return this JSON — only include keys where you are confident:\n' +
-      '{\n' +
-      '  "saying": "a phrase or motto they seem to live by",\n' +
-      '  "food": "a food mentioned fondly or repeatedly",\n' +
-      '  "place": "a place mentioned with warmth or frequency",\n' +
-      '  "song": "any music or song mentioned",\n' +
-      '  "person": "the person mentioned most warmly",\n' +
-      '  "achievement": "something they seem proud of",\n' +
-      '  "lesson": "a lesson or wisdom that comes through",\n' +
-      '  "philosophy": "their apparent approach to life in one sentence"\n' +
-      '}\n' +
-      'For each key: only include it if you can infer a specific value. ' +
-      'Include a confidence note like "(mentioned 3 times)" where relevant. ' +
-      'Do not include keys you cannot determine. Output the JSON now:';
-
+    // ── Prompt built server-side in GETHRO_PROXY (life_model action, Phase 5) ──
     try {
-      const raw    = await callAI(prompt, { max_tokens: 600 });
-      const clean  = raw.replace(/```json|```/g, '').trim();
-      const match  = clean.match(/\{[\s\S]*\}/);
-      const result = JSON.parse(match ? match[0] : clean);
+      const { essentials: result } = await callGethro('life_model', {
+        entriesText: allText.substring(0, 4000),
+        alreadyConfirmed,
+      });
 
       let found = 0;
       Object.entries(result).forEach(([key, value]) => {
