@@ -2412,6 +2412,28 @@
         Loading your people&#8230;
       </div>
 
+      <!-- Gethro first-open review screen (shown once when tree is empty but entries have people tags) -->
+      <div id="mpReviewScreen" style="display:none">
+        <!-- Gethro intro header -->
+        <div style="display:flex;align-items:flex-start;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:20px">
+          <div style="font-size:2rem;flex-shrink:0;margin-top:2px">🎙️</div>
+          <div>
+            <p id="mpReviewIntro" style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--text);line-height:1.5;margin:0 0 6px">I found some people mentioned in your memories. Want to add them to your family tree?</p>
+            <p style="font-size:0.8rem;color:var(--text-light);margin:0">Set a relationship for each person, then tap <strong>Add to tree</strong>. You can skip anyone you don't want to include.</p>
+          </div>
+        </div>
+
+        <!-- Per-person suggestion rows — rendered by _mpBuildReviewRows() -->
+        <div id="mpReviewRows" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px"></div>
+
+        <!-- Bottom action bar -->
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button id="mpReviewSaveBtn" onclick="mpReviewSaveConfirmed()" style="flex:1;padding:12px;background:var(--gold);color:#fff;border:none;border-radius:10px;font-family:'Lato',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;min-width:160px">Add to my tree</button>
+          <button onclick="mpReviewSkipAll()" style="padding:12px 18px;background:none;border:1px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:0.85rem;color:var(--text-light);cursor:pointer">Skip for now</button>
+        </div>
+        <p id="mpReviewSaveStatus" style="font-size:0.78rem;color:var(--text-light);margin-top:10px;display:none"></p>
+      </div>
+
     </div>
   </div>
 
@@ -2950,8 +2972,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.78';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 1 step 4: add/edit person flow — name, relationship type, custom label, DOB. Edit and delete from selected card. Saves to life_people via Supabase.';
+  const APP_VERSION  = 'v3.80';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree: fix generation assignment (MP_PERSON_GEN direct lookup replacing BFS), fix MP_REL_TO_TREE inversions, add SVG connector lines between generation rows with branch logic.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4319,6 +4341,7 @@
       closeAskGethro();
       _agpPendingMemoryConvo = false; // discard any unsaved memory convo on sign-out
       _featureUsage = {}; // clear feature cache on sign-out
+      _mpReviewDone = false; // re-check review flag on next sign-in
     }
     memCheckButtons();
   }
@@ -13352,18 +13375,54 @@
   // +1 = children, +2 = grandchildren, etc.
 
   // Relationship type → generation offset from person_a to person_b
+  // Semantics: "person_b is at gen (person_a_gen + offset)"
+  // person_a = self (gen 0), so offset = generation of person_b
   var MP_GEN_OFFSET = {
-    'parent_of':            -1,   // a is parent of b → b is one gen below a
-    'child_of':              1,
-    'grandparent_of':       -2,
-    'grandchild_of':         2,
-    'great_grandparent_of': -3,
-    'great_grandchild_of':   3,
-    'spouse_of':             0,
-    'sibling_of':            0,
-    'step_parent_of':       -1,
-    'step_child_of':         1,
-    'half_sibling_of':       0,
+    'parent_of':            1,    // a is parent → b (child) is one gen younger (+1)
+    'child_of':            -1,    // a is child → b (parent) is one gen older (-1)
+    'grandparent_of':       2,    // a is grandparent → b (grandchild) is +2
+    'grandchild_of':       -2,
+    'great_grandparent_of': 3,
+    'great_grandchild_of': -3,
+    'spouse_of':            0,
+    'sibling_of':           0,
+    'step_parent_of':       1,
+    'step_child_of':       -1,
+    'half_sibling_of':      0,
+  };
+
+  // Direct gen from the relationship_type stored on each person row
+  // (simpler and correct — no BFS needed for the author's direct relatives)
+  var MP_PERSON_GEN = {
+    'self':              0,
+    'mother':           -1,
+    'father':           -1,
+    'parent':           -1,
+    'step_parent':      -1,
+    'grandmother':      -2,
+    'grandfather':      -2,
+    'great_grandparent':-3,
+    'sister':            0,
+    'brother':           0,
+    'sibling':           0,
+    'half_sibling':      0,
+    'spouse':            0,
+    'partner':           0,
+    'daughter':          1,
+    'son':               1,
+    'child':             1,
+    'step_child':        1,
+    'granddaughter':     2,
+    'grandson':          2,
+    'grandchild':        2,
+    'great_grandchild':  3,
+    // Extended family — no tree gen placement, keep at 0
+    'aunt':              0,
+    'uncle':             0,
+    'cousin':            0,
+    'niece':             0,
+    'nephew':            0,
+    'other':             0,
   };
 
   // Friendly label for relationship_type stored on person row
@@ -13399,6 +13458,7 @@
 
   async function openMyPeople() {
     document.getElementById('myPeopleOverlay').style.display = 'block';
+    document.getElementById('mpReviewScreen').style.display  = 'none';
     logActivity('my_people_opened', '', 'info', 'PEOPLE');
     await _mpLoad();
   }
@@ -13437,6 +13497,15 @@
     loadEl.style.display = 'none';
 
     if (!_mpPeople.length) {
+      // Check if we should show the Gethro review screen (first open, entries have people tags)
+      var shouldReview = await _mpCheckReview();
+      if (shouldReview) {
+        var suggestions = _mpSuggestionsFromEntries();
+        if (suggestions.length) {
+          _mpShowReviewScreen(suggestions);
+          return;
+        }
+      }
       emptyEl.style.display = 'block';
       return;
     }
@@ -13455,55 +13524,22 @@
   }
 
   function _mpAssignGenerations() {
-    // Find the author node (bucket='family', relationship_type='self' or first inserted)
-    // Author is whoever has no parent_of relationship pointing at them — i.e. no one is their parent.
-    // Fallback: first person in list.
-    var genMap = {};  // person id → generation number
-
-    // Find author: person with relationship_type 'self', or lacking any incoming 'parent_of' rel
-    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-    if (!selfNode) {
-      // Pick person who is not the 'b' in any parent_of relationship
-      var childIds = new Set(_mpRels.filter(function(r) { return r.relationship_type === 'parent_of'; }).map(function(r) { return r.person_b_id; }));
-      selfNode = _mpPeople.find(function(p) { return !childIds.has(p.id); }) || _mpPeople[0];
-    }
-    genMap[selfNode.id] = 0;
-
-    // BFS outward from self using relationships
-    var queue = [selfNode.id];
-    var visited = new Set([selfNode.id]);
-    while (queue.length) {
-      var current = queue.shift();
-      var currentGen = genMap[current];
-      _mpRels.forEach(function(r) {
-        var offset = MP_GEN_OFFSET[r.relationship_type];
-        if (offset === undefined) return;
-        var otherId = null;
-        if (r.person_a_id === current) otherId = r.person_b_id;
-        else if (r.person_b_id === current) {
-          // reverse direction: invert offset
-          offset = -offset;
-          otherId = r.person_a_id;
-        }
-        if (!otherId || visited.has(otherId)) return;
-        genMap[otherId] = currentGen + offset;
-        visited.add(otherId);
-        queue.push(otherId);
-      });
-    }
-
-    // Any unconnected people: assign gen 0
+    // Assign generation directly from each person's relationship_type.
+    // The author (self) is always gen 0. All other rels map directly via MP_PERSON_GEN.
+    // This is simpler and more reliable than graph BFS for the common case.
     _mpPeople.forEach(function(p) {
-      if (genMap[p.id] === undefined) genMap[p.id] = 0;
+      var gen = MP_PERSON_GEN[p.relationship_type];
+      p._gen = (gen !== undefined) ? gen : 0;
     });
 
-    // Store gen on each person object
-    _mpPeople.forEach(function(p) { p._gen = genMap[p.id]; });
+    // Ensure the self node is at gen 0 regardless
+    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+    if (selfNode) selfNode._gen = 0;
 
     // Calculate total range
     var gens = _mpPeople.map(function(p) { return p._gen; });
-    _mpAllMinGen = Math.min.apply(null, gens);
-    _mpAllMaxGen = Math.max.apply(null, gens);
+    _mpAllMinGen = gens.length ? Math.min.apply(null, gens) : 0;
+    _mpAllMaxGen = gens.length ? Math.max.apply(null, gens) : 0;
   }
 
   function _mpRender() {
@@ -13516,23 +13552,121 @@
     upRow.style.display   = (_mpMinGen > _mpAllMinGen) ? 'block' : 'none';
     downRow.style.display = (_mpMaxGen < _mpAllMaxGen) ? 'block' : 'none';
 
-    // Render each generation row from most-ancestor to most-descendant
+    // Collect visible gens that have people
+    var visibleGens = [];
     for (var gen = _mpMinGen; gen <= _mpMaxGen; gen++) {
       var people = _mpPeople.filter(function(p) { return p._gen === gen; });
-      if (!people.length) continue;
-      treeEl.appendChild(_mpBuildGenRow(gen, people));
-      // Connector line between generations (not after last row)
-      if (gen < _mpMaxGen) {
-        var connector = document.createElement('div');
-        connector.style.cssText = 'display:flex;justify-content:center;height:28px;align-items:center';
-        connector.innerHTML = '<div style="width:2px;height:100%;background:var(--border)"></div>';
-        treeEl.appendChild(connector);
-      }
+      if (people.length) visibleGens.push({ gen: gen, people: people });
     }
+
+    // Render each generation row, with an SVG connector strip between adjacent rows
+    visibleGens.forEach(function(g, idx) {
+      var rowEl = _mpBuildGenRow(g.gen, g.people);
+      rowEl.setAttribute('data-gen', g.gen);
+      treeEl.appendChild(rowEl);
+
+      if (idx < visibleGens.length - 1) {
+        // Connector strip: a vertical bar + short horizontal branches drawn with SVG after layout
+        var connectorWrap = document.createElement('div');
+        connectorWrap.className = 'mp-connector';
+        connectorWrap.setAttribute('data-from-gen', g.gen);
+        connectorWrap.setAttribute('data-to-gen',   visibleGens[idx + 1].gen);
+        connectorWrap.style.cssText = 'position:relative;width:100%;height:48px;flex-shrink:0';
+        // Simple centred vertical line as fallback (replaced by SVG after paint)
+        connectorWrap.innerHTML =
+          '<svg width="100%" height="48" style="display:block;overflow:visible">' +
+            '<line x1="50%" y1="0" x2="50%" y2="48" stroke="var(--border)" stroke-width="2"/>' +
+          '</svg>';
+        treeEl.appendChild(connectorWrap);
+      }
+    });
+
+    // After the DOM is painted, redraw connectors with proper branch lines
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        _mpDrawConnectors(treeEl, visibleGens);
+      });
+    });
+  }
+
+  function _mpDrawConnectors(treeEl, visibleGens) {
+    var connectors = treeEl.querySelectorAll('.mp-connector');
+    connectors.forEach(function(wrap) {
+      var fromGen = parseInt(wrap.getAttribute('data-from-gen'), 10);
+      var toGen   = parseInt(wrap.getAttribute('data-to-gen'),   10);
+
+      // Get card centres for the from-row and to-row
+      var fromRow = treeEl.querySelector('[data-gen="' + fromGen + '"]');
+      var toRow   = treeEl.querySelector('[data-gen="' + toGen   + '"]');
+      if (!fromRow || !toRow) return;
+
+      var wrapRect = wrap.getBoundingClientRect();
+      if (!wrapRect.width) return;
+
+      var fromCards = fromRow.querySelectorAll('[data-person-id]');
+      var toCards   = toRow.querySelectorAll('[data-person-id]');
+
+      // Centre X of each card relative to the connector strip
+      function cardCentreX(card) {
+        var r = card.getBoundingClientRect();
+        return (r.left + r.right) / 2 - wrapRect.left;
+      }
+
+      var fromXs = Array.prototype.map.call(fromCards, cardCentreX);
+      var toXs   = Array.prototype.map.call(toCards,   cardCentreX);
+      if (!fromXs.length || !toXs.length) return;
+
+      var W = wrapRect.width;
+      var H = 48;
+      var midY = H / 2;
+      var strokeColor = 'var(--border)';
+      var sw = 2; // stroke-width
+
+      var paths = [];
+
+      // Draw a horizontal bar connecting all from-nodes at midY - 12
+      // and all to-nodes at midY + 12, with verticals joining them to midY
+      var fromMid = midY - 10;
+      var toMid   = midY + 10;
+
+      // Vertical stubs from each from-card down to fromMid
+      fromXs.forEach(function(x) {
+        paths.push('<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + fromMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
+      });
+
+      // Horizontal bar across from-nodes at fromMid (only if >1)
+      if (fromXs.length > 1) {
+        var fMin = Math.min.apply(null, fromXs);
+        var fMax = Math.max.apply(null, fromXs);
+        paths.push('<line x1="' + fMin + '" y1="' + fromMid + '" x2="' + fMax + '" y2="' + fromMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
+      }
+
+      // Centre trunk: from fromMid down to toMid
+      var fromCentreX = (Math.min.apply(null, fromXs) + Math.max.apply(null, fromXs)) / 2;
+      var toCentreX   = (Math.min.apply(null, toXs)   + Math.max.apply(null, toXs))   / 2;
+      // Single trunk connects centre of from-group to centre of to-group
+      paths.push('<line x1="' + fromCentreX + '" y1="' + fromMid + '" x2="' + toCentreX + '" y2="' + toMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
+
+      // Horizontal bar across to-nodes at toMid (only if >1)
+      if (toXs.length > 1) {
+        var tMin = Math.min.apply(null, toXs);
+        var tMax = Math.max.apply(null, toXs);
+        paths.push('<line x1="' + tMin + '" y1="' + toMid + '" x2="' + tMax + '" y2="' + toMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
+      }
+
+      // Vertical stubs from toMid up to each to-card
+      toXs.forEach(function(x) {
+        paths.push('<line x1="' + x + '" y1="' + toMid + '" x2="' + x + '" y2="' + H + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
+      });
+
+      wrap.innerHTML =
+        '<svg width="' + W + '" height="' + H + '" style="display:block;overflow:visible">' +
+          paths.join('') +
+        '</svg>';
+    });
   }
 
   function _mpBuildGenRow(gen, people) {
-    // Generation label
     var genLabels = {
       '-3': 'Great-grandparents',
       '-2': 'Grandparents',
@@ -13555,7 +13689,7 @@
 
     // Cards row
     var cardsRow = document.createElement('div');
-    cardsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:center';
+    cardsRow.style.cssText = 'display:flex;flex-wrap:nowrap;gap:10px;justify-content:center';
 
     people.forEach(function(person) {
       cardsRow.appendChild(_mpBuildCard(person, gen === 0));
@@ -13650,36 +13784,36 @@
   var _mpEditingPersonId = null;   // null = adding new person
 
   // Map of relationship_type → tree relationship_type for life_people_relationships
+  // person_a = self (gen 0), person_b = new person.
+  // Kept for relationship-row inserts; generation placement now uses MP_PERSON_GEN directly.
   var MP_REL_TO_TREE = {
-    'mother':           'parent_of',   // self is parent of ... wait — need inverse
-    // The author is gen 0. We store a relationship FROM the person TO the author,
-    // or FROM the author TO the person. We use person_a=newPerson, person_b=author
-    // with the semantic type describing how person_a relates to person_b (person_a IS ___ OF person_b).
-    // But it is simpler to store: person_a=author, person_b=newPerson, type=xxx_of
-    // where type encodes how author relates to new person.
-    // Author → newPerson directions (stored as relationship from author's POV):
-    'mother':           'child_of',          // author is child of mother
-    'father':           'child_of',          // author is child of father
-    'parent':           'child_of',
-    'grandmother':      'grandchild_of',
-    'grandfather':      'grandchild_of',
-    'great_grandparent':'great_grandchild_of',
-    'sister':           'sibling_of',
-    'brother':          'sibling_of',
-    'half_sibling':     'half_sibling_of',
-    'spouse':           'spouse_of',
-    'daughter':         'parent_of',
-    'son':              'parent_of',
-    'child':            'parent_of',
-    'granddaughter':    'grandparent_of',
-    'grandson':         'grandparent_of',
-    'great_grandchild': 'great_grandparent_of',
-    'aunt':             null,    // no standard tree placement — family bucket but no gen offset
-    'uncle':            null,
-    'cousin':           null,
-    'niece':            null,
-    'nephew':           null,
-    'other':            null,
+    'mother':            'child_of',
+    'father':            'child_of',
+    'parent':            'child_of',
+    'step_parent':       'child_of',
+    'grandmother':       'grandchild_of',
+    'grandfather':       'grandchild_of',
+    'great_grandparent': 'great_grandchild_of',
+    'sister':            'sibling_of',
+    'brother':           'sibling_of',
+    'sibling':           'sibling_of',
+    'half_sibling':      'half_sibling_of',
+    'spouse':            'spouse_of',
+    'partner':           'spouse_of',
+    'daughter':          'parent_of',
+    'son':               'parent_of',
+    'child':             'parent_of',
+    'step_child':        'parent_of',
+    'granddaughter':     'grandparent_of',
+    'grandson':          'grandparent_of',
+    'grandchild':        'grandparent_of',
+    'great_grandchild':  'great_grandparent_of',
+    'aunt':              null,
+    'uncle':             null,
+    'cousin':            null,
+    'niece':             null,
+    'nephew':            null,
+    'other':             null,
   };
 
   function mpOpenAddPerson() {
@@ -13888,6 +14022,304 @@
       dbgErr('PEOPLE', 'mpDeleteSelected error:', e.message);
     }
   }
+
+  // ── My People — Gethro first-open review screen ──────────────────
+  // State for the review screen
+  var _mpReviewSuggestions = [];  // [{ name, relType, relLabel, included }]
+  var _mpReviewDone = false;      // cached from life_settings so we don't re-fetch every open
+
+  // Called from openMyPeople() before _mpLoad — checks if review has been done.
+  // Returns true if we should show the review screen (tree empty, not done, people exist in entries).
+  async function _mpCheckReview() {
+    if (_mpReviewDone) return false;  // already done this session
+
+    // Load the flag from life_settings
+    try {
+      var headers = getAuthHeaders();
+      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.people_tree_review_done', { headers });
+      if (res.ok) {
+        var rows = await res.json();
+        if (rows.length && rows[0].value === 'true') {
+          _mpReviewDone = true;
+          return false;
+        }
+      }
+    } catch(e) { dbgWarn('PEOPLE', 'review flag check failed: ' + e.message); }
+
+    // Only show review if there are no people in the tree yet
+    // (If the user added people manually then deleted them all, we skip — flag is already set.)
+    return true;
+  }
+
+  // Extract unique people names from entries that aren't already in _mpPeople
+  function _mpSuggestionsFromEntries() {
+    // Collect all unique names from entry.people tags
+    var nameFreq = {};
+    (entries || []).forEach(function(e) {
+      if (!e.people) return;
+      e.people.split(',').forEach(function(n) {
+        var name = n.trim();
+        if (!name) return;
+        nameFreq[name] = (nameFreq[name] || 0) + 1;
+      });
+    });
+
+    // Exclude names already in _mpPeople
+    var existingNames = new Set(_mpPeople.map(function(p) { return p.name.toLowerCase(); }));
+    var names = Object.keys(nameFreq).filter(function(n) { return !existingNames.has(n.toLowerCase()); });
+
+    // Sort by frequency descending, cap at 15 suggestions
+    names.sort(function(a, b) { return nameFreq[b] - nameFreq[a]; });
+    names = names.slice(0, 15);
+
+    return names.map(function(name) {
+      return { name: name, relType: '', relLabel: '', included: true, count: nameFreq[name] };
+    });
+  }
+
+  // Build and show the review screen
+  function _mpShowReviewScreen(suggestions) {
+    _mpReviewSuggestions = suggestions;
+
+    // Hide loading/tree elements
+    document.getElementById('mpLoadingState').style.display  = 'none';
+    document.getElementById('mpEmptyState').style.display    = 'none';
+    document.getElementById('mpTreeContainer').innerHTML     = '';
+    document.getElementById('mpExpandUpRow').style.display   = 'none';
+    document.getElementById('mpExpandDownRow').style.display = 'none';
+
+    _mpBuildReviewRows();
+    document.getElementById('mpReviewScreen').style.display = 'block';
+  }
+
+  function _mpBuildReviewRows() {
+    var container = document.getElementById('mpReviewRows');
+    container.innerHTML = '';
+    _mpReviewSuggestions.forEach(function(s, idx) {
+      var row = document.createElement('div');
+      var bg = s.included ? 'var(--surface)' : 'rgba(0,0,0,0.03)';
+      var opacity = s.included ? '1' : '0.45';
+      row.id = 'mpReviewRow_' + idx;
+      row.style.cssText = 'background:' + bg + ';border:1px solid var(--border);border-radius:12px;padding:14px 16px;transition:opacity 0.15s;opacity:' + opacity;
+
+      // Top row: checkbox + name + mention count
+      var topRow = document.createElement('div');
+      topRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:' + (s.included ? '12px' : '0');
+      topRow.innerHTML =
+        '<input type="checkbox" id="mpReviewChk_' + idx + '" ' + (s.included ? 'checked' : '') + ' ' +
+        'onchange="mpReviewToggle(' + idx + ',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)">' +
+        '<span style="font-size:0.9rem;font-weight:700;color:var(--text);font-family:Lato,sans-serif;flex:1">' + _escHtml(s.name) + '</span>' +
+        '<span style="font-size:0.72rem;color:var(--text-light)">' + s.count + ' mention' + (s.count !== 1 ? 's' : '') + '</span>';
+      row.appendChild(topRow);
+
+      // Relationship fields (only visible when included)
+      var fieldsDiv = document.createElement('div');
+      fieldsDiv.id = 'mpReviewFields_' + idx;
+      fieldsDiv.style.cssText = 'display:' + (s.included ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px';
+
+      // Rel type select
+      var relTypeOptions = [
+        ['', '— Relationship —'],
+        ['mother', 'Mother'], ['father', 'Father'], ['parent', 'Parent / step-parent'],
+        ['grandmother', 'Grandmother'], ['grandfather', 'Grandfather'], ['great_grandparent', 'Great-grandparent'],
+        ['sister', 'Sister'], ['brother', 'Brother'], ['half_sibling', 'Half-sibling'],
+        ['spouse', 'Spouse / partner'],
+        ['daughter', 'Daughter'], ['son', 'Son'], ['child', 'Child / step-child'],
+        ['granddaughter', 'Granddaughter'], ['grandson', 'Grandson'], ['great_grandchild', 'Great-grandchild'],
+        ['aunt', 'Aunt'], ['uncle', 'Uncle'], ['cousin', 'Cousin'], ['niece', 'Niece'], ['nephew', 'Nephew'],
+        ['other', 'Other'],
+      ];
+      var selectHtml = '<select id="mpReviewRel_' + idx + '" onchange="mpReviewRelChange(' + idx + ',this.value)" ' +
+        'style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--bg)">';
+      relTypeOptions.forEach(function(opt) {
+        selectHtml += '<option value="' + opt[0] + '"' + (s.relType === opt[0] ? ' selected' : '') + '>' + opt[1] + '</option>';
+      });
+      selectHtml += '</select>';
+
+      var labelHtml = '<input type="text" id="mpReviewLabel_' + idx + '" placeholder="Custom label (optional)" value="' + _escHtml(s.relLabel || '') + '" ' +
+        'oninput="mpReviewLabelChange(' + idx + ',this.value)" ' +
+        'style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--bg)">';
+
+      fieldsDiv.innerHTML = selectHtml + labelHtml;
+      row.appendChild(fieldsDiv);
+      container.appendChild(row);
+    });
+  }
+
+  function _escHtml(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function mpReviewToggle(idx, checked) {
+    _mpReviewSuggestions[idx].included = checked;
+    var row    = document.getElementById('mpReviewRow_' + idx);
+    var fields = document.getElementById('mpReviewFields_' + idx);
+    var topRow = row.querySelector('div');
+    if (row) {
+      row.style.opacity    = checked ? '1' : '0.45';
+      row.style.background = checked ? 'var(--surface)' : 'rgba(0,0,0,0.03)';
+    }
+    if (fields) {
+      fields.style.display = checked ? 'grid' : 'none';
+      topRow.style.marginBottom = checked ? '12px' : '0';
+    }
+  }
+
+  function mpReviewRelChange(idx, val) {
+    _mpReviewSuggestions[idx].relType = val;
+  }
+
+  function mpReviewLabelChange(idx, val) {
+    _mpReviewSuggestions[idx].relLabel = val;
+  }
+
+  async function mpReviewSaveConfirmed() {
+    var btn    = document.getElementById('mpReviewSaveBtn');
+    var status = document.getElementById('mpReviewSaveStatus');
+    var headers = getAuthHeaders();
+
+    // Read current field values (user may have typed without triggering oninput on blur)
+    _mpReviewSuggestions.forEach(function(s, idx) {
+      var relEl   = document.getElementById('mpReviewRel_' + idx);
+      var labelEl = document.getElementById('mpReviewLabel_' + idx);
+      if (relEl)   s.relType  = relEl.value;
+      if (labelEl) s.relLabel = (labelEl.value || '').trim();
+    });
+
+    var toSave = _mpReviewSuggestions.filter(function(s) { return s.included && s.relType; });
+    var skipped = _mpReviewSuggestions.filter(function(s) { return s.included && !s.relType; });
+
+    if (!toSave.length) {
+      if (skipped.length) {
+        status.textContent = 'Please select a relationship for each ticked person, or untick them to skip.';
+        status.style.display = 'block';
+        return;
+      }
+      // Nothing ticked — treat as skip all
+      await mpReviewSkipAll();
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    status.style.display = 'none';
+
+    try {
+      // Need a self node to anchor relationships. Create one if it doesn't exist.
+      var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+      if (!selfNode) {
+        var selfBody = {
+          user_id:           currentUser.id,
+          name:              userProfile.name || userProfile.firstName || 'You',
+          relationship_type: 'self',
+          bucket:            'family',
+        };
+        var selfRes = await fetch(DB_PEOPLE_URL, {
+          method: 'POST',
+          headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+          body: JSON.stringify(selfBody),
+        });
+        if (selfRes.ok) {
+          var selfRows = await selfRes.json();
+          selfNode = selfRows[0];
+          if (selfNode) _mpPeople.push(selfNode);
+        }
+      }
+
+      var saved = 0;
+      for (var i = 0; i < toSave.length; i++) {
+        var s = toSave[i];
+        try {
+          var personBody = {
+            user_id:           currentUser.id,
+            name:              s.name,
+            relationship_type: s.relType,
+            bucket:            'family',
+          };
+          if (s.relLabel) personBody.relationship_label = s.relLabel;
+
+          var pRes = await fetch(DB_PEOPLE_URL, {
+            method: 'POST',
+            headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify(personBody),
+          });
+          if (!pRes.ok) continue;
+          var pRows = await pRes.json();
+          var newPerson = pRows[0];
+          if (newPerson) {
+            _mpPeople.push(newPerson);
+            // Insert relationship row if mappable and selfNode exists
+            var treeRelType = MP_REL_TO_TREE[s.relType];
+            if (selfNode && treeRelType) {
+              var relBody = {
+                user_id:           currentUser.id,
+                person_a_id:       selfNode.id,
+                person_b_id:       newPerson.id,
+                relationship_type: treeRelType,
+              };
+              var relRes = await fetch(DB_PEOPLE_REL_URL, {
+                method: 'POST',
+                headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+                body: JSON.stringify(relBody),
+              });
+              if (relRes.ok) {
+                var relRows = await relRes.json();
+                if (relRows[0]) _mpRels.push(relRows[0]);
+              }
+            }
+            saved++;
+          }
+        } catch(e) { dbgWarn('PEOPLE', 'Review save error for ' + s.name + ': ' + e.message); }
+      }
+
+      // Mark review as done
+      await _mpMarkReviewDone();
+      logActivity('people_review_saved', saved + ' people added', 'info', 'PEOPLE');
+
+      // Transition to tree
+      document.getElementById('mpReviewScreen').style.display = 'none';
+      toast(saved + ' ' + (saved === 1 ? 'person' : 'people') + ' added to your family tree.');
+
+      if (_mpPeople.filter(function(p) { return p.relationship_type !== 'self'; }).length) {
+        _mpAssignGenerations();
+        _mpMinGen = Math.max(_mpAllMinGen, -1);
+        _mpMaxGen = Math.min(_mpAllMaxGen,  1);
+        if (_mpMinGen > 0) _mpMinGen = 0;
+        if (_mpMaxGen < 0) _mpMaxGen = 0;
+        document.getElementById('mpEmptyState').style.display = 'none';
+        _mpRender();
+      } else {
+        document.getElementById('mpEmptyState').style.display = 'block';
+      }
+
+    } catch(e) {
+      dbgErr('PEOPLE', 'mpReviewSaveConfirmed error:', e.message);
+      status.textContent = 'Something went wrong — please try again.';
+      status.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Add to my tree';
+    }
+  }
+
+  async function mpReviewSkipAll() {
+    await _mpMarkReviewDone();
+    logActivity('people_review_skipped', '', 'info', 'PEOPLE');
+    document.getElementById('mpReviewScreen').style.display = 'none';
+    document.getElementById('mpEmptyState').style.display = 'block';
+  }
+
+  async function _mpMarkReviewDone() {
+    _mpReviewDone = true;
+    try {
+      var headers = getAuthHeaders();
+      await fetch(DB_SETTINGS_URL, {
+        method: 'POST',
+        headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+        body: JSON.stringify({ user_id: currentUser.id, key: 'people_tree_review_done', value: 'true', updated_at: new Date().toISOString() }),
+      });
+    } catch(e) { dbgWarn('PEOPLE', 'Could not set review done flag: ' + e.message); }
+  }
+
   function showEditProfile() {
     document.getElementById('profileEditFirstName').value = userProfile.firstName || '';
     document.getElementById('profileEditLastName').value  = userProfile.lastName  || '';
