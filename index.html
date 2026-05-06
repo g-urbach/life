@@ -2154,6 +2154,7 @@
             <p id="dashGethroMsg" style="font-size:0.95rem;line-height:1.6;color:var(--text);font-family:'Playfair Display',serif;font-style:italic;margin:0"></p>
             <div id="dashGethroAction" style="margin-top:10px"></div>
           </div>
+          <button id="dashGetroDismissBtn" onclick="dashGethroDissmiss()" title="Dismiss for a week" style="background:none;border:none;font-size:1rem;cursor:pointer;color:var(--text-light);line-height:1;padding:2px 4px;opacity:0.5;display:none" aria-label="Dismiss">✕</button>
         </div>
       </div>
 
@@ -2501,7 +2502,23 @@
       <!-- Date of birth (optional) -->
       <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
       <input id="mpPersonDob" type="date"
-        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:24px">
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px">
+
+      <!-- Bio (optional) -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">A few words about them <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+      <textarea id="mpPersonBio" rows="3" placeholder="e.g. A quiet man who loved cricket and always smelled of woodsmoke."
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;margin-bottom:16px;line-height:1.5"></textarea>
+
+      <!-- Photo (optional) -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Photo <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+        <div id="mpPersonPhotoPreview" style="width:52px;height:52px;border-radius:50%;background:var(--surface);border:2px solid var(--border);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.4rem">👤</div>
+        <div style="flex:1">
+          <input id="mpPersonPhotoFile" type="file" accept="image/*" style="display:none" onchange="mpPersonPhotoPreviewUpdate()">
+          <button type="button" onclick="document.getElementById('mpPersonPhotoFile').click()" style="padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif">📷 Choose photo</button>
+          <div id="mpPersonPhotoStatus" style="font-size:0.72rem;color:var(--text-light);margin-top:4px"></div>
+        </div>
+      </div>
 
       <!-- Error message -->
       <div id="mpPersonError" style="display:none;background:#fff0f0;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:var(--rose);margin-bottom:16px"></div>
@@ -2535,6 +2552,10 @@
             <div id="mpProfileName" style="font-family:'Playfair Display',serif;font-size:1.3rem;font-weight:700;color:var(--text);line-height:1.2;margin-bottom:4px"></div>
             <div id="mpProfileDob" style="font-size:0.78rem;color:var(--text-light)"></div>
           </div>
+        </div>
+        <!-- Bio -->
+        <div id="mpProfileBioWrap" style="display:none;margin-top:12px;font-size:0.84rem;color:var(--text-light);line-height:1.55;font-style:italic;padding:10px 12px;background:var(--surface2);border-radius:8px">
+          <span id="mpProfileBio"></span>
         </div>
         <!-- Action buttons -->
         <div style="display:flex;gap:8px;margin-top:16px">
@@ -3016,8 +3037,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.81';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 2 step 1: person profile panel — tapping a tree card opens a full profile with name, relationship, DOB, entry mentions list, and Write a memory CTA.';
+  const APP_VERSION  = 'v3.83';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 3: Gethro nudges for empty tree + frequently-mentioned people not in tree. Dismiss button stores 7-day suppress in localStorage.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4723,6 +4744,7 @@
   const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/rest/v1/life_activity_log'; // usage tracking
   const DB_PEOPLE_URL       = SUPABASE_URL + '/rest/v1/life_people';                // Family tree nodes
   const DB_PEOPLE_REL_URL   = SUPABASE_URL + '/rest/v1/life_people_relationships';  // Family tree edges
+  const DB_ENTRY_PEOPLE_URL = SUPABASE_URL + '/rest/v1/life_entry_people';          // Entry→person join table
 
   // ── Auth session expiry handler ──────────────────────────────────
   // Called after any fetch — if we get a 401 and are supposedly signed in,
@@ -5802,6 +5824,8 @@
         if (cached) { Object.assign(cached, patch); }
         dbg('DB', 'Entry edited (PATCH), id:', editId);
         recLastTags = { ...tags };
+        // Link entry to people in the join table (fire-and-forget)
+        if (patch.people) _mpLinkEntryToPeople(editId, patch.people);
         // New photos/audio added during an edit session are still attached as children
         if (recPhotos.length) {
           for (let i = 0; i < recPhotos.length; i++) {
@@ -5827,6 +5851,7 @@
 
     // ── New entry mode: POST ──────────────────────────────────────────
     const eid = await addEntry(fullTags.chapter || 'Unspecified', text, entryQuestion, null, null, fullTags, null);
+    if (eid && fullTags.people) _mpLinkEntryToPeople(eid, fullTags.people);
     if (eid && recPhotos.length) {
       for (let i = 0; i < recPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + recPhotos.length + '...');
@@ -8360,25 +8385,91 @@
       obs.push({ msg: 'I\'d love to hear more about your ' + missingChapter.toLowerCase() + '. ' + chPrompts[missingChapter] + ' There\'s nothing written there yet.', action: 'memories' });
     }
 
+    // ⑪ No one in the family tree yet (but user has entries) — invite to build it
+    if (real.length >= 3 && typeof _mpPeople !== 'undefined' && _mpPeople.length === 0) {
+      obs.push({
+        msg: 'I\'ve been reading your memories and notice there are people in them — but you haven\'t added anyone to your family tree yet. It only takes a moment, and it makes the story so much richer.',
+        action: 'people',
+        dismissKey: 'gethro_nudge_dismissed_tree_empty',
+      });
+    }
+
+    // ⑫ Person frequently mentioned in entries but not in the tree
+    if (real.length >= 3 && typeof _mpPeople !== 'undefined' && _mpPeople.length >= 0) {
+      const peopleCounts12 = {};
+      real.forEach(function(e) {
+        if (e.people) e.people.split(',').map(function(p) { return p.trim(); }).filter(Boolean).forEach(function(p) {
+          peopleCounts12[p] = (peopleCounts12[p] || 0) + 1;
+        });
+      });
+      const treeNames = new Set(_mpPeople.map(function(p) { return (p.name || '').toLowerCase(); }));
+      const notInTree = Object.entries(peopleCounts12)
+        .filter(function(pair) { return pair[1] >= 2 && !treeNames.has(pair[0].toLowerCase()); })
+        .sort(function(a, b) { return b[1] - a[1]; });
+      if (notInTree.length) {
+        const topName = notInTree[0][0];
+        const count   = notInTree[0][1];
+        obs.push({
+          msg: 'You mention ' + topName + ' in ' + count + ' of your memories, but I don\'t know who they are yet. Adding them to your family tree would help me understand your story better.',
+          action: 'people',
+          dismissKey: 'gethro_nudge_dismissed_tree_person',
+        });
+      }
+    }
+
     // ⑩ Generic encouragement fallback
     obs.push({ msg: 'Every time you add a memory, your story grows richer. What feels right to write about today?' + (name ? '' : ''), action: 'memories' });
 
+    // Filter out observations whose dismissKey has been triggered within the last 7 days
+    const now = Date.now();
+    const DISMISS_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const filteredObs = obs.filter(function(o) {
+      if (!o.dismissKey) return true;
+      const stored = localStorage.getItem(o.dismissKey);
+      if (!stored) return true;
+      return (now - parseInt(stored, 10)) > DISMISS_MS;
+    });
+
     // Pick observation for today — day-seed so same message shows all day
     const daySeed = Math.floor(Date.now() / 86400000);
-    const pick = obs[daySeed % obs.length];
+    const pool = filteredObs.length ? filteredObs : obs; // always have at least one
+    const pick = pool[daySeed % pool.length];
 
     msgEl.textContent = pick.msg;
+
+    // Show dismiss button only for nudges that have a dismissKey
+    var dismissBtn = document.getElementById('dashGetroDismissBtn');
+    if (dismissBtn) {
+      if (pick.dismissKey) {
+        dismissBtn.style.display = 'block';
+        dismissBtn.setAttribute('data-dismiss-key', pick.dismissKey);
+      } else {
+        dismissBtn.style.display = 'none';
+        dismissBtn.removeAttribute('data-dismiss-key');
+      }
+    }
 
     // Optional action button
     if (pick.action === 'memories') {
       actEl.innerHTML = '<button onclick="showPanel(\'memories\',null,0)" style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--gold);border-radius:6px;background:none;color:var(--gold-dark);font-family:\'Lato\',sans-serif;cursor:pointer">✍️ Write a memory</button>';
     } else if (pick.action === 'entries') {
       actEl.innerHTML = '<button onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;showPanel(\'entries\',null,3)" style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--gold);border-radius:6px;background:none;color:var(--gold-dark);font-family:\'Lato\',sans-serif;cursor:pointer">📋 View entries</button>';
+    } else if (pick.action === 'people') {
+      actEl.innerHTML = '<button onclick="openMyPeople && openMyPeople()" style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--gold);border-radius:6px;background:none;color:var(--gold-dark);font-family:\'Lato\',sans-serif;cursor:pointer">🌳 Open family tree</button>';
     } else {
       actEl.innerHTML = '';
     }
 
     tile.style.display = 'block';
+  }
+
+  // Dismiss the current Gethro tile nudge for 7 days (stored in localStorage — device-local, low stakes)
+  function dashGethroDissmiss() {
+    var btn = document.getElementById('dashGetroDismissBtn');
+    var key = btn && btn.getAttribute('data-dismiss-key');
+    if (key) localStorage.setItem(key, Date.now().toString());
+    var tile = document.getElementById('dashGethroTile');
+    if (tile) tile.style.display = 'none';
   }
 
   function renderDashboard() {
@@ -13753,6 +13844,21 @@
     card.onmouseover = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = '0 2px 12px rgba(0,0,0,0.12)'; };
     card.onmouseout  = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = ''; };
 
+    // Photo thumbnail or emoji avatar
+    var thumbWrap = document.createElement('div');
+    thumbWrap.style.cssText = 'width:36px;height:36px;border-radius:50%;background:var(--bg);border:1.5px solid var(--border);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:6px;flex-shrink:0';
+    if (person.photo_url) {
+      var thumbImg = document.createElement('img');
+      thumbImg.src = person.photo_url;
+      thumbImg.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+      thumbWrap.appendChild(thumbImg);
+    } else {
+      var cardEmojiMap = { mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
+        son:'👦', daughter:'👧', brother:'🧑', sister:'👩', spouse:'💑', partner:'💑', self:'🧑' };
+      thumbWrap.textContent = cardEmojiMap[person.relationship_type] || '👤';
+    }
+    card.appendChild(thumbWrap);
+
     // Name
     var nameEl = document.createElement('div');
     nameEl.style.cssText = 'font-size:0.88rem;font-weight:700;color:var(--text);font-family:\'Lato\',sans-serif;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
@@ -13876,6 +13982,11 @@
     document.getElementById('mpPersonRelType').value  = '';
     document.getElementById('mpPersonRelLabel').value = '';
     document.getElementById('mpPersonDob').value      = '';
+    document.getElementById('mpPersonBio').value      = '';
+    document.getElementById('mpPersonPhotoFile').value = '';
+    document.getElementById('mpPersonPhotoPreview').innerHTML = '👤';
+    document.getElementById('mpPersonPhotoPreview').style.background = 'var(--surface)';
+    document.getElementById('mpPersonPhotoStatus').textContent = '';
     document.getElementById('mpPersonError').style.display = 'none';
     document.getElementById('mpPersonSaveBtn').textContent = 'Save';
     document.getElementById('mpPersonModal').style.display = 'flex';
@@ -13891,6 +14002,20 @@
     document.getElementById('mpPersonRelType').value  = person.relationship_type || '';
     document.getElementById('mpPersonRelLabel').value = person.relationship_label || '';
     document.getElementById('mpPersonDob').value      = person.dob || '';
+    document.getElementById('mpPersonBio').value      = person.bio || '';
+    document.getElementById('mpPersonPhotoFile').value = '';
+    document.getElementById('mpPersonPhotoStatus').textContent = '';
+    // Show existing photo in preview if set
+    var prevEl = document.getElementById('mpPersonPhotoPreview');
+    if (person.photo_url) {
+      prevEl.innerHTML = '';
+      var img = document.createElement('img');
+      img.src = person.photo_url;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+      prevEl.appendChild(img);
+    } else {
+      prevEl.innerHTML = '👤';
+    }
     document.getElementById('mpPersonError').style.display = 'none';
     document.getElementById('mpPersonSaveBtn').textContent = 'Save changes';
     document.getElementById('mpPersonModal').style.display = 'flex';
@@ -13899,6 +14024,22 @@
   function mpClosePersonModal() {
     document.getElementById('mpPersonModal').style.display = 'none';
     _mpEditingPersonId = null;
+  }
+
+  function mpPersonPhotoPreviewUpdate() {
+    var file = document.getElementById('mpPersonPhotoFile').files[0];
+    if (!file) return;
+    var prevEl = document.getElementById('mpPersonPhotoPreview');
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      prevEl.innerHTML = '';
+      var img = document.createElement('img');
+      img.src = ev.target.result;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+      prevEl.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+    document.getElementById('mpPersonPhotoStatus').textContent = file.name;
   }
 
   function mpPersonRelTypeChanged() {
@@ -13910,6 +14051,8 @@
     var relType  = document.getElementById('mpPersonRelType').value;
     var relLabel = (document.getElementById('mpPersonRelLabel').value || '').trim();
     var dob      = document.getElementById('mpPersonDob').value || null;
+    var bio      = (document.getElementById('mpPersonBio').value || '').trim() || null;
+    var photoFile = document.getElementById('mpPersonPhotoFile').files[0] || null;
     var errEl    = document.getElementById('mpPersonError');
     var saveBtn  = document.getElementById('mpPersonSaveBtn');
 
@@ -13930,12 +14073,31 @@
 
     var headers = getAuthHeaders();
 
+    // Upload photo if one was chosen
+    var photoUrl = null;
+    if (photoFile) {
+      try {
+        document.getElementById('mpPersonPhotoStatus').textContent = 'Uploading photo…';
+        var up = await uploadPhotoFile(photoFile);
+        if (up && up.path) {
+          // Get a signed URL so it's displayable
+          var signedUrl = await getSignedUrl(up.path);
+          photoUrl = signedUrl || up.path;
+        }
+        document.getElementById('mpPersonPhotoStatus').textContent = '';
+      } catch(photoErr) {
+        dbgWarn('PEOPLE', 'Photo upload failed:', photoErr.message);
+        document.getElementById('mpPersonPhotoStatus').textContent = 'Photo upload failed — person saved without photo';
+      }
+    }
+
     try {
       if (_mpEditingPersonId) {
         // ── PATCH existing person ──────────────────────────────────
-        var patchBody = { name: name, relationship_type: relType, dob: dob };
+        var patchBody = { name: name, relationship_type: relType, dob: dob, bio: bio };
         if (relLabel) patchBody.relationship_label = relLabel;
         else patchBody.relationship_label = null;
+        if (photoUrl) patchBody.photo_url = photoUrl;
 
         var patchRes = await fetch(DB_PEOPLE_URL + '?id=eq.' + _mpEditingPersonId + '&user_id=eq.' + currentUser.id, {
           method: 'PATCH',
@@ -13951,6 +14113,8 @@
           localPerson.relationship_type  = relType;
           localPerson.relationship_label = relLabel || null;
           localPerson.dob                = dob;
+          localPerson.bio                = bio;
+          if (photoUrl) localPerson.photo_url = photoUrl;
         }
         logActivity('people_edited', name, 'info', 'PEOPLE');
 
@@ -13961,9 +14125,11 @@
           name:               name,
           relationship_type:  relType,
           dob:                dob,
+          bio:                bio,
           bucket:             'family',
         };
         if (relLabel) newPersonBody.relationship_label = relLabel;
+        if (photoUrl) newPersonBody.photo_url = photoUrl;
 
         var postRes = await fetch(DB_PEOPLE_URL, {
           method: 'POST',
@@ -14376,6 +14542,34 @@
   // ── Person profile panel ──────────────────────────────────────────
   var _mpProfilePersonId = null;
 
+  // Populate life_entry_people for a saved entry.
+  // Called fire-and-forget after every successful entry save/edit.
+  // Parses the people tag (comma-separated names), matches against _mpPeople cache,
+  // and upserts rows into the join table for any matched person.
+  async function _mpLinkEntryToPeople(entryId, peopleTag) {
+    if (!currentUser || !entryId || !peopleTag || !_mpPeople.length) return;
+    var names = peopleTag.split(',').map(function(n) { return n.trim().toLowerCase(); }).filter(Boolean);
+    if (!names.length) return;
+    var headers = getAuthHeaders();
+    _mpPeople.forEach(function(person) {
+      var personLower = (person.name || '').toLowerCase();
+      var personFirst = personLower.split(' ')[0];
+      var matched = names.some(function(n) {
+        return n === personLower || (personFirst.length >= 4 && n.includes(personFirst));
+      });
+      if (!matched) return;
+      // Fire-and-forget upsert (ignore-duplicates header handles re-saves cleanly)
+      fetch(DB_ENTRY_PEOPLE_URL, {
+        method: 'POST',
+        headers: Object.assign({}, headers, {
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=ignore-duplicates,return=minimal',
+        }),
+        body: JSON.stringify({ user_id: currentUser.id, entry_id: entryId, person_id: person.id }),
+      }).catch(function(e) { dbgWarn('PEOPLE', '_mpLinkEntryToPeople error:', e.message); });
+    });
+  }
+
   function mpOpenProfile(personId) {
     var person = _mpPeople.find(function(p) { return p.id === personId; });
     if (!person) return;
@@ -14400,11 +14594,39 @@
       dobEl.style.display = 'none';
     }
 
-    var avatarMap = { mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
-      son:'👦', daughter:'👧', brother:'🧑', sister:'👩', spouse:'💑', partner:'💑', self:'🧑' };
-    document.getElementById('mpProfileAvatar').textContent = avatarMap[person.relationship_type] || '👤';
+    // Bio
+    var bioWrap = document.getElementById('mpProfileBioWrap');
+    var bioEl   = document.getElementById('mpProfileBio');
+    if (person.bio) {
+      bioEl.textContent = person.bio;
+      bioWrap.style.display = 'block';
+    } else {
+      bioWrap.style.display = 'none';
+    }
 
-    _mpBuildMentions(person);
+    // Avatar: photo thumbnail or emoji fallback
+    var avatarEl = document.getElementById('mpProfileAvatar');
+    avatarEl.innerHTML = '';
+    if (person.photo_url) {
+      var avatarImg = document.createElement('img');
+      avatarImg.src = person.photo_url;
+      avatarImg.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+      avatarImg.onerror = function() {
+        avatarEl.innerHTML = '';
+        var emojiMap = { mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
+          son:'👦', daughter:'👧', brother:'🧑', sister:'👩', spouse:'💑', partner:'💑', self:'🧑' };
+        avatarEl.textContent = emojiMap[person.relationship_type] || '👤';
+      };
+      avatarEl.appendChild(avatarImg);
+    } else {
+      var emojiMap2 = { mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
+        son:'👦', daughter:'👧', brother:'🧑', sister:'👩', spouse:'💑', partner:'💑', self:'🧑' };
+      avatarEl.textContent = emojiMap2[person.relationship_type] || '👤';
+    }
+
+    _mpBuildMentions(person, []);  // render immediately from name-string matches
+    // Also fetch explicit entry→person links and re-render with merged set
+    _mpLoadExplicitLinks(person);
 
     var panel = document.getElementById('mpProfilePanel');
     panel.style.display = 'block';
@@ -14423,7 +14645,28 @@
     }, 280);
   }
 
-  function _mpBuildMentions(person) {
+  // Fetch explicit entry→person links for this person, merge with name-string matches,
+  // then re-render the mentions list. Fire-and-forget — profile is already visible.
+  async function _mpLoadExplicitLinks(person) {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(DB_ENTRY_PEOPLE_URL + '?person_id=eq.' + person.id + '&user_id=eq.' + currentUser.id + '&select=entry_id', {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return;
+      var rows = await res.json();
+      var explicitIds = rows.map(function(r) { return r.entry_id; });
+      _mpBuildMentions(person, explicitIds);
+    } catch(e) {
+      // Non-fatal — name-string mentions already shown
+      dbgWarn('PEOPLE', '_mpLoadExplicitLinks error:', e.message);
+    }
+  }
+
+  // Build the mentions list in the profile panel.
+  // explicitIds: array of entry UUIDs from life_entry_people (may be empty on first call).
+  // Falls back to name-string matching for entries not yet linked explicitly.
+  function _mpBuildMentions(person, explicitIds) {
     var container = document.getElementById('mpProfileMentions');
     var emptyEl   = document.getElementById('mpProfileNoMentions');
     container.innerHTML = '';
@@ -14433,10 +14676,23 @@
     var nameLower  = name.toLowerCase();
     var firstLower = firstName.toLowerCase();
 
-    var matched = (entries || []).filter(function(e) {
+    // Name-string matches (always computed for fallback / older entries)
+    var nameMatched = (entries || []).filter(function(e) {
       var text = ((e.answer || '') + ' ' + (e.question || '') + ' ' + (e.people || '')).toLowerCase();
       return text.includes(nameLower) || (firstLower.length >= 4 && text.includes(firstLower));
     });
+
+    // Explicitly linked entries (may be empty array on first call before async load)
+    var explicitEntries = explicitIds.length
+      ? (entries || []).filter(function(e) { return explicitIds.includes(e.id); })
+      : [];
+
+    // Merge: union by id, explicit first, then name-string fallback for the rest
+    var seen = {};
+    var matched = [];
+    explicitEntries.forEach(function(e) { if (!seen[e.id]) { seen[e.id] = true; matched.push(e); } });
+    nameMatched.forEach(function(e)     { if (!seen[e.id]) { seen[e.id] = true; matched.push(e); } });
+
     matched.sort(function(a, b) { return (b.created_at || '') > (a.created_at || '') ? 1 : -1; });
 
     if (!matched.length) {
