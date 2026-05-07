@@ -2409,11 +2409,12 @@
         <div style="display:flex;align-items:center;gap:4px">
           <!-- Generation depth controls (tree tab only) -->
           <div id="mpTreeControls" style="display:flex;align-items:center;gap:4px">
+            <span id="mpRerootCrumb" style="display:none;font-size:0.65rem;letter-spacing:0.06em;color:var(--gold);font-weight:700;margin-right:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
             <span style="font-size:0.65rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);font-weight:700;margin-right:2px">Gens</span>
             <button onclick="mpGenDecrease()" id="mpGenDecBtn" title="Show fewer generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#8722;</button>
             <span id="mpGenDepthLabel" style="font-size:0.78rem;color:var(--text);min-width:18px;text-align:center;font-family:'Lato',sans-serif">3</span>
             <button onclick="mpGenIncrease()" id="mpGenIncBtn" title="Show more generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#43;</button>
-            <button onclick="mpRecentre()" title="Re-centre on you" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);margin-left:2px">&#8853;</button>
+            <button id="mpRecentreBtn" onclick="mpRecentre()" title="Re-centre on you" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);margin-left:2px">&#8853;</button>
           </div>
           <!-- Close -->
           <button onclick="closeMyPeople()" style="width:28px;height:28px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text-light);margin-left:4px">&#10005;</button>
@@ -2661,6 +2662,11 @@
         <button onclick="mpProfileAddRelative()" id="mpProfileAddRelBtn"
           style="width:100%;margin-top:8px;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;text-align:left">
           &#43; Add a relative of <span class="mp-profile-first-name" id="mpProfileAddRelName"></span>
+        </button>
+        <!-- Re-root button (hidden for self node) -->
+        <button id="mpProfileRerootBtn" onclick="mpReRoot(_mpProfilePersonId)"
+          style="display:none;width:100%;margin-top:4px;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;text-align:left">
+          &#127795; View tree from <span id="mpProfileRerootName"></span>'s perspective
         </button>
         <!-- Delete button (subtle, below the fold) -->
         <button onclick="mpProfileDelete()" style="width:100%;margin-top:4px;padding:7px;background:none;border:1px solid transparent;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer;text-align:left">
@@ -3141,8 +3147,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.87';
-  const DEPLOY_NOTES = APP_VERSION + ' — Deployer stale test cleanup: Phase 1 checks for removed elements/functions replaced with correct Phase 4 equivalents (deploy-v32). No app code changes.';
+  const APP_VERSION  = 'v3.88';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family tree Phase 4b: re-root any person as tree centre (View tree from X\'s perspective), explicit-edge-only connectors (heuristic inference removed), breadcrumb + gold re-centre button when re-rooted.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13751,11 +13757,51 @@
   // ── Re-centre on self ────────────────────────────────────────────
   function mpRecentre() {
     _mpRootId = null;
+    _mpUpdateRerootBreadcrumb();
     _mpRender();
-    // snap back to self node after a tick so layout is done
     requestAnimationFrame(function() {
       _mpCentreOnSelf();
     });
+  }
+
+  // Re-root the tree on a specific person — called from their profile panel
+  function mpReRoot(personId) {
+    mpCloseProfile();
+    _mpRootId = personId || null;
+    _mpUpdateRerootBreadcrumb();
+    _mpRender();
+    // Centre on the new root after layout
+    requestAnimationFrame(function() {
+      var rootPerson = _mpRootId && _mpPeople.find(function(p) { return p.id === _mpRootId; });
+      if (!rootPerson || rootPerson._layoutX === undefined) { _mpCentreOnSelf(); return; }
+      var vp = document.getElementById('mpCanvasViewport');
+      if (!vp) return;
+      _mpCanvas.scale = 1.0;
+      _mpCanvas.tx = vp.clientWidth  / 2 - (rootPerson._layoutX + MP_NODE_W / 2);
+      _mpCanvas.ty = vp.clientHeight / 2 - (rootPerson._layoutY + MP_NODE_H / 2);
+      _mpApplyTransform();
+    });
+  }
+
+  // Show/hide the "Back to my tree" breadcrumb in the toolbar
+  function _mpUpdateRerootBreadcrumb() {
+    var crumb = document.getElementById('mpRerootCrumb');
+    var recentreBtn = document.getElementById('mpRecentreBtn');
+    if (!crumb || !recentreBtn) return;
+    if (_mpRootId) {
+      var p = _mpPeople.find(function(p) { return p.id === _mpRootId; });
+      var firstName = p ? (p.name || '').split(' ')[0] || p.name : '';
+      crumb.textContent = firstName ? 'Viewing from ' + firstName : 'Re-rooted view';
+      crumb.style.display = 'inline';
+      recentreBtn.title = 'Back to your tree';
+      recentreBtn.style.color = 'var(--gold)';
+      recentreBtn.style.borderColor = 'var(--gold)';
+    } else {
+      crumb.style.display = 'none';
+      recentreBtn.title = 'Re-centre on you';
+      recentreBtn.style.color = '';
+      recentreBtn.style.borderColor = '';
+    }
   }
 
   function _mpCentreOnSelf() {
@@ -13775,6 +13821,9 @@
     var overlay = document.getElementById('myPeopleOverlay');
     overlay.style.display = 'flex';
     document.getElementById('mpReviewScreen').style.display = 'none';
+    // Reset re-root state on every open
+    _mpRootId = null;
+    _mpUpdateRerootBreadcrumb();
     // Always open on Tree tab
     _mpActiveTab = 'tree';
     mpSwitchTab('tree');
@@ -13836,16 +13885,12 @@
   //   4. Centre each parent pair above their children's midpoint.
   //
   function _mpComputeLayout() {
-    // Step 1 — assign generation numbers via relationship_type (fast path for self-rooted tree)
-    _mpPeople.forEach(function(p) {
-      var g = MP_PERSON_GEN[p.relationship_type];
-      p._gen = (g !== undefined) ? g : 0;
-    });
-    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-    if (selfNode) selfNode._gen = 0;
+    // Determine root: _mpRootId (re-root mode) or the self node (normal mode)
+    var rootNode = (_mpRootId && _mpPeople.find(function(p) { return p.id === _mpRootId; }))
+      || _mpPeople.find(function(p) { return p.relationship_type === 'self'; })
+      || _mpPeople[0];
 
-    // Step 2 — augment with BFS over relationship edges for nodes connected via non-self paths
-    // Build adjacency from _mpRels: edge = { a, b, type }
+    // Step 1 — build adjacency map from explicit relationship edges
     var edgeMap = {}; // personId → [{otherId, type}]
     _mpRels.forEach(function(r) {
       if (!edgeMap[r.person_a_id]) edgeMap[r.person_a_id] = [];
@@ -13854,13 +13899,15 @@
       edgeMap[r.person_b_id].push({ id: r.person_a_id, type: _mpInvertRelType(r.relationship_type) });
     });
 
-    // BFS from self to fill in gen for anyone whose gen hasn't been determined by relationship_type
-    var genAssigned = {};
-    _mpPeople.forEach(function(p) { genAssigned[p.id] = true; }); // all already have a gen from step 1
-    // Overwrite with BFS for nodes connected via rels to refine placement
-    if (selfNode) {
-      var queue = [{ id: selfNode.id, gen: 0 }];
-      var visited = {}; visited[selfNode.id] = true;
+    // Step 2 — BFS from root to assign generations via relationship edges
+    // People with no relationship edge to root get a fallback gen from MP_PERSON_GEN
+    _mpPeople.forEach(function(p) {
+      p._gen = undefined;
+    });
+    if (rootNode) {
+      rootNode._gen = 0;
+      var queue = [{ id: rootNode.id, gen: 0 }];
+      var visited = {}; visited[rootNode.id] = true;
       while (queue.length) {
         var cur = queue.shift();
         var edges = edgeMap[cur.id] || [];
@@ -13870,14 +13917,19 @@
           var offset = _mpRelGenOffset(e.type);
           var person = _mpPeople.find(function(p) { return p.id === e.id; });
           if (person) {
-            // Only override gen if the BFS path gives a more specific placement
-            // (trust relationship_type on the person row for direct self→person rels)
             person._gen = cur.gen + offset;
           }
           queue.push({ id: e.id, gen: cur.gen + offset });
         });
       }
     }
+    // Fallback for nodes not reachable via relationship edges (e.g. added before rels existed)
+    _mpPeople.forEach(function(p) {
+      if (p._gen === undefined) {
+        var g = MP_PERSON_GEN[p.relationship_type];
+        p._gen = (g !== undefined) ? g : 0;
+      }
+    });
 
     // Step 3 — filter to visible generation range
     var minG = -(Math.min(_mpGenDepth, 4));
@@ -14104,32 +14156,8 @@
       childrenOf[r.person_a_id].push(r.person_b_id);
     });
 
-    // Also infer parent→child from generation difference for direct self-connected people
-    // where explicit relationship rows may not exist yet (legacy / review-added people)
-    _mpPeople.forEach(function(parent) {
-      if (!parent._visible) return;
-      _mpPeople.forEach(function(child) {
-        if (!child._visible) return;
-        if (child._gen !== parent._gen + 1) return;
-        // Check there's a self-connected chain: parent is ancestor or sibling of self
-        // Simple heuristic: connect if parent._gen < 0 and child is self, or parent is self and child._gen > 0
-        var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-        if (!selfNode) return;
-        var parentIsDirectAncestor = (parent.relationship_type === 'mother' || parent.relationship_type === 'father' ||
-          parent.relationship_type === 'grandmother' || parent.relationship_type === 'grandfather' ||
-          parent.relationship_type === 'great_grandparent' || parent.relationship_type === 'self');
-        var childIsDirectDescendant = (child.relationship_type === 'son' || child.relationship_type === 'daughter' ||
-          child.relationship_type === 'child' || child.relationship_type === 'grandchild' ||
-          child.relationship_type === 'grandson' || child.relationship_type === 'granddaughter' ||
-          child.relationship_type === 'great_grandchild' || child.relationship_type === 'self');
-        if (parentIsDirectAncestor && childIsDirectDescendant) {
-          if (!childrenOf[parent.id]) childrenOf[parent.id] = [];
-          if (childrenOf[parent.id].indexOf(child.id) === -1) {
-            childrenOf[parent.id].push(child.id);
-          }
-        }
-      });
-    });
+    // Connectors are driven exclusively by explicit _mpRels rows (parent_of edges).
+    // No heuristic inference — the "Add relative" flow saves correct relationship rows.
 
     // Draw connectors: for each parent, drop to mid-gap, draw bus bar, drop to children
     Object.keys(childrenOf).forEach(function(parentId) {
@@ -15025,6 +15053,16 @@
     _mpBuildMentions(person, []);  // render immediately from name-string matches
     // Also fetch explicit entry→person links and re-render with merged set
     _mpLoadExplicitLinks(person);
+
+    // Show "View tree from here" button — hidden for self node and for the current root
+    var rerootBtn  = document.getElementById('mpProfileRerootBtn');
+    var rerootName = document.getElementById('mpProfileRerootName');
+    var isSelf  = (person.relationship_type === 'self');
+    var isRoot  = (_mpRootId === personId) || (!_mpRootId && isSelf);
+    if (rerootBtn) {
+      rerootBtn.style.display = (isSelf || isRoot) ? 'none' : 'block';
+      if (rerootName) rerootName.textContent = firstName;
+    }
 
     var panel = document.getElementById('mpProfilePanel');
     panel.style.display = 'block';
