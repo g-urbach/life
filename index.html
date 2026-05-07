@@ -3190,8 +3190,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.91';
-  const DEPLOY_NOTES = APP_VERSION + ' — CI review v3.70+v3.80: dashboard skeleton shimmer, updated_at on entries (needs DB migration — see project memory), sorted entries cache, offline edit queue (extends existing queue to handle PATCH), deleteAccount edge fn verified.';
+  const APP_VERSION  = 'v3.92';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family tree fixes: (1) SVG connector lines now visible (CSS var resolved via getComputedStyle); (2) self node auto-created on first open so user always appears in their own tree; (3) self node shows gold avatar ring + "You ★" label to distinguish from siblings.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -14040,6 +14040,30 @@
 
     loadEl.style.display = 'none';
 
+    // Auto-create self node if it doesn't exist in the DB yet.
+    // This ensures the user always appears in their own tree, even if they skipped the review flow.
+    var hasSelf = _mpPeople.some(function(p) { return p.relationship_type === 'self'; });
+    if (!hasSelf && currentUser) {
+      try {
+        var selfBody = {
+          user_id:           currentUser.id,
+          name:              (userProfile && (userProfile.name || userProfile.firstName)) || 'You',
+          relationship_type: 'self',
+          bucket:            'family',
+        };
+        var selfHeaders = getAuthHeaders();
+        var selfRes = await fetch(DB_PEOPLE_URL, {
+          method: 'POST',
+          headers: Object.assign({}, selfHeaders, { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+          body: JSON.stringify(selfBody),
+        });
+        if (selfRes.ok) {
+          var selfRows = await selfRes.json();
+          if (selfRows[0]) _mpPeople.push(selfRows[0]);
+        }
+      } catch(e) { dbgWarn('PEOPLE', 'Auto-create self node failed: ' + e.message); }
+    }
+
     if (!_mpPeople.length) {
       var shouldReview = await _mpCheckReview();
       if (shouldReview) {
@@ -14282,13 +14306,20 @@
     nameEl.textContent = person.name || '—';
     el.appendChild(nameEl);
 
-    // Rel label (skip 'self' — card already gold-bordered)
-    if (person.relationship_type !== 'self') {
-      var relEl = document.createElement('div');
-      relEl.className = 'mp-node-rel';
+    // Rel label — 'self' gets a "You ★" badge instead of a generic label
+    var relEl = document.createElement('div');
+    relEl.className = 'mp-node-rel';
+    if (person.relationship_type === 'self') {
+      relEl.textContent = 'You \u2605';
+      relEl.style.color = 'var(--gold)';
+      relEl.style.fontWeight = '700';
+      // Gold avatar ring so self stands out at a glance
+      avatarEl.style.border = '2px solid var(--gold)';
+      avatarEl.style.boxShadow = '0 0 0 2px rgba(180,140,60,0.25)';
+    } else {
       relEl.textContent = person.relationship_label || MP_REL_LABEL[person.relationship_type] || '';
-      el.appendChild(relEl);
     }
+    el.appendChild(relEl);
 
     // Tap → open profile
     el.addEventListener('click', function() { mpOpenProfile(person.id); });
@@ -14300,7 +14331,9 @@
   // Draws: horizontal double-line between spouses, vertical lines parent→child,
   // and a horizontal bus bar when a couple has multiple children.
   function _mpDrawConnectorsSVG(svgEl, layout) {
-    var stroke = 'var(--border)';
+    // CSS variables don't resolve inside SVG attribute strings — compute the real value.
+    var rootStyle = getComputedStyle(document.documentElement);
+    var stroke = (rootStyle.getPropertyValue('--border') || '#b8a070').trim() || '#b8a070';
     var sw = 2;
     var paths = [];
 
