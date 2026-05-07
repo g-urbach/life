@@ -922,6 +922,44 @@
     .btn-danger { background: var(--rose); color: white; }
     .btn-danger:hover:not(:disabled) { background: #a85e52; }
 
+    /* ── MY PEOPLE TREE NODES ── */
+    .mp-node {
+      position: absolute;
+      width: 110px;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 8px 8px;
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      user-select: none;
+      -webkit-user-select: none;
+      box-sizing: border-box;
+    }
+    .mp-node:hover { border-color: var(--gold); box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+    .mp-node.mp-node-self { border-color: var(--gold); background: var(--surface2); }
+    .mp-node.mp-node-selected { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(180,140,60,0.25); }
+    .mp-node-avatar { width:44px;height:44px;border-radius:50%;background:var(--bg);border:1px solid var(--border);margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;overflow:hidden;flex-shrink:0; }
+    .mp-node-avatar img { width:100%;height:100%;object-fit:cover;border-radius:50%; }
+    .mp-node-name { font-family:'Lato',sans-serif;font-size:0.7rem;font-weight:700;color:var(--text);line-height:1.2;word-break:break-word;margin-bottom:2px; }
+    .mp-node-rel  { font-family:'Lato',sans-serif;font-size:0.62rem;color:var(--text-light);line-height:1.2; }
+
+    /* ── ADD RELATIVE PICKER BUTTONS ── */
+    .mp-rel-btn {
+      padding: 12px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.82rem;
+      color: var(--text);
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .mp-rel-btn:hover { border-color: var(--gold); background: var(--surface2); }
+
     /* ── VOICE STATUS ── */
     #voiceStatusBox { padding: 20px; background: var(--surface2); border-radius: 10px; text-align: center; margin-bottom: 20px; font-size: 0.9rem; color: var(--text-light); border: 1px solid var(--border); }
     .big-mic { font-size: 3rem; display: block; margin-bottom: 8px; }
@@ -2360,63 +2398,96 @@
   </div>
   </div>
 
-  <!-- MY PEOPLE OVERLAY (Phase 1 — tree layout) -->
-  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;overflow-y:auto">
-    <div style="max-width:720px;margin:0 auto;padding:24px 20px 80px">
+  <!-- MY PEOPLE OVERLAY (Phase 4 — pan/zoom canvas tree) -->
+  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column">
 
-      <!-- Header -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="mpOpenAddPerson()" style="background:var(--gold);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer">+ Add person</button>
-          <button onclick="closeMyPeople()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px">&#10005;</button>
+    <!-- Fixed header bar -->
+    <div style="flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg);z-index:2">
+      <!-- Title row -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0">
+        <h2 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
+        <div style="display:flex;align-items:center;gap:4px">
+          <!-- Generation depth controls (tree tab only) -->
+          <div id="mpTreeControls" style="display:flex;align-items:center;gap:4px">
+            <span style="font-size:0.65rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);font-weight:700;margin-right:2px">Gens</span>
+            <button onclick="mpGenDecrease()" id="mpGenDecBtn" title="Show fewer generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#8722;</button>
+            <span id="mpGenDepthLabel" style="font-size:0.78rem;color:var(--text);min-width:18px;text-align:center;font-family:'Lato',sans-serif">3</span>
+            <button onclick="mpGenIncrease()" id="mpGenIncBtn" title="Show more generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#43;</button>
+            <button onclick="mpRecentre()" title="Re-centre on you" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);margin-left:2px">&#8853;</button>
+          </div>
+          <!-- Close -->
+          <button onclick="closeMyPeople()" style="width:28px;height:28px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text-light);margin-left:4px">&#10005;</button>
         </div>
       </div>
-      <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:12px">Your family tree &amp; the people in your story.</p>
-
-      <!-- Selected person action bar — shown when a card is selected -->
-      <div id="mpActionBar" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin-bottom:16px;display:none;align-items:center;justify-content:space-between;gap:10px">
-        <span id="mpActionBarName" style="font-size:0.88rem;font-weight:700;color:var(--text);font-family:'Lato',sans-serif"></span>
-        <div style="display:flex;gap:8px">
-          <button onclick="mpOpenProfile(_mpSelectedId)" style="padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif">&#128100; Profile</button>
-          <button onclick="mpEditSelected()" style="padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:0.8rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif">&#9998; Edit</button>
-          <button onclick="mpDeleteSelected()" style="padding:6px 14px;border:1px solid #fca5a5;border-radius:8px;background:none;font-size:0.8rem;cursor:pointer;color:var(--rose);font-family:'Lato',sans-serif">&#128465; Delete</button>
-        </div>
-      </div>
-
-      <!-- Expand-up button -->
-      <div id="mpExpandUpRow" style="display:none;text-align:center;margin-bottom:12px">
-        <button onclick="mpExpandUp()" style="background:none;border:1px solid var(--border);border-radius:20px;padding:6px 18px;font-size:0.78rem;color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif">
-          &#8593; Show older generations
+      <!-- Tab bar -->
+      <div style="display:flex;gap:0;padding:8px 16px 0">
+        <button id="mpTabTree" onclick="mpSwitchTab('tree')"
+          style="padding:7px 18px;border:none;border-bottom:2px solid var(--gold);background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
+          &#127795; Tree
+        </button>
+        <button id="mpTabDir" onclick="mpSwitchTab('directory')"
+          style="padding:7px 18px;border:none;border-bottom:2px solid transparent;background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-light);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
+          &#128101; Directory
         </button>
       </div>
+    </div>
 
-      <!-- Tree container — generations rendered here -->
-      <div id="mpTreeContainer" style="display:flex;flex-direction:column;gap:0"></div>
-
-      <!-- Expand-down button -->
-      <div id="mpExpandDownRow" style="display:none;text-align:center;margin-top:12px">
-        <button onclick="mpExpandDown()" style="background:none;border:1px solid var(--border);border-radius:20px;padding:6px 18px;font-size:0.78rem;color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif">
-          &#8595; Show younger generations
-        </button>
+    <!-- Pan/zoom canvas viewport — fills remaining screen -->
+    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:hidden;touch-action:none;cursor:grab">
+      <!-- Inner pannable layer — nodes and SVG connectors live here -->
+      <div id="mpCanvasInner" style="position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform">
+        <!-- SVG connector layer (behind nodes) -->
+        <svg id="mpConnectorSvg" style="position:absolute;top:0;left:0;overflow:visible;pointer-events:none"></svg>
+        <!-- Node cards injected here by _mpRender() -->
+        <div id="mpTreeContainer"></div>
       </div>
+    </div>
 
-      <!-- Empty state (shown when no family members exist) -->
-      <div id="mpEmptyState" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 24px;text-align:center;margin-top:8px">
+    <!-- Loading state — centred in viewport -->
+    <div id="mpLoadingState" style="display:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;pointer-events:none">
+      <span style="font-size:0.88rem;color:var(--text-light)">Loading your people&#8230;</span>
+    </div>
+
+    <!-- Empty state — centred card -->
+    <div id="mpEmptyState" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;z-index:3">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 24px;text-align:center;max-width:340px;margin:20px">
         <div style="font-size:2.5rem;margin-bottom:16px">&#127795;</div>
         <p style="font-family:'Playfair Display',serif;font-size:1.1rem;color:var(--text);margin-bottom:8px;font-weight:600">Your family tree is empty</p>
-        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;max-width:360px;margin:0 auto 20px">Add the people in your life — parents, siblings, children, and more. Tap a card to select it, then edit or delete.</p>
+        <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin:0 auto 20px">Add the people in your life — parents, siblings, children and more. Tap any node to open their profile and add relatives from there.</p>
         <button onclick="mpOpenAddPerson()" style="background:var(--gold);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer">+ Add your first family member</button>
       </div>
+    </div>
 
-      <!-- Loading state -->
-      <div id="mpLoadingState" style="text-align:center;padding:48px 0;color:var(--text-light);font-size:0.88rem">
-        Loading your people&#8230;
+    <!-- DIRECTORY PANEL (Phase 5) — hidden by default, shown when Directory tab active -->
+    <div id="mpDirPanel" style="display:none;flex:1;overflow-y:auto;padding:16px">
+      <!-- Search + filter bar -->
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+        <input id="mpDirSearch" type="search" placeholder="Search people&#8230;" autocomplete="off"
+          oninput="mpDirRender()"
+          style="flex:1;min-width:140px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;color:var(--text);background:var(--bg)">
+        <select id="mpDirBucketFilter" onchange="mpDirRender()"
+          style="padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);background:var(--bg)">
+          <option value="">All people</option>
+          <option value="family">Family</option>
+          <option value="friend">Friends</option>
+          <option value="colleague">Colleagues</option>
+          <option value="other">Other</option>
+        </select>
+        <button onclick="mpOpenAddPersonDir()"
+          style="padding:9px 14px;background:var(--gold);color:#fff;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">+ Add person</button>
       </div>
+      <!-- Person list -->
+      <div id="mpDirList" style="display:flex;flex-direction:column;gap:8px"></div>
+      <!-- Empty state -->
+      <div id="mpDirEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128101;</div>
+        <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No people yet. Add family, friends, colleagues — anyone who features in your story.</p>
+      </div>
+    </div>
 
-      <!-- Gethro first-open review screen (shown once when tree is empty but entries have people tags) -->
-      <div id="mpReviewScreen" style="display:none">
-        <!-- Gethro intro header -->
+    <!-- Gethro first-open review screen — full overlay inside the panel -->
+    <div id="mpReviewScreen" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:4;overflow-y:auto">
+      <div style="max-width:600px;margin:0 auto;padding:24px 20px 80px">
         <div style="display:flex;align-items:flex-start;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:20px">
           <div style="font-size:2rem;flex-shrink:0;margin-top:2px">🎙️</div>
           <div>
@@ -2424,18 +2495,32 @@
             <p style="font-size:0.8rem;color:var(--text-light);margin:0">Set a relationship for each person, then tap <strong>Add to tree</strong>. You can skip anyone you don't want to include.</p>
           </div>
         </div>
-
-        <!-- Per-person suggestion rows — rendered by _mpBuildReviewRows() -->
         <div id="mpReviewRows" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px"></div>
-
-        <!-- Bottom action bar -->
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button id="mpReviewSaveBtn" onclick="mpReviewSaveConfirmed()" style="flex:1;padding:12px;background:var(--gold);color:#fff;border:none;border-radius:10px;font-family:'Lato',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;min-width:160px">Add to my tree</button>
           <button onclick="mpReviewSkipAll()" style="padding:12px 18px;background:none;border:1px solid var(--border);border-radius:10px;font-family:'Lato',sans-serif;font-size:0.85rem;color:var(--text-light);cursor:pointer">Skip for now</button>
         </div>
         <p id="mpReviewSaveStatus" style="font-size:0.78rem;color:var(--text-light);margin-top:10px;display:none"></p>
       </div>
+    </div>
 
+  </div>
+
+  <!-- MY PEOPLE — ADD RELATIVE PICKER SHEET -->
+  <div id="mpAddRelSheet" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2100;align-items:flex-end;justify-content:center;padding:0">
+    <div style="background:var(--surface);border-radius:16px 16px 0 0;padding:24px 20px 36px;width:100%;max-width:480px;box-shadow:0 -4px 30px rgba(0,0,0,0.2)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h3 id="mpAddRelSheetTitle" style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:700;color:var(--text);margin:0">Add a relative</h3>
+        <button onclick="mpCloseAddRelSheet()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">&#10005;</button>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-light);margin:0 0 16px">What is the new person's relationship <strong>to <span id="mpAddRelSheetAnchorName"></span></strong>?</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button onclick="mpAddRelChosen('parent')"    class="mp-rel-btn">&#8679; Parent / step-parent</button>
+        <button onclick="mpAddRelChosen('child')"     class="mp-rel-btn">&#8681; Child / step-child</button>
+        <button onclick="mpAddRelChosen('sibling')"   class="mp-rel-btn">&#8596; Sibling</button>
+        <button onclick="mpAddRelChosen('spouse')"    class="mp-rel-btn">&#10084; Spouse / partner</button>
+        <button onclick="mpAddRelChosen('other')"     class="mp-rel-btn" style="grid-column:1/-1">&#8942; Other relationship&#8230;</button>
+      </div>
     </div>
   </div>
 
@@ -2520,6 +2605,16 @@
         </div>
       </div>
 
+      <!-- Bucket (family / friend / colleague / other) -->
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Category</label>
+      <select id="mpPersonBucket"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:20px">
+        <option value="family">Family (appears on tree)</option>
+        <option value="friend">Friend</option>
+        <option value="colleague">Colleague</option>
+        <option value="other">Other</option>
+      </select>
+
       <!-- Error message -->
       <div id="mpPersonError" style="display:none;background:#fff0f0;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:var(--rose);margin-bottom:16px"></div>
 
@@ -2562,6 +2657,15 @@
           <button onclick="mpProfileEdit()" style="flex:1;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer">&#9998; Edit</button>
           <button onclick="mpProfileWriteMemory()" style="flex:2;padding:9px;background:var(--gold);color:#fff;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer">&#9997; Write a memory about them</button>
         </div>
+        <!-- Add relative button -->
+        <button onclick="mpProfileAddRelative()" id="mpProfileAddRelBtn"
+          style="width:100%;margin-top:8px;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;text-align:left">
+          &#43; Add a relative of <span class="mp-profile-first-name" id="mpProfileAddRelName"></span>
+        </button>
+        <!-- Delete button (subtle, below the fold) -->
+        <button onclick="mpProfileDelete()" style="width:100%;margin-top:4px;padding:7px;background:none;border:1px solid transparent;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer;text-align:left">
+          &#128465; Remove from tree
+        </button>
       </div>
 
       <!-- Mentions section -->
@@ -3037,8 +3141,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.83';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family Tree Phase 3: Gethro nudges for empty tree + frequently-mentioned people not in tree. Dismiss button stores 7-day suppress in localStorage.';
+  const APP_VERSION  = 'v3.86';
+  const DEPLOY_NOTES = APP_VERSION + ' — My People Phase 5: People Directory. Second tab (Tree | Directory) inside overlay. Searchable list of all people, bucket filter (family/friend/colleague/other). Add person from Directory sets bucket. Tapping opens existing profile panel.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13495,106 +13599,187 @@
     });
   });
 
-  // ── My People — Family Tree ───────────────────────────────────────
-  // State
-  var _mpPeople = [];        // all people rows from life_people
-  var _mpRels   = [];        // all relationship rows from life_people_relationships
-  var _mpMinGen = -1;        // lowest generation currently visible (negative = ancestors)
-  var _mpMaxGen =  1;        // highest generation currently visible (positive = descendants)
-  var _mpAllMinGen = -1;     // lowest generation that exists in data
-  var _mpAllMaxGen =  1;     // highest generation that exists in data
+  // ═══════════════════════════════════════════════════════════════════
+  // MY PEOPLE — Phase 4 Pan/Zoom Canvas Tree
+  // ═══════════════════════════════════════════════════════════════════
 
-  // Generation number mapping:
-  //  0 = the author (you)
-  // -1 = parents, -2 = grandparents, -3 = great-grandparents
-  // +1 = children, +2 = grandchildren, etc.
+  // ── Data state ────────────────────────────────────────────────────
+  var _mpPeople = [];   // all life_people rows
+  var _mpRels   = [];   // all life_people_relationships rows
 
-  // Relationship type → generation offset from person_a to person_b
-  // Semantics: "person_b is at gen (person_a_gen + offset)"
-  // person_a = self (gen 0), so offset = generation of person_b
-  var MP_GEN_OFFSET = {
-    'parent_of':            1,    // a is parent → b (child) is one gen younger (+1)
-    'child_of':            -1,    // a is child → b (parent) is one gen older (-1)
-    'grandparent_of':       2,    // a is grandparent → b (grandchild) is +2
-    'grandchild_of':       -2,
-    'great_grandparent_of': 3,
-    'great_grandchild_of': -3,
-    'spouse_of':            0,
-    'sibling_of':           0,
-    'step_parent_of':       1,
-    'step_child_of':       -1,
-    'half_sibling_of':      0,
+  // ── Canvas/viewport state ─────────────────────────────────────────
+  var _mpCanvas = { tx: 0, ty: 0, scale: 1.0 };  // current pan/zoom transform
+  var _mpGenDepth = 2;   // generations above AND below self to display (so total visible = 2*depth+1)
+  var _mpRootId   = null; // person ID at the centre of the layout (null = self node)
+
+  // ── Generation depth labels ──────────────────────────────────────
+  var MP_GEN_LABEL = {
+    '-4': 'Great-great-grandparents', '-3': 'Great-grandparents', '-2': 'Grandparents',
+    '-1': 'Parents', '0': '', '1': 'Children', '2': 'Grandchildren',
+    '3': 'Great-grandchildren', '4': 'Great-great-grandchildren',
   };
 
-  // Direct gen from the relationship_type stored on each person row
-  // (simpler and correct — no BFS needed for the author's direct relatives)
-  var MP_PERSON_GEN = {
-    'self':              0,
-    'mother':           -1,
-    'father':           -1,
-    'parent':           -1,
-    'step_parent':      -1,
-    'grandmother':      -2,
-    'grandfather':      -2,
-    'great_grandparent':-3,
-    'sister':            0,
-    'brother':           0,
-    'sibling':           0,
-    'half_sibling':      0,
-    'spouse':            0,
-    'partner':           0,
-    'daughter':          1,
-    'son':               1,
-    'child':             1,
-    'step_child':        1,
-    'granddaughter':     2,
-    'grandson':          2,
-    'grandchild':        2,
-    'great_grandchild':  3,
-    // Extended family — no tree gen placement, keep at 0
-    'aunt':              0,
-    'uncle':             0,
-    'cousin':            0,
-    'niece':             0,
-    'nephew':            0,
-    'other':             0,
-  };
-
-  // Friendly label for relationship_type stored on person row
+  // ── Friendly display label ────────────────────────────────────────
   var MP_REL_LABEL = {
-    'parent':            'Parent',
-    'mother':            'Mother',
-    'father':            'Father',
-    'sibling':           'Sibling',
-    'brother':           'Brother',
-    'sister':            'Sister',
-    'spouse':            'Spouse',
-    'partner':           'Partner',
-    'child':             'Child',
-    'son':               'Son',
-    'daughter':          'Daughter',
-    'grandparent':       'Grandparent',
-    'grandmother':       'Grandmother',
-    'grandfather':       'Grandfather',
-    'grandchild':        'Grandchild',
-    'grandson':          'Grandson',
-    'granddaughter':     'Granddaughter',
-    'great_grandparent': 'Great-grandparent',
-    'great_grandchild':  'Great-grandchild',
-    'step_parent':       'Step-parent',
-    'step_child':        'Step-child',
-    'half_sibling':      'Half-sibling',
-    'aunt':              'Aunt',
-    'uncle':             'Uncle',
-    'cousin':            'Cousin',
-    'niece':             'Niece',
-    'nephew':            'Nephew',
+    'parent':'Parent','mother':'Mother','father':'Father','sibling':'Sibling',
+    'brother':'Brother','sister':'Sister','spouse':'Spouse','partner':'Partner',
+    'child':'Child','son':'Son','daughter':'Daughter','grandparent':'Grandparent',
+    'grandmother':'Grandmother','grandfather':'Grandfather','grandchild':'Grandchild',
+    'grandson':'Grandson','granddaughter':'Granddaughter','great_grandparent':'Great-grandparent',
+    'great_grandchild':'Great-grandchild','step_parent':'Step-parent','step_child':'Step-child',
+    'half_sibling':'Half-sibling','aunt':'Aunt','uncle':'Uncle','cousin':'Cousin',
+    'niece':'Niece','nephew':'Nephew','self':'You',
   };
 
+  // relationship_type → generation offset relative to self
+  var MP_PERSON_GEN = {
+    'self':0,'mother':-1,'father':-1,'parent':-1,'step_parent':-1,
+    'grandmother':-2,'grandfather':-2,'great_grandparent':-3,
+    'sister':0,'brother':0,'sibling':0,'half_sibling':0,
+    'spouse':0,'partner':0,
+    'daughter':1,'son':1,'child':1,'step_child':1,
+    'granddaughter':2,'grandson':2,'grandchild':2,'great_grandchild':3,
+    'aunt':0,'uncle':0,'cousin':0,'niece':0,'nephew':0,'other':0,
+  };
+
+  // ── Node dimensions ───────────────────────────────────────────────
+  var MP_NODE_W  = 110;   // node card width px
+  var MP_NODE_H  = 98;    // node card height px
+  var MP_NODE_GAP_X = 20; // horizontal gap between siblings
+  var MP_NODE_GAP_Y = 80; // vertical gap between generations (connector space)
+  var MP_SPOUSE_GAP = 14; // gap between spouse pairs
+
+  // ── Pan/zoom pointer handling ─────────────────────────────────────
+  var _mpPointers = {};    // active pointer events keyed by pointerId
+  var _mpLastDist = null;  // last pinch distance (for pinch-zoom)
+  var _mpPanStart = null;  // { tx, ty, cx, cy } snapshot at pointer-down
+
+  function _mpApplyTransform() {
+    var inner = document.getElementById('mpCanvasInner');
+    if (!inner) return;
+    inner.style.transform = 'translate(' + _mpCanvas.tx + 'px,' + _mpCanvas.ty + 'px) scale(' + _mpCanvas.scale + ')';
+  }
+
+  function _mpInitPanZoom() {
+    var vp = document.getElementById('mpCanvasViewport');
+    if (!vp || vp._mpPanBound) return;
+    vp._mpPanBound = true;
+
+    vp.addEventListener('pointerdown', function(e) {
+      // Don't pan if tapping a node card
+      if (e.target.closest('.mp-node')) return;
+      vp.setPointerCapture(e.pointerId);
+      _mpPointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var ids = Object.keys(_mpPointers);
+      if (ids.length === 1) {
+        _mpPanStart = { tx: _mpCanvas.tx, ty: _mpCanvas.ty, cx: e.clientX, cy: e.clientY };
+        _mpLastDist = null;
+      }
+      vp.style.cursor = 'grabbing';
+    });
+
+    vp.addEventListener('pointermove', function(e) {
+      if (!_mpPointers[e.pointerId]) return;
+      _mpPointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var ids = Object.keys(_mpPointers);
+
+      if (ids.length === 1 && _mpPanStart) {
+        // Single pointer → pan
+        _mpCanvas.tx = _mpPanStart.tx + (e.clientX - _mpPanStart.cx);
+        _mpCanvas.ty = _mpPanStart.ty + (e.clientY - _mpPanStart.cy);
+        _mpApplyTransform();
+
+      } else if (ids.length === 2) {
+        // Two pointers → pinch-zoom
+        var p0 = _mpPointers[ids[0]];
+        var p1 = _mpPointers[ids[1]];
+        var dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+        if (_mpLastDist !== null) {
+          var delta = dist / _mpLastDist;
+          var midX  = (p0.x + p1.x) / 2;
+          var midY  = (p0.y + p1.y) / 2;
+          _mpZoomAround(midX, midY, delta);
+        }
+        _mpLastDist = dist;
+      }
+    });
+
+    function _mpPointerUp(e) {
+      delete _mpPointers[e.pointerId];
+      if (Object.keys(_mpPointers).length === 0) {
+        _mpPanStart = null;
+        _mpLastDist = null;
+        vp.style.cursor = 'grab';
+      }
+    }
+    vp.addEventListener('pointerup',     _mpPointerUp);
+    vp.addEventListener('pointercancel', _mpPointerUp);
+
+    // Mouse-wheel zoom
+    vp.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var factor = e.deltaY < 0 ? 1.1 : 0.91;
+      _mpZoomAround(e.clientX, e.clientY, factor);
+    }, { passive: false });
+  }
+
+  function _mpZoomAround(screenX, screenY, factor) {
+    var vp   = document.getElementById('mpCanvasViewport');
+    var rect = vp ? vp.getBoundingClientRect() : { left: 0, top: 0 };
+    // Convert screen point to canvas coords before scale change
+    var cx = (screenX - rect.left - _mpCanvas.tx) / _mpCanvas.scale;
+    var cy = (screenY - rect.top  - _mpCanvas.ty) / _mpCanvas.scale;
+    var newScale = Math.max(0.3, Math.min(3.0, _mpCanvas.scale * factor));
+    _mpCanvas.tx = screenX - rect.left - cx * newScale;
+    _mpCanvas.ty = screenY - rect.top  - cy * newScale;
+    _mpCanvas.scale = newScale;
+    _mpApplyTransform();
+  }
+
+  // ── Generation depth controls ────────────────────────────────────
+  function mpGenDecrease() {
+    if (_mpGenDepth > 0) {
+      _mpGenDepth = Math.max(0, _mpGenDepth - 1);
+      _mpRender();
+    }
+  }
+  function mpGenIncrease() {
+    _mpGenDepth = Math.min(4, _mpGenDepth + 1);
+    _mpRender();
+  }
+
+  // ── Re-centre on self ────────────────────────────────────────────
+  function mpRecentre() {
+    _mpRootId = null;
+    _mpRender();
+    // snap back to self node after a tick so layout is done
+    requestAnimationFrame(function() {
+      _mpCentreOnSelf();
+    });
+  }
+
+  function _mpCentreOnSelf() {
+    var vp   = document.getElementById('mpCanvasViewport');
+    var self = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+    if (!vp || !self || self._layoutX === undefined) return;
+    var vpW  = vp.clientWidth;
+    var vpH  = vp.clientHeight;
+    _mpCanvas.scale = 1.0;
+    _mpCanvas.tx    = vpW  / 2 - (self._layoutX + MP_NODE_W / 2) * _mpCanvas.scale;
+    _mpCanvas.ty    = vpH  / 2 - (self._layoutY + MP_NODE_H / 2) * _mpCanvas.scale;
+    _mpApplyTransform();
+  }
+
+  // ── Open overlay ─────────────────────────────────────────────────
   async function openMyPeople() {
-    document.getElementById('myPeopleOverlay').style.display = 'block';
-    document.getElementById('mpReviewScreen').style.display  = 'none';
+    var overlay = document.getElementById('myPeopleOverlay');
+    overlay.style.display = 'flex';
+    document.getElementById('mpReviewScreen').style.display = 'none';
+    // Always open on Tree tab
+    _mpActiveTab = 'tree';
+    mpSwitchTab('tree');
     logActivity('my_people_opened', '', 'info', 'PEOPLE');
+    _mpInitPanZoom();
     await _mpLoad();
   }
 
@@ -13602,384 +13787,469 @@
     document.getElementById('myPeopleOverlay').style.display = 'none';
   }
 
+  // ── Load data ────────────────────────────────────────────────────
   async function _mpLoad() {
     var loadEl  = document.getElementById('mpLoadingState');
     var emptyEl = document.getElementById('mpEmptyState');
     var treeEl  = document.getElementById('mpTreeContainer');
-    var upRow   = document.getElementById('mpExpandUpRow');
-    var downRow = document.getElementById('mpExpandDownRow');
 
-    loadEl.style.display  = 'block';
+    loadEl.style.display  = 'flex';
     emptyEl.style.display = 'none';
     treeEl.innerHTML      = '';
-    upRow.style.display   = 'none';
-    downRow.style.display = 'none';
 
     try {
       var headers = getAuthHeaders();
       var [pRes, rRes] = await Promise.all([
-        fetch(DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id + '&bucket=eq.family&order=created_at.asc', { headers }),
+        fetch(DB_PEOPLE_URL  + '?user_id=eq.' + currentUser.id + '&order=created_at.asc', { headers }),
         fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id, { headers }),
       ]);
-      _mpPeople = pRes.ok  ? await pRes.json()  : [];
-      _mpRels   = rRes.ok  ? await rRes.json()  : [];
+      _mpPeople = pRes.ok ? await pRes.json() : [];
+      _mpRels   = rRes.ok ? await rRes.json() : [];
     } catch(e) {
       dbgWarn('PEOPLE', 'Load failed: ' + e.message);
-      _mpPeople = [];
-      _mpRels   = [];
+      _mpPeople = []; _mpRels = [];
     }
 
     loadEl.style.display = 'none';
 
     if (!_mpPeople.length) {
-      // Check if we should show the Gethro review screen (first open, entries have people tags)
       var shouldReview = await _mpCheckReview();
       if (shouldReview) {
         var suggestions = _mpSuggestionsFromEntries();
-        if (suggestions.length) {
-          _mpShowReviewScreen(suggestions);
-          return;
-        }
+        if (suggestions.length) { _mpShowReviewScreen(suggestions); return; }
       }
-      emptyEl.style.display = 'block';
+      emptyEl.style.display = 'flex';
       return;
     }
 
-    // Assign generation numbers
-    _mpAssignGenerations();
-
-    // Default visible range: -1 (parents) to +1 (children), anchored on gen 0 (you)
-    _mpMinGen = Math.max(_mpAllMinGen, -1);
-    _mpMaxGen = Math.min(_mpAllMaxGen,  1);
-    // Always show at least gen 0
-    if (_mpMinGen > 0) _mpMinGen = 0;
-    if (_mpMaxGen < 0) _mpMaxGen = 0;
-
     _mpRender();
+    requestAnimationFrame(function() { _mpCentreOnSelf(); });
   }
 
-  function _mpAssignGenerations() {
-    // Assign generation directly from each person's relationship_type.
-    // The author (self) is always gen 0. All other rels map directly via MP_PERSON_GEN.
-    // This is simpler and more reliable than graph BFS for the common case.
+  // ── Graph layout ─────────────────────────────────────────────────
+  // Assigns _gen and _layoutX/_layoutY to every visible person.
+  // Strategy:
+  //   1. Assign generation via BFS from the root node using relationship_type
+  //      as the primary signal, supplemented by life_people_relationships edges.
+  //   2. Group by generation; within each generation place nodes left→right.
+  //   3. Spouses sit horizontally adjacent to their partner (same generation row).
+  //   4. Centre each parent pair above their children's midpoint.
+  //
+  function _mpComputeLayout() {
+    // Step 1 — assign generation numbers via relationship_type (fast path for self-rooted tree)
     _mpPeople.forEach(function(p) {
-      var gen = MP_PERSON_GEN[p.relationship_type];
-      p._gen = (gen !== undefined) ? gen : 0;
+      var g = MP_PERSON_GEN[p.relationship_type];
+      p._gen = (g !== undefined) ? g : 0;
     });
-
-    // Ensure the self node is at gen 0 regardless
     var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
     if (selfNode) selfNode._gen = 0;
 
-    // Calculate total range
-    var gens = _mpPeople.map(function(p) { return p._gen; });
-    _mpAllMinGen = gens.length ? Math.min.apply(null, gens) : 0;
-    _mpAllMaxGen = gens.length ? Math.max.apply(null, gens) : 0;
-  }
+    // Step 2 — augment with BFS over relationship edges for nodes connected via non-self paths
+    // Build adjacency from _mpRels: edge = { a, b, type }
+    var edgeMap = {}; // personId → [{otherId, type}]
+    _mpRels.forEach(function(r) {
+      if (!edgeMap[r.person_a_id]) edgeMap[r.person_a_id] = [];
+      if (!edgeMap[r.person_b_id]) edgeMap[r.person_b_id] = [];
+      edgeMap[r.person_a_id].push({ id: r.person_b_id, type: r.relationship_type });
+      edgeMap[r.person_b_id].push({ id: r.person_a_id, type: _mpInvertRelType(r.relationship_type) });
+    });
 
-  function _mpRender() {
-    var treeEl  = document.getElementById('mpTreeContainer');
-    var upRow   = document.getElementById('mpExpandUpRow');
-    var downRow = document.getElementById('mpExpandDownRow');
-    treeEl.innerHTML = '';
-
-    // Show/hide expand buttons
-    upRow.style.display   = (_mpMinGen > _mpAllMinGen) ? 'block' : 'none';
-    downRow.style.display = (_mpMaxGen < _mpAllMaxGen) ? 'block' : 'none';
-
-    // Collect visible gens that have people
-    var visibleGens = [];
-    for (var gen = _mpMinGen; gen <= _mpMaxGen; gen++) {
-      var people = _mpPeople.filter(function(p) { return p._gen === gen; });
-      if (people.length) visibleGens.push({ gen: gen, people: people });
+    // BFS from self to fill in gen for anyone whose gen hasn't been determined by relationship_type
+    var genAssigned = {};
+    _mpPeople.forEach(function(p) { genAssigned[p.id] = true; }); // all already have a gen from step 1
+    // Overwrite with BFS for nodes connected via rels to refine placement
+    if (selfNode) {
+      var queue = [{ id: selfNode.id, gen: 0 }];
+      var visited = {}; visited[selfNode.id] = true;
+      while (queue.length) {
+        var cur = queue.shift();
+        var edges = edgeMap[cur.id] || [];
+        edges.forEach(function(e) {
+          if (visited[e.id]) return;
+          visited[e.id] = true;
+          var offset = _mpRelGenOffset(e.type);
+          var person = _mpPeople.find(function(p) { return p.id === e.id; });
+          if (person) {
+            // Only override gen if the BFS path gives a more specific placement
+            // (trust relationship_type on the person row for direct self→person rels)
+            person._gen = cur.gen + offset;
+          }
+          queue.push({ id: e.id, gen: cur.gen + offset });
+        });
+      }
     }
 
-    // Render each generation row, with an SVG connector strip between adjacent rows
-    visibleGens.forEach(function(g, idx) {
-      var rowEl = _mpBuildGenRow(g.gen, g.people);
-      rowEl.setAttribute('data-gen', g.gen);
-      treeEl.appendChild(rowEl);
+    // Step 3 — filter to visible generation range
+    var minG = -(Math.min(_mpGenDepth, 4));
+    var maxG =  (Math.min(_mpGenDepth, 4));
+    var visible = _mpPeople.filter(function(p) { return p._gen >= minG && p._gen <= maxG; });
 
-      if (idx < visibleGens.length - 1) {
-        // Connector strip: a vertical bar + short horizontal branches drawn with SVG after layout
-        var connectorWrap = document.createElement('div');
-        connectorWrap.className = 'mp-connector';
-        connectorWrap.setAttribute('data-from-gen', g.gen);
-        connectorWrap.setAttribute('data-to-gen',   visibleGens[idx + 1].gen);
-        connectorWrap.style.cssText = 'position:relative;width:100%;height:48px;flex-shrink:0';
-        // Simple centred vertical line as fallback (replaced by SVG after paint)
-        connectorWrap.innerHTML =
-          '<svg width="100%" height="48" style="display:block;overflow:visible">' +
-            '<line x1="50%" y1="0" x2="50%" y2="48" stroke="var(--border)" stroke-width="2"/>' +
-          '</svg>';
-        treeEl.appendChild(connectorWrap);
+    // Step 4 — identify spouse pairs so they can be co-placed
+    var spousePairs = [];
+    var inPair = {};
+    _mpRels.forEach(function(r) {
+      if (r.relationship_type !== 'spouse_of') return;
+      if (inPair[r.person_a_id] || inPair[r.person_b_id]) return;
+      var a = visible.find(function(p) { return p.id === r.person_a_id; });
+      var b = visible.find(function(p) { return p.id === r.person_b_id; });
+      if (!a || !b) return;
+      spousePairs.push([a.id, b.id]);
+      inPair[a.id] = true; inPair[b.id] = true;
+    });
+
+    // Step 5 — group into generations, ordering: paired nodes together, then singles
+    var gens = {};
+    visible.forEach(function(p) {
+      if (!gens[p._gen]) gens[p._gen] = [];
+    });
+    // Add pairs first, then unpaired singles
+    spousePairs.forEach(function(pair) {
+      var a = visible.find(function(p) { return p.id === pair[0]; });
+      var b = visible.find(function(p) { return p.id === pair[1]; });
+      if (!a || !b) return;
+      if (!gens[a._gen]) gens[a._gen] = [];
+      gens[a._gen].push({ type: 'pair', nodes: [a, b] });
+    });
+    visible.forEach(function(p) {
+      if (inPair[p.id]) return;
+      if (!gens[p._gen]) gens[p._gen] = [];
+      gens[p._gen].push({ type: 'single', nodes: [p] });
+    });
+
+    // Step 6 — compute X positions per generation
+    var genKeys = Object.keys(gens).map(Number).sort(function(a,b){return a-b;});
+    var layoutNodes = {}; // id → { x, y, w }  (w = slot width for connectors)
+    genKeys.forEach(function(gen) {
+      var slots = gens[gen];
+      // Total width of this row
+      var rowW = 0;
+      slots.forEach(function(slot) {
+        if (slot.type === 'pair') rowW += MP_NODE_W * 2 + MP_SPOUSE_GAP + MP_NODE_GAP_X;
+        else                       rowW += MP_NODE_W + MP_NODE_GAP_X;
+      });
+      rowW -= MP_NODE_GAP_X; // remove trailing gap
+      var startX = -rowW / 2; // centred at x=0
+      var y = gen * (MP_NODE_H + MP_NODE_GAP_Y);
+      slots.forEach(function(slot) {
+        if (slot.type === 'pair') {
+          var a = slot.nodes[0]; var b = slot.nodes[1];
+          var pairMidX = startX + MP_NODE_W + MP_SPOUSE_GAP / 2;
+          layoutNodes[a.id] = { x: startX,                       y: y, slotW: MP_NODE_W * 2 + MP_SPOUSE_GAP };
+          layoutNodes[b.id] = { x: startX + MP_NODE_W + MP_SPOUSE_GAP, y: y, slotW: 0 };
+          startX += MP_NODE_W * 2 + MP_SPOUSE_GAP + MP_NODE_GAP_X;
+        } else {
+          var p = slot.nodes[0];
+          layoutNodes[p.id] = { x: startX, y: y, slotW: MP_NODE_W };
+          startX += MP_NODE_W + MP_NODE_GAP_X;
+        }
+      });
+    });
+
+    // Write layout coords back onto person objects (offset so min-x/y >= padding)
+    var allX = Object.values(layoutNodes).map(function(n) { return n.x; });
+    var allY = Object.values(layoutNodes).map(function(n) { return n.y; });
+    var padX = 40; var padY = 40;
+    var minX = allX.length ? Math.min.apply(null, allX) - padX : 0;
+    var minY = allY.length ? Math.min.apply(null, allY) - padY : 0;
+    _mpPeople.forEach(function(p) {
+      var ln = layoutNodes[p.id];
+      if (ln) {
+        p._layoutX   = ln.x - minX;
+        p._layoutY   = ln.y - minY;
+        p._slotW     = ln.slotW;
+        p._visible   = true;
+      } else {
+        p._visible = false;
       }
     });
 
-    // After the DOM is painted, redraw connectors with proper branch lines
-    requestAnimationFrame(function() {
-      requestAnimationFrame(function() {
-        _mpDrawConnectors(treeEl, visibleGens);
-      });
-    });
+    return { layoutNodes: layoutNodes, minX: minX, minY: minY, genKeys: genKeys, gens: gens };
   }
 
-  function _mpDrawConnectors(treeEl, visibleGens) {
-    var connectors = treeEl.querySelectorAll('.mp-connector');
-    connectors.forEach(function(wrap) {
-      var fromGen = parseInt(wrap.getAttribute('data-from-gen'), 10);
-      var toGen   = parseInt(wrap.getAttribute('data-to-gen'),   10);
-
-      // Get card centres for the from-row and to-row
-      var fromRow = treeEl.querySelector('[data-gen="' + fromGen + '"]');
-      var toRow   = treeEl.querySelector('[data-gen="' + toGen   + '"]');
-      if (!fromRow || !toRow) return;
-
-      var wrapRect = wrap.getBoundingClientRect();
-      if (!wrapRect.width) return;
-
-      var fromCards = fromRow.querySelectorAll('[data-person-id]');
-      var toCards   = toRow.querySelectorAll('[data-person-id]');
-
-      // Centre X of each card relative to the connector strip
-      function cardCentreX(card) {
-        var r = card.getBoundingClientRect();
-        return (r.left + r.right) / 2 - wrapRect.left;
-      }
-
-      var fromXs = Array.prototype.map.call(fromCards, cardCentreX);
-      var toXs   = Array.prototype.map.call(toCards,   cardCentreX);
-      if (!fromXs.length || !toXs.length) return;
-
-      var W = wrapRect.width;
-      var H = 48;
-      var midY = H / 2;
-      var strokeColor = 'var(--border)';
-      var sw = 2; // stroke-width
-
-      var paths = [];
-
-      // Draw a horizontal bar connecting all from-nodes at midY - 12
-      // and all to-nodes at midY + 12, with verticals joining them to midY
-      var fromMid = midY - 10;
-      var toMid   = midY + 10;
-
-      // Vertical stubs from each from-card down to fromMid
-      fromXs.forEach(function(x) {
-        paths.push('<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + fromMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
-      });
-
-      // Horizontal bar across from-nodes at fromMid (only if >1)
-      if (fromXs.length > 1) {
-        var fMin = Math.min.apply(null, fromXs);
-        var fMax = Math.max.apply(null, fromXs);
-        paths.push('<line x1="' + fMin + '" y1="' + fromMid + '" x2="' + fMax + '" y2="' + fromMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
-      }
-
-      // Centre trunk: from fromMid down to toMid
-      var fromCentreX = (Math.min.apply(null, fromXs) + Math.max.apply(null, fromXs)) / 2;
-      var toCentreX   = (Math.min.apply(null, toXs)   + Math.max.apply(null, toXs))   / 2;
-      // Single trunk connects centre of from-group to centre of to-group
-      paths.push('<line x1="' + fromCentreX + '" y1="' + fromMid + '" x2="' + toCentreX + '" y2="' + toMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
-
-      // Horizontal bar across to-nodes at toMid (only if >1)
-      if (toXs.length > 1) {
-        var tMin = Math.min.apply(null, toXs);
-        var tMax = Math.max.apply(null, toXs);
-        paths.push('<line x1="' + tMin + '" y1="' + toMid + '" x2="' + tMax + '" y2="' + toMid + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
-      }
-
-      // Vertical stubs from toMid up to each to-card
-      toXs.forEach(function(x) {
-        paths.push('<line x1="' + x + '" y1="' + toMid + '" x2="' + x + '" y2="' + H + '" stroke="' + strokeColor + '" stroke-width="' + sw + '"/>');
-      });
-
-      wrap.innerHTML =
-        '<svg width="' + W + '" height="' + H + '" style="display:block;overflow:visible">' +
-          paths.join('') +
-        '</svg>';
-    });
-  }
-
-  function _mpBuildGenRow(gen, people) {
-    var genLabels = {
-      '-3': 'Great-grandparents',
-      '-2': 'Grandparents',
-      '-1': 'Parents',
-       '0': 'You',
-       '1': 'Children',
-       '2': 'Grandchildren',
-       '3': 'Great-grandchildren',
+  function _mpRelGenOffset(relType) {
+    var map = {
+      'parent_of':1,'child_of':-1,'grandparent_of':2,'grandchild_of':-2,
+      'great_grandparent_of':3,'great_grandchild_of':-3,
+      'spouse_of':0,'sibling_of':0,'step_parent_of':1,'step_child_of':-1,'half_sibling_of':0,
     };
-    var label = genLabels[String(gen)] || (gen < 0 ? 'Generation ' + Math.abs(gen) + ' up' : 'Generation ' + gen + ' down');
-
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:8px';
-
-    // Label
-    var labelEl = document.createElement('div');
-    labelEl.style.cssText = 'font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);font-weight:700;margin-bottom:2px';
-    labelEl.textContent = label;
-    row.appendChild(labelEl);
-
-    // Cards row
-    var cardsRow = document.createElement('div');
-    cardsRow.style.cssText = 'display:flex;flex-wrap:nowrap;gap:10px;justify-content:center';
-
-    people.forEach(function(person) {
-      cardsRow.appendChild(_mpBuildCard(person, gen === 0));
-    });
-
-    row.appendChild(cardsRow);
-    return row;
+    return map[relType] || 0;
   }
 
-  function _mpBuildCard(person, isSelf) {
-    var card = document.createElement('div');
-    var borderColor = isSelf ? 'var(--gold)' : 'var(--border)';
-    var bgColor     = isSelf ? 'rgba(201,169,110,0.08)' : 'var(--surface)';
-    card.style.cssText = 'background:' + bgColor + ';border:1.5px solid ' + borderColor + ';border-radius:12px;padding:12px 16px;min-width:120px;max-width:180px;cursor:pointer;transition:box-shadow 0.15s;user-select:none';
-    card.setAttribute('data-person-id', person.id);
-    card.onclick = function() { _mpSelectCard(person.id, card); };
-    card.onmouseover = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = '0 2px 12px rgba(0,0,0,0.12)'; };
-    card.onmouseout  = function() { if (!card.classList.contains('mp-selected')) card.style.boxShadow = ''; };
+  function _mpInvertRelType(relType) {
+    var inv = {
+      'parent_of':'child_of','child_of':'parent_of',
+      'grandparent_of':'grandchild_of','grandchild_of':'grandparent_of',
+      'great_grandparent_of':'great_grandchild_of','great_grandchild_of':'great_grandparent_of',
+      'spouse_of':'spouse_of','sibling_of':'sibling_of',
+      'step_parent_of':'step_child_of','step_child_of':'step_parent_of',
+      'half_sibling_of':'half_sibling_of',
+    };
+    return inv[relType] || relType;
+  }
 
-    // Photo thumbnail or emoji avatar
-    var thumbWrap = document.createElement('div');
-    thumbWrap.style.cssText = 'width:36px;height:36px;border-radius:50%;background:var(--bg);border:1.5px solid var(--border);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:6px;flex-shrink:0';
+  // ── Render ───────────────────────────────────────────────────────
+  function _mpRender() {
+    var treeEl = document.getElementById('mpTreeContainer');
+    var svgEl  = document.getElementById('mpConnectorSvg');
+    if (!treeEl || !svgEl) return;
+
+    treeEl.innerHTML = '';
+    svgEl.innerHTML  = '';
+
+    var layout = _mpComputeLayout();
+
+    // Update gen depth label
+    var depthLabel = document.getElementById('mpGenDepthLabel');
+    if (depthLabel) depthLabel.textContent = _mpGenDepth;
+
+    // Compute canvas size
+    var visiblePeople = _mpPeople.filter(function(p) { return p._visible; });
+    if (!visiblePeople.length) return;
+    var maxX = Math.max.apply(null, visiblePeople.map(function(p) { return p._layoutX + MP_NODE_W; }));
+    var maxY = Math.max.apply(null, visiblePeople.map(function(p) { return p._layoutY + MP_NODE_H; }));
+    var canvasW = maxX + 40;
+    var canvasH = maxY + 40;
+    treeEl.style.cssText = 'position:relative;width:' + canvasW + 'px;height:' + canvasH + 'px';
+    svgEl.setAttribute('width',  canvasW);
+    svgEl.setAttribute('height', canvasH);
+    svgEl.style.cssText = 'position:absolute;top:0;left:0;width:' + canvasW + 'px;height:' + canvasH + 'px;overflow:visible;pointer-events:none';
+
+    // Render node cards
+    visiblePeople.forEach(function(person) {
+      var card = _mpBuildNode(person);
+      treeEl.appendChild(card);
+    });
+
+    // Draw SVG connector lines
+    _mpDrawConnectorsSVG(svgEl, layout);
+  }
+
+  // ── Build a node card ─────────────────────────────────────────────
+  function _mpBuildNode(person) {
+    var el = document.createElement('div');
+    el.className = 'mp-node' +
+      (person.relationship_type === 'self' ? ' mp-node-self' : '');
+    el.style.left = person._layoutX + 'px';
+    el.style.top  = person._layoutY + 'px';
+    el.setAttribute('data-person-id', person.id);
+
+    // Avatar
+    var emojiMap = { mother:'👩',father:'👨',grandmother:'👵',grandfather:'👴',
+      son:'👦',daughter:'👧',brother:'🧑',sister:'👩',spouse:'💑',partner:'💑',self:'🧑' };
+    var avatarEl = document.createElement('div');
+    avatarEl.className = 'mp-node-avatar';
     if (person.photo_url) {
-      var thumbImg = document.createElement('img');
-      thumbImg.src = person.photo_url;
-      thumbImg.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
-      thumbWrap.appendChild(thumbImg);
+      var img = document.createElement('img');
+      img.src = person.photo_url;
+      img.alt = person.name || '';
+      avatarEl.appendChild(img);
     } else {
-      var cardEmojiMap = { mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
-        son:'👦', daughter:'👧', brother:'🧑', sister:'👩', spouse:'💑', partner:'💑', self:'🧑' };
-      thumbWrap.textContent = cardEmojiMap[person.relationship_type] || '👤';
+      avatarEl.textContent = emojiMap[person.relationship_type] || '👤';
     }
-    card.appendChild(thumbWrap);
+    el.appendChild(avatarEl);
 
     // Name
     var nameEl = document.createElement('div');
-    nameEl.style.cssText = 'font-size:0.88rem;font-weight:700;color:var(--text);font-family:\'Lato\',sans-serif;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    nameEl.className = 'mp-node-name';
     nameEl.textContent = person.name || '—';
-    card.appendChild(nameEl);
+    el.appendChild(nameEl);
 
-    // Relationship label
-    var relText = person.relationship_label || MP_REL_LABEL[person.relationship_type] || person.relationship_type || '';
-    if (relText) {
+    // Rel label (skip 'self' — card already gold-bordered)
+    if (person.relationship_type !== 'self') {
       var relEl = document.createElement('div');
-      relEl.style.cssText = 'font-size:0.72rem;color:var(--text-light);margin-bottom:2px';
-      relEl.textContent = relText;
-      card.appendChild(relEl);
+      relEl.className = 'mp-node-rel';
+      relEl.textContent = person.relationship_label || MP_REL_LABEL[person.relationship_type] || '';
+      el.appendChild(relEl);
     }
 
-    // DOB
-    if (person.dob) {
-      var dobEl = document.createElement('div');
-      dobEl.style.cssText = 'font-size:0.68rem;color:var(--text-light);margin-top:4px';
-      var d = new Date(person.dob);
-      dobEl.textContent = 'b. ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
-      card.appendChild(dobEl);
-    }
+    // Tap → open profile
+    el.addEventListener('click', function() { mpOpenProfile(person.id); });
 
-    return card;
+    return el;
   }
 
-  var _mpSelectedId = null;
-  var _mpSelectTimer = null;
+  // ── SVG connectors ─────────────────────────────────────────────
+  // Draws: horizontal double-line between spouses, vertical lines parent→child,
+  // and a horizontal bus bar when a couple has multiple children.
+  function _mpDrawConnectorsSVG(svgEl, layout) {
+    var stroke = 'var(--border)';
+    var sw = 2;
+    var paths = [];
 
-  function _mpSelectCard(personId, cardEl) {
-    // First tap selects + shows action bar.
-    // Second tap on same card opens the full profile panel.
-    var wasSameCard = (_mpSelectedId === personId);
+    // ── Spouse connectors: horizontal bar between couple centres ──
+    _mpRels.forEach(function(r) {
+      if (r.relationship_type !== 'spouse_of') return;
+      var a = _mpPeople.find(function(p) { return p.id === r.person_a_id && p._visible; });
+      var b = _mpPeople.find(function(p) { return p.id === r.person_b_id && p._visible; });
+      if (!a || !b) return;
+      // right edge of left node to left edge of right node
+      var leftNode  = a._layoutX < b._layoutX ? a : b;
+      var rightNode = a._layoutX < b._layoutX ? b : a;
+      var x1 = leftNode._layoutX  + MP_NODE_W;
+      var x2 = rightNode._layoutX;
+      var y  = leftNode._layoutY  + MP_NODE_H / 2;
+      // Double line (marriage symbol)
+      paths.push('<line x1="' + x1 + '" y1="' + (y-2) + '" x2="' + x2 + '" y2="' + (y-2) +
+        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+      paths.push('<line x1="' + x1 + '" y1="' + (y+2) + '" x2="' + x2 + '" y2="' + (y+2) +
+        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+    });
 
-    // Deselect previously selected card visually
-    var prev = document.querySelector('.mp-selected');
-    if (prev) {
-      prev.classList.remove('mp-selected');
-      prev.style.boxShadow = '';
-      var prevPerson = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
-      var wasSelf = prevPerson && prevPerson._gen === 0;
-      prev.style.borderColor = wasSelf ? 'var(--gold)' : 'var(--border)';
-    }
+    // ── Parent→child connectors ───────────────────────────────────
+    // Build child lists from rels: parent_of edges
+    var childrenOf = {}; // parentId → [childId]
+    _mpRels.forEach(function(r) {
+      if (r.relationship_type !== 'parent_of') return;
+      if (!childrenOf[r.person_a_id]) childrenOf[r.person_a_id] = [];
+      childrenOf[r.person_a_id].push(r.person_b_id);
+    });
 
-    var actionBar = document.getElementById('mpActionBar');
+    // Also infer parent→child from generation difference for direct self-connected people
+    // where explicit relationship rows may not exist yet (legacy / review-added people)
+    _mpPeople.forEach(function(parent) {
+      if (!parent._visible) return;
+      _mpPeople.forEach(function(child) {
+        if (!child._visible) return;
+        if (child._gen !== parent._gen + 1) return;
+        // Check there's a self-connected chain: parent is ancestor or sibling of self
+        // Simple heuristic: connect if parent._gen < 0 and child is self, or parent is self and child._gen > 0
+        var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+        if (!selfNode) return;
+        var parentIsDirectAncestor = (parent.relationship_type === 'mother' || parent.relationship_type === 'father' ||
+          parent.relationship_type === 'grandmother' || parent.relationship_type === 'grandfather' ||
+          parent.relationship_type === 'great_grandparent' || parent.relationship_type === 'self');
+        var childIsDirectDescendant = (child.relationship_type === 'son' || child.relationship_type === 'daughter' ||
+          child.relationship_type === 'child' || child.relationship_type === 'grandchild' ||
+          child.relationship_type === 'grandson' || child.relationship_type === 'granddaughter' ||
+          child.relationship_type === 'great_grandchild' || child.relationship_type === 'self');
+        if (parentIsDirectAncestor && childIsDirectDescendant) {
+          if (!childrenOf[parent.id]) childrenOf[parent.id] = [];
+          if (childrenOf[parent.id].indexOf(child.id) === -1) {
+            childrenOf[parent.id].push(child.id);
+          }
+        }
+      });
+    });
 
-    if (wasSameCard) {
-      // Second tap → open profile
-      _mpSelectedId = null;
-      actionBar.style.display = 'none';
-      mpOpenProfile(personId);
-      return;
-    }
+    // Draw connectors: for each parent, drop to mid-gap, draw bus bar, drop to children
+    Object.keys(childrenOf).forEach(function(parentId) {
+      var parent = _mpPeople.find(function(p) { return p.id === parentId && p._visible; });
+      if (!parent) return;
+      var childIds = childrenOf[parentId];
+      var children = childIds.map(function(cid) {
+        return _mpPeople.find(function(p) { return p.id === cid && p._visible; });
+      }).filter(Boolean);
+      if (!children.length) return;
 
-    _mpSelectedId = personId;
-    cardEl.classList.add('mp-selected');
-    cardEl.style.borderColor = 'var(--sage)';
-    cardEl.style.boxShadow   = '0 0 0 3px rgba(122,158,126,0.25)';
+      var px = parent._layoutX + MP_NODE_W / 2;
+      var py = parent._layoutY + MP_NODE_H;
+      var busY = py + MP_NODE_GAP_Y / 2;
 
-    var person = _mpPeople.find(function(p) { return p.id === personId; });
-    var isSelf = person && person.relationship_type === 'self';
-    document.getElementById('mpActionBarName').textContent = person ? person.name : '';
-    actionBar.style.display = isSelf ? 'none' : 'flex';
+      // Check if spouse of parent is also a known parent of same children (co-parent)
+      // If so, drop trunk from midpoint between the couple
+      var spouseId = null;
+      _mpRels.forEach(function(r) {
+        if (r.relationship_type !== 'spouse_of') return;
+        if (r.person_a_id === parent.id) spouseId = r.person_b_id;
+        if (r.person_b_id === parent.id) spouseId = r.person_a_id;
+      });
+      var spouse = spouseId ? _mpPeople.find(function(p) { return p.id === spouseId && p._visible; }) : null;
+      if (spouse) {
+        // trunk drops from midpoint between couple
+        px = (parent._layoutX + spouse._layoutX + MP_NODE_W) / 2;
+      }
+
+      // Trunk down from parent to bus
+      paths.push('<line x1="' + px + '" y1="' + py + '" x2="' + px + '" y2="' + busY +
+        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+
+      if (children.length > 1) {
+        var cxs = children.map(function(c) { return c._layoutX + MP_NODE_W / 2; });
+        var busMin = Math.min.apply(null, cxs);
+        var busMax = Math.max.apply(null, cxs);
+        // Bus bar
+        paths.push('<line x1="' + busMin + '" y1="' + busY + '" x2="' + busMax + '" y2="' + busY +
+          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+        // Trunk from bus bar centre (if px is outside bus range, clamp to range)
+        var trunkX = Math.max(busMin, Math.min(busMax, px));
+        if (trunkX !== px) {
+          paths.push('<line x1="' + px + '" y1="' + busY + '" x2="' + trunkX + '" y2="' + busY +
+            '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+        }
+        // Drop to each child
+        children.forEach(function(c) {
+          var cx = c._layoutX + MP_NODE_W / 2;
+          paths.push('<line x1="' + cx + '" y1="' + busY + '" x2="' + cx + '" y2="' + c._layoutY +
+            '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+        });
+      } else {
+        // Single child — straight line
+        var c = children[0];
+        var cx = c._layoutX + MP_NODE_W / 2;
+        paths.push('<line x1="' + px + '" y1="' + busY + '" x2="' + cx + '" y2="' + busY +
+          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+        paths.push('<line x1="' + cx + '" y1="' + busY + '" x2="' + cx + '" y2="' + c._layoutY +
+          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+      }
+    });
+
+    svgEl.innerHTML = paths.join('');
   }
 
-  function mpExpandUp() {
-    if (_mpMinGen > _mpAllMinGen) {
-      _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen - 1);
-      _mpRender();
-    }
+  // ── Add Relative flow ─────────────────────────────────────────────
+  var _mpAddRelAnchorId = null;  // person we're adding a relative FOR
+
+  function mpProfileAddRelative() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    if (!person) return;
+    _mpAddRelAnchorId = person.id;
+    var firstName = (person.name || '').split(' ')[0] || 'them';
+    document.getElementById('mpAddRelSheetTitle').textContent  = 'Add a relative of ' + firstName;
+    document.getElementById('mpAddRelSheetAnchorName').textContent = firstName;
+    document.getElementById('mpAddRelSheet').style.display = 'flex';
   }
 
-  function mpExpandDown() {
-    if (_mpMaxGen < _mpAllMaxGen) {
-      _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen + 1);
-      _mpRender();
-    }
+  function mpCloseAddRelSheet() {
+    document.getElementById('mpAddRelSheet').style.display = 'none';
+    _mpAddRelAnchorId = null;
+  }
+
+  // Called when user picks a relationship category from the sheet
+  function mpAddRelChosen(category) {
+    mpCloseAddRelSheet();
+    // Pre-select a sensible default relationship_type in the modal based on category
+    var relPresets = {
+      'parent':  'parent',
+      'child':   'child',
+      'sibling': 'sibling',
+      'spouse':  'spouse',
+      'other':   'other',
+    };
+    mpOpenAddPerson(relPresets[category] || '');
   }
 
   // ── Add / Edit person ─────────────────────────────────────────────
-  var _mpEditingPersonId = null;   // null = adding new person
+  var _mpEditingPersonId = null;
 
-  // Map of relationship_type → tree relationship_type for life_people_relationships
-  // person_a = self (gen 0), person_b = new person.
-  // Kept for relationship-row inserts; generation placement now uses MP_PERSON_GEN directly.
+  // Map of person.relationship_type → life_people_relationships.relationship_type
+  // Direction: person_a = anchor/self, person_b = new person.
   var MP_REL_TO_TREE = {
-    'mother':            'child_of',
-    'father':            'child_of',
-    'parent':            'child_of',
-    'step_parent':       'child_of',
-    'grandmother':       'grandchild_of',
-    'grandfather':       'grandchild_of',
-    'great_grandparent': 'great_grandchild_of',
-    'sister':            'sibling_of',
-    'brother':           'sibling_of',
-    'sibling':           'sibling_of',
-    'half_sibling':      'half_sibling_of',
-    'spouse':            'spouse_of',
-    'partner':           'spouse_of',
-    'daughter':          'parent_of',
-    'son':               'parent_of',
-    'child':             'parent_of',
-    'step_child':        'parent_of',
-    'granddaughter':     'grandparent_of',
-    'grandson':          'grandparent_of',
-    'grandchild':        'grandparent_of',
-    'great_grandchild':  'great_grandparent_of',
-    'aunt':              null,
-    'uncle':             null,
-    'cousin':            null,
-    'niece':             null,
-    'nephew':            null,
-    'other':             null,
+    'mother':'child_of','father':'child_of','parent':'child_of','step_parent':'child_of',
+    'grandmother':'grandchild_of','grandfather':'grandchild_of',
+    'great_grandparent':'great_grandchild_of',
+    'sister':'sibling_of','brother':'sibling_of','sibling':'sibling_of','half_sibling':'half_sibling_of',
+    'spouse':'spouse_of','partner':'spouse_of',
+    'daughter':'parent_of','son':'parent_of','child':'parent_of','step_child':'parent_of',
+    'granddaughter':'grandparent_of','grandson':'grandparent_of','grandchild':'grandparent_of',
+    'great_grandchild':'great_grandparent_of',
+    'aunt':null,'uncle':null,'cousin':null,'niece':null,'nephew':null,'other':null,
   };
 
-  function mpOpenAddPerson() {
+  function mpOpenAddPerson(presetRelType) {
     _mpEditingPersonId = null;
     document.getElementById('mpPersonModalTitle').textContent = 'Add a person';
     document.getElementById('mpPersonName').value     = '';
-    document.getElementById('mpPersonRelType').value  = '';
+    document.getElementById('mpPersonRelType').value  = presetRelType || '';
     document.getElementById('mpPersonRelLabel').value = '';
     document.getElementById('mpPersonDob').value      = '';
     document.getElementById('mpPersonBio').value      = '';
@@ -13989,13 +14259,16 @@
     document.getElementById('mpPersonPhotoStatus').textContent = '';
     document.getElementById('mpPersonError').style.display = 'none';
     document.getElementById('mpPersonSaveBtn').textContent = 'Save';
+    document.getElementById('mpPersonBucket').value = 'family';
     document.getElementById('mpPersonModal').style.display = 'flex';
     setTimeout(function() { document.getElementById('mpPersonName').focus(); }, 50);
   }
 
-  function mpEditSelected() {
-    var person = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
+  // Called from profile panel — edit the currently open person
+  function mpProfileEdit() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
     if (!person) return;
+    mpCloseProfile();
     _mpEditingPersonId = person.id;
     document.getElementById('mpPersonModalTitle').textContent = 'Edit person';
     document.getElementById('mpPersonName').value     = person.name || '';
@@ -14003,9 +14276,9 @@
     document.getElementById('mpPersonRelLabel').value = person.relationship_label || '';
     document.getElementById('mpPersonDob').value      = person.dob || '';
     document.getElementById('mpPersonBio').value      = person.bio || '';
+    document.getElementById('mpPersonBucket').value   = person.bucket || 'family';
     document.getElementById('mpPersonPhotoFile').value = '';
     document.getElementById('mpPersonPhotoStatus').textContent = '';
-    // Show existing photo in preview if set
     var prevEl = document.getElementById('mpPersonPhotoPreview');
     if (person.photo_url) {
       prevEl.innerHTML = '';
@@ -14019,6 +14292,181 @@
     document.getElementById('mpPersonError').style.display = 'none';
     document.getElementById('mpPersonSaveBtn').textContent = 'Save changes';
     document.getElementById('mpPersonModal').style.display = 'flex';
+  }
+
+  // Called from profile panel — delete the currently open person
+  async function mpProfileDelete() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    if (!person) return;
+    if (!confirm('Remove "' + person.name + '" from your family tree? This cannot be undone.')) return;
+    mpCloseProfile();
+    var headers = getAuthHeaders();
+    try {
+      await fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id +
+        '&or=(person_a_id.eq.' + person.id + ',person_b_id.eq.' + person.id + ')',
+        { method: 'DELETE', headers: headers });
+      var delRes = await fetch(DB_PEOPLE_URL + '?id=eq.' + person.id + '&user_id=eq.' + currentUser.id,
+        { method: 'DELETE', headers: headers });
+      if (!delRes.ok) throw new Error('Delete failed (' + delRes.status + ')');
+      _mpPeople = _mpPeople.filter(function(p) { return p.id !== person.id; });
+      _mpRels   = _mpRels.filter(function(r) { return r.person_a_id !== person.id && r.person_b_id !== person.id; });
+      logActivity('people_deleted', person.name, 'info', 'PEOPLE');
+      toast(person.name + ' removed.');
+      if (!_mpPeople.length) {
+        document.getElementById('mpTreeContainer').innerHTML = '';
+        document.getElementById('mpConnectorSvg').innerHTML = '';
+        document.getElementById('mpEmptyState').style.display = 'flex';
+        if (_mpActiveTab === 'directory') mpDirRender();
+        return;
+      }
+      _mpRender();
+      if (_mpActiveTab === 'directory') mpDirRender();
+    } catch(e) {
+      toast('Could not delete — please try again.');
+      dbgErr('PEOPLE', 'mpProfileDelete error:', e.message);
+    }
+  }
+
+  // Legacy stubs — kept so any older references don't throw
+  function mpEditSelected()   { mpProfileEdit(); }
+  function mpDeleteSelected() { mpProfileDelete(); }
+
+  // ── My People — Tab switcher (Phase 5) ─────────────────────────────
+  var _mpActiveTab = 'tree';  // 'tree' | 'directory'
+
+  function mpSwitchTab(tab) {
+    _mpActiveTab = tab;
+    var treeVp   = document.getElementById('mpCanvasViewport');
+    var dirPanel = document.getElementById('mpDirPanel');
+    var treeCtrl = document.getElementById('mpTreeControls');
+    var tabTree  = document.getElementById('mpTabTree');
+    var tabDir   = document.getElementById('mpTabDir');
+
+    if (tab === 'tree') {
+      if (treeVp)   treeVp.style.display    = '';        // restores flex:1
+      if (dirPanel) dirPanel.style.display  = 'none';
+      if (treeCtrl) treeCtrl.style.display  = 'flex';
+      if (tabTree)  { tabTree.style.borderBottom = '2px solid var(--gold)'; tabTree.style.color = 'var(--text)'; }
+      if (tabDir)   { tabDir.style.borderBottom  = '2px solid transparent'; tabDir.style.color  = 'var(--text-light)'; }
+    } else {
+      if (treeVp)   treeVp.style.display    = 'none';
+      if (dirPanel) dirPanel.style.display  = 'block';
+      if (treeCtrl) treeCtrl.style.display  = 'none';
+      if (tabTree)  { tabTree.style.borderBottom = '2px solid transparent'; tabTree.style.color = 'var(--text-light)'; }
+      if (tabDir)   { tabDir.style.borderBottom  = '2px solid var(--gold)'; tabDir.style.color  = 'var(--text)'; }
+      mpDirRender();
+    }
+  }
+
+  // ── My People — Directory render (Phase 5) ──────────────────────────
+  // Opens the add-person modal pre-set to a non-family bucket (for Directory tab adds)
+  function mpOpenAddPersonDir() {
+    _mpEditingPersonId = null;
+    document.getElementById('mpPersonModalTitle').textContent = 'Add a person';
+    document.getElementById('mpPersonName').value     = '';
+    document.getElementById('mpPersonRelType').value  = '';
+    document.getElementById('mpPersonRelLabel').value = '';
+    document.getElementById('mpPersonDob').value      = '';
+    document.getElementById('mpPersonBio').value      = '';
+    document.getElementById('mpPersonBucket').value   = 'friend';
+    document.getElementById('mpPersonPhotoFile').value = '';
+    document.getElementById('mpPersonPhotoPreview').innerHTML = '&#128100;';
+    document.getElementById('mpPersonPhotoPreview').style.background = 'var(--surface)';
+    document.getElementById('mpPersonPhotoStatus').textContent = '';
+    document.getElementById('mpPersonError').style.display = 'none';
+    document.getElementById('mpPersonSaveBtn').textContent = 'Save';
+    document.getElementById('mpPersonModal').style.display = 'flex';
+    setTimeout(function() { document.getElementById('mpPersonName').focus(); }, 50);
+  }
+
+  // Render the directory list (filtered by search + bucket)
+  function mpDirRender() {
+    var searchEl  = document.getElementById('mpDirSearch');
+    var bucketEl  = document.getElementById('mpDirBucketFilter');
+    var listEl    = document.getElementById('mpDirList');
+    var emptyEl   = document.getElementById('mpDirEmpty');
+    if (!listEl) return;
+
+    var query  = (searchEl ? searchEl.value : '').toLowerCase().trim();
+    var bucket = bucketEl ? bucketEl.value : '';
+
+    // Sort: family first, then alpha within bucket
+    var BUCKET_ORDER = { family: 0, friend: 1, colleague: 2, other: 3 };
+    var sorted = (_mpPeople || []).slice().sort(function(a, b) {
+      var ba = BUCKET_ORDER[a.bucket] !== undefined ? BUCKET_ORDER[a.bucket] : 4;
+      var bb = BUCKET_ORDER[b.bucket] !== undefined ? BUCKET_ORDER[b.bucket] : 4;
+      if (ba !== bb) return ba - bb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+    var filtered = sorted.filter(function(p) {
+      if (bucket && p.bucket !== bucket) return false;
+      if (query && (p.name || '').toLowerCase().indexOf(query) === -1) return false;
+      return true;
+    });
+
+    listEl.innerHTML = '';
+    if (!filtered.length) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    var BUCKET_LABELS = { family: 'Family', friend: 'Friend', colleague: 'Colleague', other: 'Other' };
+    var lastBucket = null;
+
+    filtered.forEach(function(person) {
+      // Section header when bucket changes (only when showing all)
+      if (!bucket && person.bucket !== lastBucket) {
+        lastBucket = person.bucket;
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);font-weight:700;padding:10px 4px 4px;margin-top:' + (lastBucket === 'family' ? '0' : '8px');
+        hdr.textContent   = BUCKET_LABELS[lastBucket] || lastBucket;
+        listEl.appendChild(hdr);
+      }
+
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:background 0.12s';
+      row.onmouseenter = function() { row.style.background = 'var(--surface2,var(--bg))'; };
+      row.onmouseleave = function() { row.style.background = 'var(--surface)'; };
+      row.onclick = function() { mpOpenProfile(person.id); };
+
+      // Avatar
+      var avatarEl = document.createElement('div');
+      avatarEl.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--bg);border:1px solid var(--border);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:1.1rem';
+      if (person.photo_url) {
+        var img = document.createElement('img');
+        img.src = person.photo_url;
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        img.onerror = function() { avatarEl.textContent = '&#128100;'; };
+        avatarEl.appendChild(img);
+      } else {
+        avatarEl.innerHTML = '&#128100;';
+      }
+      row.appendChild(avatarEl);
+
+      // Name + relationship label
+      var textEl = document.createElement('div');
+      textEl.style.cssText = 'flex:1;min-width:0';
+      var nameEl = document.createElement('div');
+      nameEl.style.cssText = 'font-size:0.9rem;font-weight:700;color:var(--text);font-family:Lato,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      nameEl.textContent = person.name || '';
+      textEl.appendChild(nameEl);
+      var relEl = document.createElement('div');
+      relEl.style.cssText = 'font-size:0.74rem;color:var(--text-light);margin-top:1px';
+      var relTxt = person.relationship_label || (person.relationship_type ? (MP_REL_LABEL[person.relationship_type] || person.relationship_type) : '');
+      relEl.textContent = relTxt || (BUCKET_LABELS[person.bucket] || '');
+      textEl.appendChild(relEl);
+      row.appendChild(textEl);
+
+      // Chevron
+      var chev = document.createElement('div');
+      chev.style.cssText = 'color:var(--text-light);font-size:0.9rem;flex-shrink:0';
+      chev.textContent = '›';
+      row.appendChild(chev);
+
+      listEl.appendChild(row);
+    });
   }
 
   function mpClosePersonModal() {
@@ -14052,6 +14500,7 @@
     var relLabel = (document.getElementById('mpPersonRelLabel').value || '').trim();
     var dob      = document.getElementById('mpPersonDob').value || null;
     var bio      = (document.getElementById('mpPersonBio').value || '').trim() || null;
+    var bucket   = document.getElementById('mpPersonBucket').value || 'family';
     var photoFile = document.getElementById('mpPersonPhotoFile').files[0] || null;
     var errEl    = document.getElementById('mpPersonError');
     var saveBtn  = document.getElementById('mpPersonSaveBtn');
@@ -14062,7 +14511,8 @@
       errEl.style.display = 'block';
       return;
     }
-    if (!relType) {
+    // Relationship type required only for family (tree) entries
+    if (bucket === 'family' && !relType) {
       errEl.textContent = 'Please select a relationship.';
       errEl.style.display = 'block';
       return;
@@ -14094,7 +14544,7 @@
     try {
       if (_mpEditingPersonId) {
         // ── PATCH existing person ──────────────────────────────────
-        var patchBody = { name: name, relationship_type: relType, dob: dob, bio: bio };
+        var patchBody = { name: name, relationship_type: relType, dob: dob, bio: bio, bucket: bucket };
         if (relLabel) patchBody.relationship_label = relLabel;
         else patchBody.relationship_label = null;
         if (photoUrl) patchBody.photo_url = photoUrl;
@@ -14114,6 +14564,7 @@
           localPerson.relationship_label = relLabel || null;
           localPerson.dob                = dob;
           localPerson.bio                = bio;
+          localPerson.bucket             = bucket;
           if (photoUrl) localPerson.photo_url = photoUrl;
         }
         logActivity('people_edited', name, 'info', 'PEOPLE');
@@ -14126,7 +14577,7 @@
           relationship_type:  relType,
           dob:                dob,
           bio:                bio,
-          bucket:             'family',
+          bucket:             bucket,
         };
         if (relLabel) newPersonBody.relationship_label = relLabel;
         if (photoUrl) newPersonBody.photo_url = photoUrl;
@@ -14143,19 +14594,21 @@
         // Add to local cache
         _mpPeople.push(newPerson);
 
-        // If this person has a mappable tree relationship, insert a relationship row
-        // linking the author (gen 0 = self node) to the new person.
+        // Determine anchor person: if we came from the "Add relative" flow, use that anchor;
+        // otherwise fall back to the self node.
+        var anchorId = _mpAddRelAnchorId;
+        var anchorNode = anchorId
+          ? _mpPeople.find(function(p) { return p.id === anchorId; })
+          : _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
+        _mpAddRelAnchorId = null;  // clear anchor after use
+
         var treeRelType = MP_REL_TO_TREE[relType];
-        var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-        if (!selfNode) {
-          // Self node may not exist yet — skip relationship insert but still show person
-          dbgWarn('PEOPLE', 'No self node found — skipping relationship insert');
+        if (!anchorNode) {
+          dbgWarn('PEOPLE', 'No anchor node found — skipping relationship insert');
         } else if (treeRelType) {
-          // person_a = self/author, person_b = newPerson
-          // type = how the AUTHOR relates to the newPerson
           var relBody = {
             user_id:           currentUser.id,
-            person_a_id:       selfNode.id,
+            person_a_id:       anchorNode.id,
             person_b_id:       newPerson.id,
             relationship_type: treeRelType,
           };
@@ -14171,22 +14624,17 @@
             dbgWarn('PEOPLE', 'Relationship insert failed: ' + relRes.status + ' (person still saved)');
           }
         }
-        // For types with no tree placement (aunt, uncle, cousin, other) — person saved but no relationship row.
         logActivity('people_added', name + ' (' + relType + ')', 'info', 'PEOPLE');
       }
 
       mpClosePersonModal();
-      // Re-assign generations and re-render with updated data
+      // Re-render with updated data
       if (_mpPeople.length) {
-        _mpAssignGenerations();
-        _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen);
-        _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen);
         document.getElementById('mpEmptyState').style.display = 'none';
       }
       _mpRender();
-      // Deselect
-      _mpSelectedId = null;
-      document.getElementById('mpActionBar').style.display = 'none';
+      // Refresh directory list if visible
+      if (_mpActiveTab === 'directory') mpDirRender();
 
     } catch(e) {
       errEl.textContent = e.message || 'Could not save — please try again.';
@@ -14195,50 +14643,6 @@
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = _mpEditingPersonId ? 'Save changes' : 'Save';
-    }
-  }
-
-  async function mpDeleteSelected() {
-    var person = _mpPeople.find(function(p) { return p.id === _mpSelectedId; });
-    if (!person) return;
-    if (!confirm('Delete "' + person.name + '" from your family tree? This cannot be undone.')) return;
-
-    var headers = getAuthHeaders();
-    try {
-      // Delete relationship rows first (CASCADE should handle it, but belt-and-suspenders)
-      await fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id + '&or=(person_a_id.eq.' + person.id + ',person_b_id.eq.' + person.id + ')', {
-        method: 'DELETE', headers: headers,
-      });
-      // Delete person row
-      var delRes = await fetch(DB_PEOPLE_URL + '?id=eq.' + person.id + '&user_id=eq.' + currentUser.id, {
-        method: 'DELETE', headers: headers,
-      });
-      if (!delRes.ok) throw new Error('Delete failed (' + delRes.status + ')');
-
-      // Remove from local caches
-      _mpPeople = _mpPeople.filter(function(p) { return p.id !== person.id; });
-      _mpRels   = _mpRels.filter(function(r) { return r.person_a_id !== person.id && r.person_b_id !== person.id; });
-      _mpSelectedId = null;
-      document.getElementById('mpActionBar').style.display = 'none';
-
-      logActivity('people_deleted', person.name, 'info', 'PEOPLE');
-      toast(person.name + ' removed.');
-
-      if (!_mpPeople.length) {
-        document.getElementById('mpTreeContainer').innerHTML = '';
-        document.getElementById('mpExpandUpRow').style.display = 'none';
-        document.getElementById('mpExpandDownRow').style.display = 'none';
-        document.getElementById('mpEmptyState').style.display = 'block';
-        return;
-      }
-      _mpAssignGenerations();
-      _mpMinGen = Math.max(_mpAllMinGen, _mpMinGen);
-      _mpMaxGen = Math.min(_mpAllMaxGen, _mpMaxGen);
-      _mpRender();
-
-    } catch(e) {
-      toast('Could not delete — please try again.');
-      dbgErr('PEOPLE', 'mpDeleteSelected error:', e.message);
     }
   }
 
@@ -14304,8 +14708,6 @@
     document.getElementById('mpLoadingState').style.display  = 'none';
     document.getElementById('mpEmptyState').style.display    = 'none';
     document.getElementById('mpTreeContainer').innerHTML     = '';
-    document.getElementById('mpExpandUpRow').style.display   = 'none';
-    document.getElementById('mpExpandDownRow').style.display = 'none';
 
     _mpBuildReviewRows();
     document.getElementById('mpReviewScreen').style.display = 'block';
@@ -14500,15 +14902,11 @@
       toast(saved + ' ' + (saved === 1 ? 'person' : 'people') + ' added to your family tree.');
 
       if (_mpPeople.filter(function(p) { return p.relationship_type !== 'self'; }).length) {
-        _mpAssignGenerations();
-        _mpMinGen = Math.max(_mpAllMinGen, -1);
-        _mpMaxGen = Math.min(_mpAllMaxGen,  1);
-        if (_mpMinGen > 0) _mpMinGen = 0;
-        if (_mpMaxGen < 0) _mpMaxGen = 0;
         document.getElementById('mpEmptyState').style.display = 'none';
         _mpRender();
+        requestAnimationFrame(function() { _mpCentreOnSelf(); });
       } else {
-        document.getElementById('mpEmptyState').style.display = 'block';
+        document.getElementById('mpEmptyState').style.display = 'flex';
       }
 
     } catch(e) {
@@ -14524,7 +14922,7 @@
     await _mpMarkReviewDone();
     logActivity('people_review_skipped', '', 'info', 'PEOPLE');
     document.getElementById('mpReviewScreen').style.display = 'none';
-    document.getElementById('mpEmptyState').style.display = 'block';
+    document.getElementById('mpEmptyState').style.display = 'flex';
   }
 
   async function _mpMarkReviewDone() {
