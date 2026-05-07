@@ -1154,6 +1154,19 @@
       justify-content: space-between;
     }
     .dash-tile:hover { box-shadow: 0 4px 20px rgba(44,36,22,0.12); transform: translateY(-2px); }
+    /* Skeleton shimmer — applied to dash-grid while entries === null */
+    @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+    .dash-grid.loading .dash-tile::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.15) 50%, transparent 75%);
+      background-size: 400px 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 14px;
+      pointer-events: none;
+    }
+    .dash-grid.loading .dash-tile { cursor: default; }
+    .dash-grid.loading .dash-tile:hover { box-shadow: none; transform: none; }
     .dash-tile-wide { grid-column: 1 / -1; min-height: 90px; }
     .dash-tile-icon { font-size: 1.6rem; margin-bottom: 8px; display: block; }
     .dash-tile-title { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-light); margin-bottom: 4px; }
@@ -2181,7 +2194,7 @@
     <h2 class="section-title">Dashboard</h2>
     <p class="section-sub" id="dashGreeting">Here's how your story is shaping up.</p>
 
-    <div class="dash-grid">
+    <div class="dash-grid loading" id="dashGrid">
 
       <!-- ⓪ GETHRO TILE — daily observation, rules-based -->
       <div class="dash-tile dash-tile-wide" id="dashGethroTile" style="display:none;min-height:auto;padding:16px 20px;border-left:3px solid var(--gold)">
@@ -3177,8 +3190,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.90';
-  const DEPLOY_NOTES = APP_VERSION + ' — Weekly email nudge: opt-in toggle + fortnightly option in Help tab. Saves weekly_email_enabled + weekly_email_frequency + user_email to life_settings. Edge function weekly-email/index.ts sends Gethro-signed prompts via Resend on pg_cron schedule.';
+  const APP_VERSION  = 'v3.91';
+  const DEPLOY_NOTES = APP_VERSION + ' — CI review v3.70+v3.80: dashboard skeleton shimmer, updated_at on entries (needs DB migration — see project memory), sorted entries cache, offline edit queue (extends existing queue to handle PATCH), deleteAccount edge fn verified.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4858,7 +4871,7 @@
       _gethroAudioCtx = null;
     }
     await sb.auth.signOut();
-    entries = [];
+    entries = []; _invalidateSortCache();
     toast('Signed out');
   }
 
@@ -4978,7 +4991,7 @@
       title:                tags?.title    || null,
       parent_entry_id:      parentEntryId  || null
     };
-    entries.push(newEntry);
+    entries.push(newEntry); _invalidateSortCache();
 
     try {
       const res = await fetch(DB_URL, {
@@ -5949,6 +5962,14 @@
       const dateVal = fullTags.date || fullTags.year || null;
       if (dateVal !== undefined) patch.date = dateVal;
       try {
+        if (!navigator.onLine) {
+          // Queue the edit for retry when back online
+          const cached = entries.find(function(en) { return en.id === editId; });
+          if (cached) Object.assign(cached, patch);
+          _offlineQueuePushEdit(editId, patch);
+          _invalidateSortCache();
+          return 'offline';
+        }
         const res = await fetch(DB_URL + '?id=eq.' + editId + '&user_id=eq.' + currentUser.id, {
           method: 'PATCH',
           headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
@@ -8613,7 +8634,25 @@
     if (tile) tile.style.display = 'none';
   }
 
+  // Sorted entries cache — invalidated when entries array changes
+  var _sortedReal = null;
+  var _sortedRealLen = -1;
+
+  function _getSortedReal() {
+    var real = entries.filter(e => !e.category?.startsWith('_profile'));
+    // Invalidate cache if entries length changed
+    if (_sortedReal && _sortedRealLen === real.length) return _sortedReal;
+    _sortedReal = real.slice().sort((a, b) => a.timestamp < b.timestamp ? -1 : 1);
+    _sortedRealLen = real.length;
+    return _sortedReal;
+  }
+
+  function _invalidateSortCache() { _sortedReal = null; _sortedRealLen = -1; }
+
   function renderDashboard() {
+    // Remove skeleton shimmer once entries have loaded
+    var dashGrid = document.getElementById('dashGrid');
+    if (dashGrid) dashGrid.classList.remove('loading');
     try {
     const real = entries.filter(e => !e.category?.startsWith('_profile'));
     if (!real.length) {
@@ -8965,7 +9004,7 @@
       return `<div class="entry-card" id="${safeId}" style="margin-bottom:12px">
         <div class="entry-meta">
           <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
-          <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}</span>
+          <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}${e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : ''}</span>
           ${e.id ? `<button class="entry-delete-btn" onclick="deleteEntry(${deleteId})" title="Delete">✕</button>` : ''}
         </div>
         ${e.title ? `<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ${e.title}</p>` : ''}
@@ -9852,7 +9891,7 @@
         '<div class="entry-meta">' +
           '<span class="entry-cat">' + (e.chapter || e.category || 'Unspecified') + '</span>' +
           wcBadge +
-          '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>' +
+          '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
           (e.id ? '<button class="entry-delete-btn" onclick="deleteEntry(' + deleteId + ')" title="Delete">✕</button>' : '') +
         '</div>' +
         photoStripHtml +
@@ -11417,7 +11456,7 @@
         '<div class="entry-meta">' +
           getEntryTypeBadge(type) +
           '<span class="entry-cat">' + (e.category || 'Unspecified') + '</span>' +
-          '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + '</span>' +
+          '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
           (e.id ? '<button class="entry-delete-btn" onclick="deleteEntry(' + deleteId + ')" title="Delete entry">✕</button>' : '') +
         '</div>' +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + e.title + '</p>' : '') +
@@ -11511,7 +11550,7 @@
       else {
         notifyDev('warn', 'AUTH', 'User deleted all their entries: ' + currentUser.email);
         logActivity('data_deleted', 'all_entries: ' + currentUser.email, 'warn', 'AUTH');
-        entries = [];
+        entries = []; _invalidateSortCache();
         toast('All entries deleted');
       }
     } catch(err) { dbgErr('DB', 'confirmDelete threw:', err.message); toast('Error: ' + err.message); }
@@ -13681,41 +13720,55 @@
   }
   function _offlineQueuePush(entry) {
     var q = _offlineQueueLoad();
-    q.push(entry);
+    q.push({ _method: 'POST', _url: DB_URL, data: entry });
     _offlineQueueSave(q);
-    dbg('OFFLINE', 'Queued entry for retry. Queue length:', q.length);
+    dbg('OFFLINE', 'Queued new entry for retry. Queue length:', q.length);
     toast('Saved locally — will sync when back online');
+  }
+  function _offlineQueuePushEdit(entryId, patch) {
+    var q = _offlineQueueLoad();
+    // Replace any existing queued edit for the same entry (last write wins)
+    q = q.filter(function(item) { return !(item._method === 'PATCH' && item._entryId === entryId); });
+    q.push({ _method: 'PATCH', _url: DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, _entryId: entryId, data: patch });
+    _offlineQueueSave(q);
+    dbg('OFFLINE', 'Queued edit for retry. Queue length:', q.length);
+    toast('Edit saved locally — will sync when back online');
   }
   async function _offlineQueueFlush() {
     if (!navigator.onLine) return;
     var q = _offlineQueueLoad();
     if (!q.length) return;
-    dbg('OFFLINE', 'Flushing offline queue, entries:', q.length);
+    dbg('OFFLINE', 'Flushing offline queue, items:', q.length);
     var remaining = [];
     for (var i = 0; i < q.length; i++) {
       var item = q[i];
+      // Support legacy queue items (plain objects without _method)
+      var method = item._method || 'POST';
+      var url    = item._url    || DB_URL;
+      var body   = item.data    || item; // legacy: whole item was the entry
       try {
-        var res = await fetch(DB_URL, {
-          method: 'POST',
-          headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
-          body: JSON.stringify(item)
-        });
+        var headers = Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' });
+        var res = await fetch(url, { method: method, headers: headers, body: JSON.stringify(body) });
         if (res.ok) {
-          dbg('OFFLINE', 'Queued entry synced OK');
+          dbg('OFFLINE', method, 'queued item synced OK');
+          if (method === 'PATCH' && item._entryId) {
+            // Update local cache with the synced patch
+            var cached = entries.find(function(en) { return en.id === item._entryId; });
+            if (cached) Object.assign(cached, body);
+          }
         } else {
-          dbgWarn('OFFLINE', 'Queued entry sync failed, status:', res.status, '— re-queuing');
+          dbgWarn('OFFLINE', 'Queued item sync failed, status:', res.status, '— re-queuing');
           remaining.push(item);
         }
       } catch(err) {
-        dbgWarn('OFFLINE', 'Queued entry sync threw:', err.message, '— re-queuing');
+        dbgWarn('OFFLINE', 'Queued item sync threw:', err.message, '— re-queuing');
         remaining.push(item);
       }
     }
     _offlineQueueSave(remaining);
     if (remaining.length < q.length) {
       var synced = q.length - remaining.length;
-      toast(synced + ' offline entr' + (synced === 1 ? 'y' : 'ies') + ' synced ✓');
-      // Reload entries from server so synced entries appear
+      toast(synced + ' offline change' + (synced === 1 ? '' : 's') + ' synced ✓');
       if (!remaining.length) fetchEntries();
     }
   }
