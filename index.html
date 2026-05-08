@@ -2693,17 +2693,20 @@
         <!-- Action buttons -->
         <div style="display:flex;gap:8px;margin-top:16px">
           <button onclick="mpProfileEdit()" style="flex:1;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer">&#9998; Edit</button>
-          <button onclick="mpProfileWriteMemory()" style="flex:2;padding:9px;background:var(--gold);color:#fff;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer">&#9997; Write a memory about them</button>
+          <button onclick="mpProfileAddRelative()" id="mpProfileAddRelBtn"
+            style="flex:2;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;text-align:center">
+            &#43; Add a relative
+          </button>
         </div>
-        <!-- Add relative button -->
-        <button onclick="mpProfileAddRelative()" id="mpProfileAddRelBtn"
-          style="width:100%;margin-top:8px;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;text-align:left">
-          &#43; Add a relative of <span class="mp-profile-first-name" id="mpProfileAddRelName"></span>
-        </button>
-        <!-- Delete button (subtle, below the fold) -->
-        <button onclick="mpProfileDelete()" style="width:100%;margin-top:4px;padding:7px;background:none;border:1px solid transparent;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer;text-align:left">
-          &#128465; Remove from tree
-        </button>
+        <!-- Write a memory — secondary text link style -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+          <button onclick="mpProfileWriteMemory()" style="padding:0;background:none;border:none;font-family:'Lato',sans-serif;font-size:0.78rem;color:var(--gold-dark);cursor:pointer;text-decoration:underline;text-underline-offset:2px">
+            ✍️ Write a memory about <span class="mp-profile-first-name"></span>
+          </button>
+          <button onclick="mpProfileDelete()" style="padding:0;background:none;border:none;font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer">
+            &#128465; Remove
+          </button>
+        </div>
       </div>
 
       <!-- Mentions section -->
@@ -3208,8 +3211,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.94';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix dTree crash: add Lodash CDN (dTree depends on _ globally; missing on Android Chrome caused render error).';
+  const APP_VERSION  = 'v3.95';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix tree line bug (null spouse crashes dTree; use hidden dummy spouse for single-parent nodes so bro-to-dad line draws correctly). Fix Edit button (remove duplicate mpProfileEdit that overrode the working one). Redesign profile drawer: Edit+Add Relative as primary buttons, Write a memory demoted to text link, Remove consolidated inline.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -14108,9 +14111,19 @@
           });
         });
       } else {
-        // No spouse, just children
+        // No spouse — use a hidden dummy spouse node (dTree requires a spouse object;
+        // passing null crashes with null.name). hidden:true means dTree lays it out but
+        // does not render it, so children still connect to the parent correctly.
         nodeMap[p.id].marriages.push({
-          spouse:   null,
+          spouse: {
+            name:      '',
+            hidden:    true,
+            noParent:  true,
+            extra:     {},
+            marriages: [],
+            'class':   '',
+            textClass: '',
+          },
           children: myChildren.map(function(cid) {
             return nodeMap[cid] || makeNode(byId[cid]);
           }).filter(Boolean),
@@ -15187,12 +15200,6 @@
     countEl.style.cssText = 'font-size:0.72rem;color:var(--text-light);text-align:center;margin-top:4px';
     countEl.textContent = matched.length + ' memor' + (matched.length === 1 ? 'y' : 'ies') + ' found';
     container.appendChild(countEl);
-  }
-
-  function mpProfileEdit() {
-    var id = _mpProfilePersonId;
-    mpCloseProfile();
-    setTimeout(function() { _mpSelectedId = id; mpEditSelected(); }, 300);
   }
 
   function mpProfileWriteMemory() {
