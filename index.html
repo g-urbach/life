@@ -30,6 +30,9 @@
   </script>
   <!-- jsPDF for PDF generation — replaces html2pdf which silently fails due to html2canvas issues -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- dTree: MIT-licensed family tree library built on D3 v4 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.13.0/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-dtree@2.4.1/dist/dTree.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Lato:wght@300;400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -922,28 +925,52 @@
     .btn-danger { background: var(--rose); color: white; }
     .btn-danger:hover:not(:disabled) { background: #a85e52; }
 
-    /* ── MY PEOPLE TREE NODES ── */
-    .mp-node {
-      position: absolute;
-      width: 110px;
+    /* ── MY PEOPLE TREE — dTree integration ── */
+    #mpDTree { width: 100%; height: 100%; }
+    #mpDTree svg { font-family: 'Lato', sans-serif; overflow: visible; }
+
+    /* Node cards — rendered inside foreignObject by dTree */
+    .mpNode {
       background: var(--surface);
       border: 2px solid var(--border);
       border-radius: 12px;
-      padding: 10px 8px 8px;
+      padding: 8px 6px 7px;
       cursor: pointer;
       text-align: center;
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
       transition: border-color 0.15s, box-shadow 0.15s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
       user-select: none;
       -webkit-user-select: none;
-      box-sizing: border-box;
     }
-    .mp-node:hover { border-color: var(--gold); box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
-    .mp-node.mp-node-self { border-color: var(--gold); background: var(--surface2); }
-    .mp-node.mp-node-selected { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(180,140,60,0.25); }
-    .mp-node-avatar { width:44px;height:44px;border-radius:50%;background:var(--bg);border:1px solid var(--border);margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;overflow:hidden;flex-shrink:0; }
-    .mp-node-avatar img { width:100%;height:100%;object-fit:cover;border-radius:50%; }
-    .mp-node-name { font-family:'Lato',sans-serif;font-size:0.7rem;font-weight:700;color:var(--text);line-height:1.2;word-break:break-word;margin-bottom:2px; }
-    .mp-node-rel  { font-family:'Lato',sans-serif;font-size:0.62rem;color:var(--text-light);line-height:1.2; }
+    .mpNode:hover { border-color: var(--gold); box-shadow: 0 2px 12px rgba(0,0,0,0.15); }
+    .mpNode.mpNode-self { border-color: var(--gold); background: var(--surface2, var(--surface)); }
+    .mpNode-avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.15rem; overflow: hidden; flex-shrink: 0;
+    }
+    .mpNode-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+    .mpNode-self .mpNode-avatar { border: 2px solid var(--gold); box-shadow: 0 0 0 2px rgba(180,140,60,0.2); }
+    .mpNode-name { font-size: 0.68rem; font-weight: 700; color: var(--text); line-height: 1.2; word-break: break-word; }
+    .mpNode-rel  { font-size: 0.59rem; color: var(--text-light); line-height: 1.2; }
+
+    /* dTree SVG connector lines */
+    #mpDTree path.linage, #mpDTree path.mpDTreeLink { stroke: var(--border); stroke-width: 2px; fill: none; }
+    #mpDTree path.marriage, #mpDTree path.mpDTreeMarriage { stroke: var(--border); stroke-width: 2px; fill: none; }
+    #mpDTree .mpDTreeMarriage circle, #mpDTree .marriage circle { fill: var(--border); }
+
+    /* dTree pan/zoom container */
+    #mpDTree .zoom { cursor: grab; }
+    #mpDTree .zoom:active { cursor: grabbing; }
+    #mpDTree foreignObject { overflow: visible; }
 
     /* ── ADD RELATIVE PICKER BUTTONS ── */
     .mp-rel-btn {
@@ -2427,13 +2454,9 @@
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0">
         <h2 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
         <div style="display:flex;align-items:center;gap:4px">
-          <!-- Generation depth controls (tree tab only) -->
+          <!-- Tree controls (fit view button; dTree handles zoom/pan natively) -->
           <div id="mpTreeControls" style="display:flex;align-items:center;gap:4px">
-            <span style="font-size:0.65rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);font-weight:700;margin-right:2px">Gens</span>
-            <button onclick="mpGenDecrease()" id="mpGenDecBtn" title="Show fewer generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#8722;</button>
-            <span id="mpGenDepthLabel" style="font-size:0.78rem;color:var(--text);min-width:18px;text-align:center;font-family:'Lato',sans-serif">3</span>
-            <button onclick="mpGenIncrease()" id="mpGenIncBtn" title="Show more generations" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.9rem;cursor:pointer;color:var(--text);font-family:'Lato',sans-serif;display:flex;align-items:center;justify-content:center">&#43;</button>
-            <button onclick="mpRecentre()" title="Re-centre on you" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);margin-left:2px">&#8853;</button>
+            <button onclick="mpRecentre()" title="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)" title="Fit to screen">&#8853;</button>
           </div>
           <!-- Close -->
           <button onclick="closeMyPeople()" style="width:28px;height:28px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text-light);margin-left:4px">&#10005;</button>
@@ -2452,15 +2475,9 @@
       </div>
     </div>
 
-    <!-- Pan/zoom canvas viewport — fills remaining screen -->
-    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:hidden;touch-action:none;cursor:grab">
-      <!-- Inner pannable layer — nodes and SVG connectors live here -->
-      <div id="mpCanvasInner" style="position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform">
-        <!-- SVG connector layer (behind nodes) -->
-        <svg id="mpConnectorSvg" style="position:absolute;top:0;left:0;overflow:visible;pointer-events:none"></svg>
-        <!-- Node cards injected here by _mpRender() -->
-        <div id="mpTreeContainer"></div>
-      </div>
+    <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom -->
+    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:hidden">
+      <div id="mpDTree" style="width:100%;height:100%"></div>
     </div>
 
     <!-- Loading state — centred in viewport -->
@@ -3190,8 +3207,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.92';
-  const DEPLOY_NOTES = APP_VERSION + ' — Family tree fixes: (1) SVG connector lines now visible (CSS var resolved via getComputedStyle); (2) self node auto-created on first open so user always appears in their own tree; (3) self node shows gold avatar ring + "You ★" label to distinguish from siblings.';
+  const APP_VERSION  = 'v3.93';
+  const DEPLOY_NOTES = APP_VERSION + ' — Family tree: replaced hand-rolled layout+connector engine with dTree (MIT, d3-dtree@2.4.1). Fixes: correct spouse/sibling/parent-child connectors; proper co-parent detection; pan+zoom via dTree built-in. Data model unchanged; clean DB required (see SQL).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -13835,20 +13852,9 @@
   var _mpPeople = [];   // all life_people rows
   var _mpRels   = [];   // all life_people_relationships rows
 
-  // ── Canvas/viewport state ─────────────────────────────────────────
-  var _mpCanvas = { tx: 0, ty: 0, scale: 1.0 };  // current pan/zoom transform
-  var _mpGenDepth = 2;   // generations above AND below self to display (so total visible = 2*depth+1)
-  var _mpRootId   = null; // person ID at the centre of the layout (null = self node)
-
-  // ── Generation depth labels ──────────────────────────────────────
-  var MP_GEN_LABEL = {
-    '-4': 'Great-great-grandparents', '-3': 'Great-grandparents', '-2': 'Grandparents',
-    '-1': 'Parents', '0': '', '1': 'Children', '2': 'Grandchildren',
-    '3': 'Great-grandchildren', '4': 'Great-great-grandchildren',
-  };
-
   // ── Friendly display label ────────────────────────────────────────
-  var MP_REL_LABEL = {
+  // (also redefined in _mpBuildDTreeData for completeness; keep this for mpSavePerson etc.)
+  var MP_REL_LABEL_LEGACY = {
     'parent':'Parent','mother':'Mother','father':'Father','sibling':'Sibling',
     'brother':'Brother','sister':'Sister','spouse':'Spouse','partner':'Partner',
     'child':'Child','son':'Son','daughter':'Daughter','grandparent':'Grandparent',
@@ -13859,145 +13865,6 @@
     'niece':'Niece','nephew':'Nephew','self':'You',
   };
 
-  // relationship_type → generation offset relative to self
-  var MP_PERSON_GEN = {
-    'self':0,'mother':-1,'father':-1,'parent':-1,'step_parent':-1,
-    'grandmother':-2,'grandfather':-2,'great_grandparent':-3,
-    'sister':0,'brother':0,'sibling':0,'half_sibling':0,
-    'spouse':0,'partner':0,
-    'daughter':1,'son':1,'child':1,'step_child':1,
-    'granddaughter':2,'grandson':2,'grandchild':2,'great_grandchild':3,
-    'aunt':0,'uncle':0,'cousin':0,'niece':0,'nephew':0,'other':0,
-  };
-
-  // ── Node dimensions ───────────────────────────────────────────────
-  var MP_NODE_W  = 110;   // node card width px
-  var MP_NODE_H  = 98;    // node card height px
-  var MP_NODE_GAP_X = 20; // horizontal gap between siblings
-  var MP_NODE_GAP_Y = 80; // vertical gap between generations (connector space)
-  var MP_SPOUSE_GAP = 14; // gap between spouse pairs
-
-  // ── Pan/zoom pointer handling ─────────────────────────────────────
-  var _mpPointers = {};    // active pointer events keyed by pointerId
-  var _mpLastDist = null;  // last pinch distance (for pinch-zoom)
-  var _mpPanStart = null;  // { tx, ty, cx, cy } snapshot at pointer-down
-
-  function _mpApplyTransform() {
-    var inner = document.getElementById('mpCanvasInner');
-    if (!inner) return;
-    inner.style.transform = 'translate(' + _mpCanvas.tx + 'px,' + _mpCanvas.ty + 'px) scale(' + _mpCanvas.scale + ')';
-  }
-
-  function _mpInitPanZoom() {
-    var vp = document.getElementById('mpCanvasViewport');
-    if (!vp || vp._mpPanBound) return;
-    vp._mpPanBound = true;
-
-    vp.addEventListener('pointerdown', function(e) {
-      // Don't pan if tapping a node card
-      if (e.target.closest('.mp-node')) return;
-      vp.setPointerCapture(e.pointerId);
-      _mpPointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-      var ids = Object.keys(_mpPointers);
-      if (ids.length === 1) {
-        _mpPanStart = { tx: _mpCanvas.tx, ty: _mpCanvas.ty, cx: e.clientX, cy: e.clientY };
-        _mpLastDist = null;
-      }
-      vp.style.cursor = 'grabbing';
-    });
-
-    vp.addEventListener('pointermove', function(e) {
-      if (!_mpPointers[e.pointerId]) return;
-      _mpPointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-      var ids = Object.keys(_mpPointers);
-
-      if (ids.length === 1 && _mpPanStart) {
-        // Single pointer → pan
-        _mpCanvas.tx = _mpPanStart.tx + (e.clientX - _mpPanStart.cx);
-        _mpCanvas.ty = _mpPanStart.ty + (e.clientY - _mpPanStart.cy);
-        _mpApplyTransform();
-
-      } else if (ids.length === 2) {
-        // Two pointers → pinch-zoom
-        var p0 = _mpPointers[ids[0]];
-        var p1 = _mpPointers[ids[1]];
-        var dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-        if (_mpLastDist !== null) {
-          var delta = dist / _mpLastDist;
-          var midX  = (p0.x + p1.x) / 2;
-          var midY  = (p0.y + p1.y) / 2;
-          _mpZoomAround(midX, midY, delta);
-        }
-        _mpLastDist = dist;
-      }
-    });
-
-    function _mpPointerUp(e) {
-      delete _mpPointers[e.pointerId];
-      if (Object.keys(_mpPointers).length === 0) {
-        _mpPanStart = null;
-        _mpLastDist = null;
-        vp.style.cursor = 'grab';
-      }
-    }
-    vp.addEventListener('pointerup',     _mpPointerUp);
-    vp.addEventListener('pointercancel', _mpPointerUp);
-
-    // Mouse-wheel zoom
-    vp.addEventListener('wheel', function(e) {
-      e.preventDefault();
-      var factor = e.deltaY < 0 ? 1.1 : 0.91;
-      _mpZoomAround(e.clientX, e.clientY, factor);
-    }, { passive: false });
-  }
-
-  function _mpZoomAround(screenX, screenY, factor) {
-    var vp   = document.getElementById('mpCanvasViewport');
-    var rect = vp ? vp.getBoundingClientRect() : { left: 0, top: 0 };
-    // Convert screen point to canvas coords before scale change
-    var cx = (screenX - rect.left - _mpCanvas.tx) / _mpCanvas.scale;
-    var cy = (screenY - rect.top  - _mpCanvas.ty) / _mpCanvas.scale;
-    var newScale = Math.max(0.3, Math.min(3.0, _mpCanvas.scale * factor));
-    _mpCanvas.tx = screenX - rect.left - cx * newScale;
-    _mpCanvas.ty = screenY - rect.top  - cy * newScale;
-    _mpCanvas.scale = newScale;
-    _mpApplyTransform();
-  }
-
-  // ── Generation depth controls ────────────────────────────────────
-  function mpGenDecrease() {
-    if (_mpGenDepth > 0) {
-      _mpGenDepth = Math.max(0, _mpGenDepth - 1);
-      _mpRender();
-    }
-  }
-  function mpGenIncrease() {
-    _mpGenDepth = Math.min(4, _mpGenDepth + 1);
-    _mpRender();
-  }
-
-  // ── Re-centre on self ────────────────────────────────────────────
-  function mpRecentre() {
-    _mpRootId = null;
-    _mpRender();
-    // snap back to self node after a tick so layout is done
-    requestAnimationFrame(function() {
-      _mpCentreOnSelf();
-    });
-  }
-
-  function _mpCentreOnSelf() {
-    var vp   = document.getElementById('mpCanvasViewport');
-    var self = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-    if (!vp || !self || self._layoutX === undefined) return;
-    var vpW  = vp.clientWidth;
-    var vpH  = vp.clientHeight;
-    _mpCanvas.scale = 1.0;
-    _mpCanvas.tx    = vpW  / 2 - (self._layoutX + MP_NODE_W / 2) * _mpCanvas.scale;
-    _mpCanvas.ty    = vpH  / 2 - (self._layoutY + MP_NODE_H / 2) * _mpCanvas.scale;
-    _mpApplyTransform();
-  }
-
   // ── Open overlay ─────────────────────────────────────────────────
   async function openMyPeople() {
     var overlay = document.getElementById('myPeopleOverlay');
@@ -14007,7 +13874,6 @@
     _mpActiveTab = 'tree';
     mpSwitchTab('tree');
     logActivity('my_people_opened', '', 'info', 'PEOPLE');
-    _mpInitPanZoom();
     await _mpLoad();
   }
 
@@ -14019,11 +13885,11 @@
   async function _mpLoad() {
     var loadEl  = document.getElementById('mpLoadingState');
     var emptyEl = document.getElementById('mpEmptyState');
-    var treeEl  = document.getElementById('mpTreeContainer');
+    var treeEl  = document.getElementById('mpDTree');
 
     loadEl.style.display  = 'flex';
     emptyEl.style.display = 'none';
-    treeEl.innerHTML      = '';
+    if (treeEl) treeEl.innerHTML = '';
 
     try {
       var headers = getAuthHeaders();
@@ -14078,383 +13944,301 @@
     requestAnimationFrame(function() { _mpCentreOnSelf(); });
   }
 
-  // ── Graph layout ─────────────────────────────────────────────────
-  // Assigns _gen and _layoutX/_layoutY to every visible person.
-  // Strategy:
-  //   1. Assign generation via BFS from the root node using relationship_type
-  //      as the primary signal, supplemented by life_people_relationships edges.
-  //   2. Group by generation; within each generation place nodes left→right.
-  //   3. Spouses sit horizontally adjacent to their partner (same generation row).
-  //   4. Centre each parent pair above their children's midpoint.
+  // ── dTree family tree renderer ────────────────────────────────────
+  // Converts _mpPeople + _mpRels into dTree's data format and renders
+  // into #mpDTree. dTree handles layout, SVG connectors, pan, and zoom.
   //
-  function _mpComputeLayout() {
-    // Step 1 — assign generation numbers via relationship_type (fast path for self-rooted tree)
-    _mpPeople.forEach(function(p) {
-      var g = MP_PERSON_GEN[p.relationship_type];
-      p._gen = (g !== undefined) ? g : 0;
-    });
-    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-    if (selfNode) selfNode._gen = 0;
+  // dTree data model:
+  //   Each root node: { id, name, marriages: [{ spouse, children: [] }] }
+  //   We root the tree at the 'self' node and build outward.
+  //
+  var _mpDTreeInstance = null; // holds the dTree object for recentre/reset
 
-    // Step 2 — augment with BFS over relationship edges for nodes connected via non-self paths
-    // Build adjacency from _mpRels: edge = { a, b, type }
-    var edgeMap = {}; // personId → [{otherId, type}]
+  // Emoji fallback map
+  var _mpEmojiMap = {
+    mother:'👩', father:'👨', grandmother:'👵', grandfather:'👴',
+    son:'👦', daughter:'👧', brother:'🧑', sister:'👩',
+    spouse:'💑', partner:'💑', self:'🧑',
+    great_grandparent:'👴', grandchild:'👶', child:'🧒', step_child:'🧒',
+    step_parent:'👤', half_sibling:'🧑', aunt:'👩', uncle:'👨',
+    cousin:'🧑', niece:'👧', nephew:'👦', other:'👤',
+  };
+
+  // Rel label display map
+  var MP_REL_LABEL = {
+    mother:'Mother', father:'Father', grandmother:'Grandmother', grandfather:'Grandfather',
+    great_grandparent:'Great-grandparent',
+    sister:'Sister', brother:'Brother', sibling:'Sibling', half_sibling:'Half-sibling',
+    spouse:'Spouse', partner:'Partner',
+    daughter:'Daughter', son:'Son', child:'Child', step_child:'Step-child',
+    step_parent:'Step-parent',
+    granddaughter:'Granddaughter', grandson:'Grandson', grandchild:'Grandchild',
+    great_grandchild:'Great-grandchild',
+    aunt:'Aunt', uncle:'Uncle', cousin:'Cousin', niece:'Niece', nephew:'Nephew',
+    other:'Other',
+  };
+
+  function _mpBuildDTreeData() {
+    // Build lookup maps from _mpRels
+    var childrenOf  = {};  // parentId  → [childId]
+    var parentsOf   = {};  // childId   → [parentId]
+    var spouseOf    = {};  // personId  → [spouseId]  (may have multiple)
+    var siblingOf   = {};  // personId  → [siblingId]
+
     _mpRels.forEach(function(r) {
-      if (!edgeMap[r.person_a_id]) edgeMap[r.person_a_id] = [];
-      if (!edgeMap[r.person_b_id]) edgeMap[r.person_b_id] = [];
-      edgeMap[r.person_a_id].push({ id: r.person_b_id, type: r.relationship_type });
-      edgeMap[r.person_b_id].push({ id: r.person_a_id, type: _mpInvertRelType(r.relationship_type) });
+      var a = r.person_a_id, b = r.person_b_id, t = r.relationship_type;
+      function add(map, key, val) {
+        if (!map[key]) map[key] = [];
+        if (map[key].indexOf(val) === -1) map[key].push(val);
+      }
+      if (t === 'parent_of')  { add(childrenOf, a, b); add(parentsOf,  b, a); }
+      if (t === 'child_of')   { add(parentsOf,  a, b); add(childrenOf, b, a); }
+      if (t === 'spouse_of')  { add(spouseOf, a, b);   add(spouseOf, b, a);   }
+      if (t === 'sibling_of' || t === 'half_sibling_of') {
+        add(siblingOf, a, b); add(siblingOf, b, a);
+      }
     });
 
-    // BFS from self to fill in gen for anyone whose gen hasn't been determined by relationship_type
-    var genAssigned = {};
-    _mpPeople.forEach(function(p) { genAssigned[p.id] = true; }); // all already have a gen from step 1
-    // Overwrite with BFS for nodes connected via rels to refine placement
-    if (selfNode) {
-      var queue = [{ id: selfNode.id, gen: 0 }];
-      var visited = {}; visited[selfNode.id] = true;
-      while (queue.length) {
-        var cur = queue.shift();
-        var edges = edgeMap[cur.id] || [];
-        edges.forEach(function(e) {
-          if (visited[e.id]) return;
-          visited[e.id] = true;
-          var offset = _mpRelGenOffset(e.type);
-          var person = _mpPeople.find(function(p) { return p.id === e.id; });
-          if (person) {
-            // Only override gen if the BFS path gives a more specific placement
-            // (trust relationship_type on the person row for direct self→person rels)
-            person._gen = cur.gen + offset;
-          }
-          queue.push({ id: e.id, gen: cur.gen + offset });
+    // Propagate parents to siblings: if A has parents [P1,P2] and B is sibling of A,
+    // then B is also a child of P1 and P2.
+    var peopleIds = _mpPeople.map(function(p) { return p.id; });
+    peopleIds.forEach(function(childId) {
+      (parentsOf[childId] || []).forEach(function(parentId) {
+        function add(map, key, val) {
+          if (!map[key]) map[key] = [];
+          if (map[key].indexOf(val) === -1) map[key].push(val);
+        }
+        (siblingOf[childId] || []).forEach(function(sibId) {
+          add(childrenOf, parentId, sibId);
+          add(parentsOf,  sibId,    parentId);
         });
-      }
+      });
+    });
+
+    // Build a lookup: id → person object
+    var byId = {};
+    _mpPeople.forEach(function(p) { byId[p.id] = p; });
+
+    // Find the self node as root; fall back to first person
+    var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; })
+                || _mpPeople[0];
+    if (!selfNode) return [];
+
+    // dTree node builder
+    function makeNode(person) {
+      var isSelf = person.relationship_type === 'self';
+      var label  = isSelf
+        ? 'You \u2605'
+        : (person.relationship_label || MP_REL_LABEL[person.relationship_type] || '');
+      var emoji  = _mpEmojiMap[person.relationship_type] || '👤';
+      var avatarHtml = person.photo_url
+        ? '<img src="' + person.photo_url.replace(/"/g, '&quot;') + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : emoji;
+
+      return {
+        id:         person.id,
+        name:       person.name || '—',
+        extra: {
+          personId:    person.id,
+          isSelf:      isSelf,
+          label:       label,
+          avatarHtml:  avatarHtml,
+        },
+        marriages: [],    // populated below
+        // dTree uses 'class' for node CSS class
+        class: isSelf ? 'mpNode mpNode-self' : 'mpNode',
+        textClass: 'mpNode-text',
+      };
     }
 
-    // Step 3 — filter to visible generation range
-    var minG = -(Math.min(_mpGenDepth, 4));
-    var maxG =  (Math.min(_mpGenDepth, 4));
-    var visible = _mpPeople.filter(function(p) { return p._gen >= minG && p._gen <= maxG; });
+    // Build dTree-format node tree via BFS from self outward.
+    // dTree expects: root → marriages (each has a spouse + children array).
+    // We model: self married to spouse; children hang off the marriage.
+    // Ancestors are modelled as the PARENTS of self → so we walk up the tree too.
+    //
+    // dTree's model is actually: each node can appear once as a root, and its
+    // marriages list links to spouses. Children of a marriage appear under marriages[i].children.
+    // For a family tree we build the tree top-down from the oldest generation.
+    //
+    // Strategy: find the topmost generation, root there, recurse down.
+    // Simpler: dTree supports multiple root nodes in the data array — we supply
+    // the entire forest and let it lay out. Each person without parents is a root.
 
-    // Step 4 — identify spouse pairs so they can be co-placed
-    var spousePairs = [];
-    var inPair = {};
-    _mpRels.forEach(function(r) {
-      if (r.relationship_type !== 'spouse_of') return;
-      if (inPair[r.person_a_id] || inPair[r.person_b_id]) return;
-      var a = visible.find(function(p) { return p.id === r.person_a_id; });
-      var b = visible.find(function(p) { return p.id === r.person_b_id; });
-      if (!a || !b) return;
-      spousePairs.push([a.id, b.id]);
-      inPair[a.id] = true; inPair[b.id] = true;
-    });
+    var visited   = {};
+    var nodeMap   = {}; // id → dTree node object
 
-    // Step 5 — group into generations, ordering: paired nodes together, then singles
-    var gens = {};
-    visible.forEach(function(p) {
-      if (!gens[p._gen]) gens[p._gen] = [];
-    });
-    // Add pairs first, then unpaired singles
-    spousePairs.forEach(function(pair) {
-      var a = visible.find(function(p) { return p.id === pair[0]; });
-      var b = visible.find(function(p) { return p.id === pair[1]; });
-      if (!a || !b) return;
-      if (!gens[a._gen]) gens[a._gen] = [];
-      gens[a._gen].push({ type: 'pair', nodes: [a, b] });
-    });
-    visible.forEach(function(p) {
-      if (inPair[p.id]) return;
-      if (!gens[p._gen]) gens[p._gen] = [];
-      gens[p._gen].push({ type: 'single', nodes: [p] });
-    });
-
-    // Step 6 — compute X positions per generation
-    var genKeys = Object.keys(gens).map(Number).sort(function(a,b){return a-b;});
-    var layoutNodes = {}; // id → { x, y, w }  (w = slot width for connectors)
-    genKeys.forEach(function(gen) {
-      var slots = gens[gen];
-      // Total width of this row
-      var rowW = 0;
-      slots.forEach(function(slot) {
-        if (slot.type === 'pair') rowW += MP_NODE_W * 2 + MP_SPOUSE_GAP + MP_NODE_GAP_X;
-        else                       rowW += MP_NODE_W + MP_NODE_GAP_X;
-      });
-      rowW -= MP_NODE_GAP_X; // remove trailing gap
-      var startX = -rowW / 2; // centred at x=0
-      var y = gen * (MP_NODE_H + MP_NODE_GAP_Y);
-      slots.forEach(function(slot) {
-        if (slot.type === 'pair') {
-          var a = slot.nodes[0]; var b = slot.nodes[1];
-          var pairMidX = startX + MP_NODE_W + MP_SPOUSE_GAP / 2;
-          layoutNodes[a.id] = { x: startX,                       y: y, slotW: MP_NODE_W * 2 + MP_SPOUSE_GAP };
-          layoutNodes[b.id] = { x: startX + MP_NODE_W + MP_SPOUSE_GAP, y: y, slotW: 0 };
-          startX += MP_NODE_W * 2 + MP_SPOUSE_GAP + MP_NODE_GAP_X;
-        } else {
-          var p = slot.nodes[0];
-          layoutNodes[p.id] = { x: startX, y: y, slotW: MP_NODE_W };
-          startX += MP_NODE_W + MP_NODE_GAP_X;
-        }
-      });
-    });
-
-    // Write layout coords back onto person objects (offset so min-x/y >= padding)
-    var allX = Object.values(layoutNodes).map(function(n) { return n.x; });
-    var allY = Object.values(layoutNodes).map(function(n) { return n.y; });
-    var padX = 40; var padY = 40;
-    var minX = allX.length ? Math.min.apply(null, allX) - padX : 0;
-    var minY = allY.length ? Math.min.apply(null, allY) - padY : 0;
+    // Create dTree node objects for all people
     _mpPeople.forEach(function(p) {
-      var ln = layoutNodes[p.id];
-      if (ln) {
-        p._layoutX   = ln.x - minX;
-        p._layoutY   = ln.y - minY;
-        p._slotW     = ln.slotW;
-        p._visible   = true;
+      nodeMap[p.id] = makeNode(p);
+    });
+
+    // For each person, build their marriages with children
+    _mpPeople.forEach(function(p) {
+      var mySpouses   = spouseOf[p.id]   || [];
+      var myChildren  = childrenOf[p.id] || [];
+
+      if (mySpouses.length === 0 && myChildren.length === 0) return;
+
+      if (mySpouses.length > 0) {
+        // One marriage entry per spouse, children shared between them
+        mySpouses.forEach(function(spouseId) {
+          var spouse = byId[spouseId];
+          if (!spouse) return;
+          // Children of THIS couple = intersection of p's children and spouse's children
+          // If no overlap, attribute all of p's children to first marriage
+          var spouseKids = childrenOf[spouseId] || [];
+          var sharedKids = myChildren.filter(function(cid) {
+            return spouseKids.indexOf(cid) !== -1;
+          });
+          // Unattributed children (no co-parent found) go to first marriage
+          var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
+          var unattributed = myChildren.filter(function(cid) {
+            return mySpouses.every(function(sid) {
+              return (childrenOf[sid] || []).indexOf(cid) === -1;
+            });
+          });
+          var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []);
+
+          nodeMap[p.id].marriages.push({
+            spouse:   nodeMap[spouseId] || makeNode(spouse),
+            children: marriageKids.map(function(cid) {
+              return nodeMap[cid] || makeNode(byId[cid]);
+            }).filter(Boolean),
+          });
+        });
       } else {
-        p._visible = false;
+        // No spouse, just children
+        nodeMap[p.id].marriages.push({
+          spouse:   null,
+          children: myChildren.map(function(cid) {
+            return nodeMap[cid] || makeNode(byId[cid]);
+          }).filter(Boolean),
+        });
       }
     });
 
-    return { layoutNodes: layoutNodes, minX: minX, minY: minY, genKeys: genKeys, gens: gens };
+    // Roots = people with no parents (top of tree)
+    var roots = _mpPeople.filter(function(p) {
+      return !parentsOf[p.id] || parentsOf[p.id].length === 0;
+    });
+    // If everyone has parents (cycle or bad data), fall back to self
+    if (roots.length === 0) roots = [selfNode];
+
+    return roots.map(function(r) { return nodeMap[r.id]; });
   }
 
-  function _mpRelGenOffset(relType) {
-    var map = {
-      'parent_of':1,'child_of':-1,'grandparent_of':2,'grandchild_of':-2,
-      'great_grandparent_of':3,'great_grandchild_of':-3,
-      'spouse_of':0,'sibling_of':0,'step_parent_of':1,'step_child_of':-1,'half_sibling_of':0,
-    };
-    return map[relType] || 0;
-  }
-
-  function _mpInvertRelType(relType) {
-    var inv = {
-      'parent_of':'child_of','child_of':'parent_of',
-      'grandparent_of':'grandchild_of','grandchild_of':'grandparent_of',
-      'great_grandparent_of':'great_grandchild_of','great_grandchild_of':'great_grandparent_of',
-      'spouse_of':'spouse_of','sibling_of':'sibling_of',
-      'step_parent_of':'step_child_of','step_child_of':'step_parent_of',
-      'half_sibling_of':'half_sibling_of',
-    };
-    return inv[relType] || relType;
-  }
-
-  // ── Render ───────────────────────────────────────────────────────
   function _mpRender() {
-    var treeEl = document.getElementById('mpTreeContainer');
-    var svgEl  = document.getElementById('mpConnectorSvg');
-    if (!treeEl || !svgEl) return;
+    var container = document.getElementById('mpDTree');
+    if (!container) return;
+    container.innerHTML = '';
 
-    treeEl.innerHTML = '';
-    svgEl.innerHTML  = '';
+    if (!_mpPeople.length) return;
 
-    var layout = _mpComputeLayout();
+    var data = _mpBuildDTreeData();
+    if (!data || !data.length) return;
 
-    // Update gen depth label
-    var depthLabel = document.getElementById('mpGenDepthLabel');
-    if (depthLabel) depthLabel.textContent = _mpGenDepth;
+    var vp    = document.getElementById('mpCanvasViewport');
+    var vpW   = vp ? vp.offsetWidth  || 360 : 360;
+    var vpH   = vp ? vp.offsetHeight || 600 : 600;
 
-    // Compute canvas size
-    var visiblePeople = _mpPeople.filter(function(p) { return p._visible; });
-    if (!visiblePeople.length) return;
-    var maxX = Math.max.apply(null, visiblePeople.map(function(p) { return p._layoutX + MP_NODE_W; }));
-    var maxY = Math.max.apply(null, visiblePeople.map(function(p) { return p._layoutY + MP_NODE_H; }));
-    var canvasW = maxX + 40;
-    var canvasH = maxY + 40;
-    treeEl.style.cssText = 'position:relative;width:' + canvasW + 'px;height:' + canvasH + 'px';
-    svgEl.setAttribute('width',  canvasW);
-    svgEl.setAttribute('height', canvasH);
-    svgEl.style.cssText = 'position:absolute;top:0;left:0;width:' + canvasW + 'px;height:' + canvasH + 'px;overflow:visible;pointer-events:none';
+    // Resolve CSS variables to real colour values for SVG attributes
+    var rootStyle   = getComputedStyle(document.documentElement);
+    var borderColor = (rootStyle.getPropertyValue('--border') || '#e8dcc8').trim() || '#e8dcc8';
 
-    // Render node cards
-    visiblePeople.forEach(function(person) {
-      var card = _mpBuildNode(person);
-      treeEl.appendChild(card);
-    });
+    try {
+      _mpDTreeInstance = dTree.init(data, {
+        target:           '#mpDTree',
+        debug:            false,
+        width:            vpW,
+        height:           vpH,
+        nodeWidth:        120,        // card width; height comes from nodeSize callback
+        marriageNodeSize: 6,          // small dot at couple midpoint
+        hideMarriageNodes: false,
+        margin: { top: 60, right: 60, bottom: 60, left: 60 },
+        styles: {
+          node:     'mpDTreeNode',
+          linage:   'mpDTreeLink',
+          marriage: 'mpDTreeMarriage',
+          text:     'mpDTreeText',
+        },
+        callbacks: {
+          // nodeSize returns [width, height] for layout; all nodes share same size
+          nodeSize: function(nodes, width, textRenderer) {
+            nodes.forEach(function(n) { n.cWidth = 120; n.cHeight = 108; });
+            return [120, 108];
+          },
+          // nodeRenderer returns an HTML string for the node div content
+          // dTree wraps this in a foreignObject automatically
+          nodeRenderer: function(name, x, y, height, width, extra, id, nodeClass, textClass, textRenderer) {
+            var isSelf     = extra && extra.isSelf;
+            var label      = extra ? extra.label      : '';
+            var avatar     = extra ? extra.avatarHtml : '👤';
+            var cardClass  = isSelf ? 'mpNode mpNode-self' : 'mpNode';
+            var labelStyle = isSelf
+              ? 'color:var(--gold);font-weight:700'
+              : 'color:var(--text-light)';
+            // dTree places the foreignObject; we return the inner div HTML
+            return [
+              '<div class="' + cardClass + '" ',
+              'onclick="mpOpenProfile(\'' + (extra ? extra.personId : '') + '\')" ',
+              'style="width:100%;height:100%;box-sizing:border-box">',
+                '<div class="mpNode-avatar">' + avatar + '</div>',
+                '<div class="mpNode-name">' + (name || '\u2014') + '</div>',
+                '<div class="mpNode-rel" style="' + labelStyle + '">' + label + '</div>',
+              '</div>',
+            ].join('');
+          },
+          nodeClick: function() {}, // handled via onclick in nodeRenderer
+        },
+      });
 
-    // Draw SVG connector lines
-    _mpDrawConnectorsSVG(svgEl, layout);
-  }
-
-  // ── Build a node card ─────────────────────────────────────────────
-  function _mpBuildNode(person) {
-    var el = document.createElement('div');
-    el.className = 'mp-node' +
-      (person.relationship_type === 'self' ? ' mp-node-self' : '');
-    el.style.left = person._layoutX + 'px';
-    el.style.top  = person._layoutY + 'px';
-    el.setAttribute('data-person-id', person.id);
-
-    // Avatar
-    var emojiMap = { mother:'👩',father:'👨',grandmother:'👵',grandfather:'👴',
-      son:'👦',daughter:'👧',brother:'🧑',sister:'👩',spouse:'💑',partner:'💑',self:'🧑' };
-    var avatarEl = document.createElement('div');
-    avatarEl.className = 'mp-node-avatar';
-    if (person.photo_url) {
-      var img = document.createElement('img');
-      img.src = person.photo_url;
-      img.alt = person.name || '';
-      avatarEl.appendChild(img);
-    } else {
-      avatarEl.textContent = emojiMap[person.relationship_type] || '👤';
+      // Fit the whole tree into the viewport after a tick
+      if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
+        setTimeout(function() {
+          try { _mpDTreeInstance.zoomToFit(300); } catch(e) {}
+        }, 100);
+      }
+    } catch(e) {
+      dbgErr('PEOPLE', 'dTree render error: ' + e.message);
     }
-    el.appendChild(avatarEl);
 
-    // Name
-    var nameEl = document.createElement('div');
-    nameEl.className = 'mp-node-name';
-    nameEl.textContent = person.name || '—';
-    el.appendChild(nameEl);
-
-    // Rel label — 'self' gets a "You ★" badge instead of a generic label
-    var relEl = document.createElement('div');
-    relEl.className = 'mp-node-rel';
-    if (person.relationship_type === 'self') {
-      relEl.textContent = 'You \u2605';
-      relEl.style.color = 'var(--gold)';
-      relEl.style.fontWeight = '700';
-      // Gold avatar ring so self stands out at a glance
-      avatarEl.style.border = '2px solid var(--gold)';
-      avatarEl.style.boxShadow = '0 0 0 2px rgba(180,140,60,0.25)';
-    } else {
-      relEl.textContent = person.relationship_label || MP_REL_LABEL[person.relationship_type] || '';
-    }
-    el.appendChild(relEl);
-
-    // Tap → open profile
-    el.addEventListener('click', function() { mpOpenProfile(person.id); });
-
-    return el;
-  }
-
-  // ── SVG connectors ─────────────────────────────────────────────
-  // Draws: horizontal double-line between spouses, vertical lines parent→child,
-  // and a horizontal bus bar when a couple has multiple children.
-  function _mpDrawConnectorsSVG(svgEl, layout) {
-    // CSS variables don't resolve inside SVG attribute strings — compute the real value.
-    var rootStyle = getComputedStyle(document.documentElement);
-    var stroke = (rootStyle.getPropertyValue('--border') || '#b8a070').trim() || '#b8a070';
-    var sw = 2;
-    var paths = [];
-
-    // ── Spouse connectors: horizontal bar between couple centres ──
-    _mpRels.forEach(function(r) {
-      if (r.relationship_type !== 'spouse_of') return;
-      var a = _mpPeople.find(function(p) { return p.id === r.person_a_id && p._visible; });
-      var b = _mpPeople.find(function(p) { return p.id === r.person_b_id && p._visible; });
-      if (!a || !b) return;
-      // right edge of left node to left edge of right node
-      var leftNode  = a._layoutX < b._layoutX ? a : b;
-      var rightNode = a._layoutX < b._layoutX ? b : a;
-      var x1 = leftNode._layoutX  + MP_NODE_W;
-      var x2 = rightNode._layoutX;
-      var y  = leftNode._layoutY  + MP_NODE_H / 2;
-      // Double line (marriage symbol)
-      paths.push('<line x1="' + x1 + '" y1="' + (y-2) + '" x2="' + x2 + '" y2="' + (y-2) +
-        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-      paths.push('<line x1="' + x1 + '" y1="' + (y+2) + '" x2="' + x2 + '" y2="' + (y+2) +
-        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-    });
-
-    // ── Parent→child connectors ───────────────────────────────────
-    // Build child lists from rels: parent_of edges
-    var childrenOf = {}; // parentId → [childId]
-    _mpRels.forEach(function(r) {
-      if (r.relationship_type !== 'parent_of') return;
-      if (!childrenOf[r.person_a_id]) childrenOf[r.person_a_id] = [];
-      childrenOf[r.person_a_id].push(r.person_b_id);
-    });
-
-    // Also infer parent→child from generation difference for direct self-connected people
-    // where explicit relationship rows may not exist yet (legacy / review-added people)
-    _mpPeople.forEach(function(parent) {
-      if (!parent._visible) return;
-      _mpPeople.forEach(function(child) {
-        if (!child._visible) return;
-        if (child._gen !== parent._gen + 1) return;
-        // Check there's a self-connected chain: parent is ancestor or sibling of self
-        // Simple heuristic: connect if parent._gen < 0 and child is self, or parent is self and child._gen > 0
-        var selfNode = _mpPeople.find(function(p) { return p.relationship_type === 'self'; });
-        if (!selfNode) return;
-        var parentIsDirectAncestor = (parent.relationship_type === 'mother' || parent.relationship_type === 'father' ||
-          parent.relationship_type === 'grandmother' || parent.relationship_type === 'grandfather' ||
-          parent.relationship_type === 'great_grandparent' || parent.relationship_type === 'self');
-        var childIsDirectDescendant = (child.relationship_type === 'son' || child.relationship_type === 'daughter' ||
-          child.relationship_type === 'child' || child.relationship_type === 'grandchild' ||
-          child.relationship_type === 'grandson' || child.relationship_type === 'granddaughter' ||
-          child.relationship_type === 'great_grandchild' || child.relationship_type === 'self');
-        if (parentIsDirectAncestor && childIsDirectDescendant) {
-          if (!childrenOf[parent.id]) childrenOf[parent.id] = [];
-          if (childrenOf[parent.id].indexOf(child.id) === -1) {
-            childrenOf[parent.id].push(child.id);
-          }
-        }
+    // Post-render: style SVG connector paths to match design system colours
+    requestAnimationFrame(function() {
+      var svg = container.querySelector('svg');
+      if (!svg) return;
+      // Connector lines
+      svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
+        el.style.stroke = borderColor;
+        el.style.strokeWidth = '2px';
+        el.style.fill = 'none';
+      });
+      // Marriage link (double line between couple)
+      svg.querySelectorAll('path.mpDTreeMarriage, path.marriage').forEach(function(el) {
+        el.style.stroke = borderColor;
+        el.style.strokeWidth = '2px';
+        el.style.fill = 'none';
+      });
+      // Marriage node dot
+      svg.querySelectorAll('.mpDTreeMarriage circle, .marriage circle').forEach(function(el) {
+        el.style.fill = borderColor;
       });
     });
+  }
 
-    // Draw connectors: for each parent, drop to mid-gap, draw bus bar, drop to children
-    Object.keys(childrenOf).forEach(function(parentId) {
-      var parent = _mpPeople.find(function(p) { return p.id === parentId && p._visible; });
-      if (!parent) return;
-      var childIds = childrenOf[parentId];
-      var children = childIds.map(function(cid) {
-        return _mpPeople.find(function(p) { return p.id === cid && p._visible; });
-      }).filter(Boolean);
-      if (!children.length) return;
+  function mpRecentre() {
+    if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
+      try { _mpDTreeInstance.zoomToFit(300); } catch(e) { _mpRender(); }
+    } else {
+      _mpRender();
+    }
+  }
 
-      var px = parent._layoutX + MP_NODE_W / 2;
-      var py = parent._layoutY + MP_NODE_H;
-      var busY = py + MP_NODE_GAP_Y / 2;
+  // Stubs — toolbar buttons won't throw if called
+  function mpGenDecrease() { /* no-op: dTree shows full tree */ }
+  function mpGenIncrease() { /* no-op: dTree shows full tree */ }
 
-      // Check if spouse of parent is also a known parent of same children (co-parent)
-      // If so, drop trunk from midpoint between the couple
-      var spouseId = null;
-      _mpRels.forEach(function(r) {
-        if (r.relationship_type !== 'spouse_of') return;
-        if (r.person_a_id === parent.id) spouseId = r.person_b_id;
-        if (r.person_b_id === parent.id) spouseId = r.person_a_id;
-      });
-      var spouse = spouseId ? _mpPeople.find(function(p) { return p.id === spouseId && p._visible; }) : null;
-      if (spouse) {
-        // trunk drops from midpoint between couple
-        px = (parent._layoutX + spouse._layoutX + MP_NODE_W) / 2;
-      }
-
-      // Trunk down from parent to bus
-      paths.push('<line x1="' + px + '" y1="' + py + '" x2="' + px + '" y2="' + busY +
-        '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-
-      if (children.length > 1) {
-        var cxs = children.map(function(c) { return c._layoutX + MP_NODE_W / 2; });
-        var busMin = Math.min.apply(null, cxs);
-        var busMax = Math.max.apply(null, cxs);
-        // Bus bar
-        paths.push('<line x1="' + busMin + '" y1="' + busY + '" x2="' + busMax + '" y2="' + busY +
-          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-        // Trunk from bus bar centre (if px is outside bus range, clamp to range)
-        var trunkX = Math.max(busMin, Math.min(busMax, px));
-        if (trunkX !== px) {
-          paths.push('<line x1="' + px + '" y1="' + busY + '" x2="' + trunkX + '" y2="' + busY +
-            '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-        }
-        // Drop to each child
-        children.forEach(function(c) {
-          var cx = c._layoutX + MP_NODE_W / 2;
-          paths.push('<line x1="' + cx + '" y1="' + busY + '" x2="' + cx + '" y2="' + c._layoutY +
-            '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-        });
-      } else {
-        // Single child — straight line
-        var c = children[0];
-        var cx = c._layoutX + MP_NODE_W / 2;
-        paths.push('<line x1="' + px + '" y1="' + busY + '" x2="' + cx + '" y2="' + busY +
-          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-        paths.push('<line x1="' + cx + '" y1="' + busY + '" x2="' + cx + '" y2="' + c._layoutY +
-          '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
-      }
-    });
-
-    svgEl.innerHTML = paths.join('');
+  function _mpCentreOnSelf() {
+    // dTree handles centering; this is a no-op kept for _mpLoad compatibility
   }
 
   // ── Add Relative flow ─────────────────────────────────────────────
@@ -14574,8 +14358,8 @@
       logActivity('people_deleted', person.name, 'info', 'PEOPLE');
       toast(person.name + ' removed.');
       if (!_mpPeople.length) {
-        document.getElementById('mpTreeContainer').innerHTML = '';
-        document.getElementById('mpConnectorSvg').innerHTML = '';
+        var dt = document.getElementById('mpDTree');
+        if (dt) dt.innerHTML = '';
         document.getElementById('mpEmptyState').style.display = 'flex';
         if (_mpActiveTab === 'directory') mpDirRender();
         return;
@@ -14968,7 +14752,8 @@
     // Hide loading/tree elements
     document.getElementById('mpLoadingState').style.display  = 'none';
     document.getElementById('mpEmptyState').style.display    = 'none';
-    document.getElementById('mpTreeContainer').innerHTML     = '';
+    var dt = document.getElementById('mpDTree');
+    if (dt) dt.innerHTML = '';
 
     _mpBuildReviewRows();
     document.getElementById('mpReviewScreen').style.display = 'block';
