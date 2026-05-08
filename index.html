@@ -972,6 +972,9 @@
     #mpDTree .zoom { cursor: grab; }
     #mpDTree .zoom:active { cursor: grabbing; }
     #mpDTree foreignObject { overflow: visible; }
+    /* Hidden dummy spouse node (used for single-parent families — dTree requires a spouse
+       object to draw parent→child lines but we don't want to display it) */
+    #mpDTree foreignObject.mpNodeHiddenFO { opacity: 0 !important; pointer-events: none !important; }
 
     /* ── ADD RELATIVE PICKER BUTTONS ── */
     .mp-rel-btn {
@@ -2704,7 +2707,7 @@
             ✍️ Write a memory about <span class="mp-profile-first-name"></span>
           </button>
           <button onclick="mpProfileDelete()" style="padding:0;background:none;border:none;font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer">
-            &#128465; Remove
+            &#128465; Remove from tree
           </button>
         </div>
       </div>
@@ -3211,8 +3214,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.95';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix tree line bug (null spouse crashes dTree; use hidden dummy spouse for single-parent nodes so bro-to-dad line draws correctly). Fix Edit button (remove duplicate mpProfileEdit that overrode the working one). Redesign profile drawer: Edit+Add Relative as primary buttons, Write a memory demoted to text link, Remove consolidated inline.';
+  const APP_VERSION  = 'v3.96';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix dummy spouse rendering as "undefined" node: use mpNodeHidden class + nodeRenderer guard to make it truly invisible. Fix Write a memory: close overlay + showPanel properly. Fix Remove label: "Remove from tree".';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -14121,7 +14124,7 @@
             noParent:  true,
             extra:     {},
             marriages: [],
-            'class':   '',
+            'class':   'mpNodeHidden',
             textClass: '',
           },
           children: myChildren.map(function(cid) {
@@ -14184,6 +14187,10 @@
           // nodeRenderer returns an HTML string for the node div content
           // dTree wraps this in a foreignObject automatically
           nodeRenderer: function(name, x, y, height, width, extra, id, nodeClass, textClass, textRenderer) {
+            // Dummy hidden spouse node (used for single-parent families)
+            if (nodeClass === 'mpNodeHidden') {
+              return '<div style="width:100%;height:100%;opacity:0;pointer-events:none"></div>';
+            }
             var isSelf     = extra && extra.isSelf;
             var label      = extra ? extra.label      : '';
             var avatar     = extra ? extra.avatarHtml : '👤';
@@ -15206,12 +15213,14 @@
     var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
     mpCloseProfile();
     setTimeout(function() {
-      if (typeof showPanel === 'function') showPanel('memories');
+      // Close the My People overlay first, then switch to memories panel
+      closeMyPeople();
+      showPanel('memories', null, 0);
       if (person) {
-        var qBox = document.getElementById('aiQuestionBox');
-        if (qBox) { qBox.value = 'Tell me a memory about ' + person.name; }
-        var ansBox = document.getElementById('memAnswer');
-        if (ansBox) setTimeout(function() { ansBox.focus(); }, 100);
+        setTimeout(function() {
+          var ansBox = document.getElementById('memAnswer');
+          if (ansBox) { ansBox.focus(); ansBox.placeholder = 'Write a memory about ' + ((person.name || '').split(' ')[0] || 'them') + '…'; }
+        }, 150);
       }
     }, 320);
   }
