@@ -3214,8 +3214,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.96';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix dummy spouse rendering as "undefined" node: use mpNodeHidden class + nodeRenderer guard to make it truly invisible. Fix Write a memory: close overlay + showPanel properly. Fix Remove label: "Remove from tree".';
+  const APP_VERSION  = 'v3.97';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix tree layout: single-parent nodes now use direct children (no dummy spouse) so layout is clean. Fix sibling anchor bug: _mpAddRelAnchorId was cleared by mpCloseAddRelSheet before mpSavePerson could use it — now preserved until save/cancel. Fix write-a-memory: closes overlay, navigates to memories, sets placeholder with person name.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -14074,9 +14074,11 @@
     var visited   = {};
     var nodeMap   = {}; // id → dTree node object
 
-    // Create dTree node objects for all people
+    // Create dTree node objects for all people (include children array for direct-child attachment)
     _mpPeople.forEach(function(p) {
-      nodeMap[p.id] = makeNode(p);
+      var node = makeNode(p);
+      node.children = [];  // dTree reads this for direct (non-marriage) children
+      nodeMap[p.id] = node;
     });
 
     // For each person, build their marriages with children
@@ -14114,22 +14116,12 @@
           });
         });
       } else {
-        // No spouse — use a hidden dummy spouse node (dTree requires a spouse object;
-        // passing null crashes with null.name). hidden:true means dTree lays it out but
-        // does not render it, so children still connect to the parent correctly.
-        nodeMap[p.id].marriages.push({
-          spouse: {
-            name:      '',
-            hidden:    true,
-            noParent:  true,
-            extra:     {},
-            marriages: [],
-            'class':   'mpNodeHidden',
-            textClass: '',
-          },
-          children: myChildren.map(function(cid) {
-            return nodeMap[cid] || makeNode(byId[cid]);
-          }).filter(Boolean),
+        // No spouse — attach children directly to this node rather than via a marriage.
+        // dTree's reconstructTree reads person.children and attaches them directly under
+        // the node without needing a marriage node or spouse placeholder.
+        myChildren.forEach(function(cid) {
+          var childNode = nodeMap[cid] || makeNode(byId[cid]);
+          if (childNode) nodeMap[p.id].children.push(childNode);
         });
       }
     });
@@ -14277,13 +14269,14 @@
 
   function mpCloseAddRelSheet() {
     document.getElementById('mpAddRelSheet').style.display = 'none';
-    _mpAddRelAnchorId = null;
+    // Note: do NOT clear _mpAddRelAnchorId here — mpAddRelChosen needs it after closing the sheet.
+    // It is cleared in mpSavePerson after use, or in mpClosePersonModal if the user cancels.
   }
 
   // Called when user picks a relationship category from the sheet
   function mpAddRelChosen(category) {
-    mpCloseAddRelSheet();
-    // Pre-select a sensible default relationship_type in the modal based on category
+    document.getElementById('mpAddRelSheet').style.display = 'none';
+    // Anchor is preserved — mpSavePerson will use _mpAddRelAnchorId and clear it after.
     var relPresets = {
       'parent':  'parent',
       'child':   'child',
@@ -14537,7 +14530,8 @@
 
   function mpClosePersonModal() {
     document.getElementById('mpPersonModal').style.display = 'none';
-    _mpEditingPersonId = null;
+    _mpEditingPersonId  = null;
+    _mpAddRelAnchorId   = null;  // clear anchor if user cancels
   }
 
   function mpPersonPhotoPreviewUpdate() {
@@ -15211,17 +15205,25 @@
 
   function mpProfileWriteMemory() {
     var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    var firstName = person ? ((person.name || '').split(' ')[0] || person.name || '') : '';
     mpCloseProfile();
     setTimeout(function() {
-      // Close the My People overlay first, then switch to memories panel
       closeMyPeople();
       showPanel('memories', null, 0);
-      if (person) {
-        setTimeout(function() {
-          var ansBox = document.getElementById('memAnswer');
-          if (ansBox) { ansBox.focus(); ansBox.placeholder = 'Write a memory about ' + ((person.name || '').split(' ')[0] || 'them') + '…'; }
-        }, 150);
-      }
+      setTimeout(function() {
+        // Focus the answer textarea and set a placeholder so user knows context
+        var ansBox = document.getElementById('memAnswer');
+        if (ansBox) {
+          ansBox.value = '';
+          ansBox.placeholder = firstName
+            ? 'Write a memory about ' + firstName + '\u2026'
+            : 'Write a memory\u2026';
+          ansBox.focus();
+        }
+        // Hide the AI question box so it doesn't distract
+        var qBox = document.getElementById('aiQuestionBox');
+        if (qBox) qBox.style.display = 'none';
+      }, 200);
     }, 320);
   }
 
