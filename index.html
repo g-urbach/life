@@ -3214,8 +3214,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.97';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix tree layout: single-parent nodes now use direct children (no dummy spouse) so layout is clean. Fix sibling anchor bug: _mpAddRelAnchorId was cleared by mpCloseAddRelSheet before mpSavePerson could use it — now preserved until save/cancel. Fix write-a-memory: closes overlay, navigates to memories, sets placeholder with person name.';
+  const APP_VERSION  = 'v3.98';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix duplicate nodes: spouses/siblings were rendered twice (once under their parent/partner, once as orphan root). Fix: marriage only built from primary side (has-children wins, else id comparison); spouses excluded from roots list via appearsAsSpouseOf tracking.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -14081,6 +14081,9 @@
       nodeMap[p.id] = node;
     });
 
+    // Track spouses rendered under another node so we don't duplicate them as roots
+    var appearsAsSpouseOf = {}; // personId → true
+
     // For each person, build their marriages with children
     _mpPeople.forEach(function(p) {
       var mySpouses   = spouseOf[p.id]   || [];
@@ -14089,22 +14092,27 @@
       if (mySpouses.length === 0 && myChildren.length === 0) return;
 
       if (mySpouses.length > 0) {
-        // One marriage entry per spouse, children shared between them
         mySpouses.forEach(function(spouseId) {
           var spouse = byId[spouseId];
           if (!spouse) return;
-          // Children of THIS couple = intersection of p's children and spouse's children
-          // If no overlap, attribute all of p's children to first marriage
-          var spouseKids = childrenOf[spouseId] || [];
-          var sharedKids = myChildren.filter(function(cid) {
-            return spouseKids.indexOf(cid) !== -1;
-          });
-          // Unattributed children (no co-parent found) go to first marriage
+
+          // Only build the marriage from ONE side to avoid duplicate nodes.
+          // Primary = whoever has children; if tie, pick by id comparison.
+          var iHaveKids     = myChildren.length > 0;
+          var spouseHasKids = (childrenOf[spouseId] || []).length > 0;
+          var iPrimary;
+          if (iHaveKids && !spouseHasKids)       iPrimary = true;
+          else if (!iHaveKids && spouseHasKids)  iPrimary = false;
+          else                                    iPrimary = (p.id < spouseId);
+          if (!iPrimary) return;
+
+          appearsAsSpouseOf[spouseId] = true;
+
+          var spouseKids   = childrenOf[spouseId] || [];
+          var sharedKids   = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
           var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
           var unattributed = myChildren.filter(function(cid) {
-            return mySpouses.every(function(sid) {
-              return (childrenOf[sid] || []).indexOf(cid) === -1;
-            });
+            return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
           });
           var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []);
 
@@ -14116,9 +14124,7 @@
           });
         });
       } else {
-        // No spouse — attach children directly to this node rather than via a marriage.
-        // dTree's reconstructTree reads person.children and attaches them directly under
-        // the node without needing a marriage node or spouse placeholder.
+        // No spouse — attach children directly (no dummy marriage node needed).
         myChildren.forEach(function(cid) {
           var childNode = nodeMap[cid] || makeNode(byId[cid]);
           if (childNode) nodeMap[p.id].children.push(childNode);
@@ -14126,9 +14132,10 @@
       }
     });
 
-    // Roots = people with no parents (top of tree)
+    // Roots = no parents AND not already rendered as a spouse under someone else
     var roots = _mpPeople.filter(function(p) {
-      return !parentsOf[p.id] || parentsOf[p.id].length === 0;
+      var noParents = !parentsOf[p.id] || parentsOf[p.id].length === 0;
+      return noParents && !appearsAsSpouseOf[p.id];
     });
     // If everyone has parents (cycle or bad data), fall back to self
     if (roots.length === 0) roots = [selfNode];
