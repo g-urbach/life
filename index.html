@@ -106,7 +106,7 @@
     }
     .ppo-title {
       font-family: 'Playfair Display', serif;
-      font-size: 1rem; font-weight: 600;
+      font-size: 1.1rem; font-weight: 700;
       color: #f0e8d8;
     }
     .ppo-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
@@ -736,6 +736,54 @@
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
     .pulse.red { background: var(--rose); }
     .pulse.idle { background: #888; animation: none; }
+
+    /* ── Gethro avatar ──────────────────────────────────────────────── */
+    .gethro-avatar-wrap {
+      position: relative; flex-shrink: 0;
+      border-radius: 50%;
+    }
+    .gethro-avatar-wrap svg { display: block; border-radius: 50%; }
+    .gethro-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 2.5px solid var(--gold);
+      pointer-events: none;
+      transition: box-shadow 0.3s, border-color 0.3s;
+    }
+    .gethro-avatar-wrap.speaking .gethro-ring {
+      border-color: #e8c97a;
+      animation: gaRingPulse 0.65s ease-in-out infinite alternate;
+    }
+    @keyframes gaRingPulse {
+      from { box-shadow: 0 0 0 0 rgba(201,169,110,0.55); }
+      to   { box-shadow: 0 0 0 7px rgba(201,169,110,0); }
+    }
+    .gethro-avatar-wrap.speaking .ga-brow {
+      animation: gaBrow 0.55s ease-in-out infinite alternate;
+    }
+    @keyframes gaBrow {
+      from { transform: translateY(0); }
+      to   { transform: translateY(-1.5px); }
+    }
+    .gethro-avatar-wrap.speaking .ga-mouth-group {
+      animation: gaMouth 0.38s ease-in-out infinite alternate;
+      transform-origin: 40px 53px;
+    }
+    @keyframes gaMouth {
+      from { transform: scaleY(1); }
+      to   { transform: scaleY(1.55); }
+    }
+    .gethro-avatar-wrap.speaking .ga-eye-l {
+      animation: gaEye 3.2s ease-in-out infinite;
+      transform-origin: 31px 33px;
+    }
+    .gethro-avatar-wrap.speaking .ga-eye-r {
+      animation: gaEye 3.2s ease-in-out 0.18s infinite;
+      transform-origin: 49px 33px;
+    }
+    @keyframes gaEye {
+      0%,88%,100% { transform: scaleY(1); }
+      93%          { transform: scaleY(0.08); }
+    }
 
     #conversationLog {
       display: flex; flex-direction: column; gap: 12px;
@@ -1822,7 +1870,7 @@
   <div class="tab-bar-inner">
     <button class="tab-btn active" id="tab-0" onclick="showPanel('memories', null, 0)">
       <span class="tab-icon">🌟</span>
-      <span class="tab-label">Memories</span>
+      <span class="tab-label">Add Memory</span>
     </button>
     <button class="tab-btn" id="tab-1" onclick="showPanel('dashboard', null, 1)">
       <span class="tab-icon" style="position:relative">🏠<span id="dashResponsesBadge" style="display:none;position:absolute;top:-4px;right:-6px;width:8px;height:8px;border-radius:50%;background:var(--rose);border:1px solid var(--surface)"></span></span>
@@ -1834,7 +1882,7 @@
     </button>
     <button class="tab-btn" id="tab-3" onclick="_entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries', null, 3)">
       <span class="tab-icon">📋</span>
-      <span class="tab-label">Entries</span>
+      <span class="tab-label">My Memories</span>
     </button>
     <button class="tab-btn" id="tab-4" onclick="showPanel('help', null, 4)">
       <span class="tab-icon">❓</span>
@@ -1849,6 +1897,22 @@
   <!-- RECORD (merged Talk + Voice Memo + Typed Entry) -->
   <div class="panel active" id="panel-memories">
     <h2 class="section-title" id="memSectionTitle">Tell Gethro a Memory</h2>
+
+    <!-- Gethro avatar — shown during AI conversation -->
+    <div id="memGethroAvatarRow" style="display:none;justify-content:center;margin-bottom:14px">
+      <div class="gethro-avatar-wrap gethro-avatar-all" style="width:64px;height:64px">
+        <div class="gethro-ring"></div>
+        <svg width="64" height="64" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-label="Gethro" role="img">
+          <circle cx="40" cy="40" r="38" fill="#2c2416"/>
+          <ellipse cx="40" cy="37" rx="18" ry="21" fill="#f5ede0"/>
+          <rect class="ga-brow" x="26" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+          <rect class="ga-brow" x="44" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+          <g class="ga-eye-l"><ellipse cx="31" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="32.3" cy="31.7" r="1.1" fill="#fff"/></g>
+          <g class="ga-eye-r"><ellipse cx="49" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="50.3" cy="31.7" r="1.1" fill="#fff"/></g>
+          <g class="ga-mouth-group"><path d="M32 52 Q40 58 48 52" stroke="#c9a96e" stroke-width="2.5" fill="none" stroke-linecap="round"/></g>
+        </svg>
+      </div>
+    </div>
 
     <!-- AI question box (shown during AI conversation) -->
     <div id="aiQuestionBox" style="display:none;margin-bottom:18px">
@@ -2154,7 +2218,24 @@
   <!-- ── PRINT PREVIEW OVERLAY ─────────────────────────────────────────── -->
   <div id="printPreviewOverlay" role="dialog" aria-modal="true" aria-label="Book preview">
     <div class="ppo-header">
-      <div class="ppo-title">📖 Your Book Preview</div>
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <div class="gethro-avatar-wrap gethro-avatar-all" style="width:56px;height:56px;flex-shrink:0">
+          <div class="gethro-ring"></div>
+          <svg width="56" height="56" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-label="Gethro" role="img">
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/>
+            <ellipse cx="40" cy="37" rx="18" ry="21" fill="#f5ede0"/>
+            <rect class="ga-brow" x="26" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+            <rect class="ga-brow" x="44" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+            <g class="ga-eye-l"><ellipse cx="31" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="32.3" cy="31.7" r="1.1" fill="#fff"/></g>
+            <g class="ga-eye-r"><ellipse cx="49" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="50.3" cy="31.7" r="1.1" fill="#fff"/></g>
+            <g class="ga-mouth-group"><path d="M32 52 Q40 58 48 52" stroke="#c9a96e" stroke-width="2.5" fill="none" stroke-linecap="round"/></g>
+          </svg>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+          <div class="ppo-title">Here is your story, ready to print.</div>
+          <div style="font-size:0.72rem;color:#8a7558;font-family:'Lato',sans-serif;letter-spacing:0.02em">Customise your cover details, then order a real printed book.</div>
+        </div>
+      </div>
       <div class="ppo-actions">
         <span class="ppo-page-count" id="ppoPageCount"></span>
         <button class="btn btn-ghost" style="font-size:0.8rem" onclick="closePrintPreview()">✕ Close</button>
@@ -2169,19 +2250,19 @@
       <!-- Left: customisation controls -->
       <div class="ppo-controls">
         <div>
-          <h3>Book Details</h3>
+          <h3>Your Book</h3>
           <div class="ppo-field" style="margin-bottom:12px">
-            <label>Book Title</label>
+            <label>Title</label>
             <input type="text" id="ppoBookTitle" placeholder="e.g. My Life Story"
                    oninput="updatePreview()">
           </div>
           <div class="ppo-field" style="margin-bottom:12px">
-            <label>Author Name</label>
+            <label>Your name</label>
             <input type="text" id="ppoAuthorName" placeholder="Your name"
                    oninput="updatePreview()">
           </div>
           <div class="ppo-field">
-            <label>Dedication (optional)</label>
+            <label>A note to the reader (optional)</label>
             <textarea id="ppoDedication" placeholder="e.g. For my family, with love…"
                       oninput="updatePreview()"></textarea>
           </div>
@@ -2231,7 +2312,18 @@
       <!-- ⓪ GETHRO TILE — daily observation, rules-based -->
       <div class="dash-tile dash-tile-wide" id="dashGethroTile" style="display:none;min-height:auto;padding:16px 20px;border-left:3px solid var(--gold)">
         <div style="display:flex;gap:12px;align-items:flex-start">
-          <div style="font-size:1.6rem;flex-shrink:0;line-height:1;margin-top:2px">🎙️</div>
+          <div class="gethro-avatar-wrap gethro-avatar-all" style="width:48px;height:48px;margin-top:2px">
+            <div class="gethro-ring"></div>
+            <svg width="48" height="48" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-label="Gethro" role="img">
+              <circle cx="40" cy="40" r="38" fill="#2c2416"/>
+              <ellipse cx="40" cy="37" rx="18" ry="21" fill="#f5ede0"/>
+              <rect class="ga-brow" x="26" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+              <rect class="ga-brow" x="44" y="25" width="10" height="2.5" rx="1.2" fill="#5a3e20"/>
+              <g class="ga-eye-l"><ellipse cx="31" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="32.3" cy="31.7" r="1.1" fill="#fff"/></g>
+              <g class="ga-eye-r"><ellipse cx="49" cy="33" rx="3.5" ry="4" fill="#2c2416"/><circle cx="50.3" cy="31.7" r="1.1" fill="#fff"/></g>
+              <g class="ga-mouth-group"><path d="M32 52 Q40 58 48 52" stroke="#c9a96e" stroke-width="2.5" fill="none" stroke-linecap="round"/></g>
+            </svg>
+          </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:5px">Gethro</div>
             <p id="dashGethroMsg" style="font-size:0.95rem;line-height:1.6;color:var(--text);font-family:'Playfair Display',serif;font-style:italic;margin:0"></p>
@@ -3211,8 +3303,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.02';
-  const DEPLOY_NOTES = APP_VERSION + ' — life-dev confirmed private (notes updated, SEC-01 downgraded, PRV-07 updated). PRV-02 email-in-Telegram kept intentionally pre-launch (noted in backlog). UX-C01: video button disabled with coming-soon styling. APP-30 added to re-enable video when bucket ready.';
+  const APP_VERSION  = 'v4.04';
+  const DEPLOY_NOTES = APP_VERSION + ' — UX-H03: Gethro illustrated SVG avatar (Option B+C) added. Warm face at 48px (dashboard), 64px (Memories AI conversation), 56px (print preview). Speaking animations (ring pulse, brow lift, mouth morph, eye blink) driven by gethroSetSpeaking() hooked into gethroSpeak/gethroCancel/fallback TTS. MutationObserver syncs Memories avatar visibility with aiQuestionBox.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5163,7 +5255,26 @@
       _gethroAudioCtx.resume().catch(function(){});
     }
   }
+  // ── Gethro avatar speaking state ──────────────────────────────────
+  function gethroSetSpeaking(on) {
+    document.querySelectorAll('.gethro-avatar-all').forEach(function(el) {
+      el.classList.toggle('speaking', on);
+    });
+  }
+
+  // Sync Memories avatar row with aiQuestionBox visibility
+  (function() {
+    var qBox = document.getElementById('aiQuestionBox');
+    var aRow = document.getElementById('memGethroAvatarRow');
+    if (!qBox || !aRow) return;
+    var obs = new MutationObserver(function() {
+      aRow.style.display = (qBox.style.display === 'none' || qBox.style.display === '') ? 'none' : 'flex';
+    });
+    obs.observe(qBox, { attributes: true, attributeFilter: ['style'] });
+  })();
+
   function gethroCancel() {
+    gethroSetSpeaking(false);
     if (_gethroAudio) {
       try {
         // AudioBufferSourceNode uses stop(); HTMLAudioElement uses pause()
@@ -5228,9 +5339,10 @@
         var source = ctx.createBufferSource();
         source.buffer = decoded;
         source.connect(ctx.destination);
-        source.onended = function() { dbg('TTS', 'AudioContext source ended ok'); _gethroAudio = null; resolve(); };
+        source.onended = function() { dbg('TTS', 'AudioContext source ended ok'); _gethroAudio = null; gethroSetSpeaking(false); resolve(); };
         _gethroAudio = source;
         source.start(0);
+        gethroSetSpeaking(true);
         dbg('TTS', 'AudioContext source.start() called');
       } catch(err) {
         dbg('TTS', 'TTS_PROXY error:', err.message);
@@ -5252,9 +5364,10 @@
       speechSynthesis.cancel();
       var utt = new SpeechSynthesisUtterance(text);
       utt.lang = 'en-AU'; utt.rate = 0.92; utt.pitch = 1.0;
-      utt.onend = function() { dbg('TTS', 'fallback onend ok'); resolve(); };
-      utt.onerror = function(e) { dbg('TTS', 'fallback onerror:', e.error); resolve(); };
+      utt.onend = function() { dbg('TTS', 'fallback onend ok'); gethroSetSpeaking(false); resolve(); };
+      utt.onerror = function(e) { dbg('TTS', 'fallback onerror:', e.error); gethroSetSpeaking(false); resolve(); };
       speechSynthesis.speak(utt);
+      gethroSetSpeaking(true);
     }
     if (speechSynthesis.getVoices().length > 0) {
       _speak();
@@ -11739,6 +11852,14 @@
     const overlay = document.getElementById('printPreviewOverlay');
     overlay.classList.add('visible');
     document.body.style.overflow = 'hidden';
+
+    // APP-28: Gethro speaks on first print preview open per session
+    if (!openPrintPreview._hasSpoken) {
+      openPrintPreview._hasSpoken = true;
+      setTimeout(function() {
+        gethroSpeak("Here it is — your life story, ready to become a book.");
+      }, 600);
+    }
 
     // Render preview and start background preparation
     updatePreview();
