@@ -1955,9 +1955,10 @@
                   style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
                   🎙️ Record audio
                 </button>
-                <button type="button" id="recVideoRecordBtn" onclick="toggleVideoRecording();hideMediaOptions()"
-                  style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
-                  🎬 Video (10s)
+                <button type="button" id="recVideoRecordBtn"
+                  disabled title="Video recording coming soon"
+                  style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light);cursor:not-allowed;font-family:'Lato',sans-serif;opacity:0.5">
+                  🎬 Video (coming soon)
                 </button>
               </span>
             </div>
@@ -3104,10 +3105,6 @@
       Last name <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
     </label>
     <input id="onboardLastName" type="text" placeholder="e.g. Smith" autocomplete="family-name">
-    <label for="onboardDob" style="display:flex;align-items:center;justify-content:space-between">
-      Date of birth <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
-    </label>
-    <input id="onboardDob" type="date">
     <label for="onboardSex" style="display:flex;align-items:center;justify-content:space-between">
       Sex <span style="font-size:0.75rem;color:var(--text-light);font-weight:400">optional</span>
     </label>
@@ -3214,8 +3211,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v3.98';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix duplicate nodes: spouses/siblings were rendered twice (once under their parent/partner, once as orphan root). Fix: marriage only built from primary side (has-children wins, else id comparison); spouses excluded from roots list via appearsAsSpouseOf tracking.';
+  const APP_VERSION  = 'v4.02';
+  const DEPLOY_NOTES = APP_VERSION + ' — life-dev confirmed private (notes updated, SEC-01 downgraded, PRV-07 updated). PRV-02 email-in-Telegram kept intentionally pre-launch (noted in backlog). UX-C01: video button disabled with coming-soon styling. APP-30 added to re-enable video when bucket ready.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3351,8 +3348,8 @@
       panel:        activePanel,
       entry_count:  entryCount,
       src_line:     rawLine,
-      src_line_dev: devLine,
-      ua:           navigator.userAgent
+      src_line_dev: devLine
+      // PRV-12: navigator.userAgent removed from Telegram payload (device fingerprinting risk)
     };
     fetch(NOTIFY_PROXY_URL, {
       method: 'POST',
@@ -3546,9 +3543,10 @@
         var errDetail = (data && data.error) ? data.error : ('HTTP ' + res.status);
         document.getElementById('shareLoading').style.display = 'none';
         document.getElementById('shareError').style.display   = 'block';
-        // Show diagnostic in the error box so visitors can report it
+        // SEC-13: Show only a generic message to visitors — never reflect raw API errors
         var diagEl = document.getElementById('shareErrorDetail');
-        if (diagEl) diagEl.textContent = 'Error: ' + errDetail + ' (token: ' + token.substring(0,8) + '…)';
+        if (diagEl) diagEl.textContent = 'Something went wrong — please contact the person who shared this link.';
+        // Detailed error logged server-side only (Telegram + Supabase)
         notifyDev('warn', 'SHARE', 'loadSharePage failed — ' + errDetail + ' — token: ' + token);
         logActivity('share_load_failed', errDetail + ' — token: ' + token, 'warn', 'SHARE');
         return;
@@ -3649,9 +3647,10 @@
       // Meta tags (chapter, date, location)
       var metaEl = document.getElementById('shareEntryMeta');
       var metaParts = [];
-      if (entry.chapter)  metaParts.push('📖 ' + entry.chapter);
-      if (entry.date)     metaParts.push('📅 ' + entry.date);
-      if (entry.location) metaParts.push('📍 ' + entry.location);
+      // SEC-02: escHtml applied to all DB-sourced fields before innerHTML insertion
+      if (entry.chapter)  metaParts.push('📖 ' + escHtml(entry.chapter));
+      if (entry.date)     metaParts.push('📅 ' + escHtml(entry.date));
+      if (entry.location) metaParts.push('📍 ' + escHtml(entry.location));
       metaEl.innerHTML = metaParts.map(function(m) {
         return '<span style="background:var(--surface2);padding:3px 8px;border-radius:10px">' + m + '</span>';
       }).join('');
@@ -3665,8 +3664,9 @@
       logActivity('share_load_exception', e.message + ' — token: ' + token, 'warn', 'SHARE');
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareError').style.display   = 'block';
+      // SEC-13: Generic message only — never expose exception detail to visitors
       var diagEl = document.getElementById('shareErrorDetail');
-      if (diagEl) diagEl.textContent = 'Error: ' + e.message;
+      if (diagEl) diagEl.textContent = 'Something went wrong — please contact the person who shared this link.';
     }
   }
 
@@ -4537,7 +4537,7 @@
           notifyDev('warn', 'AUTH', 'Sign-in: ' + session.user.email);
           logActivity('sign_in', 'Sign-in: ' + session.user.email, 'warn', 'AUTH');
         }
-        _initSessionRestored = false; // reset so next manual sign-in notifies
+        _initSessionRestored = false;
       }
       if (event === 'SIGNED_OUT') {
         logActivity('sign_out', null, 'info', 'AUTH');
@@ -4757,9 +4757,8 @@
     if (pass.length < 6) { showAuthError('Password must be at least 6 characters.'); return; }
     if (pass !== confirm) { showAuthError('Passwords do not match — please re-enter them.'); return; }
     // No pre-signup T&C overlay — _checkDisclaimerVersion handles it after first login.
-    window._pendingEmail = email;
-    window._pendingPass  = pass;
-    await signUp();
+    // SEC-07: credentials passed as args, never stored on window.*
+    await signUp(email, pass);
   }
 
   async function signIn() {
@@ -4832,9 +4831,10 @@
     }
   }
 
-  async function signUp() {
-    const email = window._pendingEmail || '';
-    const pass  = window._pendingPass  || '';
+  // SEC-07: credentials received as function arguments (never stored on window.*)
+  async function signUp(email, pass) {
+    email = email || '';
+    pass  = pass  || '';
     if (!email || !pass) return toast('Please enter email and password');
     dbg('AUTH','Signing up:', email);
     const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: 'https://lifetold.app' } });
@@ -4850,8 +4850,6 @@
     notifyAdmin(email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
     notifyDev('warn', 'AUTH', 'New user signed up: ' + email);
     logActivity('sign_up', 'New user: ' + email, 'warn', 'AUTH');
-    window._pendingEmail = null;
-    window._pendingPass  = null;
 
     // Check whether Supabase returned a live session.
     // session present  → "Confirm email" is OFF in Supabase dashboard. User is
@@ -4987,6 +4985,9 @@
       // Only name is required — DOB and sex are optional (privacy: user can skip)
       if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
+      } else {
+        // UX-H02: returning users land on Dashboard (motivational home), not blank Memories form
+        showPanel('dashboard', null, 1);
       }
       populateTagDropdowns('rec');
     } catch(err) { dbgErr('DB','Load error:', err.message); }
@@ -5357,7 +5358,7 @@
   async function saveOnboarding() {
     const firstName = document.getElementById('onboardFirstName').value.trim();
     const lastName  = (document.getElementById('onboardLastName')?.value || '').trim();
-    const dob       = document.getElementById('onboardDob').value;
+    // PRV-01: DOB removed from onboarding — not collected at signup
     const sex       = document.getElementById('onboardSex').value;
     if (!firstName) return toast('Please enter your first name — Gethro needs to know what to call you!');
 
@@ -5370,13 +5371,13 @@
       fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_name',answer:fullName,question:'What is your name?',timestamp:new Date().toISOString()})}),
     ];
     if (lastName) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_last_name',answer:lastName,question:'What is your last name?',timestamp:new Date().toISOString()})}));
-    if (dob) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_dob',answer:dob,question:'What is your date of birth?',timestamp:new Date().toISOString()})}));
     if (sex) saves.push(fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_sex',answer:sex,question:'What is your sex?',timestamp:new Date().toISOString()})}));
     await Promise.all(saves);
 
-    userProfile = { name: fullName, firstName, lastName: lastName || null, dob: dob || null, sex: sex || null };
+    userProfile = { name: fullName, firstName, lastName: lastName || null, dob: null, sex: sex || null };
     document.getElementById('onboardingOverlay').style.display = 'none';
-    notifyDev('warn', 'AUTH', 'Onboarding complete: ' + currentUser.email + ' (' + fullName + ')');
+    // PRV-01/PRV-02: Use hashed user ID instead of email/name in Telegram payload
+    notifyDev('warn', 'AUTH', 'Onboarding complete: uid=' + currentUser.id.substring(0, 8));
     logActivity('onboarding_complete', fullName, 'info', 'AUTH');
     toast('Welcome, ' + firstName + '! 🎉');
     _onboardGethroIntro(firstName);
@@ -14004,6 +14005,11 @@
       if (t === 'sibling_of' || t === 'half_sibling_of') {
         add(siblingOf, a, b); add(siblingOf, b, a);
       }
+      // grandchild_of: a is grandchild, b is grandparent — treat as 2-gen parent_of
+      // We add a direct grandparent→grandchild link (dTree will show them 2 levels apart
+      // unless an intermediate exists; if it does, propagation handles the line).
+      if (t === 'grandchild_of')   { add(parentsOf, a, b);  add(childrenOf, b, a); }
+      if (t === 'grandparent_of')  { add(childrenOf, a, b); add(parentsOf,  b, a); }
     });
 
     // Propagate parents to siblings: if A has parents [P1,P2] and B is sibling of A,
@@ -14081,13 +14087,44 @@
       nodeMap[p.id] = node;
     });
 
-    // Track spouses rendered under another node so we don't duplicate them as roots
-    var appearsAsSpouseOf = {}; // personId → true
+    // ── Marriage ownership: decide which partner "owns" the marriage node ───
+    // The owner renders the marriage; their partner appears as the spouse card.
+    // Rules (in priority order):
+    //   1. Whoever has parents in the tree (is someone's child) owns it —
+    //      they have a fixed position; the "in-law" attaches to them.
+    //   2. Whoever has more children owns it.
+    //   3. Lexicographic id tiebreak (deterministic).
+    // The non-owner is marked renderedAsSpouse and excluded from roots.
+    var renderedAsSpouse = {}; // personId → true
+    var marriageOwners   = {}; // "sortedId1__sortedId2" → ownerId
 
-    // For each person, build their marriages with children
     _mpPeople.forEach(function(p) {
-      var mySpouses   = spouseOf[p.id]   || [];
-      var myChildren  = childrenOf[p.id] || [];
+      (spouseOf[p.id] || []).forEach(function(spouseId) {
+        var key = [p.id, spouseId].sort().join('__');
+        if (marriageOwners[key]) return; // already resolved
+
+        var pHasParents  = !!(parentsOf[p.id]    && parentsOf[p.id].length);
+        var spHasParents = !!(parentsOf[spouseId] && parentsOf[spouseId].length);
+        var pKids        = (childrenOf[p.id]       || []).length;
+        var spKids       = (childrenOf[spouseId]   || []).length;
+
+        var owner;
+        if      (pHasParents  && !spHasParents) owner = p.id;
+        else if (!pHasParents &&  spHasParents) owner = spouseId;
+        else if (pKids > spKids)                owner = p.id;
+        else if (spKids > pKids)                owner = spouseId;
+        else                                    owner = (p.id < spouseId) ? p.id : spouseId;
+
+        marriageOwners[key] = owner;
+        var nonOwner = (owner === p.id) ? spouseId : p.id;
+        renderedAsSpouse[nonOwner] = true;
+      });
+    });
+
+    // For each person, build their marriages/children
+    _mpPeople.forEach(function(p) {
+      var mySpouses  = spouseOf[p.id]   || [];
+      var myChildren = childrenOf[p.id] || [];
 
       if (mySpouses.length === 0 && myChildren.length === 0) return;
 
@@ -14095,26 +14132,17 @@
         mySpouses.forEach(function(spouseId) {
           var spouse = byId[spouseId];
           if (!spouse) return;
+          // Only build from the owning side
+          var key = [p.id, spouseId].sort().join('__');
+          if (marriageOwners[key] !== p.id) return;
 
-          // Only build the marriage from ONE side to avoid duplicate nodes.
-          // Primary = whoever has children; if tie, pick by id comparison.
-          var iHaveKids     = myChildren.length > 0;
-          var spouseHasKids = (childrenOf[spouseId] || []).length > 0;
-          var iPrimary;
-          if (iHaveKids && !spouseHasKids)       iPrimary = true;
-          else if (!iHaveKids && spouseHasKids)  iPrimary = false;
-          else                                    iPrimary = (p.id < spouseId);
-          if (!iPrimary) return;
-
-          appearsAsSpouseOf[spouseId] = true;
-
-          var spouseKids   = childrenOf[spouseId] || [];
-          var sharedKids   = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
+          var spouseKids    = childrenOf[spouseId] || [];
+          var sharedKids    = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
           var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
-          var unattributed = myChildren.filter(function(cid) {
+          var unattributed  = myChildren.filter(function(cid) {
             return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
           });
-          var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []);
+          var marriageKids  = sharedKids.concat(isFirstSpouse ? unattributed : []);
 
           nodeMap[p.id].marriages.push({
             spouse:   nodeMap[spouseId] || makeNode(spouse),
@@ -14124,7 +14152,7 @@
           });
         });
       } else {
-        // No spouse — attach children directly (no dummy marriage node needed).
+        // No spouse — attach children directly (no marriage node needed)
         myChildren.forEach(function(cid) {
           var childNode = nodeMap[cid] || makeNode(byId[cid]);
           if (childNode) nodeMap[p.id].children.push(childNode);
@@ -14132,12 +14160,12 @@
       }
     });
 
-    // Roots = no parents AND not already rendered as a spouse under someone else
+    // Roots = no parents in tree AND not rendered as someone else's spouse
     var roots = _mpPeople.filter(function(p) {
       var noParents = !parentsOf[p.id] || parentsOf[p.id].length === 0;
-      return noParents && !appearsAsSpouseOf[p.id];
+      return noParents && !renderedAsSpouse[p.id];
     });
-    // If everyone has parents (cycle or bad data), fall back to self
+    // Fallback: if cycle/bad data leaves no roots, use self
     if (roots.length === 0) roots = [selfNode];
 
     return roots.map(function(r) { return nodeMap[r.id]; });
