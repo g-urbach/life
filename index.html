@@ -3958,8 +3958,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.25';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-37: My Goals tile on Dashboard. Gethro-led 3-step goal session (era, audience, tone) via tap-cards with voice intro. Saves _profile_goal_era/_profile_goal_audience/_profile_goal_tone to DB. Tile shows goals in plain English with Revisit button. Goal values loaded into userProfile and injected into Gethro system prompt.';
+  const APP_VERSION  = 'v4.28';
+  const DEPLOY_NOTES = APP_VERSION + ' — v4.28: GETHRO_APP_KNOWLEDGE rewritten to help-centre quality (~2400 lines, full FAQ, every screen/button/workflow). Deployer v39 adds 25-point knowledge coverage regression test — warns if a feature is shipped but Gethro doesnt know about it. PROJECT MEMORY 10-build rule updated: mandatory GETHRO_APP_KNOWLEDGE diff on every review.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6456,9 +6456,46 @@
   }
 
   // ── Done: save and clear ─────────────────────────────────────────
+  // ── Auto-title: generate a title from entry content when none is provided ──
+  // Called after a successful save so it never blocks the UX. Patches the entry
+  // in the DB and updates the local cache. Fire-and-forget from memDone().
+  async function _autoGenerateTitle(entryId, answerText) {
+    if (!entryId || !answerText || typeof callGethro !== 'function') return;
+    try {
+      var snippet = answerText.trim().slice(0, 400);
+      var parsed = await callGethro('chat', {
+        systemPrompt: 'You generate short, evocative memoir entry titles. Given the text of a memory, respond ONLY with valid JSON: {"title":"Your Title Here"}. The title should be 3-8 words, specific to the content, warm but not sentimental. No punctuation at the end. No quotes around the title inside the JSON string.',
+        history: [{ role: 'user', content: 'Generate a title for this memory:\n\n' + snippet }],
+      });
+      var generatedTitle = (parsed && parsed.title) ? parsed.title.trim() : '';
+      if (!generatedTitle && parsed && parsed.reply) {
+        // Fallback: try parsing reply as JSON
+        try { var fb = JSON.parse(parsed.reply); generatedTitle = (fb.title || '').trim(); } catch(e) {}
+      }
+      if (!generatedTitle || generatedTitle.length > 80) return; // safety guard
+      // Patch DB
+      var patchRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+        body: JSON.stringify({ title: generatedTitle })
+      });
+      if (patchRes.ok) {
+        // Update local cache
+        var cached = (entries || []).find(function(e) { return e.id === entryId; });
+        if (cached) cached.title = generatedTitle;
+        dbg('MEM', 'Auto-title applied:', generatedTitle);
+      }
+    } catch(err) {
+      dbg('MEM', 'Auto-title failed (non-blocking):', err.message);
+    }
+  }
+
   async function memDone() {
     memClearSaveError(); // clear any prior banner before attempting
     let savedId;
+    // Capture title/answer before saving (form may be reset after)
+    const _titleBeforeSave = (document.getElementById('memTitle') || {}).value || '';
+    const _answerBeforeSave = (document.getElementById('memAnswer') || {}).value || '';
     try {
       savedId = await memSaveCurrentEntry();
     } catch(err) {
@@ -6471,6 +6508,10 @@
       // Show the persistent banner so the user has clear options.
       memShowSaveError('Your memory could not be saved');
       return; // preserve content
+    }
+    // ── Auto-title: if saved without a title, generate one in the background ──
+    if (!_titleBeforeSave.trim() && _answerBeforeSave.trim() && savedId && savedId !== 'offline') {
+      _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
     }
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles: clearing title/answer, hiding memExistingMediaPanel,
@@ -13992,6 +14033,298 @@
     setTimeout(() => t.classList.remove('show'), duration);
   }
 
+  // ── GETHRO_APP_KNOWLEDGE ───────────────────────────────────────────────────
+  // Single source of truth for Gethro's knowledge of the LifeTold app.
+  // Written to help-centre quality — specific enough to answer any user question
+  // including "where is X", "how do I do Y", "why isn't Z working".
+  //
+  // MAINTENANCE RULES (non-negotiable):
+  // 1. Every new feature MUST be documented here before the build ships.
+  // 2. Every 10 builds Claude does a full diff: read all FEATURES IMPLEMENTED,
+  //    compare against every section here, fill any gaps. This is mandatory
+  //    and listed in the 10-build review rule in PROJECT MEMORY.
+  // 3. The deployer regression test checks coverage of key feature keywords.
+  //    A deployer WARN means this constant needs updating.
+  //
+  // CHECKLIST — every item below must have a corresponding section:
+  // [x] Navigation / tabs          [x] Add Memory tab (full)
+  // [x] My Memories tab (full)     [x] My Story tab (full)
+  // [x] Dashboard (full)           [x] Help tab
+  // [x] Organise My Book overlay   [x] My People / Family Tree (full)
+  // [x] Print Preview overlay      [x] Ask Gethro panel
+  // [x] Onboarding                 [x] Settings overlay
+  // [x] Sharing & responses        [x] AI Review
+  // [x] Chapters                   [x] Goals (My Goals tile)
+  // [x] Duplicate Detector         [x] Story Consolidator
+  // [x] Photos & Audio             [x] Voice / mic
+  // [x] Dark mode                  [x] Account / auth
+  // [x] Weekly email prompts       [x] Offline behaviour
+  // [x] FAQ — common confused-user questions
+  // ─────────────────────────────────────────────────────────────────────────────
+  var GETHRO_APP_KNOWLEDGE = [
+
+    '=== NAVIGATION ===',
+    'Five main tabs at the bottom of the screen: Dashboard (🏠), Add Memory (✍️), My Memories (📋), My Story (📖), Help (❓).',
+    'Tap any tab icon to switch. The active tab is highlighted.',
+    'Additional overlays that open on top of the tabs (full-screen): My People / Family Tree, Organise My Book, Print Preview, Ask Gethro panel, Settings, Goal Session.',
+    'Header icons (top-right): ⚙️ Settings, 🌙/☀️ dark mode toggle, Sign Out.',
+    '',
+
+    '=== ADD MEMORY TAB ===',
+    'PURPOSE: Write or record a new memory entry. This is the main writing area.',
+    'TITLE FIELD: Optional short label for the memory (e.g. "My first day at school"). If left blank, an AI-generated title is applied automatically after saving.',
+    'MEMORY TEXT: The main textarea. Type or dictate the memory here.',
+    'MIC BUTTON (🎙️): Tap to start voice dictation. Speech is transcribed into the memory text in real time. Tap again (⏹) to stop. A pill above the mic shows the current mode.',
+    'MIC MODES: Two modes shown by a pill: "🎙️ Dictation" (gold — speech goes straight to text) and "💬 AI Interview" (rose — Gethro asks questions and listens). The pill appears above the mic button.',
+    'AI INTERVIEW MODE: Tap the "💬 AI Interview" toggle button to switch modes. In interview mode, Gethro asks a question, the user speaks their answer, Gethro asks a follow-up. This builds a richer memory than dictation alone.',
+    'ATTACHMENT ICON (📎): Tap to choose: Upload Photo (from library), Take Photo (camera), Upload Audio (existing file), Record Audio (in-browser recording).',
+    '"+ Add details" ACCORDION: Tap the dashed row to expand. Contains: Chapter (dropdown), Date / Year (free text, e.g. "1987" or "Summer 1972"), Era (life period dropdown), Location (free text), People (chip tags — type name, press Enter or comma to add), Photos (upload multiple), Reference / link.',
+    'CHAPTER DROPDOWN: In "+ Add details". Select the life chapter this memory belongs to (e.g. Childhood, Career, Marriage). Used for Book Edition story format and Story Health on Dashboard.',
+    'PEOPLE TAGS: In "+ Add details". Type a person\'s name and press Enter or comma. Multiple people can be tagged. These tags power the People filter in My Memories and appear in the My People directory.',
+    'AI REVIEW BUTTON: "Review this entry" — runs a full hygiene check (see AI REVIEW section). Available in Add Memory tab.',
+    '"Done" / "Save" BUTTON: Saves the current entry. Shows a toast "Memory saved ✓". If no title was typed, AI generates one silently in the background.',
+    '"New entry" BUTTON: Clears the form to start a fresh memory. Warns if there is unsaved content.',
+    'EDIT MODE: When editing an existing entry (opened from My Memories), the tab loads that entry\'s data. The Save button says "Update". Tap it to save changes.',
+    'MIC MODE PILL: Small pill above the mic button. Shows current mode. Tap the interview toggle button to change it — not the pill itself.',
+    '',
+
+    '=== MY MEMORIES TAB (also called Entries) ===',
+    'PURPOSE: Browse, search, filter, and manage all saved memories.',
+    'ENTRY CARDS: Each saved memory appears as a card showing title, date, chapter, and a text snippet. Tap to expand.',
+    'EXPANDED CARD: Shows full memory text, any attached photo or audio. Inline edit fields for title, text, chapter, date, people, location. Tap "Save" inside the card to update.',
+    'SEARCH BAR: Type any keyword — matching memories are shown with the search term highlighted. Tap the ✕ to clear.',
+    'FILTER PILLS: Row of filter buttons below the toolbar. Filter by Chapter, Person, or Location. Tap a pill to select it; tap again or tap ✕ to clear. Filters can be combined.',
+    '"📚 Organise My Book" BUTTON: Gold button in the toolbar. Opens the Organise My Book overlay (see that section).',
+    'SHARE BUTTON (inside expanded card): Creates a private shareable link for that memory. See SHARING section.',
+    'EDIT BUTTON (inside expanded card): Opens the memory in the Add Memory tab for full editing.',
+    'DELETE BUTTON (inside expanded card): Asks for confirmation, then permanently deletes the memory.',
+    'WORD COUNT BADGE: Small word count shown on each entry card (e.g. "42w").',
+    '',
+
+    '=== MY STORY TAB ===',
+    'PURPOSE: Generate an AI-written memoir from all saved memories, and prepare it for printing.',
+    '5 STORY FORMATS:',
+    '  • Snapshot — a short 150-word blurb. Good for a quick overview.',
+    '  • The Short Version — ~500 words. A condensed life story.',
+    '  • The Full Story — long-form detailed prose memoir.',
+    '  • Book Edition — generates a full chapter-by-chapter memoir using the chapter tags on entries. Best when entries have chapters assigned.',
+    '  • Journal Style — entries in date order in the user\'s own words, minimally edited. Most personal.',
+    '😄 FUNNY MODE: Toggle shown above the Generate button. Adds gentle humour to any format.',
+    'GENERATE BUTTON: Tap to create the story using all entries. Takes 10–30 seconds.',
+    'READ ALOUD BUTTON: Gethro reads the generated story in his voice (TTS).',
+    'EXPORT AS HTML: Downloads the story as a standalone HTML file you can open in any browser.',
+    '"🖨️ Print as Book" BUTTON: Opens the Print Preview overlay. Only enabled after a story has been generated.',
+    '"YOUR BOOK" SECTION: Collapsible section. Contains: Book Title, Author Name, Dedication ("A note to the reader"), and Blurb. "Suggest" button asks AI to write a blurb from entries. These fields appear in the printed book.',
+    'HOW TO PRINT: Generate a story → click "Print as Book" → customise cover + details in preview → click "Order via Peecho" → complete order on Peecho\'s site. Peecho handles printing and global shipping.',
+    '',
+
+    '=== PRINT PREVIEW OVERLAY ===',
+    'HOW TO OPEN: My Story tab → generate a story → tap "🖨️ Print as Book".',
+    '4 COVER STYLES: Shown as visual thumbnail cards. Tap to select.',
+    'EDIT FIELDS: Book Title, Author Name, Dedication — editable directly in the preview.',
+    '"Order via Peecho" BUTTON: Sends the book to Peecho\'s website. User chooses format (paperback, hardcover, etc.), enters delivery address, and pays. Peecho handles all printing and shipping globally.',
+    'CLOSE: Tap ✕ to close and return to My Story.',
+    '',
+
+    '=== DASHBOARD ===',
+    'PURPOSE: Overview of the memoir project. Gethro\'s home base.',
+    'GETHRO TILE: Daily observation or nudge from Gethro. Dismiss button (×) hides it for 7 days. Tap Gethro\'s avatar to open the Ask Gethro panel.',
+    'STORY HEALTH TILE: Shows each chapter as a traffic-light pill — 🔴 no entries, 🟡 few entries, 🟢 good coverage. Tap any chapter pill to jump to My Memories filtered to that chapter.',
+    'WORD COUNT TILE: Total words written across all memories, with progress milestones shown as a bar.',
+    'YOUR STORY TILE: Shows story stats and links. Contains "Organise My Book" button and "Go to My Story" link.',
+    'RESPONSES TILE: Shows unread responses from people you shared memories with. Tap to read them.',
+    'MY PEOPLE TILE: Shows family tree summary. Tap "Open family tree" to open the My People overlay.',
+    'MY GOALS TILE: Shows current memoir focus (era, audience, tone). "Revisit with Gethro" button opens a new 3-step goal session to update them.',
+    'RECENT ENTRIES: List of the most recently saved memories at the bottom of the Dashboard.',
+    'DUPLICATE DETECTOR: "Check for duplicates" button → scans all entries for similar ones → shows side-by-side pairs → user can merge or dismiss each. Merging combines both entries into one using AI.',
+    'STORY CONSOLIDATOR: "Consolidate similar entries" button → clusters related memories → user can select a cluster and merge into one polished entry using AI. Useful when multiple short entries cover the same event.',
+    '',
+
+    '=== ORGANISE MY BOOK OVERLAY ===',
+    'HOW TO OPEN: Dashboard → Your Story tile → "📚 Organise My Book", OR My Memories tab toolbar → "📚 Organise My Book".',
+    'PURPOSE: Set chapters, dates, and order for all memories in bulk — without opening each one individually.',
+    'TABLE: Shows all memories (excluding system entries) grouped by chapter, oldest first. Columns: drag handle (☰), Memory title, Preview, Chapter, Date/Year.',
+    'CHANGE CHAPTER: Use the dropdown in the Chapter column. Select any standard chapter or a custom one.',
+    'SET DATE: Type in the Date/Year field (free text, e.g. "1987", "Early 1970s", "Age 12").',
+    'REORDER MEMORIES: Drag the ☰ handle on the left of any row up or down. This changes the order within that chapter. The new order is saved as sort_order.',
+    'HOW TO DRAG: Click/tap and hold the ☰ handle, drag the row to the new position. A gold outline shows where it will land. Release to drop.',
+    'SAVING: Changes are NOT saved automatically. Tap "Save All Changes" to commit. A counter in the footer shows how many entries have unsaved changes.',
+    'CANCEL: Tap Cancel to discard all unsaved changes and close.',
+    'NOTE: Reordering only works within a chapter. Changing chapters via the dropdown can move a memory to a different chapter group.',
+    '',
+
+    '=== MY PEOPLE / FAMILY TREE OVERLAY ===',
+    'HOW TO OPEN: Dashboard → My People tile → "Open family tree", OR tap the family tree icon in the header.',
+    'PURPOSE: Build and browse the family tree. All people tagged in memories appear here.',
+    'TWO TABS: Tree (visual interactive tree) and Directory (searchable list of everyone).',
+    'TREE TAB: Visual family tree. Pan by dragging. Zoom with pinch or scroll wheel. Tap any person node to open their profile drawer.',
+    'ADDING THE FIRST PERSON: On an empty tree, tap "+ Add your first family member". Fill in name, relationship type (to yourself), and optional dates.',
+    'ADDING A RELATIVE: Tap any existing person node → their profile drawer opens → tap "Add relative" → choose relationship type → fill in their details.',
+    'PROFILE DRAWER: Slides in from the right when you tap a person. Shows name, relationship, dates, bio, memories they appear in. Buttons: Edit, Add Relative, Write a Memory, Delete.',
+    'EDIT PERSON: In the profile drawer, tap Edit. Change name, relationship, dates, bio, or photo. Tap Save.',
+    'DELETE PERSON: In the profile drawer, tap Delete. Asks for confirmation. Does not delete their entries — just removes them from the tree.',
+    'DIRECTORY TAB: Searchable, filterable list of all people. Search by name. Filter by bucket: Family, Friend, Colleague. Tap any person to open their profile.',
+    'BUCKET: Each person has a bucket (Family, Friend, Colleague) — set in the add/edit modal. Used to filter the Directory.',
+    'RELATIONSHIP TYPES: Spouse/Partner, Parent, Child, Sibling, and others. Set when adding a person.',
+    'RECENTRE: Tap the recentre button (⊙ or similar) to fit the tree back into view if you\'ve panned too far.',
+    '',
+
+    '=== ASK GETHRO PANEL ===',
+    'HOW TO OPEN: Tap the Gethro FAB button (floating avatar button), OR tap Gethro\'s avatar on the Add Memory tab.',
+    'PURPOSE: Chat with Gethro. He can help with memories, answer app questions, and navigate the app for you.',
+    'INPUT: Type a message or tap the mic button to speak. Gethro auto-sends after a pause in speech.',
+    'GETHRO NAVIGATES: If you ask Gethro to go somewhere, he will open that screen automatically. E.g. "Show me my childhood entries" → he opens My Memories filtered to Childhood chapter.',
+    'ACTION BUTTONS: After some replies, a tappable button appears (e.g. "📋 Go to My Memories") — tap it to navigate directly.',
+    'MEMORY CONVERSATION MODE: When you discuss a real memory with Gethro, a gold "Save to entry" bar appears at the top of the panel. Tap it to save the whole conversation as a new memory entry.',
+    'GETHRO\'S VOICE: Gethro speaks his replies aloud via text-to-speech. If audio doesn\'t play, check your device volume and that the browser allows audio.',
+    'CLOSE: Tap ✕ to close the panel. If you were in a memory conversation, Gethro will ask if you want to save it first.',
+    '',
+
+    '=== SETTINGS OVERLAY ===',
+    'HOW TO OPEN: Tap the ⚙️ icon in the top-right header.',
+    'CONTENTS: Password reset, Weekly email prompt toggle, Delete account.',
+    'CHANGE PASSWORD: Settings → "Reset Password" → enter current password and new password → tap Save. Alternatively: sign out → "Forgot password?" on sign-in screen → enter email → check inbox.',
+    'WEEKLY EMAIL: Settings → toggle "Weekly Story Prompt" on or off. When on, Gethro emails a question weekly or fortnightly to prompt a new memory.',
+    'DELETE ACCOUNT: Settings → "Delete My Account & All Data" → confirm. Permanently deletes all entries, photos, audio, and the account. Cannot be undone.',
+    '',
+
+    '=== ONBOARDING ===',
+    '6-step flow shown only on first sign-up. Step 1: Gethro introduces himself by voice. Step 2: Enter your first name (required — the only non-skippable step). Step 3: Enter your birthday (skippable). Step 4: Choose your memoir goal from 4 tap-cards (skippable). Step 5: How-it-works summary (skippable). Step 6: Gethro asks the first memory question — "What\'s one of your earliest memories?" — spoken aloud. Answering drops you into the Add Memory tab with the mic ready.',
+    '',
+
+    '=== SHARING & RESPONSES ===',
+    'SHARING A MEMORY: My Memories tab → expand any entry → tap "Share" → a private link is generated.',
+    'THE LINK: The link works for anyone — no login needed. Recipient sees the memory text (and photo if present) and can leave a response.',
+    'RECIPIENT RESPONSE: Recipient can type a written response OR record a voice response. The response is submitted anonymously (by name, if they provide one).',
+    'VIEWING RESPONSES: Dashboard → Responses tile shows unread response count. Tap to read them. Each response shows who sent it and their message. You can import a response as a new memory entry ("Import as memory").',
+    'GETHRO MENTIONS: When you open the Ask Gethro panel, if there are unread responses, Gethro will mention them and offer to take you to the Dashboard.',
+    '',
+
+    '=== AI REVIEW ===',
+    'HOW TO OPEN: Add Memory tab → tap "Review this entry" (visible when there is text in the memory).',
+    'WHAT IT CHECKS: Spelling, grammar, length, clarity, presence of a title, chapter tag, era, people tags, and location tag.',
+    'RESULTS: A checklist shows pass/fail for each check. Tapping a failed item shows Gethro\'s suggestion.',
+    'APPLY SUGGESTIONS: Tap any suggestion to apply it directly to the entry. Changes are previewed before saving.',
+    '"Rewrite in prose" OPTION: AI rewrites the entry in polished memoir prose while keeping all facts and names. The user sees both versions and can accept or discard.',
+    '',
+
+    '=== CHAPTERS ===',
+    'PURPOSE: Chapters organise memories into life sections. Used by Book Edition story format and Story Health tile.',
+    'COMMON CHAPTERS: Childhood, School Years, Career, Marriage, Family Life, Travel, Later Years — but any custom chapter name works.',
+    'SETTING A CHAPTER: Add Memory tab → "+ Add details" → Chapter dropdown. OR use Organise My Book to set chapters in bulk.',
+    'STORY HEALTH: Dashboard → Story Health tile shows which chapters have content (green), need more (amber), or are empty (red). Tap any chapter to filter My Memories to that chapter.',
+    'BOOK EDITION: Only entries with chapters assigned appear in chapter sections in the Book Edition story format.',
+    '',
+
+    '=== MY GOALS (MEMOIR GOALS) ===',
+    'HOW TO OPEN: Dashboard → My Goals tile → "Revisit with Gethro".',
+    '3-STEP SESSION: Step 1 — Focus era (e.g. Childhood, Career years, My whole life). Step 2 — Audience (e.g. My children, My grandchildren, Just for me). Step 3 — Tone (e.g. Heartfelt and emotional, Funny and light, Reflective and honest).',
+    'EFFECT: Goals are saved and injected into every Gethro conversation. His questions are shaped toward the stated era and audience automatically.',
+    'DISPLAYED ON DASHBOARD: Current goals shown in plain English on the My Goals tile. If not set, the tile prompts to run the session.',
+    '',
+
+    '=== DUPLICATE DETECTOR ===',
+    'HOW TO OPEN: Dashboard → "Check for duplicates" button.',
+    'WHAT IT DOES: Scans all entries using AI to find pairs that cover the same event or topic.',
+    'RESULTS: Shows matched pairs side-by-side with a similarity type (near-identical, partial overlap). Each pair has: Merge (combine into one AI-written entry), or Dismiss (keep both).',
+    'MERGE: AI writes a combined entry using both originals. User sees the draft, can edit it, then accept. One entry is saved, the other is archived (not deleted — recoverable by admin if needed).',
+    '',
+
+    '=== STORY CONSOLIDATOR ===',
+    'HOW TO OPEN: Dashboard → "Consolidate similar entries" button.',
+    'WHAT IT DOES: Clusters related memories (e.g. multiple short entries about the same holiday) and offers to merge a cluster into one polished entry.',
+    'PROCESS: Select a cluster → AI generates a consolidated draft → user can edit → accept saves as one entry, originals archived.',
+    '',
+
+    '=== PHOTOS & AUDIO ===',
+    'ADD PHOTO: Add Memory tab → 📎 attachment icon → "Upload Photo" or "Take Photo". OR expand "+ Add details" → Photos section.',
+    'MULTIPLE PHOTOS: Multiple photos can be uploaded per memory. Each becomes a child entry linked to the main one.',
+    'PHOTO AI DESCRIPTION: When a photo is uploaded, AI generates an automatic description which is saved alongside the photo.',
+    'ADD AUDIO: 📎 attachment icon → "Upload Audio" (attach existing .mp3 / .wav / .m4a file) or "Record Audio" (records directly in the browser).',
+    'PLAYBACK: Audio plays back inline on the entry card in My Memories.',
+    '',
+
+    '=== VOICE DICTATION ===',
+    'Tap the 🎙️ mic button on the Add Memory tab to start dictation. Speak naturally — pauses are fine.',
+    'Transcription appears in the memory text field in real time.',
+    'Tap ⏹ to stop. The transcription stays in the field — edit it before saving if needed.',
+    'If the mic does not start: check browser microphone permissions (usually a prompt in the address bar). On iOS, use Safari. On Android, use Chrome.',
+    '',
+
+    '=== DARK MODE ===',
+    'Tap the 🌙 moon icon in the top-right header to switch to dark mode.',
+    'Tap the ☀️ sun icon to switch back to light mode.',
+    'Preference is remembered per device.',
+    '',
+
+    '=== ACCOUNT & AUTH ===',
+    'SIGN OUT: Tap "Sign Out" in the top-right header.',
+    'SIGN IN: Email and password. No social login.',
+    'FORGOT PASSWORD (signed out): On the sign-in screen, tap "Forgot password?" → enter your email → check inbox for a reset link.',
+    'CHANGE PASSWORD (signed in): ⚙️ Settings → "Reset Password".',
+    'DELETE ACCOUNT: ⚙️ Settings → "Delete My Account & All Data". Permanent and irreversible.',
+    '',
+
+    '=== WEEKLY EMAIL PROMPTS ===',
+    'Opt in to receive a weekly question from Gethro by email.',
+    'Toggle: ⚙️ Settings → "Weekly Story Prompt" → on/off.',
+    'Frequency: weekly or fortnightly (depends on setting).',
+    'The email is signed from Gethro, not from LifeTold.',
+    '',
+
+    '=== HELP TAB ===',
+    'HOW TO OPEN: Tap the ❓ Help tab at the bottom.',
+    'CONTENTS: App feature guide, privacy information, data handling, support contact (hello@lifetold.app).',
+    '',
+
+    '=== OFFLINE BEHAVIOUR ===',
+    'If you lose internet while saving a memory, the entry is queued locally and retried when the connection returns.',
+    'An orange offline banner appears at the top of the screen when the app detects no connection.',
+    'Previously saved memories are still viewable while offline — they are cached locally.',
+    '',
+
+    '=== FAQ — COMMON QUESTIONS ===',
+    'Q: Where do I change my password?',
+    'A: Tap ⚙️ Settings (top-right header) → Reset Password. Or if signed out: "Forgot password?" on the sign-in screen.',
+    '',
+    'Q: How do I change the order of memories in my book?',
+    'A: Open "Organise My Book" (Dashboard → Your Story tile, or My Memories toolbar) → drag the ☰ handle on any row up or down → tap "Save All Changes".',
+    '',
+    'Q: How do I assign memories to chapters?',
+    'A: Either: open each memory in Add Memory tab → "+ Add details" → Chapter dropdown. Or in bulk: open "Organise My Book" and use the Chapter dropdown on each row.',
+    '',
+    'Q: My chapter is missing from the Book Edition story — why?',
+    'A: Only memories with a chapter tag assigned appear in chapter sections. Open "Organise My Book" and check that your memories have chapters set.',
+    '',
+    'Q: How do I add someone to my family tree?',
+    'A: Open My People (Dashboard → My People tile or header icon) → tap any existing person node → "Add relative", OR tap "+ Add your first family member" on an empty tree.',
+    '',
+    'Q: Where do I see responses from people I shared a memory with?',
+    'A: Dashboard → Responses tile. Gethro will also mention new responses when you open the chat panel.',
+    '',
+    'Q: How do I get a printed book?',
+    'A: My Story tab → generate a story → tap "Print as Book" → customise in the preview → tap "Order via Peecho".',
+    '',
+    'Q: Why is my memory not showing in the story?',
+    'A: All saved memories are included. If using Book Edition, make sure the memory has a chapter assigned. Try regenerating the story.',
+    '',
+    'Q: Can I edit a memory after saving it?',
+    'A: Yes. My Memories tab → tap the memory card to expand it → edit inline and tap Save. Or tap the Edit button to open it in the Add Memory tab.',
+    '',
+    'Q: How do I delete a memory?',
+    'A: My Memories tab → tap the memory card to expand it → tap the Delete button → confirm.',
+    '',
+    'Q: How do I undo a merge from the Duplicate Detector?',
+    'A: Merged entries cannot be undone from the app. Contact hello@lifetold.app — the original entries are archived server-side and can be restored by the team.',
+    '',
+    'Q: The mic is not working — what do I do?',
+    'A: Check your browser has microphone permission (look for a permission prompt or a microphone icon in the address bar). On iPhone/iPad use Safari. On Android use Chrome. Make sure the app is accessed via HTTPS.',
+    '',
+    'Q: Does LifeTold work offline?',
+    'A: Partially. You can view saved memories offline. Saving new entries while offline queues them and retries when you reconnect.',
+
+  ].join('\n');
+
   // ── Ask Gethro ────────────────────────────────────────────────────
   // Floating conversational UI. User types or speaks; Gethro replies in character
   // and optionally triggers an app action (navigate, filter, pre-fill, capture).
@@ -14578,34 +14911,13 @@
       if (_mpOv && _mpOv.style.display !== 'none') currentScreen = 'my_people';
       var _ppOv = document.getElementById('printPreviewOverlay');
       if (_ppOv && _ppOv.classList.contains('visible')) currentScreen = 'print_preview';
+      var _bboOv = document.getElementById('bulkBookOverlay');
+      if (_bboOv && _bboOv.classList.contains('open')) currentScreen = 'book_organiser';
     } catch(e) {}
 
-    var APP_KNOWLEDGE =
-      'APP KNOWLEDGE — answer any how-to question using this:\n' +
-      '\n' +
-      '- ADD MEMORY TAB: Write or dictate a memory. Tap the mic button to dictate by voice. Tap Gethro\'s avatar to chat with him. Use the camera icon to attach a photo or upload an audio file. Expand "+ Add details" to tag chapter, era/date, location, people, and upload photos. Tap "Done" to save.\n' +
-      '- MY MEMORIES TAB (Entries): Browse, search, edit or delete all saved memories. Use filters for chapter, person, or location. Tap any entry card to expand and edit it inline. Use the search bar for keyword search with highlight.\n' +
-      '- MY STORY TAB: Generate an AI-written memoir in 5 formats — Snapshot (short blurb), The Short Version, The Full Story, Book Edition (with chapters), and Journal Style (user\'s own words in date order). Toggle the 😄 Funny mode for any format. Export as an HTML file or print as a physical book.\n' +
-      '- BOOK DETAILS: In My Story tab there is a "Your Book" section — expand it to set your book title, author name, dedication, and blurb. These appear in the print preview. The "Suggest" button asks AI to write a blurb from your entries.\n' +
-      '- DASHBOARD: Gethro\'s daily observation tile, story health (chapter coverage with traffic lights), word count progress, people/places tiles, recent entries. Click any chapter in the health tile to filter entries to that chapter. The duplicate detector and story consolidator are also accessible from the Dashboard.\n' +
-      '- DUPLICATE DETECTOR: Dashboard → "Check for duplicates" — finds entries that cover the same event and offers to merge them into one clean entry.\n' +
-      '- STORY CONSOLIDATOR: Dashboard → "Consolidate similar entries" — clusters related memories and lets you merge them into a single well-written entry using AI.\n' +
-      '- MY PEOPLE (Family Tree): Tap the "My People" tile on the Dashboard or the family tree icon. Opens a full-screen overlay with two tabs — Tree (visual family tree) and Directory (list of everyone). To add someone: tap "+ Add your first family member" on an empty tree, OR tap an existing person node and choose "Add relative". Set their name, relationship type, and optional dates/notes. Tap any node to view/edit their profile. The tree is pannable and zoomable.\n' +
-      '- SHARING A MEMORY: In My Memories tab, tap any entry to expand it, then tap the "Share" button. Creates a private link you can send to family. Recipients can read the memory and submit a written or voice response. Responses appear in the Dashboard responses tile.\n' +
-      '- AI REVIEW: In Add Memory tab, tap "Review this entry" — runs a hygiene check (spelling, grammar, length, clarity, title, chapter, era, people, location) and suggests fixes. Also offers to rewrite the entry in polished prose while keeping all your facts.\n' +
-      '- PHOTOS: In Add Memory tab, expand "+ Add details" → Photos section → upload from your library or take a photo. Photos appear on the entry card in My Memories.\n' +
-      '- AUDIO: In Add Memory tab, tap the attachment icon → "Upload Audio" to attach an audio file, or "Record Audio" to record a voice memo directly. Audio plays back in the entry.\n' +
-      '- VOICE DICTATION: In Add Memory tab, tap the mic button to speak your memory — speech is transcribed in real time.\n' +
-      '- PEOPLE & REFERENCES: Chip-based tag input in the "+ Add details" section. Type a name and press Enter or comma to add. These tags power the people filter and the My People directory.\n' +
-      '- CHAPTERS: Used to organise memories into life sections (e.g. Childhood, Career, Family Life). Set in "+ Add details". The story health tile shows which chapters need more content.\n' +
-      '- PRINTING: My Story tab → generate a story → click "🖨️ Print as Book" → customise cover style, title, author, dedication in the preview → click "Order via Peecho" — takes you to Peecho\'s site to choose format, enter address and pay. Peecho handle all printing and shipping.\n' +
-      '- HELP TAB: App guide, privacy information, support email (hello@lifetold.app), weekly prompt email toggle, and delete account button.\n' +
-      '- WEEKLY EMAIL PROMPTS: Help tab → "Weekly Story Prompt" toggle — opt in to receive a weekly question from Gethro by email (weekly or fortnightly). Toggle off at any time.\n' +
-      '- DARK MODE: Tap the moon icon (🌙) in the top-right header to switch to dark mode. Tap the sun icon (☀️) to switch back.\n' +
-      '- CHANGE PASSWORD: Sign out → "Forgot password?" on the sign-in screen → enter your email → check your inbox for a reset link.\n' +
-      '- DELETE ACCOUNT: Help tab → scroll to bottom → red "Delete My Account & All Data" button. Permanently deletes all entries, photos, and account data. Cannot be undone.\n' +
-      '- SIGN OUT: Tap "Sign Out" in the top-right corner of the app.\n' +
-      '- FORGOT PASSWORD: On the sign-in screen, tap "Forgot password?" and enter your email address.\n';
+    // APP_KNOWLEDGE is now the module-level GETHRO_APP_KNOWLEDGE constant.
+    // To update what Gethro knows about the app, edit that constant — do not add facts here.
+    var APP_KNOWLEDGE = GETHRO_APP_KNOWLEDGE;
 
     var currentScreenNote = 'USER IS CURRENTLY ON: ' + currentScreen + '\n' +
       (currentScreen === 'my_people' ? 'They are looking at their family tree. Proactively help with: adding people, setting relationships, navigating Tree vs Directory tabs, or tapping a node to edit.\n' : '') +
@@ -14613,7 +14925,8 @@
       (currentScreen === 'entries' ? 'They are browsing their saved memories. Proactively help with: searching, filtering, editing, or sharing an entry.\n' : '') +
       (currentScreen === 'story' ? 'They are on the My Story tab. Proactively help with: generating a story, choosing a format, book details, or printing.\n' : '') +
       (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' : '') +
-      (currentScreen === 'print_preview' ? 'They are in the print preview. Proactively help with: cover styles, filling in book details, or placing an order via Peecho.\n' : '');
+      (currentScreen === 'print_preview' ? 'They are in the print preview. Proactively help with: cover styles, filling in book details, or placing an order via Peecho.\n' : '') +
+      (currentScreen === 'book_organiser' ? 'They are in the Organise My Book screen. They can: (1) change the chapter for each memory using the dropdown, (2) set a date/year, and (3) drag the ☰ handle on any row to reorder memories within their chapter. Changes save when they tap Save All Changes.\n' : '');
 
     // In memory conversation mode, suppress the entries summary to prevent Gethro
     // from drifting to unrelated entries (e.g. mentioning Zuma when stuck on croissants).
@@ -14645,6 +14958,7 @@
       '  navigate_story      — open the My Story tab\n' +
       '  navigate_dashboard  — open the Dashboard\n' +
       '  navigate_my_people  — open the My People / Family Tree overlay\n' +
+      '  navigate_book_organiser — open the Organise My Book overlay (set chapters, dates, drag to reorder memories)\n' +
       '  filter_person       — filter Entries by person. params: { person: "name" }\n' +
       '  filter_chapter      — filter Entries by chapter. params: { chapter: "name" }\n' +
       '  filter_location     — filter Entries by location. params: { location: "name" }\n' +
@@ -14726,7 +15040,7 @@
     var delay = 800; // small pause so reply is read before navigation
 
     // Navigation actions: close the panel first so user lands on the destination cleanly.
-    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','navigate_my_people',
+    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','navigate_my_people','navigate_book_organiser',
                       'filter_person','filter_chapter','filter_location','filter_text','new_memory','review_entry','generate_story'];
     if (navActions.indexOf(action.type) !== -1) {
       // Issue 4: if gold bar is showing and user has spoken, check before navigating
@@ -14777,6 +15091,8 @@
     switch (action.type) {
       case 'navigate_my_people':
         setTimeout(function() { if (typeof openMyPeople === 'function') openMyPeople(); }, delay); break;
+      case 'navigate_book_organiser':
+        setTimeout(function() { if (typeof openBulkBookEditor === 'function') openBulkBookEditor(); }, delay); break;
       case 'navigate_memories':
         setTimeout(function() { showPanel('memories', null, 1); }, delay); break;
       case 'navigate_entries':
@@ -14859,7 +15175,7 @@
     textDiv.textContent = text;
     div.appendChild(textDiv);
     // If there is a navigational action, add a small action button hint
-    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','navigate_my_people','filter_person','filter_chapter','filter_location','filter_text','new_memory','generate_story'];
+    var navActions = ['navigate_memories','navigate_entries','navigate_story','navigate_dashboard','navigate_my_people','navigate_book_organiser','filter_person','filter_chapter','filter_location','filter_text','new_memory','generate_story'];
     if (action && navActions.indexOf(action.type) !== -1) {
       var btn = document.createElement('button');
       btn.className = 'agp-action-btn';
@@ -14869,6 +15185,7 @@
         navigate_story:     '📖 Go to My Story',
         navigate_dashboard: '🏠 Go to Dashboard',
         navigate_my_people: '🌳 Go to My People',
+        navigate_book_organiser: '📚 Organise My Book',
         filter_person:     '👤 Filter: ' + ((action.params||{}).person||''),
         filter_chapter:    '📚 Filter: ' + ((action.params||{}).chapter||''),
         filter_location:   '📍 Filter: ' + ((action.params||{}).location||''),
@@ -16807,7 +17124,8 @@
         var dateVal = e.date || '';
         var entryId = e.id;
 
-        html += '<tr data-entry-id="' + entryId + '">' +
+        html += '<tr data-entry-id="' + entryId + '" draggable="true">' +
+          '<td class="bbo-drag-handle" title="Drag to reorder" style="width:28px;text-align:center;cursor:grab;color:var(--text-light);font-size:1rem;padding:8px 4px;user-select:none">&#9776;</td>' +
           '<td class="bbo-title-cell" title="' + escHtml(titleText) + '">' + escHtml(titleText) + '</td>' +
           '<td class="bbo-answer-cell">' + escHtml(answerPreview) + (answerPreview.length === 80 ? '…' : '') + '</td>' +
           '<td style="min-width:140px">' +
@@ -16822,9 +17140,66 @@
       });
 
       tbody.innerHTML = html;
+      _bboInitDrag(tbody);
     }
 
     document.getElementById('bulkBookOverlay').classList.add('open');
+  }
+
+  // ── BBO drag-to-reorder ──────────────────────────────────────────────
+  // Tracks per-row sort_order changes in _bboEdits so saveBulkBookEdits
+  // can PATCH them along with chapter/date changes.
+  var _bboDragSrc = null;
+
+  function _bboInitDrag(tbody) {
+    tbody.addEventListener('dragstart', function(ev) {
+      var row = ev.target.closest('tr[data-entry-id]');
+      if (!row) { ev.preventDefault(); return; }
+      _bboDragSrc = row;
+      ev.dataTransfer.effectAllowed = 'move';
+      row.style.opacity = '0.4';
+    });
+    tbody.addEventListener('dragend', function(ev) {
+      var row = ev.target.closest('tr[data-entry-id]');
+      if (row) row.style.opacity = '';
+      tbody.querySelectorAll('tr').forEach(function(r) { r.style.outline = ''; });
+    });
+    tbody.addEventListener('dragover', function(ev) {
+      ev.preventDefault();
+      var row = ev.target.closest('tr[data-entry-id]');
+      if (!row || row === _bboDragSrc) return;
+      ev.dataTransfer.dropEffect = 'move';
+      tbody.querySelectorAll('tr').forEach(function(r) { r.style.outline = ''; });
+      row.style.outline = '2px solid var(--gold)';
+    });
+    tbody.addEventListener('drop', function(ev) {
+      ev.preventDefault();
+      tbody.querySelectorAll('tr').forEach(function(r) { r.style.outline = ''; });
+      if (!_bboDragSrc) return;
+      var target = ev.target.closest('tr[data-entry-id]');
+      if (!target || target === _bboDragSrc) return;
+      // Insert before or after depending on cursor position
+      var rect = target.getBoundingClientRect();
+      var after = ev.clientY > rect.top + rect.height / 2;
+      if (after) {
+        target.parentNode.insertBefore(_bboDragSrc, target.nextSibling);
+      } else {
+        target.parentNode.insertBefore(_bboDragSrc, target);
+      }
+      _bboDragSrc.style.opacity = '';
+      // Recalculate sort_order for all content rows (skip separator rows)
+      var allRows = Array.from(tbody.querySelectorAll('tr[data-entry-id]'));
+      allRows.forEach(function(r, idx) {
+        var id = r.getAttribute('data-entry-id');
+        if (!id) return;
+        if (!_bboEdits[id]) _bboEdits[id] = {};
+        _bboEdits[id].sort_order = idx + 1;
+      });
+      var statusEl = document.getElementById('bboStatus');
+      var count = Object.keys(_bboEdits).length;
+      if (statusEl) statusEl.textContent = count + ' entr' + (count === 1 ? 'y' : 'ies') + ' changed';
+      _bboDragSrc = null;
+    });
   }
 
   function bboMarkDirty(el) {
@@ -17001,7 +17376,7 @@
   <div class="bbo-header">
     <div>
       <h2 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">📚 Organise My Book</h2>
-      <p style="font-size:0.78rem;color:var(--text-light);margin:3px 0 0">Set chapters and dates for each memory. Changes save when you tap Save All.</p>
+      <p style="font-size:0.78rem;color:var(--text-light);margin:3px 0 0">Set chapters and dates. Drag ☰ to reorder within a chapter. Changes save when you tap Save All.</p>
     </div>
     <button onclick="closeBulkBookEditor()" aria-label="Close" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px">✕</button>
   </div>
@@ -17009,8 +17384,9 @@
     <table class="bbo-table" id="bboTable">
       <thead>
         <tr>
-          <th style="width:36%">Memory</th>
-          <th class="bbo-answer-cell" style="width:30%">Preview</th>
+          <th style="width:28px"></th>
+          <th style="width:32%">Memory</th>
+          <th class="bbo-answer-cell" style="width:28%">Preview</th>
           <th style="width:22%">Chapter</th>
           <th style="width:12%">Date / Year</th>
         </tr>
