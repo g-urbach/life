@@ -1204,10 +1204,38 @@
     }
     .ob-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(201,169,110,0.25); transition: background 0.3s, transform 0.3s; }
     .ob-dot.active { background: var(--gold); transform: scale(1.4); }
+    .ob-skip {
+      display: block; margin: 14px auto 0; background: none; border: none;
+      color: rgba(201,169,110,0.5); font-family: 'Lato', sans-serif; font-size: 0.82rem;
+      cursor: pointer; letter-spacing: 0.04em; transition: color 0.2s; padding: 4px 8px;
+    }
+    .ob-skip:hover { color: var(--gold); }
+    .ob-goal-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px;
+    }
+    .ob-goal-card {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 14px 10px; background: rgba(201,169,110,0.08); border: 1px solid rgba(201,169,110,0.2);
+      border-radius: 12px; font-family: 'Lato', sans-serif; font-size: 0.78rem; color: var(--text);
+      cursor: pointer; transition: background 0.2s, border-color 0.2s; text-align: center;
+      line-height: 1.3;
+    }
+    .ob-goal-card span { display: block; }
+    .ob-goal-card:hover { background: rgba(201,169,110,0.16); border-color: var(--gold); }
+    .ob-goal-card.selected { background: rgba(201,169,110,0.22); border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+    .ob-how-list {
+      list-style: none; padding: 0; margin: 8px 0 0; text-align: left;
+    }
+    .ob-how-list li {
+      padding: 10px 0; border-bottom: 1px solid rgba(201,169,110,0.1);
+      font-size: 0.88rem; color: var(--text); line-height: 1.5;
+    }
+    .ob-how-list li:last-child { border-bottom: none; }
     @media (max-width: 480px) {
       .ob-card { padding: 32px 22px; }
       .ob-title { font-size: 1.4rem; }
       .ob-name-input { font-size: 1.2rem; }
+      .ob-goal-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
     }
 
     /* ── iOS ANSWER BAR ── */
@@ -2975,6 +3003,17 @@
         <div id="dashPowerUserNudge" style="font-size:0.82rem;color:var(--text-light);line-height:1.5;padding:10px 12px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--gold)"></div>
       </div>
 
+      <!-- ⑧ MY GOALS TILE — APP-37 -->
+      <div class="dash-tile dash-tile-wide" id="dashGoalTile" style="min-height:auto;padding:16px 20px;border-left:3px solid var(--rose)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div class="dash-tile-title" style="margin-bottom:6px">🎯 My Story Goals</div>
+            <div id="dashGoalSummary" style="font-size:0.85rem;line-height:1.6;color:var(--text-light)">Not set yet — Gethro will ask you three quick questions to focus your memoir.</div>
+          </div>
+          <button id="dashGoalBtn" onclick="openGoalSession()" style="flex-shrink:0;padding:8px 14px;border-radius:8px;border:1px solid var(--rose);background:none;color:var(--rose);font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;white-space:nowrap">Get started</button>
+        </div>
+      </div>
+
     </div>
   </div>
   </div>
@@ -3400,6 +3439,9 @@
         <button onclick="clearReviewSearch()" id="reviewSearchClear"
           style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-light);cursor:pointer;font-size:1rem;line-height:1">✕</button>
       </div>
+      <!-- APP-36: Bulk Book Editor second entry point -->
+      <button onclick="openBulkBookEditor()" title="Set chapters, dates and order for your book"
+        style="padding:8px 12px;background:var(--gold);color:#1a1208;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">📚 Organise My Book</button>
       <span id="reviewEntryCount" style="font-size:0.82rem;color:var(--text-light)"></span>
     </div>
     <div id="reviewEntryList"></div>
@@ -3603,56 +3645,48 @@
   </div>
 </div>
 
-<!-- Progressive Onboarding Overlay (UX-C02) — 3 steps -->
+<!-- Progressive Onboarding Overlay (UX-C05) — 6 steps, all skippable except Step 2 (name) -->
 <div id="onboardingOverlay" style="display:none">
   <div id="onboardingBox">
 
-    <!-- Step 1: Gethro introduces himself -->
+    <!-- Gethro SVG macro — reused across steps -->
+    <!-- Step 1: Gethro intro — warmer, longer -->
     <div class="ob-step ob-active" id="obStep1">
       <div class="ob-card">
         <div class="ob-avatar-wrap">
           <div class="ob-avatar-ring" id="obAvatarRing1"></div>
           <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <circle cx="40" cy="40" r="38" fill="#2c2416"/>
-            <ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
             <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
             <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
             <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-            <g class="ga-mouth-group">
-              <path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-              <path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/>
-            </g>
-            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
-            <ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
           </svg>
         </div>
         <p class="ob-eyebrow">Your story companion</p>
         <h2 class="ob-title">Hello, I'm Gethro.</h2>
-        <p class="ob-sub">I'm here to help you remember and capture the moments that made you who you are — at your own pace, with no wrong answers.</p>
-        <button class="ob-btn" id="obStep1Btn" onclick="obGoStep2()">Let's get started &#8594;</button>
+        <p class="ob-sub">I'm here to help you capture the moments that made you who you are. Before we start, let me ask a few things — but feel free to dive straight in.</p>
+        <button class="ob-btn" id="obStep1Btn" onclick="obGoStep(2)">Let's go &#8594;</button>
+        <button class="ob-skip" onclick="obEnterApp()">Skip &#8594;</button>
       </div>
     </div>
 
-    <!-- Step 2: Name collection -->
+    <!-- Step 2: Name — only required step, no skip -->
     <div class="ob-step" id="obStep2">
       <div class="ob-card">
         <div class="ob-avatar-wrap">
           <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <circle cx="40" cy="40" r="38" fill="#2c2416"/>
-            <ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
             <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
             <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
             <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-            <g class="ga-mouth-group">
-              <path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-              <path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/>
-            </g>
-            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
-            <ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
           </svg>
         </div>
         <p class="ob-eyebrow">First things first</p>
@@ -3665,43 +3699,127 @@
         <input id="onboardLastName" type="hidden" value="">
         <select id="onboardSex" style="display:none"><option value="">Prefer not to say</option></select>
         <button class="ob-btn" id="obStep2Btn" onclick="obSaveAndGoStep3()">That's me &#8594;</button>
+        <!-- No skip on step 2 — name is required -->
       </div>
     </div>
 
-    <!-- Step 3: First question -->
+    <!-- Step 3: Birthday -->
     <div class="ob-step" id="obStep3">
       <div class="ob-card">
         <div class="ob-avatar-wrap">
           <div class="ob-avatar-ring" id="obAvatarRing3"></div>
           <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <circle cx="40" cy="40" r="38" fill="#2c2416"/>
-            <ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
             <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
             <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
             <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
             <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-            <g class="ga-mouth-group">
-              <path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-              <path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/>
-            </g>
-            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
-            <ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
           </svg>
         </div>
-        <p class="ob-eyebrow" id="obStep3Eyebrow">Your first memory</p>
-        <h2 class="ob-title" id="obStep3Title">Here's your first question</h2>
-        <div class="ob-question-bubble" id="obStep3Question"></div>
-        <p class="ob-sub" style="margin-top:16px;font-size:0.85rem">Speak your answer or type it — whatever feels natural.</p>
-        <button class="ob-btn" id="obStep3Btn" onclick="obEnterApp()">Start my story &#8594;</button>
+        <p class="ob-eyebrow" id="obStep3Eyebrow">Where your story begins</p>
+        <h2 class="ob-title">When were you born?</h2>
+        <p class="ob-sub">This helps me give your story a sense of time and place.</p>
+        <input class="ob-name-input" id="onboardDob" type="text" placeholder="e.g. 12 March 1952"
+          autocomplete="bday" inputmode="text"
+          onkeydown="if(event.key==='Enter') obSaveDobAndGoStep4()">
+        <button class="ob-btn" id="obStep3Btn" onclick="obSaveDobAndGoStep4()">Next &#8594;</button>
+        <button class="ob-skip" onclick="obGoStep(4)">Skip &#8594;</button>
       </div>
     </div>
 
-    <!-- Progress dots -->
+    <!-- Step 4: What brings you here — memoir goal -->
+    <div class="ob-step" id="obStep4">
+      <div class="ob-card">
+        <div class="ob-avatar-wrap">
+          <div class="ob-avatar-ring" id="obAvatarRing4"></div>
+          <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
+            <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
+            <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+          </svg>
+        </div>
+        <p class="ob-eyebrow">A little more about you</p>
+        <h2 class="ob-title" id="obStep4Title">What brings you here?</h2>
+        <p class="ob-sub" style="margin-bottom:18px">I can help you capture a few memories or your whole life story — what feels right for you?</p>
+        <div class="ob-goal-grid">
+          <button class="ob-goal-card" onclick="obSelectGoal(this, 'For my family — I want them to know who I really was')">🏡<span>For my family</span></button>
+          <button class="ob-goal-card" onclick="obSelectGoal(this, 'To understand myself — I want to reflect on where I\'ve come from')">🪞<span>To understand myself</span></button>
+          <button class="ob-goal-card" onclick="obSelectGoal(this, 'A specific story — there\'s something I need to capture')">📖<span>A specific story</span></button>
+          <button class="ob-goal-card" onclick="obSelectGoal(this, 'Just exploring — I\'m not sure yet')">🧭<span>Just exploring</span></button>
+        </div>
+        <button class="ob-btn" id="obStep4Btn" onclick="obSaveGoalAndGoStep5()" style="margin-top:18px">Next &#8594;</button>
+        <button class="ob-skip" onclick="obGoStep(5)">Skip &#8594;</button>
+      </div>
+    </div>
+
+    <!-- Step 5: How it works -->
+    <div class="ob-step" id="obStep5">
+      <div class="ob-card">
+        <div class="ob-avatar-wrap">
+          <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
+            <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
+            <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+          </svg>
+        </div>
+        <p class="ob-eyebrow">Here's how it works</p>
+        <h2 class="ob-title">Simple as talking.</h2>
+        <ul class="ob-how-list">
+          <li>🎙️ <strong>Speak or type</strong> any memory — big or small</li>
+          <li>🤔 <strong>I'll ask follow-ups</strong> to bring the story to life</li>
+          <li>📚 <strong>Print a book</strong> from your story, any time</li>
+        </ul>
+        <button class="ob-btn" onclick="obGoStep(6)">Let's write your first memory &#8594;</button>
+        <button class="ob-skip" onclick="obEnterApp()">Skip &#8594;</button>
+      </div>
+    </div>
+
+    <!-- Step 6: First question — fixed ice-breaker -->
+    <div class="ob-step" id="obStep6">
+      <div class="ob-card">
+        <div class="ob-avatar-wrap">
+          <div class="ob-avatar-ring" id="obAvatarRing6"></div>
+          <svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="40" cy="40" r="38" fill="#2c2416"/><ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+            <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
+            <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
+            <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+            <g class="ga-mouth-group"><path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44 Q40 52 32 44Z" fill="#c9a96e" opacity="0.6"/></g>
+            <ellipse cx="23" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/><ellipse cx="57" cy="40" rx="5" ry="3" fill="#e8a090" opacity="0.35"/>
+          </svg>
+        </div>
+        <p class="ob-eyebrow" id="obStep6Eyebrow">Your first memory</p>
+        <h2 class="ob-title">Let's start here.</h2>
+        <div class="ob-question-bubble" id="obStep6Question">What's one of your earliest memories?</div>
+        <p class="ob-sub" style="margin-top:16px;font-size:0.85rem">Speak your answer or type it — whatever feels natural.</p>
+        <button class="ob-btn" id="obStep6Btn" onclick="obEnterApp()">Start my story &#8594;</button>
+        <button class="ob-skip" onclick="obEnterApp()">Skip &#8594;</button>
+      </div>
+    </div>
+
+    <!-- Progress dots — 6 -->
     <div class="ob-dots">
       <div class="ob-dot active" id="obDot1"></div>
       <div class="ob-dot" id="obDot2"></div>
       <div class="ob-dot" id="obDot3"></div>
+      <div class="ob-dot" id="obDot4"></div>
+      <div class="ob-dot" id="obDot5"></div>
+      <div class="ob-dot" id="obDot6"></div>
     </div>
 
   </div>
@@ -3840,8 +3958,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.22';
-  const DEPLOY_NOTES = APP_VERSION + ' — UX-H04: non-dismissing save error banner in Memories tab preserves content and gives specific guidance. UX-M02: Settings overlay extracted from Help tab (password, delete account, weekly email); accessible from new ⚙️ Settings button in header. UX-M03: Mic mode pill indicator shows Dictation vs AI Interview mode above mic button. PRV-08: marked DONE — resolved by SEC-08 (SRI on all pinnable scripts; Peecho dynamic injection documented as accepted risk).';
+  const APP_VERSION  = 'v4.25';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-37: My Goals tile on Dashboard. Gethro-led 3-step goal session (era, audience, tone) via tap-cards with voice intro. Saves _profile_goal_era/_profile_goal_audience/_profile_goal_tone to DB. Tile shows goals in plain English with Revisit button. Goal values loaded into userProfile and injected into Gethro system prompt.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -3881,7 +3999,7 @@
   let currentUser  = null;
   let sessionToken = null;
   let entries      = [];
-  let userProfile  = { name: null, dob: null, sex: null };
+  let userProfile  = { name: null, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null };
   let recognition  = null;
   let currentStory = null;
   let funnyMode    = false;
@@ -5650,6 +5768,10 @@
       const lastNameEntry  = entries.find(e => e.category === '_profile_last_name');
       const dobEntry       = entries.find(e => e.category === '_profile_dob');
       const sexEntry       = entries.find(e => e.category === '_profile_sex');
+      const memoirGoalEntry = entries.find(e => e.category === '_profile_memoir_goal');
+      const goalEraEntry      = entries.find(e => e.category === '_profile_goal_era');
+      const goalAudienceEntry = entries.find(e => e.category === '_profile_goal_audience');
+      const goalToneEntry     = entries.find(e => e.category === '_profile_goal_tone');
 
       // firstName: prefer dedicated entry, fall back to splitting _profile_name (legacy users)
       const storedFirst = firstNameEntry?.answer?.trim() ?? null;
@@ -5665,6 +5787,10 @@
       userProfile.name      = derivedFull;
       userProfile.dob       = dobEntry?.answer  ?? null;
       userProfile.sex       = sexEntry?.answer  ?? null;
+      userProfile.memoirGoal = memoirGoalEntry?.answer ?? null;
+      userProfile.goalEra      = goalEraEntry?.answer      ?? null;
+      userProfile.goalAudience = goalAudienceEntry?.answer ?? null;
+      userProfile.goalTone     = goalToneEntry?.answer     ?? null;
       // Only name is required — DOB and sex are optional (privacy: user can skip)
       if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
@@ -6049,12 +6175,19 @@
   // ── Onboarding ───────────────────────────────────────────────────
   // ── Onboarding ───────────────────────────────────────────────────
   // Name is the only required field. DOB and sex are optional — user can skip them.
-  // ── Progressive Onboarding (UX-C02) — 3-step fullscreen flow ──────────
-  // Step 1: Gethro introduces himself (voice + avatar speaking ring)
-  // Step 2: Name collection (warm fullscreen, just first name)
-  // Step 3: First question shown + spoken, then enter app
+  // ── Progressive Onboarding (UX-C05) — 6-step flow, all skippable except Step 2 ──────────
+  // Step 1: Gethro intro (voice + avatar)
+  // Step 2: Name — only required step
+  // Step 3: Birthday (skippable)
+  // Step 4: Memoir goal — 4 tap-cards (skippable)
+  // Step 5: How it works (skippable)
+  // Step 6: First question — fixed ice-breaker spoken aloud
   // Pronunciation: TTS uses "Jeffro" (soft-G like "Geoff"); all UI reads "Gethro".
 
+  // Fixed ice-breaker (UX-C05 owner decision)
+  var ONBOARD_ICE_BREAKER = { title: 'My earliest memory', q: "What's one of your earliest memories?" };
+
+  // Legacy array — kept for any code referencing ONBOARD_ICE_BREAKERS
   var ONBOARD_ICE_BREAKERS = [
     { title: 'Where I grew up',     q: 'Where did you grow up?' },
     { title: 'My childhood home',   q: 'Tell me about the home you grew up in.' },
@@ -6063,12 +6196,76 @@
     { title: 'What I wanted to be', q: 'What did you want to be when you grew up?' },
   ];
 
-  // Tracks the chosen ice-breaker across steps
-  var _obIceBraker = null;
+  var _obIceBraker    = ONBOARD_ICE_BREAKER; // always the fixed question
+  var _obSelectedGoal = null;                 // memoir goal selected on step 4
+  var _obCurrentStep  = 1;
 
-  // Called when onboardingOverlay first shows — speak Gethro intro on step 1
+  // Generic step transition
+  function obGoStep(targetStep) {
+    gethroCancel();
+    var fromEl = document.getElementById('obStep' + _obCurrentStep);
+    var toEl   = document.getElementById('obStep' + targetStep);
+    if (!fromEl || !toEl) return;
+    var fromDot = document.getElementById('obDot' + _obCurrentStep);
+    var toDot   = document.getElementById('obDot' + targetStep);
+    if (fromDot) fromDot.classList.remove('active');
+    if (toDot)   toDot.classList.add('active');
+    fromEl.classList.add('ob-exit');
+    fromEl.classList.remove('ob-active');
+    setTimeout(function() {
+      fromEl.classList.remove('ob-exit');
+      _obCurrentStep = targetStep;
+      toEl.classList.add('ob-active');
+      _obOnStepEnter(targetStep);
+    }, 280);
+  }
+
+  function _obOnStepEnter(step) {
+    if (step === 1) {
+      _obStartStep1();
+    } else if (step === 2) {
+      var inp = document.getElementById('onboardFirstName');
+      if (inp) setTimeout(function() { inp.focus(); }, 200);
+    } else if (step === 3) {
+      var firstName = (document.getElementById('onboardFirstName').value || '').trim();
+      var eyebrow = document.getElementById('obStep3Eyebrow');
+      if (eyebrow && firstName) eyebrow.textContent = 'Where your story begins, ' + firstName;
+      var ring = document.getElementById('obAvatarRing3');
+      setTimeout(function() {
+        if (ring) ring.classList.add('speaking');
+        gethroSpeak("It would be great to know where this story begins. When were you born?").then(function() {
+          if (ring) ring.classList.remove('speaking');
+        }).catch(function() { if (ring) ring.classList.remove('speaking'); });
+        var inp = document.getElementById('onboardDob');
+        if (inp) setTimeout(function() { inp.focus(); }, 200);
+      }, 300);
+    } else if (step === 4) {
+      var firstName = (document.getElementById('onboardFirstName').value || '').trim();
+      var titleEl = document.getElementById('obStep4Title');
+      if (titleEl && firstName) titleEl.textContent = firstName + ', what brings you here?';
+      var ring = document.getElementById('obAvatarRing4');
+      setTimeout(function() {
+        if (ring) ring.classList.add('speaking');
+        gethroSpeak("I can help you capture a few memories or your whole life story. What brings you here?").then(function() {
+          if (ring) ring.classList.remove('speaking');
+        }).catch(function() { if (ring) ring.classList.remove('speaking'); });
+      }, 300);
+    } else if (step === 6) {
+      var firstName = (document.getElementById('onboardFirstName').value || '').trim();
+      var eyebrow = document.getElementById('obStep6Eyebrow');
+      if (eyebrow && firstName) eyebrow.textContent = 'Your first memory, ' + firstName;
+      var ring = document.getElementById('obAvatarRing6');
+      setTimeout(function() {
+        if (ring) ring.classList.add('speaking');
+        gethroSpeak(ONBOARD_ICE_BREAKER.q).then(function() {
+          if (ring) ring.classList.remove('speaking');
+        }).catch(function() { if (ring) ring.classList.remove('speaking'); });
+      }, 400);
+    }
+  }
+
   function _obStartStep1() {
-    // Prime iOS speech engine (overlay shown via user-initiated login gesture)
+    _obCurrentStep = 1;
     try {
       if (window.speechSynthesis) {
         var primer = new SpeechSynthesisUtterance('');
@@ -6080,61 +6277,35 @@
       var ring = document.getElementById('obAvatarRing1');
       if (ring) ring.classList.add('speaking');
       gethroSpeak(
-        "Hi there! I'm Jeffro, your personal story guide. " +
-        "My job is to help you capture the moments that made you who you are. " +
-        "Let me ask what to call you."
+        "Hello, I'm Jeffro — your story companion. " +
+        "I'm here to help you capture the moments that made you who you are. " +
+        "Before we start, let's get to know each other a bit — but feel free to skip straight in any time."
       ).then(function() {
         if (ring) ring.classList.remove('speaking');
-      }).catch(function() {
-        if (ring) ring.classList.remove('speaking');
-      });
+      }).catch(function() { if (ring) ring.classList.remove('speaking'); });
     }, 600);
   }
 
-  // Step 1 -> Step 2
-  function obGoStep2() {
-    gethroCancel();
-    var s1 = document.getElementById('obStep1');
-    var s2 = document.getElementById('obStep2');
-    var d1 = document.getElementById('obDot1');
-    var d2 = document.getElementById('obDot2');
-    if (!s1 || !s2) return;
-    s1.classList.add('ob-exit');
-    s1.classList.remove('ob-active');
-    setTimeout(function() {
-      s1.classList.remove('ob-exit');
-      s2.classList.add('ob-active');
-      if (d1) d1.classList.remove('active');
-      if (d2) d2.classList.add('active');
-      var inp = document.getElementById('onboardFirstName');
-      if (inp) setTimeout(function() { inp.focus(); }, 200);
-    }, 280);
-  }
+  // Compat alias — step 1 CTA still calls obGoStep2()
+  function obGoStep2() { obGoStep(2); }
 
-  // Step 2 -> save name -> Step 3
+  // Step 2: save name → Step 3
   async function obSaveAndGoStep3() {
     var firstName = (document.getElementById('onboardFirstName').value || '').trim();
     if (!firstName) {
       var inp = document.getElementById('onboardFirstName');
-      if (inp) {
-        inp.style.borderColor = '#c97b6e';
-        inp.focus();
-        setTimeout(function() { inp.style.borderColor = ''; }, 1800);
-      }
+      if (inp) { inp.style.borderColor = '#c97b6e'; inp.focus(); setTimeout(function() { inp.style.borderColor = ''; }, 1800); }
       return;
     }
     var btn = document.getElementById('obStep2Btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-
-    // PRV-01: last name, DOB not collected at onboarding
     var fullName = firstName;
     try {
       await Promise.all([
-        fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_first_name',answer:firstName,question:'What is your first name?',timestamp:new Date().toISOString()})}),
-        fetch(DB_URL,{method:'POST',headers:{...getAuthHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({user_id:currentUser.id,category:'_profile_name',answer:fullName,question:'What is your name?',timestamp:new Date().toISOString()})}),
+        fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() }) }),
+        fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_name', answer: fullName, question: 'What is your name?', timestamp: new Date().toISOString() }) }),
       ]);
-      userProfile = { name: fullName, firstName: firstName, lastName: null, dob: null, sex: null };
-      // PRV-01/PRV-02: truncated UID only in Telegram
+      userProfile = { name: fullName, firstName: firstName, lastName: null, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null };
       notifyDev('warn', 'AUTH', 'Onboarding complete: uid=' + currentUser.id.substring(0, 8));
       logActivity('onboarding_complete', fullName, 'info', 'AUTH');
     } catch(err) {
@@ -6143,71 +6314,61 @@
       toast('Could not save — please check your connection and try again');
       return;
     }
-
-    // Pick ice-breaker before transitioning so step 3 is ready
-    var dayIdx = Math.floor(Date.now() / 86400000) % ONBOARD_ICE_BREAKERS.length;
-    _obIceBraker = ONBOARD_ICE_BREAKERS[dayIdx];
-
-    // Populate step 3 content
-    var eyebrow = document.getElementById('obStep3Eyebrow');
-    var title   = document.getElementById('obStep3Title');
-    var qBubble = document.getElementById('obStep3Question');
-    if (eyebrow) eyebrow.textContent = 'Your first question, ' + firstName;
-    if (title)   title.textContent   = _obIceBraker.title;
-    if (qBubble) qBubble.textContent = _obIceBraker.q;
-
-    // Transition to step 3
-    var s2 = document.getElementById('obStep2');
-    var s3 = document.getElementById('obStep3');
-    var d2 = document.getElementById('obDot2');
-    var d3 = document.getElementById('obDot3');
-    if (!s2 || !s3) return;
-    s2.classList.add('ob-exit');
-    s2.classList.remove('ob-active');
-    setTimeout(function() {
-      s2.classList.remove('ob-exit');
-      s3.classList.add('ob-active');
-      if (d2) d2.classList.remove('active');
-      if (d3) d3.classList.add('active');
-      // Speak the question aloud with ring animation
-      var ring = document.getElementById('obAvatarRing3');
-      setTimeout(function() {
-        if (ring) ring.classList.add('speaking');
-        gethroSpeak(_obIceBraker.q).then(function() {
-          if (ring) ring.classList.remove('speaking');
-        }).catch(function() {
-          if (ring) ring.classList.remove('speaking');
-        });
-      }, 400);
-    }, 280);
+    if (btn) { btn.disabled = false; btn.textContent = "That's me \u2192"; }
+    obGoStep(3);
   }
 
-  // Step 3 CTA: dismiss overlay, pre-fill form, start mic
+  // Step 3: save DOB → Step 4
+  async function obSaveDobAndGoStep4() {
+    var dob = (document.getElementById('onboardDob')?.value || '').trim();
+    if (dob) {
+      try {
+        await fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_dob', answer: dob, question: 'What is your date of birth?', timestamp: new Date().toISOString() }) });
+        if (userProfile) userProfile.dob = dob;
+      } catch(err) { dbgErr('ONBOARD', 'DOB save failed (non-fatal):', err.message); }
+    }
+    obGoStep(4);
+  }
+
+  // Step 4: goal tap-card selection
+  function obSelectGoal(el, goalValue) {
+    document.querySelectorAll('.ob-goal-card').forEach(function(c) { c.classList.remove('selected'); });
+    el.classList.add('selected');
+    _obSelectedGoal = goalValue;
+  }
+
+  // Step 4: save memoir goal → Step 5
+  async function obSaveGoalAndGoStep5() {
+    if (_obSelectedGoal) {
+      try {
+        await fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_memoir_goal', answer: _obSelectedGoal, question: 'What brings you to LifeTold?', timestamp: new Date().toISOString() }) });
+      } catch(err) { dbgErr('ONBOARD', 'Goal save failed (non-fatal):', err.message); }
+    }
+    obGoStep(5);
+  }
+
+  // Step 6 CTA / skip-to-app: dismiss overlay, pre-fill fixed ice-breaker, start mic
   async function obEnterApp() {
     gethroCancel();
     document.getElementById('onboardingOverlay').style.display = 'none';
     toast('Welcome, ' + (userProfile.firstName || '') + '! \uD83C\uDF89');
-
     await new Promise(function(r) { setTimeout(r, 300); });
     showPanel('memories', null, 1);
-
-    var ib = _obIceBraker || ONBOARD_ICE_BREAKERS[0];
     var titleEl  = document.getElementById('memTitle');
     var answerEl = document.getElementById('memAnswer');
-    if (titleEl)  { titleEl.value = ib.title; }
-    if (answerEl) { answerEl.value = ''; answerEl.placeholder = ib.q; }
+    if (titleEl)  titleEl.value = ONBOARD_ICE_BREAKER.title;
+    if (answerEl) { answerEl.value = ''; answerEl.placeholder = ONBOARD_ICE_BREAKER.q; }
     _userHasTyped = false;
     draftClear();
-
     await new Promise(function(r) { setTimeout(r, 200); });
     if (document.getElementById('panel-memories').classList.contains('active')) {
       try { startMemMic(); } catch(e) { dbg('ONBOARD', 'startMemMic non-critical:', e.message); }
     }
   }
 
-  // Backward-compat aliases — any code still calling the old names routes correctly
+  // Backward-compat aliases
   function saveOnboarding() { obSaveAndGoStep3(); }
-  function _onboardGethroIntro(name) { /* replaced by obEnterApp() — UX-C02 */ }
+  function _onboardGethroIntro(name) { /* replaced by obEnterApp() — UX-C02/UX-C05 */ }
 
     // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
@@ -9728,6 +9889,8 @@
     try { renderGethroTile(real); } catch(e) { dbgWarn('DASH', 'Gethro tile failed:', e.message); }
     // Power User tile — feature usage summary + targeted nudge
     try { renderPowerUserTile(real); } catch(e) { dbgWarn('DASH', 'Power user tile failed:', e.message); }
+    // Goal tile — show current goals or prompt to set them
+    try { renderGoalTile(); } catch(e) { dbgWarn('DASH', 'Goal tile failed:', e.message); }
     // Responses tile — load feedback from Supabase (async, fire-and-forget)
     loadResponsesTile();
     } catch(dashErr) {
@@ -11052,6 +11215,266 @@
   function toggleWordsDrill()    { toggleSuper('story');  }
   function togglePeopleDrill()   { toggleSuper('book');   }
   function toggleLocationsDrill(){ toggleSuper('book');   }
+
+  // ── APP-37: My Goals — Goal Session & Dashboard Tile ─────────────────
+  // Three-step Gethro-led session. Each step has tap-card options + optional
+  // custom text input. Saves _profile_goal_era, _profile_goal_audience,
+  // _profile_goal_tone to life_entries on completion.
+
+  var _goalStep = 0;        // 0=era 1=audience 2=tone
+  var _goalAnswers = {};    // { era, audience, tone }
+  var _goalSelectedCard = null; // currently selected card value
+
+  var _GOAL_STEPS = [
+    {
+      key:      'era',
+      label:    'Step 1 of 3 — Focus era',
+      question: 'Which part of your life do you most want to capture right now?',
+      cards: [
+        { emoji: '🧒', label: 'Childhood & growing up',   value: 'childhood and early years' },
+        { emoji: '🎓', label: 'School & early adulthood', value: 'school and early adulthood' },
+        { emoji: '💼', label: 'Career & working life',    value: 'career and working life' },
+        { emoji: '👨‍👩‍👧', label: 'Family & relationships',   value: 'family and relationships' },
+        { emoji: '🌏', label: 'Adventures & travel',      value: 'adventures and travel' },
+        { emoji: '🕰️', label: 'All of it — the full story', value: 'the full arc of my life' },
+      ]
+    },
+    {
+      key:      'audience',
+      label:    'Step 2 of 3 — Your reader',
+      question: 'Who are you writing this for?',
+      cards: [
+        { emoji: '👨‍👩‍👧‍👦', label: 'My family',            value: 'my family' },
+        { emoji: '👶', label: 'Grandchildren',         value: 'my grandchildren' },
+        { emoji: '🪞', label: 'Myself — self-reflection', value: 'myself' },
+        { emoji: '🌐', label: 'Anyone who wants to read it', value: 'a general audience' },
+      ]
+    },
+    {
+      key:      'tone',
+      label:    'Step 3 of 3 — Voice & tone',
+      question: 'How do you want your story to feel?',
+      cards: [
+        { emoji: '🌅', label: 'Warm & nostalgic',   value: 'warm and nostalgic' },
+        { emoji: '💬', label: 'Honest & direct',    value: 'honest and direct' },
+        { emoji: '😄', label: 'Light & funny',      value: 'light and funny' },
+        { emoji: '📖', label: 'Thoughtful & formal', value: 'thoughtful and formal' },
+      ]
+    },
+  ];
+
+  function openGoalSession() {
+    _goalStep = 0;
+    _goalAnswers = {};
+    _goalSelectedCard = null;
+    var overlay = document.getElementById('goalSessionOverlay');
+    if (!overlay) return;
+    overlay.style.display = 'flex';
+    _renderGoalStep();
+    var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+    var intro = firstName
+      ? 'Hi ' + firstName + '. Three quick questions — I want to understand what you are writing and who you are writing it for. That way I can ask you the right questions.'
+      : 'Three quick questions — I want to understand what you are writing and who you are writing it for. That way I can ask you the right questions.';
+    gethroSpeak(intro).catch(function(){});
+  }
+
+  function closeGoalSession() {
+    var overlay = document.getElementById('goalSessionOverlay');
+    if (overlay) overlay.style.display = 'none';
+    gethroCancel();
+  }
+
+  function _renderGoalStep() {
+    var step = _GOAL_STEPS[_goalStep];
+    _goalSelectedCard = null;
+
+    // Progress dots
+    for (var d = 0; d < 3; d++) {
+      var dot = document.getElementById('goalDot' + d);
+      if (dot) dot.style.background = d <= _goalStep ? 'var(--rose)' : 'var(--border)';
+    }
+
+    var labelEl    = document.getElementById('goalStepLabel');
+    var questionEl = document.getElementById('goalQuestion');
+    var cardsEl    = document.getElementById('goalCards');
+    var statusEl   = document.getElementById('goalStatus');
+    var nextBtn    = document.getElementById('goalNextBtn');
+    var customWrap = document.getElementById('goalCustomWrap');
+    var customInp  = document.getElementById('goalCustomInput');
+
+    if (labelEl)    labelEl.textContent    = step.label;
+    if (questionEl) questionEl.textContent = step.question;
+    if (statusEl)   statusEl.textContent   = '';
+    if (customWrap) customWrap.style.display = 'none';
+    if (customInp)  customInp.value = '';
+    if (nextBtn)    nextBtn.disabled = true;
+    nextBtn.textContent = _goalStep < 2 ? 'Next' : 'Save my goals';
+
+    // Render tap-cards
+    if (cardsEl) {
+      cardsEl.innerHTML = '';
+      step.cards.forEach(function(card) {
+        var btn = document.createElement('button');
+        btn.setAttribute('data-value', card.value);
+        btn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:center';
+        btn.innerHTML = '<span style="font-size:1.4rem">' + card.emoji + '</span><span style="font-size:0.78rem;color:var(--text);line-height:1.3">' + card.label + '</span>';
+        btn.onclick = function() { _goalSelectCard(card.value, btn, cardsEl); };
+        cardsEl.appendChild(btn);
+      });
+      // "Other" card
+      var otherBtn = document.createElement('button');
+      otherBtn.setAttribute('data-value', '_other');
+      otherBtn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:center';
+      otherBtn.innerHTML = '<span style="font-size:1.4rem">✏️</span><span style="font-size:0.78rem;color:var(--text);line-height:1.3">Other…</span>';
+      otherBtn.onclick = function() {
+        _goalSelectCard('_other', otherBtn, cardsEl);
+        var cw = document.getElementById('goalCustomWrap');
+        if (cw) cw.style.display = 'block';
+        var ci = document.getElementById('goalCustomInput');
+        if (ci) { ci.focus(); ci.oninput = function() {
+          var nxt = document.getElementById('goalNextBtn');
+          if (nxt) nxt.disabled = !ci.value.trim();
+          _goalSelectedCard = ci.value.trim() || '_other';
+        }; }
+      };
+      cardsEl.appendChild(otherBtn);
+    }
+  }
+
+  function _goalSelectCard(value, btn, cardsEl) {
+    // Deselect all
+    var allBtns = cardsEl ? cardsEl.querySelectorAll('button') : [];
+    for (var i = 0; i < allBtns.length; i++) {
+      allBtns[i].style.borderColor = 'var(--border)';
+      allBtns[i].style.background  = 'var(--surface)';
+    }
+    // Select this one
+    btn.style.borderColor = 'var(--rose)';
+    btn.style.background  = 'rgba(180,60,60,0.06)';
+    _goalSelectedCard = value;
+
+    var customWrap = document.getElementById('goalCustomWrap');
+    if (customWrap && value !== '_other') customWrap.style.display = 'none';
+
+    var nextBtn = document.getElementById('goalNextBtn');
+    if (nextBtn && value !== '_other') nextBtn.disabled = false;
+
+    // Speak the card label back for warmth
+    var step = _GOAL_STEPS[_goalStep];
+    var card = step.cards.find(function(c) { return c.value === value; });
+    if (card) {
+      var affirmations = ['Good choice.', 'Got it.', 'Perfect.', 'Noted.'];
+      gethroSpeak(affirmations[Math.floor(Math.random() * affirmations.length)]).catch(function(){});
+    }
+  }
+
+  function _goalSkip() {
+    // Record null for this step and move on
+    var step = _GOAL_STEPS[_goalStep];
+    _goalAnswers[step.key] = null;
+    _goalAdvance();
+  }
+
+  function _goalNext() {
+    var step     = _GOAL_STEPS[_goalStep];
+    var customInp = document.getElementById('goalCustomInput');
+    var value = _goalSelectedCard;
+    if (value === '_other') value = (customInp ? customInp.value.trim() : '') || null;
+    _goalAnswers[step.key] = value || null;
+    _goalAdvance();
+  }
+
+  function _goalAdvance() {
+    if (_goalStep < 2) {
+      _goalStep++;
+      _renderGoalStep();
+      var step = _GOAL_STEPS[_goalStep];
+      setTimeout(function() { gethroSpeak(step.question).catch(function(){}); }, 300);
+    } else {
+      _goalSaveAll();
+    }
+  }
+
+  async function _goalSaveAll() {
+    var statusEl = document.getElementById('goalStatus');
+    var nextBtn  = document.getElementById('goalNextBtn');
+    if (statusEl) statusEl.textContent = 'Saving…';
+    if (nextBtn)  nextBtn.disabled = true;
+
+    try {
+      var saves = [];
+      if (_goalAnswers.era !== null && _goalAnswers.era !== undefined) {
+        saves.push(_upsertGoalEntry('_profile_goal_era', _goalAnswers.era, 'Which part of your life do you most want to capture?'));
+      }
+      if (_goalAnswers.audience !== null && _goalAnswers.audience !== undefined) {
+        saves.push(_upsertGoalEntry('_profile_goal_audience', _goalAnswers.audience, 'Who are you writing this for?'));
+      }
+      if (_goalAnswers.tone !== null && _goalAnswers.tone !== undefined) {
+        saves.push(_upsertGoalEntry('_profile_goal_tone', _goalAnswers.tone, 'How do you want your story to feel?'));
+      }
+      await Promise.all(saves);
+
+      // Update in-memory userProfile
+      userProfile.goalEra      = _goalAnswers.era      || null;
+      userProfile.goalAudience = _goalAnswers.audience || null;
+      userProfile.goalTone     = _goalAnswers.tone     || null;
+
+      var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+      var summary = firstName
+        ? 'Perfect, ' + firstName + '. I\'ve got what I need. I\'ll keep these in mind every time we talk.'
+        : 'Perfect. I\'ve got what I need. I\'ll keep these in mind every time we talk.';
+      gethroSpeak(summary).catch(function(){});
+
+      // Update tile and close
+      renderGoalTile();
+      setTimeout(function() { closeGoalSession(); }, 2800);
+      logActivity('goal_session_complete', JSON.stringify(_goalAnswers), 'info', 'GOAL');
+    } catch(err) {
+      if (statusEl) statusEl.textContent = 'Could not save — check your connection and try again.';
+      if (nextBtn) nextBtn.disabled = false;
+      dbgErr('GOAL', 'Save failed:', err.message);
+    }
+  }
+
+  async function _upsertGoalEntry(category, answer, question) {
+    var existing = entries.find(function(e) { return e.category === category; });
+    if (existing) {
+      await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+        body: JSON.stringify({ answer: answer })
+      });
+      existing.answer = answer;
+    } else {
+      var res = await fetch(DB_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify({ user_id: currentUser.id, category: category, answer: answer, question: question, timestamp: new Date().toISOString() })
+      });
+      if (res.ok) { var rows = await res.json(); if (rows[0]) entries.push(rows[0]); }
+    }
+  }
+
+  function renderGoalTile() {
+    var summaryEl = document.getElementById('dashGoalSummary');
+    var btn       = document.getElementById('dashGoalBtn');
+    var era       = userProfile.goalEra      || (entries.find(function(e) { return e.category === '_profile_goal_era'; }) || {}).answer || null;
+    var audience  = userProfile.goalAudience || (entries.find(function(e) { return e.category === '_profile_goal_audience'; }) || {}).answer || null;
+    var tone      = userProfile.goalTone     || (entries.find(function(e) { return e.category === '_profile_goal_tone'; }) || {}).answer || null;
+    var hasAny = !!(era || audience || tone);
+    if (!summaryEl || !btn) return;
+    if (hasAny) {
+      var parts = [];
+      if (era)      parts.push('Focusing on <strong>' + escHtml(era) + '</strong>');
+      if (audience) parts.push('Writing for <strong>' + escHtml(audience) + '</strong>');
+      if (tone)     parts.push('Tone: <strong>' + escHtml(tone) + '</strong>');
+      summaryEl.innerHTML = parts.join(' &middot; ');
+      btn.textContent = 'Revisit with Gethro';
+    } else {
+      summaryEl.textContent = 'Not set yet — Gethro will ask you three quick questions to focus your memoir.';
+      btn.textContent = 'Get started';
+    }
+  }
 
   // ── Power User tile ───────────────────────────────────────────────
   // Shows feature usage counts and nudges toward the next untried feature.
@@ -14205,6 +14628,14 @@
       'Your style is investigative journalist, not counsellor — you dig for specifics: names, dates, places, events, sequences, what actually happened. You care less about how things felt and more about what exactly occurred. When you ask a question, make it concrete and fact-seeking — not "how did that make you feel?" but "who was there?", "what year was that?", "what happened next?", "where exactly were you?".\n' +
       'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
       'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
+      (userProfile.memoirGoal ? 'MEMOIR PURPOSE: ' + userProfile.memoirGoal + ' — use this to shape your questions and encouragement; connect what the user is writing back to this stated purpose.\n' : '') +
+      (userProfile.goalEra || userProfile.goalAudience || userProfile.goalTone
+        ? 'MEMOIR GOALS: ' +
+          (userProfile.goalEra      ? 'Focus era: ' + userProfile.goalEra + '. '      : '') +
+          (userProfile.goalAudience ? 'Writing for: ' + userProfile.goalAudience + '. ' : '') +
+          (userProfile.goalTone     ? 'Tone: ' + userProfile.goalTone + '.'             : '') +
+          ' Use these to steer your questions toward the right era and to match the desired voice.\n'
+        : '') +
       currentScreenNote + '\n' +
       entriesContext + '\n\n' +
       APP_KNOWLEDGE + '\n' +
@@ -16594,6 +17025,58 @@
     <button class="btn btn-primary" onclick="saveBulkBookEdits()" id="bboSaveBtn" style="padding:10px 28px;font-weight:700">Save All Changes</button>
     <button class="btn btn-ghost" onclick="closeBulkBookEditor()" style="padding:10px 20px">Cancel</button>
     <span id="bboStatus" style="font-size:0.82rem;color:var(--text-light);margin-left:auto"></span>
+  </div>
+</div>
+
+<!-- ── APP-37: Goal Session Overlay ─────────────────────────────────── -->
+<div id="goalSessionOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2100;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div class="gethro-avatar-wrap gethro-avatar-all" style="width:42px;height:42px;flex-shrink:0">
+        <div class="gethro-ring"></div>
+        <svg width="42" height="42" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="40" cy="40" r="38" fill="#2c2416"/>
+          <ellipse cx="40" cy="36" rx="19" ry="22" fill="#f5ede0"/>
+          <path class="ga-brow" d="M27 23 Q32 20 37 22" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <path class="ga-brow" d="M43 22 Q48 20 53 23" stroke="#5a3e20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <g class="ga-eye-l"><ellipse cx="32" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="33.2" cy="32" r="1" fill="#fff"/></g>
+          <g class="ga-eye-r"><ellipse cx="48" cy="33" rx="3.8" ry="3.2" fill="#2c2416"/><circle cx="49.2" cy="32" r="1" fill="#fff"/></g>
+          <path d="M39 38.5 Q40 41.5 41 38.5" stroke="#c4a882" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+          <g class="ga-mouth-group">
+            <path d="M32 44 Q36 42.5 40 43.5 Q44 42.5 48 44" stroke="#a07848" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+            <path d="M32 44 Q40 52 48 44" stroke="#a07848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </div>
+      <div>
+        <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold-dark)">Gethro</div>
+        <div id="goalStepLabel" style="font-size:0.75rem;color:var(--text-light)">Step 1 of 3</div>
+      </div>
+      <button onclick="closeGoalSession()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
+    </div>
+    <!-- Progress dots -->
+    <div style="display:flex;gap:6px;margin-bottom:20px">
+      <div id="goalDot0" style="height:4px;flex:1;border-radius:2px;background:var(--rose);transition:background 0.3s"></div>
+      <div id="goalDot1" style="height:4px;flex:1;border-radius:2px;background:var(--border);transition:background 0.3s"></div>
+      <div id="goalDot2" style="height:4px;flex:1;border-radius:2px;background:var(--border);transition:background 0.3s"></div>
+    </div>
+    <!-- Question -->
+    <p id="goalQuestion" style="font-family:'Playfair Display',serif;font-size:1.05rem;line-height:1.55;color:var(--text);margin:0 0 18px;font-style:italic"></p>
+    <!-- Tap-cards -->
+    <div id="goalCards" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px"></div>
+    <!-- Custom answer input (shown when a card isn't selected or user taps "Other") -->
+    <div id="goalCustomWrap" style="display:none;margin-bottom:14px">
+      <input id="goalCustomInput" type="text" placeholder="Type your own answer…"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+    </div>
+    <!-- Status / selection feedback -->
+    <div id="goalStatus" style="font-size:0.8rem;color:var(--text-light);min-height:1.2em;margin-bottom:14px"></div>
+    <!-- Navigation -->
+    <div style="display:flex;gap:10px">
+      <button id="goalSkipBtn" onclick="_goalSkip()" class="btn btn-ghost" style="flex:1;font-size:0.85rem">Skip</button>
+      <button id="goalNextBtn" onclick="_goalNext()" class="btn btn-primary" style="flex:2;font-size:0.85rem" disabled>Next</button>
+    </div>
   </div>
 </div>
 
