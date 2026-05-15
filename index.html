@@ -2385,12 +2385,6 @@
         onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
     </div>
 
-    <!-- UX-M03: Mic mode pill — shows current recording mode -->
-    <div style="margin-bottom:6px;display:flex;align-items:center;gap:8px">
-      <span id="memModePill" style="display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;letter-spacing:0.04em;background:rgba(201,169,110,0.15);color:var(--gold-dark);border:1px solid rgba(201,169,110,0.35);transition:all 0.2s">🎙️ Dictation</span>
-      <span style="font-size:0.72rem;color:var(--text-light)">mode — tap below to speak</span>
-    </div>
-
     <!-- Mic button — prominent, above textarea -->
     <div style="margin-bottom:12px">
       <button id="memMicBtn" onclick="toggleMemMic()"
@@ -3984,8 +3978,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.36';
-  const DEPLOY_NOTES = APP_VERSION + ' — HOTFIX: Android horizontal scroll fixed. body overflow-x:hidden added. Header padding reduced at 700px breakpoint (consistent with mobile tab bar). .header-right gap reduced and buttons smaller on mobile to prevent overflow. main padding also moves to 700px breakpoint.';
+  const APP_VERSION  = 'v4.38';
+  const DEPLOY_NOTES = APP_VERSION + ' — CLEANUP: Full removal of orphaned interview-mode code. Removed: interviewActive var, memSetInterviewBtn(), memInterviewMe(), memAppendQuestion(), memAskFollowUp(), memAskQuestion(), memAINewTopic(), memConvNext/Deeper/End(), recDeepContext var. Simplified recSave entryQuestion. Updated 3 stale Gethro knowledge strings. renderEntryAnswer() kept to handle legacy AI Question: blocks in existing entries.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6461,8 +6455,7 @@
   let recAudios      = [];   // [{file, preview, caption, recorded}] queued audio clips
   let recVideos      = [];   // [{file, preview, caption, recorded}] queued video clips (10s max)
   let recLastTags    = {};   // carries forward between entries
-  let recDeepContext  = '';   // last Q+A for go-deeper (used by interview mode)
-  let recCurQuestion = '';   // current AI question
+  let recCurQuestion = '';   // current AI question (used by memAINewTopicForChapter and recSave)
   let recActive      = false;// AI conversation running
   let memMicActive   = false;// mic dictation active
   let _micPrimedStream = null; // getUserMedia stream kept alive on iOS during recognition session
@@ -6470,7 +6463,6 @@
   // Load persisted preference; default TRUE (voice on by default)
   var userMicPref;
   try { var _mp = localStorage.getItem(MIC_PREF_KEY); userMicPref = _mp === null ? true : _mp === '1'; } catch(e) { userMicPref = true; }
-  let interviewActive = false;// true after first Interview me press; flips button label
   let _userHasTyped  = false;// true once user has personally entered content (blocks autosave on AI-only prompts)
   let _memEditEntryId = null; // set when editing an existing entry via "Edit with Gethro" — triggers PATCH instead of POST on save
 
@@ -6553,8 +6545,6 @@
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles everything: title/answer, accordion, tags, media, mic, _memEditEntryId
     memResetForm();
-    interviewActive = false;
-    memSetInterviewBtn(false);
     logActivity('entry_saved', null, 'info', 'DB');
     featTrackSave();
     featCheckNudge();
@@ -6569,9 +6559,7 @@
     if (_userHasTyped && (title.trim() || answer.trim())) {
       if (!confirm('You have unsaved text. Start a new entry and lose what is here?')) return;
     }
-    memResetForm(); // handles text, tags, accordion, media, draft, mic, mode pill
-    interviewActive = false;
-    memSetInterviewBtn(false);
+    memResetForm(); // handles text, tags, accordion, media, draft, mic
     document.getElementById('memTitle').focus();
   }
 
@@ -6829,7 +6817,6 @@
     if (memMicActive) stopMemMic();
     setMemStatus('idle', '');
     recCurQuestion  = '';
-    recDeepContext  = '';
     recActive = false;
     _userHasTyped = false;
     _memEditEntryId = null; // clear edit mode — next save will be a fresh insert
@@ -6846,7 +6833,6 @@
     populateTagDropdowns('rec');
     draftClear(); // draft saved — wipe the autosave
     memClearSaveError(); // clear any lingering error banner
-    updateMemModePill(); // reset pill to Dictation mode
   }
 
   // ── Autosave draft ────────────────────────────────────────────────
@@ -6974,7 +6960,7 @@
     if (!answer && !title && !recPhotos.length && !recAudios.length) return null;
     const fullTags = title ? { ...tags, title } : tags;
     const text  = answer || (title ? '(see title)' : 'Photo entry');
-    const entryQuestion = interviewActive ? null : (recCurQuestion || null);
+    const entryQuestion = recCurQuestion || null;
 
     // ── Edit mode: PATCH existing entry ──────────────────────────────
     if (_memEditEntryId) {
@@ -7463,252 +7449,6 @@
   // ── Cancel button ─────────────────────────────────────────────────
   function memCancel() {
     memResetForm(false);
-  }
-
-  // ── Interview Me ─────────────────────────────────────────────────
-  // If content exists: ask a follow-up question about it (no save).
-  // If empty: ask a fresh new-topic question (no save).
-  // Speaks the question aloud and starts the mic.
-  // ── Update interview button label ───────────────────────────────
-  function memSetInterviewBtn(active) {
-    const btn = document.getElementById('memAITopicBtn');
-    if (!btn) return;
-    btn.textContent = active ? '💬 Continue interview' : '💬 Interview me';
-    updateMemModePill();
-  }
-
-  async function memInterviewMe() {
-    if (!currentUser) return toast('Please sign in first');
-    logActivity('interview_started', null, 'info', 'AI');
-    const { title, answer } = memReadEntry();
-
-    // Prime audio on user tap — AudioContext for Chrome desktop, speechSynthesis for iOS
-    _primeAudioContext();
-    if (window.speechSynthesis) {
-      _primeAudioContext();
-      const primer = new SpeechSynthesisUtterance('');
-      speechSynthesis.speak(primer);
-      speechSynthesis.cancel();
-    }
-
-    if (answer || title) {
-      // Has content — build context from the textarea (includes prior Q&A thread).
-      // Cap at the last 7 exchanges to avoid oversized AI prompts on long interviews.
-      var fullContext = (title ? 'Title: ' + title + '\n' : '') + answer;
-      var contextLines = fullContext.split('\n');
-      var qCount = contextLines.filter(function(l){ return /^AI Question:/.test(l); }).length;
-      if (qCount > 7) {
-        var found = 0, startIdx = 0;
-        for (var ci = contextLines.length - 1; ci >= 0; ci--) {
-          if (/^AI Question:/.test(contextLines[ci])) {
-            found++;
-            if (found === 7) { startIdx = ci; break; }
-          }
-        }
-        fullContext = contextLines.slice(startIdx).join('\n');
-      }
-      recDeepContext = fullContext;
-      if (memMicActive) stopMemMic();
-      setMemStatus('speaking', 'Gethro is thinking...');
-      await memAskFollowUp();
-    } else {
-      // Nothing written yet — pick a new topic from the user's life story
-      recActive = true;
-      await memAskQuestion('new');
-    }
-
-    // After first press, flip button to "Continue interview"
-    interviewActive = true;
-    memSetInterviewBtn(true);
-  }
-
-  // ── Append a question inline into the textarea ───────────────────
-  // Format: divider line, then "AI Question:", then name label in CAPS.
-  // Plain textarea cannot render bold — CAPS name provides clear visual rhythm.
-  // Future: upgrade to contenteditable div for true bold rendering.
-
-  function memAppendQuestion(question) {
-    const ta    = document.getElementById('memAnswer');
-    const rawName = (userProfile && userProfile.name) ? userProfile.name : 'Your response';
-    // Use first name only, capitalised, for clean interview rhythm
-    const firstName = rawName.split(' ')[0];
-    const firstNameUpper = firstName.toUpperCase();
-    const sep   = ta.value.trim() ? '\n\n' : '';
-    ta.value   += sep + 'AI Question:\n' + question + '\n\n' + firstNameUpper + ' Answer:\n';
-    // Scroll to bottom and place cursor ready to type
-    ta.scrollTop = ta.scrollHeight;
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-  }
-
-  async function memAskFollowUp() {
-    if (!recDeepContext) return;
-    try {
-      const res = await callGethro('seed_question', { mode: 'follow_up', entryContext: recDeepContext });
-      const question = res.question;
-      recCurQuestion = question;
-      // Append inline — no separate question box needed
-      memAppendQuestion(question);
-      document.getElementById('aiQuestionBox').style.display = 'none';
-      // Gethro speaks the follow-up question, then starts mic if user preference on
-      if (memMicActive) stopMemMic();
-      setMemStatus('speaking', 'Gethro is thinking...');
-      gethroSpeak(question).then(function() {
-        setMemStatus('idle', '');
-        if (userMicPref) { setTimeout(function() { startMemMic(); }, 300); }
-      });
-    } catch(err) {
-      dbgErr('MEM', 'Follow-up failed:', err.message);
-      setMemStatus('idle', '');
-    }
-  }
-
-  // ── AI New Topic ──────────────────────────────────────────────────
-  async function memAINewTopic() {
-    if (!currentUser) return toast('Please sign in first');
-    // Prime iOS speech engine on user tap
-    if (window.speechSynthesis) {
-      _primeAudioContext();
-      const primer = new SpeechSynthesisUtterance('');
-      speechSynthesis.speak(primer);
-      speechSynthesis.cancel();
-    }
-    const { answer, title } = memReadEntry();
-    if (answer || title || recPhotos.length) {
-      setMemStatus('idle', 'Saving...');
-      await memSaveCurrentEntry();
-      toast('Saved ✓');
-    }
-    recActive = true;
-
-    document.getElementById('memAnswer').value = '';
-    document.getElementById('memTitle').value  = '';
-    recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = [];
-    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    recAudios = [];
-    recVideos.forEach(v => { if (v.preview) URL.revokeObjectURL(v.preview); });
-    recVideos = []; renderUnifiedMediaStrip();
-    await memAskQuestion('new');
-  }
-
-  // ── Conversation controls ─────────────────────────────────────────
-  async function memConvNext() {
-    const answer = document.getElementById('memAnswer').value.trim();
-    if (answer) {
-      setMemStatus('idle', 'Saving...');
-      await memSaveCurrentEntry();
-      toast('Saved ✓');
-    }
-    document.getElementById('memAnswer').value = '';
-    document.getElementById('memTitle').value  = '';
-    recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = [];
-    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    recAudios = [];
-    recVideos.forEach(v => { if (v.preview) URL.revokeObjectURL(v.preview); });
-    recVideos = []; renderUnifiedMediaStrip();
-    resetTagFields('rec');
-    await memAskQuestion('new');
-  }
-
-  async function memConvDeeper() {
-    const answer = document.getElementById('memAnswer').value.trim();
-    if (answer) {
-      // Update deep context with this answer
-      recDeepContext = (recCurQuestion ? 'Q: ' + recCurQuestion + '\nA: ' : 'A: ') + answer;
-      setMemStatus('idle', 'Saving...');
-      await memSaveCurrentEntry();
-      toast('Saved ✓');
-    }
-    document.getElementById('memAnswer').value = '';
-    document.getElementById('memTitle').value  = '';
-    recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = [];
-    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    recAudios = [];
-    recVideos.forEach(v => { if (v.preview) URL.revokeObjectURL(v.preview); });
-    recVideos = []; renderUnifiedMediaStrip();
-    resetTagFields('rec');
-    await memAskQuestion('deep');
-  }
-
-  function memConvEnd() {
-    recActive = false;
-    stopListening();
-    gethroCancel();
-
-    document.getElementById('aiQuestionBox').style.display  = 'none';
-    document.getElementById('memAnswer').value = '';
-    document.getElementById('memTitle').value  = '';
-    recPhotos.forEach(p => URL.revokeObjectURL(p.preview));
-    recPhotos = [];
-    recAudios.forEach(a => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    recAudios = [];
-    recVideos.forEach(v => { if (v.preview) URL.revokeObjectURL(v.preview); });
-    recVideos = []; renderUnifiedMediaStrip();
-    setMemStatus('idle', '');
-    recCurQuestion = '';
-    applyTagDefaults('rec', recLastTags);
-    memCheckButtons();
-    toast('Conversation saved');
-  }
-
-  // ── AI question engine ────────────────────────────────────────────
-  async function memAskQuestion(direction) {
-    if (!recActive) return;
-    const isDeep = direction === 'deep';
-    setMemStatus('speaking', isDeep ? 'Gethro is thinking...' : 'Gethro is choosing a topic...');
-    document.getElementById('aiQuestionBox').style.display = 'none';
-
-    try {
-      const realEntries = entries.filter(e => !e.category.startsWith('_profile'));
-      let prompt;
-
-      let question;
-      if (isDeep) {
-        const context = recDeepContext || realEntries.slice(-3)
-          .map(e => (e.question ? 'Q: ' + e.question + '\n' : '') + 'A: ' + e.answer).join('\n\n');
-        const res = await callGethro('seed_question', { mode: 'deep', entryContext: context });
-        question = res.question;
-      } else {
-        const coveredQuestions = realEntries.map(e => e.question).filter(Boolean).concat(recCurQuestion ? [recCurQuestion] : []).join('\n');
-        const coveredText = realEntries.slice(-40).map(e => (e.question || '') + ' ' + e.answer.slice(0,60)).join(' ').toLowerCase();
-        const lifeAreas = ['early childhood','parents','siblings','primary school','high school',
-          'first job','romance','marriage','children','career','places lived',
-          'travel','hobbies','proudest moment','regrets','hardest time',
-          'mentor','beliefs','funniest memory','advice to younger self'];
-        const uncovered = lifeAreas.filter(a => !a.split(' ').some(w => w.length > 3 && coveredText.includes(w)));
-        const res = await callGethro('seed_question', {
-          mode: 'new',
-          coveredQuestions,
-          uncoveredAreas: uncovered.length ? uncovered : lifeAreas.slice(-8),
-        });
-        question = res.question;
-      }
-      if (!recActive) return;
-      recCurQuestion = question;
-
-      // Append inline — keep question box hidden
-      memAppendQuestion(question);
-      document.getElementById('aiQuestionBox').style.display = 'none';
-      applyTagDefaults('rec', recLastTags);
-
-      await speakAndWait(question);
-      if (!recActive) return;
-      setMemStatus('idle', '');
-      // Respect user mic preference — do not force mic on if user turned it off
-      if (memMicActive) stopMemMic();
-      if (userMicPref) {
-        await new Promise(r => setTimeout(r, 150));
-        startMemMic();
-      }
-
-    } catch(err) {
-      dbgErr('MEM', err.message);
-      setMemStatus('idle', 'I couldn\'t connect — try again?');
-      // conversation cleaned up by reset
-    }
   }
 
   // ── Unified media strip (photos + audio + video) ─────────────────
@@ -9313,8 +9053,8 @@
   }
 
   // ── Render entry answer with styled inline interview formatting ───
-  // Parses "--- AI Question: ... ---" and "FIRSTNAME:" labels written
-  // by memAppendQuestion() and renders them visually distinct in entry cards.
+  // Parses "AI Question: ..." blocks written by the old inline interview feature
+  // and renders them visually distinct in entry cards.
   // Plain text entries pass through unchanged.
   function renderEntryAnswer(rawAnswer) {
     if (!rawAnswer) return '';
@@ -14099,9 +13839,7 @@
     'PURPOSE: Write or record a new memory entry. This is the main writing area.',
     'TITLE FIELD: Optional short label for the memory (e.g. "My first day at school"). If left blank, an AI-generated title is applied automatically after saving.',
     'MEMORY TEXT: The main textarea. Type or dictate the memory here.',
-    'MIC BUTTON (🎙️): Tap to start voice dictation. Speech is transcribed into the memory text in real time. Tap again (⏹) to stop. A pill above the mic shows the current mode.',
-    'MIC MODES: Two modes shown by a pill: "🎙️ Dictation" (gold — speech goes straight to text) and "💬 AI Interview" (rose — Gethro asks questions and listens). The pill appears above the mic button.',
-    'AI INTERVIEW MODE: Tap the "💬 AI Interview" toggle button to switch modes. In interview mode, Gethro asks a question, the user speaks their answer, Gethro asks a follow-up. This builds a richer memory than dictation alone.',
+    'MIC BUTTON (🎙️): Tap to start voice dictation. Speech is transcribed into the memory text in real time. Tap again (⏹) to stop.',
     'ATTACHMENT ICON (📎): Tap to choose: Upload Photo (from library), Take Photo (camera), Upload Audio (existing file), Record Audio (in-browser recording).',
     '"+ Add details" ACCORDION: Tap the dashed row to expand. Contains: Chapter (dropdown), Date / Year (free text, e.g. "1987" or "Summer 1972"), Location (free text), People (chip tags — type name, press Enter or comma to add), Photos (upload multiple), Reference / link.',
     'CHAPTER DROPDOWN: In "+ Add details". Select the life chapter this memory belongs to (e.g. Childhood, Career, Marriage). Used for Book Edition story format and Story Health on Dashboard.',
@@ -14110,9 +13848,9 @@
     '"Done" / "Save" BUTTON: Saves the current entry. Shows a toast "Memory saved ✓". If no title was typed, AI generates one silently in the background.',
     '"New entry" BUTTON: Clears the form to start a fresh memory. Warns if there is unsaved content.',
     'EDIT MODE: When editing an existing entry (opened from My Memories), the tab loads that entry\'s data. The Save button says "Update". Tap it to save changes.',
-    'MIC MODE PILL: Small pill above the mic button. Shows current mode. Tap the interview toggle button to change it — not the pill itself.',
-    '',
+    ''
 
+,
     '=== MY MEMORIES TAB (also called Entries) ===',
     'PURPOSE: Browse, search, filter, and manage all saved memories.',
     'ENTRY CARDS: Each saved memory appears as a card showing title, date, chapter, and a text snippet. Tap to expand.',
@@ -15463,8 +15201,7 @@
       if (el) {
         el.addEventListener('input', memCheckButtons);
         // Mark that the user has personally typed/spoken content — enables autosave
-        // and unsaved-content warnings. Not set by memAppendQuestion() so AI-appended
-        // interview questions don't incorrectly arm the autosave or unsaved-content guard.
+        // and unsaved-content warnings.
         el.addEventListener('input', () => { _userHasTyped = true; });
       }
     });
@@ -17086,22 +16823,6 @@
   }
 
   // ── UX-M03: Mic mode pill ─────────────────────────────────────────
-  function updateMemModePill() {
-    var pill = document.getElementById('memModePill');
-    if (!pill) return;
-    if (interviewActive) {
-      pill.textContent = '\ud83d\udcac AI Interview';
-      pill.style.background = 'rgba(201,123,110,0.15)';
-      pill.style.color = 'var(--rose)';
-      pill.style.borderColor = 'rgba(201,123,110,0.35)';
-    } else {
-      pill.textContent = '\ud83c\udfa4\ufe0f Dictation';
-      pill.style.background = 'rgba(201,169,110,0.15)';
-      pill.style.color = 'var(--gold-dark)';
-      pill.style.borderColor = 'rgba(201,169,110,0.35)';
-    }
-  }
-
   // ── UX-H05: My People — first-person guide tooltip ───────────────────
   // Shows a one-time dismissing tooltip on the canvas after the first
   // non-self person is added, telling the user to tap a node to add relatives.
