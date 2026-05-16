@@ -4026,8 +4026,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.46';
-  const DEPLOY_NOTES = APP_VERSION + ' — AUTH-01: Google OAuth sign-in added. "Continue with Google" button on landing screen calls signInWithOAuth. Requires Google Cloud Console OAuth app + Supabase provider config before going live. SEC-09 duplicate ID resolved in v4.46 backlog hygiene.';
+  const APP_VERSION  = 'v4.47';
+  const DEPLOY_NOTES = APP_VERSION + ' — Bug fixes: agreeDisclaimer undefined error removed (stale event binding — handler is set dynamically by _checkDisclaimerVersion). Gethro blank panel on first open fixed: _gethroHistory now pushed on greeting so re-open does not re-trigger; signOut now resets _gethroHistory and clears agpLog so next login always gets a fresh greeting.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5860,6 +5860,12 @@
       try { _gethroAudioCtx.close(); } catch(e) {}
       _gethroAudioCtx = null;
     }
+    // Reset Gethro panel state so the next sign-in always gets a fresh greeting
+    _gethroHistory = [];
+    _agpMemoryMode = false;
+    _agpPendingMemoryConvo = false;
+    var agpLog = document.getElementById('agpLog');
+    if (agpLog) agpLog.innerHTML = '';
     await sb.auth.signOut();
     entries = []; _invalidateSortCache();
     // SEC-11/B: clear memoir content from localStorage on sign-out so shared-device
@@ -14459,6 +14465,7 @@
       }
       _convoStart('general', null);
       _agpAppendGethro(opener, _agpPendingResponseCount > 0 ? { type: 'navigate_dashboard', params: {} } : null);
+      _gethroHistory.push({ role: 'assistant', content: opener }); // keep history in sync so re-open doesn't re-trigger greeting
       gethroSpeak(opener).catch(function(){}).finally(function() {
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
       });
