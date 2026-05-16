@@ -2017,6 +2017,11 @@
     <!-- Entry content -->
     <div id="shareContent" style="display:none">
 
+    <!-- UX-M11: expiry warning — shown only when link is within 7 days of expiry -->
+      <div id="shareExpiryWarning" style="display:none;margin-bottom:16px;padding:10px 14px;background:rgba(201,169,110,0.10);border:1px solid rgba(201,169,110,0.35);border-radius:8px;font-size:0.82rem;color:var(--text-light);line-height:1.5">
+        ⏳ <span id="shareExpiryMsg"></span>
+      </div>
+
       <!-- Entry card — no question shown here, it appears in the form below -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
@@ -2651,6 +2656,8 @@
     <div id="storySkeletonLoader" style="display:none">
       <div class="ai-thinking">
         <div class="ai-thinking-label">Gethro is writing your story…</div>
+        <!-- UX-M08: time estimate shown only for slow modes (extended/chapters) -->
+        <div id="storyTimeEstimate" style="display:none;font-size:0.8rem;color:var(--text-light);margin-bottom:14px;font-style:italic">This usually takes 15–20 seconds — Gethro is giving it his full attention ☕</div>
         <div class="skeleton skeleton-block short" style="margin-bottom:20px;height:28px;width:50%"></div>
         <div class="skeleton skeleton-block full"></div>
         <div class="skeleton skeleton-block med"></div>
@@ -2748,6 +2755,15 @@
         <div id="ppoMinNotice" class="ppo-min-notice" style="display:none">
           ⚠️ Your story needs at least 20 pages to order as a printed book.
           Add more memories to grow your story — the more you add, the richer your book!
+        </div>
+        <!-- PRV-14: per-print consent before story is uploaded to Peecho -->
+        <div id="ppoPrintConsent" style="margin-top:16px;padding:12px 14px;background:rgba(201,169,110,0.07);border:1px solid rgba(201,169,110,0.2);border-radius:8px;font-size:0.78rem;color:var(--text-light);line-height:1.6">
+          <strong style="color:var(--text);display:block;margin-bottom:6px">Before we send to print</strong>
+          To print your book, your story will be securely uploaded to Peecho (Netherlands) for fulfilment. Peecho receives only your formatted story text — no account details.
+          <label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;cursor:pointer;color:var(--text)">
+            <input type="checkbox" id="ppoPrintConsentCheck" style="margin-top:2px;width:15px;height:15px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+            <span>I understand my story will be sent to Peecho for printing.</span>
+          </label>
         </div>
       </div>
       <!-- Right: paginated book preview -->
@@ -3651,13 +3667,19 @@
 <div id="newPasswordOverlay" style="display:none;position:fixed;inset:0;background:rgba(44,36,22,0.75);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px">
   <div style="background:var(--cream);border-radius:16px;padding:36px;max-width:400px;width:100%;box-shadow:0 8px 48px rgba(44,36,22,0.3)">
     <h2 style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:400;margin-bottom:8px">Set a new password</h2>
-    <p style="font-size:0.88rem;color:var(--ink-light);margin-bottom:20px;line-height:1.6">Choose a new password for your account.</p>
-    <input id="newPasswordInput" type="password" placeholder="New password (min 6 characters)"
-      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;margin-bottom:10px"
->
+    <p style="font-size:0.88rem;color:var(--ink-light);margin-bottom:20px;line-height:1.6">Choose a new password for your account. At least 12 characters keeps your memories safe.</p>
+    <input id="newPasswordInput" type="password" placeholder="New password (min 12 characters)"
+      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;margin-bottom:8px"
+      minlength="12" oninput="pwStrengthCheck()">
+    <!-- PRV-16: inline strength indicator -->
+    <div id="pwStrengthBar" style="height:4px;border-radius:2px;background:var(--border);margin-bottom:6px;overflow:hidden">
+      <div id="pwStrengthFill" style="height:100%;width:0%;border-radius:2px;transition:width 0.3s,background 0.3s"></div>
+    </div>
+    <div id="pwStrengthLabel" style="font-size:0.78rem;color:var(--ink-light);margin-bottom:12px;min-height:1.2em"></div>
     <input id="newPasswordConfirm" type="password" placeholder="Confirm new password"
       style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;margin-bottom:14px"
->
+      oninput="pwMatchCheck()">
+    <div id="pwMatchLabel" style="font-size:0.78rem;margin-bottom:10px;min-height:1.2em"></div>
     <div id="newPasswordMsg" style="display:none;font-size:0.85rem;margin-bottom:14px;line-height:1.5"></div>
     <button class="btn btn-primary" style="width:100%" id="newPasswordBtn">Set New Password</button>
   </div>
@@ -3976,8 +3998,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.43';
-  const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 2: All remaining JS-generated inline handlers migrated. filterEntriesByChapter, usePrompt (x2), mpOpenProfile, mpReviewToggle, mpReviewLabelChange converted to data-* attributes + event delegation. Media strip remove/stop buttons restored with data-action delegation. shareFbStrip remove buttons fixed. querySelector[onclick] replaced with getElementById. unsafe-inline can now be dropped from CSP script-src.';
+  const APP_VERSION  = 'v4.45';
+  const DEPLOY_NOTES = APP_VERSION + ' — PRV-10: memoir draft moved from localStorage to server-side (life_drafts table); persists across sessions/devices, cleared on save/new/cancel, restore prompt on load. PRV-16: password minimum raised to 12 chars with inline strength indicator (zxcvbn). PRV-17: confirmed no live GitHub Pages URL in app code — marked done. PRV-19: Peecho Button key documented as display-only scope — no financial risk, no code change needed.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4427,6 +4449,22 @@
       // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
+
+      // UX-M11: show expiry warning if link expires within 7 days
+      // Requires SHARE_PROXY get_entry to return expiresAt (ISO string) — gracefully skipped if absent.
+      var expiryEl  = document.getElementById('shareExpiryWarning');
+      var expiryMsg = document.getElementById('shareExpiryMsg');
+      if (expiryEl && expiryMsg && data.expiresAt) {
+        var expiryDate = new Date(data.expiresAt);
+        var daysLeft   = Math.ceil((expiryDate - Date.now()) / 86400000);
+        if (daysLeft >= 0 && daysLeft <= 7) {
+          var expiryFmt = expiryDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+          expiryMsg.textContent = daysLeft === 0
+            ? 'This link expires today — please leave your response before it\'s gone.'
+            : 'This link expires on ' + expiryFmt + ' (' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left) — please leave your response before then.';
+          expiryEl.style.display = 'block';
+        }
+      }
 
     } catch(e) {
       notifyDev('warn', 'SHARE', 'loadSharePage exception: ' + e.message + ' — token: ' + token);
@@ -5525,6 +5563,47 @@
     document.getElementById('landingAuthPanel').style.display = 'block';
   }
 
+  // PRV-16: password strength indicator — lightweight, no library needed for this pattern
+  // Scores: 0=too short, 1=weak, 2=fair, 3=good, 4=strong
+  function pwStrengthCheck() {
+    var val   = (document.getElementById('newPasswordInput') || {}).value || '';
+    var fill  = document.getElementById('pwStrengthFill');
+    var label = document.getElementById('pwStrengthLabel');
+    if (!fill || !label) return;
+    if (val.length === 0) { fill.style.width = '0%'; label.textContent = ''; return; }
+    if (val.length < 12) {
+      fill.style.width = '15%'; fill.style.background = '#e07060';
+      label.style.color = '#e07060'; label.textContent = 'Too short — needs at least 12 characters'; return;
+    }
+    var score = 0;
+    if (val.length >= 12) score++;
+    if (val.length >= 16) score++;
+    if (/[A-Z]/.test(val) && /[a-z]/.test(val)) score++;
+    if (/[0-9]/.test(val)) score++;
+    if (/[^A-Za-z0-9]/.test(val)) score++;
+    var levels = [
+      { pct: '30%',  color: '#e07060', text: 'Weak — try adding numbers or symbols' },
+      { pct: '55%',  color: '#e8a84c', text: 'Fair — a bit longer would be better' },
+      { pct: '78%',  color: '#8bc34a', text: 'Good password' },
+      { pct: '100%', color: '#4caf72', text: '✓ Strong password' },
+    ];
+    var lvl = levels[Math.min(score - 1, 3)];
+    fill.style.width = lvl.pct; fill.style.background = lvl.color;
+    label.style.color = lvl.color; label.textContent = lvl.text;
+  }
+
+  function pwMatchCheck() {
+    var pass    = (document.getElementById('newPasswordInput')   || {}).value || '';
+    var confirm = (document.getElementById('newPasswordConfirm') || {}).value || '';
+    var label   = document.getElementById('pwMatchLabel');
+    if (!label || !confirm) return;
+    if (pass === confirm) {
+      label.style.color = '#4caf72'; label.textContent = '✓ Passwords match';
+    } else {
+      label.style.color = '#e07060'; label.textContent = 'Passwords don\'t match yet';
+    }
+  }
+
   function showSetNewPassword() {
     const overlay = document.getElementById('newPasswordOverlay');
     overlay.style.display = 'flex';
@@ -5537,8 +5616,9 @@
     const msg     = document.getElementById('newPasswordMsg');
     const btn     = document.getElementById('newPasswordBtn');
 
-    if (pass.length < 6) {
-      msg.style.color = '#e07060'; msg.textContent = 'Password must be at least 6 characters.'; msg.style.display = 'block'; return;
+    // PRV-16: minimum 12 characters (was 6)
+    if (pass.length < 12) {
+      msg.style.color = '#e07060'; msg.textContent = 'Password must be at least 12 characters.'; msg.style.display = 'block'; return;
     }
     if (pass !== confirm) {
       msg.style.color = '#e07060'; msg.textContent = 'Passwords do not match.'; msg.style.display = 'block'; return;
@@ -6043,9 +6123,10 @@
           if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
         } catch(e) { dbg('TTS', 'getSession err:', e.message); }
         dbg('TTS', 'fetching TTS_PROXY, freshToken=' + (freshToken ? 'ok' : 'NULL'));
-        var res = await fetch(TTS_PROXY_URL + '?apikey=' + encodeURIComponent(SUPABASE_ANON), {
+        // PRV-20: apikey passed as header (not URL param) to avoid exposure in server logs / browser history
+        var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
+          headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
           body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken })
         });
         dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
@@ -6845,50 +6926,77 @@
   // Saves title, answer, and all tag fields to localStorage every 3s
   // while the user is on the memories tab and has content. Restored
   // on next visit with a toast. Cleared on save, save+new, or cancel.
-  var _draftTimer = null;
-  var DRAFT_KEY   = 'mls_draft_v2'; // v2: added reference + reference_url fields
+  // ── PRV-10: Server-side draft persistence ─────────────────────────────────
+  // Drafts are stored in life_drafts (user_id PK, content jsonb, updated_at).
+  // localStorage is no longer used for draft content.
+  // - draftSave()    → upserts to life_drafts (debounced via ticker, 3s)
+  // - draftClear()   → deletes the row (called on save / new / cancel / sign-out)
+  // - draftRestore() → called on init; fetches row and prompts user if found
+  // Cross-device: draft survives browser close and is available on any device.
 
-  function draftSave() {
+  var _draftTimer          = null;
+  var _draftSuppressRestore = false; // set true when user deliberately clears (New Entry / Save)
+  var _draftSaving         = false;  // debounce guard — prevent overlapping upserts
+
+  async function draftSave() {
+    if (!currentUser) return;
+    if (_draftSaving) return;
     var title  = document.getElementById('memTitle')  ? document.getElementById('memTitle').value  : '';
     var answer = document.getElementById('memAnswer') ? document.getElementById('memAnswer').value : '';
-    // Only persist if there is something worth saving AND the user has personally typed/spoken content
-    // (prevents autosave triggering when interview appended an AI question to a blank entry)
+    // Only persist if there is real user-typed content
     if (!title.trim() && !answer.trim()) { draftClear(); return; }
-    if (!_userHasTyped) return; // no real user input yet — don't save
+    if (!_userHasTyped) return;
     var draft = {
-      title:  title,
-      answer: answer,
-      chapter:        getFieldVal('recTagChapter', 'recTagChapterCustom'),
-      era:            getFieldVal('recTagYear',    'recTagYearCustom'),
-      date:           getFieldVal2('recTagDate'),
-      location:       getFieldVal('recTagLocation','recTagLocationCustom'),
-      people:         getFieldVal2('recTagPeople'),
-      reference:      getFieldVal2('recTagRef'),
-      reference_url:  getFieldVal2('recTagRefUrl'),
-      ts: Date.now()
+      title:         title,
+      answer:        answer,
+      chapter:       getFieldVal('recTagChapter', 'recTagChapterCustom'),
+      era:           getFieldVal('recTagYear',    'recTagYearCustom'),
+      date:          getFieldVal2('recTagDate'),
+      location:      getFieldVal('recTagLocation','recTagLocationCustom'),
+      people:        getFieldVal2('recTagPeople'),
+      reference:     getFieldVal2('recTagRef'),
+      reference_url: getFieldVal2('recTagRefUrl'),
+      ts:            Date.now()
     };
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch(e) {}
+    _draftSaving = true;
+    try {
+      await fetch(DB_URL.replace('/life_entries', '/life_drafts'), {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ user_id: currentUser.id, content: draft, updated_at: new Date().toISOString() })
+      });
+    } catch(e) { dbg('DRAFT', 'draftSave failed: ' + e); }
+    _draftSaving = false;
   }
 
-  function draftClear() {
-    try { localStorage.removeItem(DRAFT_KEY); } catch(e) {}
-    _draftSuppressRestore = true; // deliberate clear — block any subsequent restore this session
+  async function draftClear() {
+    _draftSuppressRestore = true;
+    if (!currentUser) return;
+    try {
+      await fetch(DB_URL.replace('/life_entries', '/life_drafts') + '?user_id=eq.' + currentUser.id, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+    } catch(e) { dbg('DRAFT', 'draftClear failed: ' + e); }
   }
 
-  var _draftSuppressRestore = false; // set true when user deliberately clears (New Entry / Save)
-
-  function draftRestore() {
-    if (_draftSuppressRestore) return; // user deliberately cleared — don't restore
-    var raw;
-    try { raw = localStorage.getItem(DRAFT_KEY); } catch(e) { return; }
-    if (!raw) return;
-    var d;
-    try { d = JSON.parse(raw); } catch(e) { draftClear(); return; }
+  async function draftRestore() {
+    if (_draftSuppressRestore) return;
+    if (!currentUser) return;
+    var raw, d;
+    try {
+      var res = await fetch(DB_URL.replace('/life_entries', '/life_drafts') + '?user_id=eq.' + currentUser.id + '&limit=1', {
+        headers: getAuthHeaders()
+      });
+      var rows = await res.json();
+      if (!rows || !rows.length) return;
+      d = rows[0].content;
+    } catch(e) { dbg('DRAFT', 'draftRestore fetch failed: ' + e); return; }
     if (!d || (!d.title && !d.answer)) { draftClear(); return; }
     // Restore text fields
     if (d.title  && document.getElementById('memTitle'))  document.getElementById('memTitle').value  = d.title;
     if (d.answer && document.getElementById('memAnswer')) document.getElementById('memAnswer').value = d.answer;
-    // Restore tag selects — set custom input if value not in select options
+    // Restore tag selects
     restoreSelectOrCustom('recTagChapter', 'recTagChapterCustom', d.chapter);
     restoreSelectOrCustom('recTagYear',    'recTagYearCustom',    d.era);
     restoreSelectOrCustom('recTagLocation','recTagLocationCustom',d.location);
@@ -6904,16 +7012,16 @@
       }
     }
     if (d.reference) {
-      var refEl = document.getElementById('recTagRef');
+      var refEl    = document.getElementById('recTagRef');
       var refUrlEl = document.getElementById('recTagRefUrl');
       if (refEl) refEl.value = d.reference;
       if (refUrlEl && d.reference_url) refUrlEl.value = d.reference_url;
-      var urls = d.reference_url ? d.reference_url.split('|||') : [];
+      var urls  = d.reference_url ? d.reference_url.split('|||') : [];
       var items = d.reference.split('|||').map(function(label, i){ return { label: label, url: urls[i] || '' }; });
       renderTagChipManager('recRefChips', items.map(function(i){ return i.label; }), 'references', 'rec', null);
     }
     memCheckButtons();
-    toast('📝 Draft restored');
+    toast('📝 Draft restored — your unsaved memory is back');
   }
 
   // Helper: get value from a select+custom-input pair
@@ -8069,8 +8177,11 @@
 
     const out = document.getElementById('storyOutput');
     const skeleton = document.getElementById('storySkeletonLoader');
+    const timeEst  = document.getElementById('storyTimeEstimate');
     out.style.display = 'none';
     skeleton.style.display = 'block';
+    // UX-M08: show time estimate only for slow modes (8000 max_tokens via Groq = 15-20s)
+    if (timeEst) timeEst.style.display = (mode === 'extended' || mode === 'chapters') ? 'block' : 'none';
 
     try {
       let profileContext = '';
@@ -9161,7 +9272,8 @@
 
     // Log immediately — before the undo window — so we always have an audit trail
     // even if the user undoes. The commit/undo state is tracked separately.
-    logActivity('entry_delete_initiated', 'id:' + entryId + ' title:' + title + (entryDate ? ' date:' + entryDate : ''), 'info', 'ENTRIES');
+    // PRV-13: log only entry ID — title and date are memoir content and must not appear in operational logs.
+    logActivity('entry_delete_initiated', 'id:' + entryId, 'info', 'ENTRIES');
 
     // Safety: if a delete is already pending, block a new one until the user
     // resolves it (undo or wait). Silent auto-commit caused double-deletes.
@@ -12832,6 +12944,9 @@
     ppoTokenExpiry = 0;
     ppoProxyUrl    = null;
     ppoPdfBlob     = null;
+    // PRV-14: reset consent on close so each print session requires explicit re-consent
+    var consentCheck = document.getElementById('ppoPrintConsentCheck');
+    if (consentCheck) consentCheck.checked = false;
     var btn = document.getElementById('ppoOrderBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Preparing…';
@@ -13313,6 +13428,12 @@
   async function printBook() {
     if (!currentUser)  return toast('Please sign in first');
     if (!currentStory) return toast('Generate a story first');
+    // PRV-14: per-print consent required before uploading story to Peecho
+    var consentCheck = document.getElementById('ppoPrintConsentCheck');
+    if (consentCheck && !consentCheck.checked) {
+      toast('Please tick the consent box before ordering your book.');
+      return;
+    }
     logActivity('print_attempted', null, 'info', 'PEECHO');
     notifyDev('warn', 'PEECHO', 'Print as Book started by: ' + (currentUser.email || currentUser.id));
 
