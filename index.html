@@ -2140,9 +2140,29 @@
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════
-     LANDING SCREEN (logged-out users)
-══════════════════════════════════════════ -->
+<!-- UX-M09: Unsubscribe confirmation screen (shown when ?unsubscribe=<token> in URL) -->
+<div id="unsubscribeScreen" style="display:none;min-height:100vh;background:var(--bg);font-family:'Lato',sans-serif">
+  <div style="max-width:480px;margin:0 auto;padding:60px 24px;text-align:center">
+    <div style="font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold-dark);letter-spacing:0.04em;margin-bottom:32px">LifeTold</div>
+    <div id="unsubLoading" style="color:var(--text-light);font-size:0.95rem;padding:40px 0">
+      <div style="font-size:2rem;margin-bottom:12px">⏳</div>
+      Unsubscribing…
+    </div>
+    <div id="unsubSuccess" style="display:none">
+      <div style="font-size:2.5rem;margin-bottom:16px">✅</div>
+      <h2 style="font-family:'Playfair Display',serif;font-size:1.3rem;color:var(--text);margin-bottom:12px">You're unsubscribed</h2>
+      <p style="font-size:0.9rem;color:var(--text-light);line-height:1.7;margin-bottom:24px">You won't receive weekly story prompts from Gethro anymore. You can turn them back on any time in Settings.</p>
+      <a href="/" style="display:inline-block;padding:10px 24px;background:var(--gold);color:#1a1208;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;text-decoration:none">Open LifeTold</a>
+    </div>
+    <div id="unsubError" style="display:none">
+      <div style="font-size:2.5rem;margin-bottom:16px">⚠️</div>
+      <h2 style="font-family:'Playfair Display',serif;font-size:1.3rem;color:var(--text);margin-bottom:12px">Link expired or invalid</h2>
+      <p style="font-size:0.9rem;color:var(--text-light);line-height:1.7;margin-bottom:24px">This unsubscribe link has expired or already been used. Sign in to manage your email preferences in Settings.</p>
+      <a href="/" style="display:inline-block;padding:10px 24px;background:var(--gold);color:#1a1208;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;text-decoration:none">Open LifeTold</a>
+    </div>
+  </div>
+</div>
+
 <div id="landingScreen">
   <div class="landing-inner">
     <div class="landing-left">
@@ -3489,7 +3509,16 @@
       <!-- APP-36: Bulk Book Editor second entry point -->
       <button id="organiseBookBtn" title="Set chapters, dates and order for your book"
         style="padding:8px 12px;background:var(--gold);color:#1a1208;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">📚 Organise My Book</button>
+      <!-- UX-M10: Select mode toggle -->
+      <button id="entriesSelectBtn" title="Select memories to merge"
+        style="padding:8px 12px;background:none;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text-light);cursor:pointer;white-space:nowrap;flex-shrink:0">☑️ Select</button>
       <span id="reviewEntryCount" style="font-size:0.82rem;color:var(--text-light)"></span>
+    </div>
+    <!-- UX-M10: Sticky merge bar — shown when in select mode -->
+    <div id="entriesMergeBar" style="display:none;position:sticky;top:0;z-index:30;background:var(--surface);border:1px solid var(--gold);border-radius:10px;padding:10px 14px;margin-bottom:12px;align-items:center;gap:10px;flex-wrap:wrap">
+      <span id="entriesMergeCount" style="font-size:0.82rem;color:var(--text);flex:1">Select 2 or more memories to merge</span>
+      <button id="entriesMergeCancelBtn" style="padding:6px 14px;background:none;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text-light);cursor:pointer">Cancel</button>
+      <button id="entriesMergeBtn" disabled style="padding:6px 16px;background:var(--sage);color:#fff;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;opacity:0.5">✦ Merge selected</button>
     </div>
     <div id="reviewEntryList"></div>
   </div>
@@ -4026,8 +4055,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.48';
-  const DEPLOY_NOTES = APP_VERSION + ' — Bug fix: Gethro blank panel on first open (FAB / avatar / help button). The v4.47 fix added !skipGreeting to the greeting condition but all user-facing click listeners passed the raw click Event as the first argument — a truthy value that silently suppressed the greeting on every normal open. Fixed by wrapping all openAskGethro click listeners in anonymous functions so no argument is passed.';
+  const APP_VERSION  = 'v4.53';
+  const DEPLOY_NOTES = APP_VERSION + ' — Story prompt email settings: Daily frequency option added alongside weekly/fortnightly. Email toggle + frequency buttons now properly wired (pre-existing unwired bug fixed). openSettings() updated to call renderEmailPrefsUI() directly. Settings heading updated to "Story Prompt Emails". Paired with WEEKLY_EMAIL_PROXY v2 edge function (goal-aware, mode-cycling, daily support).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5356,6 +5385,19 @@
       return; // stop init — no auth, no entry loading, no app shell
     }
 
+    // ── UX-M09: Unsubscribe mode: detect ?unsubscribe=<token> ────────
+    // No auth required — UNSUB_PROXY verifies the signed token server-side.
+    var unsubToken = urlParams.get('unsubscribe');
+    if (unsubToken) {
+      document.getElementById('landingScreen').style.display     = 'none';
+      document.getElementById('appShell').style.display          = 'none';
+      document.getElementById('shareScreen').style.display       = 'none';
+      document.getElementById('unsubscribeScreen').style.display = 'block';
+      initTheme();
+      handleUnsubscribeToken(unsubToken);
+      return;
+    }
+
     // Show landing screen initially
     document.getElementById('landingScreen').style.display = 'block';
     document.getElementById('appShell').style.display = 'none';
@@ -6585,6 +6627,8 @@
       // queries don't persist the next time the user opens Entries manually.
       var srchEl = document.getElementById('reviewSearch');
       if (srchEl && srchEl.value) { srchEl.value = ''; }
+      // UX-M10: exit select mode when leaving entries tab
+      if (_selectMode) entriesToggleSelectMode(false);
     }
     if (name === 'prompts')   { renderPrompts(); }
     // End AI session when navigating away from memories
@@ -10627,6 +10671,73 @@
     renderReviewEntries();
   }
 
+  // ── UX-M10: Select mode for manual merge ─────────────────────────
+  var _selectMode  = false;
+  var _selectedIds = new Set();
+
+  function entriesToggleSelectMode(on) {
+    _selectMode = (on !== undefined) ? on : !_selectMode;
+    _selectedIds.clear();
+    var btn     = document.getElementById('entriesSelectBtn');
+    var bar     = document.getElementById('entriesMergeBar');
+    if (btn) {
+      btn.textContent = _selectMode ? '✕ Cancel' : '☑️ Select';
+      btn.style.background    = _selectMode ? 'var(--rose-light, #fde8e8)' : 'none';
+      btn.style.borderColor   = _selectMode ? 'var(--rose)' : 'var(--border)';
+      btn.style.color         = _selectMode ? 'var(--rose)' : 'var(--text-light)';
+    }
+    if (bar) bar.style.display = _selectMode ? 'flex' : 'none';
+    renderReviewEntries();
+  }
+
+  function entriesToggleCard(id) {
+    if (!_selectMode || !id) return;
+    if (_selectedIds.has(id)) _selectedIds.delete(id);
+    else _selectedIds.add(id);
+    // Update checkbox visual without full re-render
+    var cb = document.getElementById('selcheck-' + id);
+    if (cb) cb.checked = _selectedIds.has(id);
+    var card = document.getElementById('rev-' + id);
+    if (card) card.style.outline = _selectedIds.has(id) ? '2px solid var(--gold)' : '';
+    // Update merge bar
+    var countEl  = document.getElementById('entriesMergeCount');
+    var mergeBtn = document.getElementById('entriesMergeBtn');
+    var n = _selectedIds.size;
+    if (countEl)  countEl.textContent  = n === 0 ? 'Select 2 or more memories to merge' : n + ' memor' + (n===1?'y':'ies') + ' selected';
+    if (mergeBtn) { mergeBtn.disabled = n < 2; mergeBtn.style.opacity = n < 2 ? '0.5' : '1'; }
+  }
+
+  async function entriesMergeSelected() {
+    if (_selectedIds.size < 2) return;
+    var selectedEntries = entries.filter(function(e) { return e.id && _selectedIds.has(e.id); });
+    if (selectedEntries.length < 2) { toast('Could not find selected entries — please try again'); return; }
+    // Exit select mode before opening consolidate overlay
+    entriesToggleSelectMode(false);
+    // Open consolidate overlay at step 2, pre-loaded with selected entries
+    // Mirrors consolidateSelectGroup() but with manually chosen entries instead of AI clusters
+    var ov = document.getElementById('consolidateOverlay');
+    if (!ov) return;
+    ov.classList.add('open');
+    var step1 = document.getElementById('consolidateStep1');
+    var step2 = document.getElementById('consolidateStep2');
+    if (step1) step1.style.display = 'none';
+    if (step2) step2.style.display = 'block';
+    // _consolidateActiveGroup is an array of IDs — match the existing contract exactly
+    _consolidateActiveGroup = selectedEntries.map(function(e) { return e.id; });
+    _consolidateExcluded = new Set();
+    _consolidateEdits   = {};
+    _consolidateRenderSourceList();
+    var titleEl  = document.getElementById('consolidateMergeTitle');
+    var statusEl = document.getElementById('consolidateAiStatus');
+    var approveBtn = document.getElementById('consolidateApproveBtn');
+    var regenBtn   = document.getElementById('consolidateRegenerateBtn');
+    if (titleEl)    titleEl.value      = selectedEntries[0].title || '';
+    if (statusEl)   statusEl.textContent = '✨ Drafting suggested consolidation…';
+    if (approveBtn) approveBtn.disabled = true;
+    if (regenBtn)   regenBtn.disabled   = true;
+    await consolidateDraft(selectedEntries);
+  }
+
   async function renderReviewEntries() {
     const filter = document.getElementById('reviewFilterCat').value;
     const search = (document.getElementById('reviewSearch')?.value || '').toLowerCase().trim();
@@ -10880,20 +10991,32 @@
           '</div>'
         : '';
 
-      return '<div class="entry-card ' + (hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : '') + '" id="' + safeId + '">' +
+      // UX-M10: in select mode, card is tappable and shows a checkbox
+      var isSelected = _selectMode && e.id && _selectedIds.has(e.id);
+      var selectOverlay = _selectMode && e.id
+        ? '<label style="position:absolute;top:10px;right:10px;z-index:5;cursor:pointer;display:flex;align-items:center;gap:6px">' +
+            '<input type="checkbox" id="selcheck-' + e.id + '" ' + (isSelected ? 'checked' : '') +
+            ' style="width:20px;height:20px;accent-color:var(--gold);cursor:pointer;flex-shrink:0">' +
+          '</label>'
+        : '';
+
+      return '<div class="entry-card ' + (hasPhotos ? 'type-photo' : hasAudio ? 'type-voice' : '') + '" id="' + safeId + '"' +
+        ' style="position:relative' + (isSelected ? ';outline:2px solid var(--gold)' : '') + '"' +
+        (_selectMode && e.id ? ' onclick="entriesToggleCard(\'' + e.id + '\')"' : '') + '>' +
+        selectOverlay +
         '<div class="entry-meta">' +
           '<span class="entry-cat">' + escHtml(e.chapter || e.category || 'Unspecified') + '</span>' +
           wcBadge +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
-          (e.id ? '<button class="entry-delete-btn" title="Delete">✕</button>' : '') +
+          (!_selectMode && e.id ? '<button class="entry-delete-btn" title="Delete">✕</button>' : '') +
         '</div>' +
-        photoStripHtml +
-        audioStripHtml +
+        (!_selectMode ? photoStripHtml : '') +
+        (!_selectMode ? audioStripHtml : '') +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + escHtml(e.title) + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
-        '<p class="entry-text">' + renderEntryAnswer(e.answer) + '</p>' +
-        tagHtml +
-        (e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+        '<p class="entry-text"' + (_selectMode ? ' style="pointer-events:none"' : '') + '>' + renderEntryAnswer(e.answer) + '</p>' +
+        (!_selectMode ? tagHtml : '') +
+        (!_selectMode && e.id ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           '<button class="improve-btn">🔍 AI Review</button>' +
           '<button id="cancel-review-' + e.id + '" style="display:none;font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✕ Cancel</button>' +
           '<button style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos') + '</button>' +
@@ -10902,18 +11025,18 @@
           '<button style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">🔗 Share</button>' +
         '</div>' : '') +
         '<div id="sharelinks-indicator-' + e.id + '"></div>' +
-        '<div id="sharelinks-panel-' + e.id + '" style="display:none"></div>' +
-        '<div id="textedit-' + e.id + '" style="display:none;margin-top:10px">' +
+        (!_selectMode ? '<div id="sharelinks-panel-' + e.id + '" style="display:none"></div>' : '') +
+        (!_selectMode ? '<div id="textedit-' + e.id + '" style="display:none;margin-top:10px">' +
           '<textarea id="texteditarea-' + e.id + '" style="width:100%;min-height:100px;padding:10px 14px;border:2px solid var(--gold);border-radius:8px;font-family:\'Lato\',sans-serif;font-size:0.95rem;line-height:1.7;resize:vertical;background:var(--surface);color:var(--text)">' + escHtml(e.answer) + '</textarea>' +
           '<div style="display:flex;gap:8px;margin-top:8px">' +
             '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px">💾 Save</button>' +
             '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 12px">Cancel</button>' +
           '</div>' +
-        '</div>' +
-        improvePanel +
-        editPanel +
-        childRepliesHtml +
-        pendingFbHtml +
+        '</div>' : '') +
+        (!_selectMode ? improvePanel : '') +
+        (!_selectMode ? editPanel : '') +
+        (!_selectMode ? childRepliesHtml : '') +
+        (!_selectMode ? pendingFbHtml : '') +
       '</div>';
       } catch(cardErr) {
         // One bad card must not wipe the whole list — render a visible error placeholder
@@ -11587,6 +11710,7 @@
     var thumb     = document.getElementById('emailNudgeThumb');
     var freqRow   = document.getElementById('emailNudgeFreqRow');
     var statusEl  = document.getElementById('emailNudgeStatus');
+    var dBtn      = document.getElementById('emailFreqDaily');
     var wBtn      = document.getElementById('emailFreqWeekly');
     var fBtn      = document.getElementById('emailFreqFortnightly');
     if (!toggle) return;
@@ -11597,16 +11721,18 @@
     freqRow.style.display     = on ? 'block' : 'none';
 
     if (statusEl) {
+      var freqLabel = _emailNudge.frequency === 'daily' ? 'every day'
+        : _emailNudge.frequency === 'fortnightly' ? 'every two weeks' : 'every week';
       statusEl.textContent = on
-        ? 'Gethro will email you ' + (_emailNudge.frequency === 'fortnightly' ? 'every two weeks' : 'every week') + ' with a story prompt.'
-        : 'Turn on to receive a weekly story prompt from Gethro.';
+        ? 'Gethro will send you a personalised story prompt ' + freqLabel + '.'
+        : 'Turn on to receive personalised story prompts from Gethro.';
     }
 
-    // Frequency button highlight
     var activeStyle   = 'background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700';
     var inactiveStyle = 'background:var(--surface);color:var(--text);border-color:var(--border)';
-    if (wBtn) wBtn.style.cssText += ';' + (_emailNudge.frequency === 'weekly' ? activeStyle : inactiveStyle);
-    if (fBtn) fBtn.style.cssText += ';' + (_emailNudge.frequency === 'fortnightly' ? activeStyle : inactiveStyle);
+    if (dBtn) dBtn.style.cssText += ';' + (_emailNudge.frequency === 'daily'        ? activeStyle : inactiveStyle);
+    if (wBtn) wBtn.style.cssText += ';' + (_emailNudge.frequency === 'weekly'       ? activeStyle : inactiveStyle);
+    if (fBtn) fBtn.style.cssText += ';' + (_emailNudge.frequency === 'fortnightly'  ? activeStyle : inactiveStyle);
   }
 
   async function toggleEmailNudge() {
@@ -11632,7 +11758,37 @@
     await saveEmailPrefKey('weekly_email_frequency', freq);
   }
 
-  // ── Story Hygiene tile ────────────────────────────────────────────
+  // ── UX-M09: Tokenised one-click unsubscribe ───────────────────────
+  // Called on page load when ?unsubscribe=<token> is in the URL.
+  // Calls UNSUB_PROXY edge function which verifies the HMAC token
+  // and writes weekly_email_enabled=false to life_settings via service role.
+  // No user auth required.
+  async function handleUnsubscribeToken(token) {
+    var loadingEl = document.getElementById('unsubLoading');
+    var successEl = document.getElementById('unsubSuccess');
+    var errorEl   = document.getElementById('unsubError');
+    try {
+      var res = await fetch(SUPABASE_URL + '/functions/v1/UNSUB_PROXY', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+        body: JSON.stringify({ token: token })
+      });
+      if (loadingEl) loadingEl.style.display = 'none';
+      if (res.ok) {
+        if (successEl) successEl.style.display = 'block';
+        // Clean URL
+        history.replaceState({}, '', window.location.pathname);
+      } else {
+        if (errorEl) errorEl.style.display = 'block';
+        dbgWarn('UNSUB', 'UNSUB_PROXY returned', res.status);
+      }
+    } catch(e) {
+      if (loadingEl) loadingEl.style.display = 'none';
+      if (errorEl)   errorEl.style.display   = 'block';
+      dbgWarn('UNSUB', 'handleUnsubscribeToken error:', e.message);
+    }
+  }
+
   function renderHygieneTile(real) {
     if (!real || !real.length) return;
     const checksEl  = document.getElementById('dashHygieneChecks');
@@ -15323,14 +15479,24 @@
   var OFFLINE_QUEUE_KEY = 'mls_offline_queue';
 
   function _offlineQueueLoad() {
-    try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch(e) { return []; }
+    try {
+      var q = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+      // PRV-11: prune items older than 7 days — stale patches are unsafe to apply
+      var cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      var pruned = q.filter(function(item) { return !item._queued_at || item._queued_at >= cutoff; });
+      if (pruned.length < q.length) {
+        dbgWarn('OFFLINE', 'Pruned', q.length - pruned.length, 'stale queue item(s) older than 7 days');
+        try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(pruned)); } catch(e) {}
+      }
+      return pruned;
+    } catch(e) { return []; }
   }
   function _offlineQueueSave(q) {
     try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q)); } catch(e) {}
   }
   function _offlineQueuePush(entry) {
     var q = _offlineQueueLoad();
-    q.push({ _method: 'POST', _url: DB_URL, data: entry });
+    q.push({ _method: 'POST', _url: DB_URL, data: entry, _queued_at: Date.now() });
     _offlineQueueSave(q);
     dbg('OFFLINE', 'Queued new entry for retry. Queue length:', q.length);
     toast('Saved locally — will sync when back online');
@@ -15339,7 +15505,7 @@
     var q = _offlineQueueLoad();
     // Replace any existing queued edit for the same entry (last write wins)
     q = q.filter(function(item) { return !(item._method === 'PATCH' && item._entryId === entryId); });
-    q.push({ _method: 'PATCH', _url: DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, _entryId: entryId, data: patch });
+    q.push({ _method: 'PATCH', _url: DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, _entryId: entryId, data: patch, _queued_at: Date.now() });
     _offlineQueueSave(q);
     dbg('OFFLINE', 'Queued edit for retry. Queue length:', q.length);
     toast('Edit saved locally — will sync when back online');
@@ -17000,8 +17166,7 @@
   function openSettings() {
     var el = document.getElementById('settingsOverlay');
     if (el) el.style.display = 'flex';
-    // Sync email nudge UI when overlay opens
-    if (typeof _renderEmailNudgeUI === 'function') _renderEmailNudgeUI();
+    renderEmailPrefsUI();
   }
 
   function closeSettings() {
@@ -17546,6 +17711,10 @@
     on('reviewSearchClear',  'click',  clearReviewSearch);
     on('organiseBookBtn',    'click',  openBulkBookEditor);
     on('entriesChapterBackBtn','click',closeChapterDetail);
+    // UX-M10: select mode for manual merge
+    on('entriesSelectBtn',    'click', function() { entriesToggleSelectMode(); });
+    on('entriesMergeCancelBtn','click', function() { entriesToggleSelectMode(false); });
+    on('entriesMergeBtn',     'click', entriesMergeSelected);
 
     // ── Help tab ──────────────────────────────────────────────────────────
     on('helpOpenGethroBtn',  'click', function() { openAskGethro(); });
@@ -17553,6 +17722,11 @@
     on('contactMessage',     'blur',  function() { this.style.borderColor='var(--border)'; });
     on('contactSendBtn',     'click', submitContactMessage);
     on('helpOpenSettingsBtn','click', openSettings);
+    // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
+    on('emailNudgeToggle',    'click', toggleEmailNudge);
+    on('emailFreqDaily',      'click', function() { setEmailFrequency('daily'); });
+    on('emailFreqWeekly',     'click', function() { setEmailFrequency('weekly'); });
+    on('emailFreqFortnightly','click', function() { setEmailFrequency('fortnightly'); });
 
     // ── Delete modal ──────────────────────────────────────────────────────
     on('confirmDeleteBtn',  'click', confirmDelete);
@@ -17630,9 +17804,9 @@
 
     <!-- Weekly Story Prompt -->
     <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
-      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">📮 Weekly Story Prompt</h4>
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">📮 Story Prompt Emails</h4>
       <p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin-bottom:14px">
-        Get a weekly question from Gethro delivered to your inbox — a gentle nudge to add another memory.
+        Get a personalised prompt from Gethro delivered to your inbox — tailored to your story goals and what you've written so far.
       </p>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <span style="font-size:0.9rem;color:var(--text);font-weight:600">Weekly prompt emails</span>
@@ -17645,6 +17819,10 @@
       <div id="emailNudgeFreqRow" style="display:none;margin-bottom:12px">
         <label style="font-size:0.82rem;color:var(--text-light);display:block;margin-bottom:6px">How often?</label>
         <div style="display:flex;gap:8px">
+          <button id="emailFreqDaily"
+            style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:0.82rem;cursor:pointer;color:var(--text)">
+            Daily
+          </button>
           <button id="emailFreqWeekly"
             style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:0.82rem;cursor:pointer;color:var(--text)">
             Weekly
