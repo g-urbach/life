@@ -4055,8 +4055,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.54';
-  const DEPLOY_NOTES = APP_VERSION + ' — Settings: name edit field added (saves to _profile_first_name + life_settings user_name); close button fixed (was unwired); openSettings() populates name field on open. Paired with WEEKLY_EMAIL_PROXY v2 fix (reads name from _profile_first_name entries, not life_settings).';
+  const APP_VERSION  = 'v4.55';
+  const DEPLOY_NOTES = APP_VERSION + ' — Profile modal: wired ✕, Cancel and Save buttons (were missing IDs and listeners — modal could not be closed). Settings: removed duplicate "Your Name" field (name is now managed exclusively in the profile modal via _profile_first_name).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -17172,9 +17172,6 @@
   function openSettings() {
     var el = document.getElementById('settingsOverlay');
     if (el) el.style.display = 'flex';
-    // Populate name field with current value
-    var nameInput = document.getElementById('settingsNameInput');
-    if (nameInput) nameInput.value = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     renderEmailPrefsUI();
   }
 
@@ -17587,8 +17584,11 @@
 
     // ── App header ────────────────────────────────────────────────────────
     on('themeBtn',      'click', toggleTheme);
-    on('editProfileBtn','click', showEditProfile);
-    on('settingsBtn',   'click', openSettings);
+    on('editProfileBtn',       'click', showEditProfile);
+    on('profileEditCloseBtn',  'click', function() { document.getElementById('profileEditOverlay').style.display = 'none'; });
+    on('profileEditCancelBtn', 'click', function() { document.getElementById('profileEditOverlay').style.display = 'none'; });
+    on('profileEditSaveBtn',   'click', saveProfileEdit);
+    on('settingsBtn',          'click', openSettings);
     on('signOutBtn',    'click', signOut);
 
     // ── Tag manager ───────────────────────────────────────────────────────
@@ -17766,7 +17766,6 @@
     on('contactSendBtn',     'click', submitContactMessage);
     on('helpOpenSettingsBtn','click', openSettings);
     on('settingsCloseBtn',   'click', closeSettings);
-    on('settingsNameSaveBtn','click', saveSettingsName);
     // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
     on('emailNudgeToggle',    'click', toggleEmailNudge);
     on('emailFreqDaily',      'click', function() { setEmailFrequency('daily'); });
@@ -17847,18 +17846,6 @@
       <button id="settingsCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
     </div>
 
-    <!-- Profile name -->
-    <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
-      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">👤 Your Name</h4>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input id="settingsNameInput" type="text" placeholder="First name"
-          style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;background:var(--surface);color:var(--text)">
-        <button id="settingsNameSaveBtn"
-          style="padding:9px 16px;background:var(--gold);color:#1a1208;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>
-      </div>
-      <p id="settingsNameMsg" style="font-size:0.78rem;color:var(--text-light);margin:6px 0 0"></p>
-    </div>
-
     <!-- Weekly Story Prompt -->
     <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
       <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">📮 Story Prompt Emails</h4>
@@ -17918,7 +17905,7 @@
   <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">Your profile</h3>
-      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
+      <button id="profileEditCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
     </div>
     <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">First name <span style="color:var(--rose)">*</span></label>
     <input id="profileEditFirstName" type="text" autocomplete="given-name"
@@ -17938,8 +17925,8 @@
       <option value="other">Other</option>
     </select>
     <div style="display:flex;gap:10px">
-      <button class="btn btn-ghost" style="flex:1">Cancel</button>
-      <button class="btn btn-primary" style="flex:2">Save</button>
+      <button id="profileEditCancelBtn" class="btn btn-ghost" style="flex:1">Cancel</button>
+      <button id="profileEditSaveBtn" class="btn btn-primary" style="flex:2">Save</button>
     </div>
   </div>
 </div>
