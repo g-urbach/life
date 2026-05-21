@@ -4055,8 +4055,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.53';
-  const DEPLOY_NOTES = APP_VERSION + ' — Story prompt email settings: Daily frequency option added alongside weekly/fortnightly. Email toggle + frequency buttons now properly wired (pre-existing unwired bug fixed). openSettings() updated to call renderEmailPrefsUI() directly. Settings heading updated to "Story Prompt Emails". Paired with WEEKLY_EMAIL_PROXY v2 edge function (goal-aware, mode-cycling, daily support).';
+  const APP_VERSION  = 'v4.54';
+  const DEPLOY_NOTES = APP_VERSION + ' — Settings: name edit field added (saves to _profile_first_name + life_settings user_name); close button fixed (was unwired); openSettings() populates name field on open. Paired with WEEKLY_EMAIL_PROXY v2 fix (reads name from _profile_first_name entries, not life_settings).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -17166,7 +17166,44 @@
   function openSettings() {
     var el = document.getElementById('settingsOverlay');
     if (el) el.style.display = 'flex';
+    // Populate name field with current value
+    var nameInput = document.getElementById('settingsNameInput');
+    if (nameInput) nameInput.value = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     renderEmailPrefsUI();
+  }
+
+  async function saveSettingsName() {
+    var nameInput = document.getElementById('settingsNameInput');
+    var msgEl     = document.getElementById('settingsNameMsg');
+    var firstName = (nameInput?.value || '').trim();
+    if (!firstName) { if (msgEl) msgEl.textContent = 'Please enter your first name.'; return; }
+    if (!currentUser) return;
+    try {
+      // Update both _profile_first_name and _profile_name entries
+      var existing = entries.find(function(e) { return e.category === '_profile_first_name'; });
+      if (existing) {
+        await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
+          method: 'PATCH', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ answer: firstName, updated_at: new Date().toISOString() })
+        });
+      } else {
+        await fetch(DB_URL, {
+          method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() })
+        });
+      }
+      // Update in-memory profile
+      userProfile.firstName = firstName;
+      if (!userProfile.name) userProfile.name = firstName;
+      // Also save to life_settings so email sender can read it
+      await saveEmailPrefKey('user_name', firstName);
+      if (msgEl) { msgEl.textContent = 'Saved ✓'; msgEl.style.color = 'var(--sage)'; }
+      setTimeout(function() { if (msgEl) msgEl.textContent = ''; }, 2500);
+      // Reload entries to keep in sync
+      await loadEntries();
+    } catch(e) {
+      if (msgEl) { msgEl.textContent = 'Save failed — please try again.'; msgEl.style.color = 'var(--rose)'; }
+    }
   }
 
   function closeSettings() {
@@ -17722,6 +17759,8 @@
     on('contactMessage',     'blur',  function() { this.style.borderColor='var(--border)'; });
     on('contactSendBtn',     'click', submitContactMessage);
     on('helpOpenSettingsBtn','click', openSettings);
+    on('settingsCloseBtn',   'click', closeSettings);
+    on('settingsNameSaveBtn','click', saveSettingsName);
     // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
     on('emailNudgeToggle',    'click', toggleEmailNudge);
     on('emailFreqDaily',      'click', function() { setEmailFrequency('daily'); });
@@ -17799,7 +17838,19 @@
   <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:440px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);max-height:90vh;overflow-y:auto;position:relative">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin:0">⚙️ Settings</h3>
-      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
+      <button id="settingsCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">✕</button>
+    </div>
+
+    <!-- Profile name -->
+    <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">👤 Your Name</h4>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="settingsNameInput" type="text" placeholder="First name"
+          style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;background:var(--surface);color:var(--text)">
+        <button id="settingsNameSaveBtn"
+          style="padding:9px 16px;background:var(--gold);color:#1a1208;border:none;border-radius:8px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>
+      </div>
+      <p id="settingsNameMsg" style="font-size:0.78rem;color:var(--text-light);margin:6px 0 0"></p>
     </div>
 
     <!-- Weekly Story Prompt -->
