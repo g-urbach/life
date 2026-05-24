@@ -2665,11 +2665,12 @@
         </div>
       </div>
 
-      <!-- Progress dots -->
+      <!-- Progress dots (4 for non-mywords: format → roast → scope → length) -->
       <div style="display:flex;gap:6px;margin-bottom:18px">
         <div id="scDot0" style="height:4px;flex:1;border-radius:2px;background:var(--rose);transition:background 0.3s"></div>
         <div id="scDot1" style="height:4px;flex:1;border-radius:2px;background:var(--border);transition:background 0.3s"></div>
         <div id="scDot2" style="height:4px;flex:1;border-radius:2px;background:var(--border);transition:background 0.3s"></div>
+        <div id="scDot3" style="height:4px;flex:1;border-radius:2px;background:var(--border);transition:background 0.3s"></div>
       </div>
 
       <!-- Tap-card grid (populated by JS) -->
@@ -3603,7 +3604,7 @@
       <p><strong>Typed Entry</strong> — Prefer to type? Write any memory or reflection here.</p>
       <p><strong>Voice Memo</strong> — Record a longer spoken memory in one go.</p>
       <p><strong>Photos</strong> — Upload a photo and tell the story behind it.</p>
-      <p><strong>My Story</strong> — Generate a beautifully written memoir or funny roast. Export to PDF.</p>
+      <p><strong>My Story</strong> — Generate a beautifully written memoir in any style — or turn it into a comedy roast. Export to PDF.</p>
       <p><strong>Dashboard</strong> — See how your story is shaping up — coverage, health checks, and what to write next.</p>
     </div>
 
@@ -3623,6 +3624,7 @@
       <h3>ℹ️ About</h3>
       <p><strong>LifeTold</strong> is a personal memoir companion that helps you record, organise and preserve your life story for the people who matter most.</p>
       <p style="font-size:0.82rem;color:var(--text-light);margin-top:6px"><a href="https://lifetold.app" target="_blank" style="color:var(--gold-dark)">lifetold.app</a></p>
+      <p style="font-size:0.82rem;color:var(--text-light);margin-top:4px">Made by <strong style="color:var(--text)">Gethro Labs Pty Ltd</strong> &nbsp;·&nbsp; ABN 79 698 041 575</p>
       <p style="font-size:0.82rem;color:var(--text-light);margin-top:4px">Powered by <a href="https://groq.com" target="_blank" style="color:var(--gold-dark)">Groq AI</a>, <a href="https://supabase.com" target="_blank" style="color:var(--gold-dark)">Supabase</a>, and <a href="https://www.peecho.com" target="_blank" style="color:var(--gold-dark)">Peecho</a>.</p>
     </div>
 
@@ -4108,8 +4110,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.62';
-  const DEPLOY_NOTES = APP_VERSION + ' — PRV-07: OWNER block updated to Gethro Labs. UX-NEW-01: Gethro re-engagement nudge on 14+ day absence (last_seen tracking added). UX-NEW-02: This day in your life dashboard tile. UX-NEW-05: Milestone celebration moments from Gethro (1st entry, 10 entries, 1st photo, 1000 words, 5000 words). APP-STORY-01 sub-sprint D: confirmed complete in proxy — backlog updated.';
+  const APP_VERSION  = 'v4.63';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-01: Comedy Roast reworked as step-2 tone toggle (applies to all AI formats, not mywords). deploy-v49: backlog parser regex fix for alphanumeric IDs (UX-M10, SEC-EF01 etc). APP-39: Gethro Labs ABN in Help tab. APP-STORY-01 marked DONE.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8371,8 +8373,9 @@
   // C2 (v4.58): chapter picker sub-step; selected/single navigate to Entries tab story-select mode.
   // "In My Own Words" skips Length. Comedy is first-class format.
 
-  var _scStep    = 0;          // 0=format, 1=scope, 2=chapter-picker (virtual), 3=length
+  var _scStep    = 0;          // 0=format, 1=roast, 2=scope, 3=chapter-picker (virtual), 4=length
   var _scFormat  = null;
+  var _scFunny   = null;       // true|false — set at step 1 (roast toggle); null until chosen
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8384,15 +8387,21 @@
   var _scStoryPendingFormat = null;
   var _scStoryPendingScope  = null;
   var _scStoryPendingLength = null;
+  var _scStoryPendingFunny  = null;  // carries _scFunny through the Entries tab select flow
   var _scStorySelected      = [];
   var _SC_FORMAT_STEPS = [
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
-    { emoji: '😄', label: 'Comedy / Roast',   value: 'comedy',    desc: 'A warm, affectionate roast of your life' },
     { emoji: '✉️',  label: 'Letter',           value: 'letter',    desc: '"Dear grandchildren…" — intimate first person' },
     { emoji: '📰', label: 'Newspaper',        value: 'newspaper', desc: 'Headline + article, third-person reporting' },
     { emoji: '🎙️', label: 'Interview',        value: 'interview', desc: 'Q&A transcript — Gethro as interviewer' },
     { emoji: '🌿', label: 'Poetry',           value: 'poetry',    desc: 'Free verse — impressionistic and emotional' },
     { emoji: '📓', label: 'In My Own Words',  value: 'mywords',   desc: 'Your exact entries, no AI — just you' },
+  ];
+
+  // Roast step cards — shown after format for all non-mywords formats
+  var _SC_ROAST_STEPS = [
+    { emoji: '✨', label: 'As written',      value: 'straight', desc: 'Gethro writes it straight — warm and true' },
+    { emoji: '😄', label: 'Comedy Roast',    value: 'roast',    desc: 'A loving, affectionate roast of your life' },
   ];
 
   var _SC_SCOPE_STEPS = [
@@ -8410,14 +8419,16 @@
   ];
 
   var _SC_STEP_META = [
-    { key: 'format', label: 'Step 1 of 3 — Format',  question: 'What style of writing would you like?' },
-    { key: 'scope',  label: 'Step 2 of 3 — Memories', question: 'Which memories should Gethro use?' },
-    { key: 'length', label: 'Step 3 of 3 — Length',   question: 'How long should the story be?' },
+    { key: 'format', label: 'Step 1 of 4 — Format',  question: 'What style of writing would you like?' },
+    { key: 'roast',  label: 'Step 2 of 4 — Tone',    question: 'Should Gethro play it straight — or have a little fun?' },
+    { key: 'scope',  label: 'Step 3 of 4 — Memories', question: 'Which memories should Gethro use?' },
+    { key: 'length', label: 'Step 4 of 4 — Length',   question: 'How long should the story be?' },
   ];
 
   function _scInit() {
     _scStep              = 0;
     _scFormat            = null;
+    _scFunny             = null;
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -8426,21 +8437,28 @@
   }
 
   function _scRender() {
-    // Step layout (C2):
+    // Step layout:
     //   0 = format
-    //   1 = scope
-    //   2 = chapter picker (only when scope='chapter') — virtual; no step index advance
-    //   3 = length
-    var isChapterPicker = (_scStep === 2 && _scScope === 'chapter');
+    //   1 = roast toggle (skipped for mywords)
+    //   2 = scope
+    //   3 = chapter picker (virtual — only when scope='chapter')
+    //   4 = length (skipped for mywords)
+    // mywords flow: 0 (format) → 2 (scope) — steps 1 and 4 are skipped
 
+    var isMywords      = (_scFormat === 'mywords');
+    var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
+
+    // Map real step to display dot index (0-based)
     var displayDot, meta;
     if      (_scStep === 0)    { displayDot = 0; meta = _SC_STEP_META[0]; }
     else if (_scStep === 1)    { displayDot = 1; meta = _SC_STEP_META[1]; }
-    else if (isChapterPicker)  { displayDot = 1; meta = { label: 'Step 2b of 3 — Chapters', question: 'Which chapters should Gethro focus on?' }; }
-    else                       { displayDot = 2; meta = _SC_STEP_META[2]; }
+    else if (_scStep === 2)    { displayDot = isMywords ? 1 : 2; meta = isMywords ? { label: 'Step 2 of 2 — Memories', question: 'Which memories should Gethro use?' } : _SC_STEP_META[2]; }
+    else if (isChapterPicker)  { displayDot = 2; meta = { label: isMywords ? 'Step 2b of 2 — Chapters' : 'Step 3b of 4 — Chapters', question: 'Which chapters should Gethro focus on?' }; }
+    else                       { displayDot = 3; meta = _SC_STEP_META[3]; }
 
-    var totalSteps = _scFormat === 'mywords' ? 2 : 3;
-    for (var d = 0; d < 3; d++) {
+    // Show the right number of dots (2 for mywords, 4 for AI formats)
+    var totalSteps = isMywords ? 2 : 4;
+    for (var d = 0; d < 4; d++) {
       var dot = document.getElementById('scDot' + d);
       if (!dot) continue;
       if (d >= totalSteps) { dot.style.background = 'var(--border)'; dot.style.opacity = '0.3'; continue; }
@@ -8512,20 +8530,31 @@
       if (pickerEl) pickerEl.style.display = 'none';
       var cards;
       if      (_scStep === 0) cards = _SC_FORMAT_STEPS;
-      else if (_scStep === 1) cards = _SC_SCOPE_STEPS;
+      else if (_scStep === 1) cards = _SC_ROAST_STEPS;
+      else if (_scStep === 2) cards = _SC_SCOPE_STEPS;
       else                    cards = _SC_LENGTH_STEPS;
 
       if (cardsEl) {
         cardsEl.style.display = 'grid';
         cardsEl.innerHTML = '';
+        // Roast step uses wider 2-card layout; restore previous selection highlight
         cards.forEach(function(card) {
           var btn = document.createElement('button');
           btn.setAttribute('data-value', card.value);
-          btn.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:12px 14px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left';
+          // Restore highlight if user back-navigated to this step
+          var alreadySelected = (_scStep === 1 && _scFunny !== null && ((card.value === 'roast') === _scFunny));
+          var borderCol = alreadySelected ? 'var(--rose)' : 'var(--border)';
+          var bgCol     = alreadySelected ? 'rgba(180,60,60,0.06)' : 'var(--surface)';
+          btn.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:12px 14px;border:2px solid ' + borderCol + ';border-radius:12px;background:' + bgCol + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left';
           var descHtml = card.desc ? '<span style="font-size:0.75rem;color:var(--text-light);line-height:1.35;display:block;margin-top:2px">' + card.desc + '</span>' : '';
           btn.innerHTML = '<span style="font-size:1.3rem;line-height:1">' + card.emoji + '</span><span style="font-size:0.82rem;font-weight:700;color:var(--text);line-height:1.2;margin-top:2px">' + card.label + '</span>' + descHtml;
           btn.onclick = function() { _scSelectCard(card.value, btn, cardsEl); };
           cardsEl.appendChild(btn);
+          // If already selected, re-enable Next button
+          if (alreadySelected) {
+            _scSelected = card.value;
+            if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
+          }
         });
       }
     }
@@ -8550,9 +8579,13 @@
   }
 
   function _scBack() {
-    if (_scStep === 2 && _scScope === 'chapter') {
+    var isMywords = (_scFormat === 'mywords');
+    if (_scStep === 3 && _scScope === 'chapter') {
       // Back from chapter picker → back to scope step
-      _scStep = 1; _scScope = null; _scChapterSelections = [];
+      _scStep = 2; _scScope = null; _scChapterSelections = [];
+    } else if (_scStep === 2 && isMywords) {
+      // mywords skips roast step — back from scope goes to format
+      _scStep = 0;
     } else if (_scStep > 0) {
       _scStep--;
     }
@@ -8560,16 +8593,26 @@
   }
 
   function _scNext() {
-    var isChapterPicker = (_scStep === 2 && _scScope === 'chapter');
+    var isMywords       = (_scFormat === 'mywords');
+    var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
 
-    if      (_scStep === 0) { _scFormat = _scSelected; }
+    if      (_scStep === 0) {
+      _scFormat = _scSelected;
+      // mywords skips the roast step — jump straight to scope
+      if (_scFormat === 'mywords') { _scStep = 2; _scRender(); return; }
+    }
     else if (_scStep === 1) {
+      // Roast step: 'roast' → funny=true, 'straight' → funny=false
+      _scFunny = (_scSelected === 'roast');
+    }
+    else if (_scStep === 2) {
       _scScope = _scSelected;
       // C2: scope=selected or single → navigate to Entries tab in story-select mode
       if (_scScope === 'selected' || _scScope === 'single') {
         _scStoryPendingFormat = _scFormat;
         _scStoryPendingScope  = _scScope;
         _scStoryPendingLength = null;  // will be set on return if format !== mywords
+        _scStoryPendingFunny  = _scFunny;
         _scStorySelectLimit   = (_scScope === 'single') ? 1 : 0;
         _scStorySelected      = [];
         _scStorySelectMode    = true;
@@ -8577,26 +8620,25 @@
         _entriesShowStoryBar();
         return;
       }
-      // C2: scope=chapter → show chapter picker sub-step
-      if (_scScope === 'chapter') { _scStep = 2; _scRender(); return; }
+      // C2: scope=chapter → show chapter picker sub-step (virtual step 3)
+      if (_scScope === 'chapter') { _scStep = 3; _scRender(); return; }
     }
     else if (isChapterPicker) {
-      // Chapter picker confirmed — advance to length step (step 3)
-      // _scChapterSelections already populated; skip to length
-      if (_scFormat === 'mywords') { generateStory(_scFormat, _scScope, null); return; }
-      _scStep = 3; _scRender(); return;
+      // Chapter picker confirmed — advance to length step (step 4)
+      if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny); return; }
+      _scStep = 4; _scRender(); return;
     }
-    else if (_scStep === 3) { _scLength = _scSelected; }
+    else if (_scStep === 4) { _scLength = _scSelected; }
 
-    // Determine max step
-    var maxStep = (_scFormat === 'mywords') ? 1 : 3;
+    // Determine max step (mywords: 2 → scope is last; AI: 4 → length is last)
+    var maxStep = isMywords ? 2 : 4;
 
     if (_scStep < maxStep) {
       _scStep++;
       _scRender();
     } else {
-      var length = (_scFormat === 'mywords') ? null : _scLength;
-      generateStory(_scFormat, _scScope, length);
+      var length = isMywords ? null : _scLength;
+      generateStory(_scFormat, _scScope, length, null, _scFunny);
     }
   }
 
@@ -8632,15 +8674,16 @@
     } catch(e) { dbgWarn('UX-M06','Could not load story_generated_once flag'); }
   }
 
-  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58) ─────────────────────
-  // Signature: generateStory(format, scope, length, selectedTimestamps?)
-  //   format             : 'prose'|'comedy'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
+  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63) ──────
+  // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?)
+  //   format             : 'prose'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
   //   scope              : 'all'|'chapter'|'selected'|'single'
   //   length             : 'snapshot'|'short'|'standard'|'book'|null (mywords)
   //   selectedTimestamps : string[] — provided by _entriesStoryConfirm for selected/single scope
   //                        chapter scope uses _scChapterSelections directly
+  //   funny              : boolean — true = comedy roast overlay on any AI format (not mywords)
 
-  async function generateStory(format, scope, length, selectedTimestamps) {
+  async function generateStory(format, scope, length, selectedTimestamps, funny) {
     if (!currentUser) return toast('Please sign in first');
     var allRealEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!allRealEntries.length) return toast('Add some entries first!');
@@ -8800,20 +8843,20 @@
       // ── AI generation ─────────────────────────────────────────────────────
       // Format-branch guards — each format is handled server-side by the proxy;
       // these client-side checks exist for clarity, logging, and future divergence.
+      // funny=true applies a comedy roast overlay on top of any format (not mywords).
       if (format === 'prose')      { /* warm literary memoir — default AI branch */ }
       else if (format === 'letter')     { /* "Dear grandchildren…" first-person letter */ }
       else if (format === 'newspaper')  { /* headline + third-person article */ }
       else if (format === 'interview')  { /* Q&A transcript — Gethro as interviewer */ }
       else if (format === 'poetry')     { /* free verse — impressionistic */ }
-      // 'comedy' and 'mywords' handled below / above respectively
 
-      const funny = (format === 'comedy');
+      const isFunny = !!funny;
 
       const storyRes = await callGethro('generate_story', {
         format,
         scope,
         length,
-        funny,
+        funny: isFunny,
         profileContext,
         entriesText,
         chapterText,
@@ -8822,7 +8865,7 @@
       const story = storyRes.story;
 
       let funnyCaptions = {};
-      if (funny && photoEntries.length) {
+      if (isFunny && photoEntries.length) {
         await Promise.all(photoEntries.map(async (e) => {
           try {
             const capRes = await callGethro('funny_caption', {
@@ -8834,9 +8877,9 @@
         }));
       }
 
-      currentStory = { text: story, mode: length || format, funny, funnyCaptions };
+      currentStory = { text: story, mode: length || format, funny: isFunny, funnyCaptions };
       skeleton.style.display = 'none';
-      await renderStory(story, photoEntries, length || format, funnyCaptions, funny);
+      await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny);
       document.getElementById('exportPdfBtn').style.display = 'inline-block';
       document.getElementById('printBookBtn').style.display = 'inline-block';
       const nudge = document.getElementById('storyNudge');
@@ -11353,6 +11396,7 @@
     var scope         = _scStoryPendingScope;
     var length        = _scStoryPendingLength;
     var selectedTs    = _scStorySelected.slice();
+    var funny         = _scStoryPendingFunny;
 
     // Disable bar to prevent double-tap
     var genBtn = document.getElementById('entriesStoryGenBtn');
@@ -11361,7 +11405,7 @@
     _scStorySelectMode = false;   // prevent showPanel from double-hiding
     showPanel('story', null, 3);
 
-    await generateStory(fmt, scope, length, selectedTs);
+    await generateStory(fmt, scope, length, selectedTs, funny);
   }
 
   // ── UX-M10: Select mode for manual merge ─────────────────────────
@@ -14959,7 +15003,7 @@
     '=== MY STORY TAB ===',
     'PURPOSE: Generate an AI-written memoir from your saved memories, and prepare it for printing.',
     'HOW IT WORKS: A 3-step Gethro conversational configurator guides you through Format → Scope → Length. Tap a card at each step, then tap "Write my story".',
-    '7 FORMATS (step 1): Prose Narrative (warm literary memoir), Comedy/Roast (affectionate roast), Letter ("Dear grandchildren…"), Newspaper (headline + article style), Interview (Q&A transcript), Poetry (free verse), In My Own Words (your exact entries, no AI).',
+    '7 FORMATS (step 1): Prose Narrative (warm literary memoir), Letter ("Dear grandchildren…"), Newspaper (headline + article style), Interview (Q&A transcript), Poetry (free verse), In My Own Words (your exact entries, no AI). PLUS a Comedy Roast option at step 2 — any AI format can be turned into an affectionate roast of your life.',
     '4 SCOPES (step 2): All entries (full memoir), By chapter (selected chapters), Selected entries (specific memories), Single entry (one memory in full).',
     '4 LENGTHS (step 3, skipped for In My Own Words): Snapshot (~150 words), Short (3–5 paragraphs), Standard (full coverage), Book Edition (chapters + headings — print-ready).',
     'IN MY OWN WORDS: Skips the Length step entirely. Renders entries in date order exactly as written — no AI, no editing. Sorted by entry date field, then timestamp. Includes chapter headings, photos, location and people tags.',
