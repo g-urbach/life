@@ -4110,8 +4110,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.63';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-01: Comedy Roast reworked as step-2 tone toggle (applies to all AI formats, not mywords). deploy-v49: backlog parser regex fix for alphanumeric IDs (UX-M10, SEC-EF01 etc). APP-39: Gethro Labs ABN in Help tab. APP-STORY-01 marked DONE.';
+  const APP_VERSION  = 'v4.64';
+  const DEPLOY_NOTES = APP_VERSION + ' — Comedy story: step-2 roast now offers style choice (dry wit / affectionate / self-deprecating / absurdist) + intensity (gentle / medium / full roast). comedyStyle + comedyIntensity sent to Gethro proxy. Story subtitle reflects chosen style+intensity. deploy-v50: stale comedy format test fixed; warnings now logged as errors; Schema 401 upgraded to error.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6736,7 +6736,7 @@
     // End AI session when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name === 'help')     { renderEmailPrefsUI(); /* refresh toggle state */ }
-    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny);
+    if (name === 'story' && currentStory) renderStory(currentStory.text, entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny, currentStory.comedyStyle, currentStory.comedyIntensity);
     if (name === 'memories') { populateTagDropdowns('rec'); _startMemHeadingRotation(); }
     if (name === 'story')    { renderBookDetails(); _storyLoadPrivacyFlag(); _scInit(); }
     // Autosave draft: start ticker when entering memories, stop when leaving
@@ -8376,6 +8376,9 @@
   var _scStep    = 0;          // 0=format, 1=roast, 2=scope, 3=chapter-picker (virtual), 4=length
   var _scFormat  = null;
   var _scFunny   = null;       // true|false — set at step 1 (roast toggle); null until chosen
+  var _scComedyStyle     = null;  // 'dry'|'affectionate'|'selfdep'|'absurdist' — set at step 1b
+  var _scComedyIntensity = null;  // 'gentle'|'medium'|'full' — set at step 1b
+  var _scRoastSubStep    = null;  // null = tone choice (straight/roast), 'options' = style+intensity
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8388,6 +8391,8 @@
   var _scStoryPendingScope  = null;
   var _scStoryPendingLength = null;
   var _scStoryPendingFunny  = null;  // carries _scFunny through the Entries tab select flow
+  var _scStoryPendingComedyStyle     = null;
+  var _scStoryPendingComedyIntensity = null;
   var _scStorySelected      = [];
   var _SC_FORMAT_STEPS = [
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
@@ -8402,6 +8407,19 @@
   var _SC_ROAST_STEPS = [
     { emoji: '✨', label: 'As written',      value: 'straight', desc: 'Gethro writes it straight — warm and true' },
     { emoji: '😄', label: 'Comedy Roast',    value: 'roast',    desc: 'A loving, affectionate roast of your life' },
+  ];
+
+  var _SC_COMEDY_STYLES = [
+    { emoji: '🫖', label: 'Dry wit',              value: 'dry',           desc: 'Understated and deadpan — the comedy hides in plain sight' },
+    { emoji: '🤗', label: 'Affectionate roast',   value: 'affectionate',  desc: 'Warm and teasing — laughing with you, never at you' },
+    { emoji: '🙈', label: 'Self-deprecating',     value: 'selfdep',       desc: 'You\'re in on the joke — poking fun at yourself' },
+    { emoji: '🦄', label: 'Absurdist',            value: 'absurdist',     desc: 'Wonderfully weird — reality is optional' },
+  ];
+
+  var _SC_COMEDY_INTENSITIES = [
+    { emoji: '😏', label: 'Gentle',     value: 'gentle',   desc: 'A little cheeky — mostly charming' },
+    { emoji: '😂', label: 'Medium',     value: 'medium',   desc: 'Properly funny — clear laughs throughout' },
+    { emoji: '😈', label: 'Full roast', value: 'full',     desc: 'No mercy — Gethro goes all in' },
   ];
 
   var _SC_SCOPE_STEPS = [
@@ -8429,6 +8447,9 @@
     _scStep              = 0;
     _scFormat            = null;
     _scFunny             = null;
+    _scComedyStyle       = null;
+    _scComedyIntensity   = null;
+    _scRoastSubStep      = null;
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -8440,6 +8461,7 @@
     // Step layout:
     //   0 = format
     //   1 = roast toggle (skipped for mywords)
+    //       1b = comedy options sub-step (style + intensity, only when roast chosen)
     //   2 = scope
     //   3 = chapter picker (virtual — only when scope='chapter')
     //   4 = length (skipped for mywords)
@@ -8447,11 +8469,13 @@
 
     var isMywords      = (_scFormat === 'mywords');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
+    var isRoastOptions  = (_scStep === 1 && _scRoastSubStep === 'options');
 
     // Map real step to display dot index (0-based)
     var displayDot, meta;
     if      (_scStep === 0)    { displayDot = 0; meta = _SC_STEP_META[0]; }
-    else if (_scStep === 1)    { displayDot = 1; meta = _SC_STEP_META[1]; }
+    else if (_scStep === 1 && !isRoastOptions) { displayDot = 1; meta = _SC_STEP_META[1]; }
+    else if (_scStep === 1 && isRoastOptions)  { displayDot = 1; meta = { label: 'Step 2 of 4 — Comedy', question: 'How do you want Gethro to roast you?' }; }
     else if (_scStep === 2)    { displayDot = isMywords ? 1 : 2; meta = isMywords ? { label: 'Step 2 of 2 — Memories', question: 'Which memories should Gethro use?' } : _SC_STEP_META[2]; }
     else if (isChapterPicker)  { displayDot = 2; meta = { label: isMywords ? 'Step 2b of 2 — Chapters' : 'Step 3b of 4 — Chapters', question: 'Which chapters should Gethro focus on?' }; }
     else                       { displayDot = 3; meta = _SC_STEP_META[3]; }
@@ -8530,11 +8554,53 @@
       if (pickerEl) pickerEl.style.display = 'none';
       var cards;
       if      (_scStep === 0) cards = _SC_FORMAT_STEPS;
-      else if (_scStep === 1) cards = _SC_ROAST_STEPS;
+      else if (_scStep === 1 && _scRoastSubStep !== 'options') cards = _SC_ROAST_STEPS;
       else if (_scStep === 2) cards = _SC_SCOPE_STEPS;
-      else                    cards = _SC_LENGTH_STEPS;
+      else if (_scStep !== 1) cards = _SC_LENGTH_STEPS;
 
-      if (cardsEl) {
+      // ── Roast options sub-step (style + intensity) ─────────────────
+      if (_scStep === 1 && _scRoastSubStep === 'options') {
+        if (cardsEl) {
+          cardsEl.style.display = 'block';
+          var styleHtml = '<div style="margin-bottom:18px">';
+          styleHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px;font-family:\'Lato\',sans-serif">Comedy style</div>';
+          styleHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+          _SC_COMEDY_STYLES.forEach(function(s) {
+            var sel = _scComedyStyle === s.value;
+            var bc = sel ? 'var(--rose)' : 'var(--border)';
+            var bg = sel ? 'rgba(180,60,60,0.06)' : 'var(--surface)';
+            styleHtml += '<button data-style="' + s.value + '" onclick="_scSelectComedyStyle(\'' + s.value + '\',this)" ' +
+              'style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:10px 12px;border:2px solid ' + bc + ';border-radius:10px;background:' + bg + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left">' +
+              '<span style="font-size:1.2rem">' + s.emoji + '</span>' +
+              '<span style="font-size:0.78rem;font-weight:700;color:var(--text)">' + s.label + '</span>' +
+              '<span style="font-size:0.68rem;color:var(--text-light);line-height:1.3">' + s.desc + '</span>' +
+              '</button>';
+          });
+          styleHtml += '</div></div>';
+          styleHtml += '<div>';
+          styleHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px;font-family:\'Lato\',sans-serif">Intensity</div>';
+          styleHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">';
+          _SC_COMEDY_INTENSITIES.forEach(function(iv) {
+            var sel = _scComedyIntensity === iv.value;
+            var bc = sel ? 'var(--rose)' : 'var(--border)';
+            var bg = sel ? 'rgba(180,60,60,0.06)' : 'var(--surface)';
+            styleHtml += '<button data-intensity="' + iv.value + '" onclick="_scSelectComedyIntensity(\'' + iv.value + '\',this)" ' +
+              'style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:10px 12px;border:2px solid ' + bc + ';border-radius:10px;background:' + bg + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left">' +
+              '<span style="font-size:1.2rem">' + iv.emoji + '</span>' +
+              '<span style="font-size:0.78rem;font-weight:700;color:var(--text)">' + iv.label + '</span>' +
+              '<span style="font-size:0.68rem;color:var(--text-light);line-height:1.3">' + iv.desc + '</span>' +
+              '</button>';
+          });
+          styleHtml += '</div></div>';
+          cardsEl.innerHTML = styleHtml;
+          // Re-enable Next if both style + intensity already selected (back-navigation restore)
+          if (_scComedyStyle && _scComedyIntensity) {
+            var nextBtn2 = document.getElementById('scNextBtn');
+            if (nextBtn2) { nextBtn2.disabled = false; nextBtn2.textContent = 'Next'; }
+          }
+        }
+      } else if (cards) {
+        if (cardsEl) {
         cardsEl.style.display = 'grid';
         cardsEl.innerHTML = '';
         // Roast step uses wider 2-card layout; restore previous selection highlight
@@ -8556,6 +8622,7 @@
             if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
           }
         });
+        }
       }
     }
   }
@@ -8578,9 +8645,46 @@
     }
   }
 
+  function _scSelectComedyStyle(value, btn) {
+    var cardsEl = document.getElementById('scCards');
+    var allBtns = cardsEl ? cardsEl.querySelectorAll('[data-style]') : [];
+    for (var i = 0; i < allBtns.length; i++) {
+      allBtns[i].style.borderColor = 'var(--border)';
+      allBtns[i].style.background  = 'var(--surface)';
+    }
+    btn.style.borderColor = 'var(--rose)';
+    btn.style.background  = 'rgba(180,60,60,0.06)';
+    _scComedyStyle = value;
+    _scMaybeEnableRoastNext();
+  }
+
+  function _scSelectComedyIntensity(value, btn) {
+    var cardsEl = document.getElementById('scCards');
+    var allBtns = cardsEl ? cardsEl.querySelectorAll('[data-intensity]') : [];
+    for (var i = 0; i < allBtns.length; i++) {
+      allBtns[i].style.borderColor = 'var(--border)';
+      allBtns[i].style.background  = 'var(--surface)';
+    }
+    btn.style.borderColor = 'var(--rose)';
+    btn.style.background  = 'rgba(180,60,60,0.06)';
+    _scComedyIntensity = value;
+    _scMaybeEnableRoastNext();
+  }
+
+  function _scMaybeEnableRoastNext() {
+    if (_scComedyStyle && _scComedyIntensity) {
+      var nextBtn = document.getElementById('scNextBtn');
+      if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
+    }
+  }
+
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
-    if (_scStep === 3 && _scScope === 'chapter') {
+    if (_scStep === 1 && _scRoastSubStep === 'options') {
+      // Back from comedy options → back to straight/roast choice
+      _scRoastSubStep = null;
+      _scSelected = 'roast'; // keep roast selected
+    } else if (_scStep === 3 && _scScope === 'chapter') {
       // Back from chapter picker → back to scope step
       _scStep = 2; _scScope = null; _scChapterSelections = [];
     } else if (_scStep === 2 && isMywords) {
@@ -8602,8 +8706,28 @@
       if (_scFormat === 'mywords') { _scStep = 2; _scRender(); return; }
     }
     else if (_scStep === 1) {
-      // Roast step: 'roast' → funny=true, 'straight' → funny=false
-      _scFunny = (_scSelected === 'roast');
+      if (_scRoastSubStep === 'options') {
+        // Comedy options confirmed — commit style + intensity, advance to scope
+        _scFunny = true;
+        _scRoastSubStep = null;
+      } else {
+        // Tone choice: straight → skip comedy options; roast → show comedy options
+        _scFunny = (_scSelected === 'roast');
+        if (_scFunny) {
+          // Show comedy style + intensity sub-step before advancing
+          _scRoastSubStep = 'options';
+          // Set sensible defaults if first visit
+          if (!_scComedyStyle)     _scComedyStyle     = 'affectionate';
+          if (!_scComedyIntensity) _scComedyIntensity = 'medium';
+          _scSelected = null;
+          _scRender();
+          return;
+        }
+        // straight — clear any leftover comedy params
+        _scComedyStyle     = null;
+        _scComedyIntensity = null;
+        _scRoastSubStep    = null;
+      }
     }
     else if (_scStep === 2) {
       _scScope = _scSelected;
@@ -8613,6 +8737,8 @@
         _scStoryPendingScope  = _scScope;
         _scStoryPendingLength = null;  // will be set on return if format !== mywords
         _scStoryPendingFunny  = _scFunny;
+        _scStoryPendingComedyStyle     = _scComedyStyle;
+        _scStoryPendingComedyIntensity = _scComedyIntensity;
         _scStorySelectLimit   = (_scScope === 'single') ? 1 : 0;
         _scStorySelected      = [];
         _scStorySelectMode    = true;
@@ -8625,7 +8751,7 @@
     }
     else if (isChapterPicker) {
       // Chapter picker confirmed — advance to length step (step 4)
-      if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny); return; }
+      if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity); return; }
       _scStep = 4; _scRender(); return;
     }
     else if (_scStep === 4) { _scLength = _scSelected; }
@@ -8638,7 +8764,7 @@
       _scRender();
     } else {
       var length = isMywords ? null : _scLength;
-      generateStory(_scFormat, _scScope, length, null, _scFunny);
+      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity);
     }
   }
 
@@ -8674,16 +8800,18 @@
     } catch(e) { dbgWarn('UX-M06','Could not load story_generated_once flag'); }
   }
 
-  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63) ──────
-  // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?)
+  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63; comedy options v4.64) ──
+  // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?, comedyStyle?, comedyIntensity?)
   //   format             : 'prose'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
   //   scope              : 'all'|'chapter'|'selected'|'single'
   //   length             : 'snapshot'|'short'|'standard'|'book'|null (mywords)
   //   selectedTimestamps : string[] — provided by _entriesStoryConfirm for selected/single scope
   //                        chapter scope uses _scChapterSelections directly
   //   funny              : boolean — true = comedy roast overlay on any AI format (not mywords)
+  //   comedyStyle        : 'dry'|'affectionate'|'selfdep'|'absurdist' — only when funny=true
+  //   comedyIntensity    : 'gentle'|'medium'|'full' — only when funny=true
 
-  async function generateStory(format, scope, length, selectedTimestamps, funny) {
+  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity) {
     if (!currentUser) return toast('Please sign in first');
     var allRealEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!allRealEntries.length) return toast('Add some entries first!');
@@ -8851,12 +8979,16 @@
       else if (format === 'poetry')     { /* free verse — impressionistic */ }
 
       const isFunny = !!funny;
+      const iComedyStyle     = isFunny ? (comedyStyle     || 'affectionate') : null;
+      const iComedyIntensity = isFunny ? (comedyIntensity || 'medium')       : null;
 
       const storyRes = await callGethro('generate_story', {
         format,
         scope,
         length,
         funny: isFunny,
+        comedyStyle:     iComedyStyle,
+        comedyIntensity: iComedyIntensity,
         profileContext,
         entriesText,
         chapterText,
@@ -8871,15 +9003,17 @@
             const capRes = await callGethro('funny_caption', {
               photoDescription: e.photo_ai_description || '',
               entryAnswer:      e.answer || '',
+              comedyStyle:      iComedyStyle,
+              comedyIntensity:  iComedyIntensity,
             });
             funnyCaptions[e.timestamp] = capRes.caption || '';
           } catch(err) { dbgWarn('STORY', 'Caption failed'); }
         }));
       }
 
-      currentStory = { text: story, mode: length || format, funny: isFunny, funnyCaptions };
+      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, funnyCaptions };
       skeleton.style.display = 'none';
-      await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny);
+      await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny, iComedyStyle, iComedyIntensity);
       document.getElementById('exportPdfBtn').style.display = 'inline-block';
       document.getElementById('printBookBtn').style.display = 'inline-block';
       const nudge = document.getElementById('storyNudge');
@@ -8893,7 +9027,7 @@
     }
   }
 
-  async function renderStory(story, photoEntries, mode, funnyCaptions, funnyOverride) {
+  async function renderStory(story, photoEntries, mode, funnyCaptions, funnyOverride, comedyStyleOverride, comedyIntensityOverride) {
     const out = document.getElementById('storyOutput');
     out.style.display = 'block';
     out.className = '';
@@ -8901,6 +9035,8 @@
     const photos = photoEntries || entries.filter(e => e.photo_url);
     const caps   = funnyCaptions || {};
     const funny  = funnyOverride !== undefined ? funnyOverride : (mode === 'funny');
+    const cStyle = comedyStyleOverride || (currentStory && currentStory.comedyStyle) || null;
+    const cInt   = comedyIntensityOverride || (currentStory && currentStory.comedyIntensity) || null;
     const name   = userProfile.name || 'Their';
 
     const photosWithUrls = await Promise.all(photos.map(async e => ({
@@ -8911,10 +9047,20 @@
     const processedStory = story.replace(/^##\s*(.+)$/gm, '\x00CHAPTERHEAD:$1\x00');
     const paragraphs = processedStory.split('\n').filter(p => p.trim());
 
+    // Build comedy subtitle from style + intensity
+    function comedySubtitle() {
+      const styleLabels = { dry: 'Dry wit', affectionate: 'Affectionate roast', selfdep: 'Self-deprecating', absurdist: 'Absurdist' };
+      const intLabels   = { gentle: '😏 Gentle', medium: '😂 Medium', full: '😈 Full roast' };
+      var parts = [];
+      if (cStyle)  parts.push(styleLabels[cStyle] || cStyle);
+      if (cInt)    parts.push(intLabels[cInt] || cInt);
+      return parts.length ? parts.join(' · ') : 'A loving roast';
+    }
+
     // Story title + byline
     const titleHtml =
       '<div class="story-title">' + (name !== 'Their' ? name + '\'s ' : '') + (funny ? 'Life Story (The Comedy Edition)' : 'Life Story') + '</div>' +
-      '<div class="story-subtitle">' + (funny ? '😄 A loving roast' : '✨ A personal memoir') + ' · ' + new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'}) + '</div>';
+      '<div class="story-subtitle">' + (funny ? '😄 ' + comedySubtitle() : '✨ A personal memoir') + ' · ' + new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'}) + '</div>';
 
     // Essentials page — inserted for extended and chapter modes
     const essentialsHtml = (mode === 'standard' || mode === 'book') ? buildEssentialsPage() : '';
@@ -11397,6 +11543,8 @@
     var length        = _scStoryPendingLength;
     var selectedTs    = _scStorySelected.slice();
     var funny         = _scStoryPendingFunny;
+    var comedyStyle   = _scStoryPendingComedyStyle;
+    var comedyInt     = _scStoryPendingComedyIntensity;
 
     // Disable bar to prevent double-tap
     var genBtn = document.getElementById('entriesStoryGenBtn');
@@ -11405,7 +11553,7 @@
     _scStorySelectMode = false;   // prevent showPanel from double-hiding
     showPanel('story', null, 3);
 
-    await generateStory(fmt, scope, length, selectedTs, funny);
+    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt);
   }
 
   // ── UX-M10: Select mode for manual merge ─────────────────────────
