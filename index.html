@@ -2908,6 +2908,19 @@
         <div id="dashResponsesList" style="display:flex;flex-direction:column;gap:10px"></div>
       </div>
 
+      <!-- ── UX-NEW-02: This Day in Your Life tile (hidden until match found) ── -->
+      <div class="dash-tile dash-tile-wide" id="dashThisDayTile" style="display:none;min-height:auto;padding:16px 20px;border-left:3px solid var(--gold);cursor:pointer">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.5rem">📅</span>
+          <div style="flex:1;min-width:0">
+            <div id="dashThisDayLabel" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:2px">On this day in your life</div>
+            <div id="dashThisDayTitle" style="font-size:0.95rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+            <div id="dashThisDayPreview" style="font-size:0.8rem;color:var(--text-light);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+          </div>
+          <span style="font-size:0.9rem;color:var(--text-light)">›</span>
+        </div>
+      </div>
+
       <!-- ① YOUR STORY -->
       <div class="dash-tile dash-tile-wide dash-super" style="cursor:pointer">
         <div class="dash-tile-accent" style="background:var(--sage)"></div>
@@ -4095,8 +4108,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.61';
-  const DEPLOY_NOTES = APP_VERSION + ' — SUB-01 status updated to PARTIAL: Stripe sandbox account live, product + price created (price_1TaYz42OAHazdrcvImHQZfnw), webhook destination configured (5 events), whsec signing secret noted. Pending: Zeller bank connection, customer portal, live mode switch. No functional code changes.';
+  const APP_VERSION  = 'v4.62';
+  const DEPLOY_NOTES = APP_VERSION + ' — PRV-07: OWNER block updated to Gethro Labs. UX-NEW-01: Gethro re-engagement nudge on 14+ day absence (last_seen tracking added). UX-NEW-02: This day in your life dashboard tile. UX-NEW-05: Milestone celebration moments from Gethro (1st entry, 10 entries, 1st photo, 1000 words, 5000 words). APP-STORY-01 sub-sprint D: confirmed complete in proxy — backlog updated.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5525,6 +5538,7 @@
         await loadEntries();
         await loadBookSettings();
         await loadFeatureUsage(); // Supabase-backed feature counters
+        await loadMilestones();   // UX-NEW-05: milestone celebration state
         await loadEmailPrefs();   // weekly email nudge opt-in
         // showReminder() removed v3.06 — rolling heading on Memories tab replaces it
         _startMemHeadingRotation();
@@ -5568,6 +5582,8 @@
       closeAskGethro();
       _agpPendingMemoryConvo = false; // discard any unsaved memory convo on sign-out
       _featureUsage = {}; // clear feature cache on sign-out
+      _milestoneCache = null; // UX-NEW-05: reset milestone state on sign-out
+      _reengagementChecked = false; // UX-NEW-01: reset re-engagement flag on sign-out
       _mpReviewDone = false; // re-check review flag on next sign-in
     }
     memCheckButtons();
@@ -6702,7 +6718,7 @@
     document.body.scrollTop = 0;
     dbg('PANEL', 'After scrollTo: scrollY=' + window.scrollY + ' docEl.scrollTop=' + document.documentElement.scrollTop + ' body.scrollTop=' + document.body.scrollTop);
 
-    if (name === 'dashboard') renderDashboard();
+    if (name === 'dashboard') { renderDashboard(); checkReengagementNudge(); } // UX-NEW-01
     if (name === 'entries')   { populateReviewFilter(_entriesChapterFilter); _entriesChapterFilter = null; renderReviewEntries(); }
     if (name !== 'entries') {
       // Clear Entries search when leaving the tab so stale Gethro filter_text
@@ -6826,6 +6842,7 @@
     logActivity('entry_saved', null, 'info', 'DB');
     featTrackSave();
     featCheckNudge();
+    checkMilestones(); // UX-NEW-05: milestone celebration moments
     toast('Memory saved ✓');
   }
 
@@ -10292,6 +10309,8 @@
 
     renderEssentials();
     renderPrompts();
+    // This Day in Your Life tile — purely client, scan entries for month/day match
+    try { renderThisDayTile(real); } catch(e) { dbgWarn('DASH', 'ThisDay tile failed:', e.message); }
     // Gethro tile — daily observation, always last so it has full entries context
     try { renderGethroTile(real); } catch(e) { dbgWarn('DASH', 'Gethro tile failed:', e.message); }
     // Power User tile — feature usage summary + targeted nudge
@@ -10305,6 +10324,243 @@
       var dg = document.getElementById('dashGreeting');
       if (dg) dg.textContent = 'Dashboard failed to load — please reload the page.';
     }
+  }
+
+  // ── UX-NEW-02: This Day in Your Life ────────────────────────────────────
+  // Scans entries for a month+day match against today (any year).
+  // Falls back to closest match if no exact hit. Pure client — no backend.
+
+  function renderThisDayTile(real) {
+    var tile = document.getElementById('dashThisDayTile');
+    if (!tile || !real.length) { if (tile) tile.style.display = 'none'; return; }
+
+    var today = new Date();
+    var todayMonth = today.getMonth(); // 0-indexed
+    var todayDay   = today.getDate();
+
+    // Score each entry: exact match = 0, else days-of-year distance (min of both directions)
+    var best = null;
+    var bestDist = Infinity;
+
+    real.forEach(function(e) {
+      if (!e.timestamp && !e.date) return;
+      var d;
+      try { d = new Date(e.timestamp || e.date); } catch(x) { return; }
+      if (isNaN(d.getTime())) return;
+      var eMonth = d.getMonth();
+      var eDay   = d.getDate();
+      // Day-of-year distance (ignore year)
+      var eDoy = eMonth * 31 + eDay; // approximate — just for comparison
+      var tDoy = todayMonth * 31 + todayDay;
+      var dist = Math.abs(eDoy - tDoy);
+      dist = Math.min(dist, 365 - dist); // wrap around year end
+      if (dist < bestDist) { bestDist = dist; best = e; }
+      else if (dist === bestDist && best) {
+        // Prefer older entries (larger year difference = more "this day in history" feel)
+        if (d.getFullYear() < new Date(best.timestamp || best.date).getFullYear()) best = e;
+      }
+    });
+
+    if (!best) { tile.style.display = 'none'; return; }
+
+    var bestDate = new Date(best.timestamp || best.date);
+    var yearDiff = today.getFullYear() - bestDate.getFullYear();
+
+    // Build label
+    var label;
+    if (bestDist === 0 && yearDiff > 0) {
+      label = 'On this day in ' + bestDate.getFullYear();
+    } else if (bestDist <= 3 && yearDiff > 0) {
+      var dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      label = 'On a ' + dayNames[bestDate.getDay()] + ' in ' + bestDate.getFullYear();
+    } else if (yearDiff > 0) {
+      label = bestDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+    } else {
+      tile.style.display = 'none';
+      return; // same year — not interesting as "on this day"
+    }
+
+    var title   = best.title || (best.answer || '').substring(0, 50);
+    var preview = (best.answer || '').replace(/[\r\n]+/g, ' ').substring(0, 80) + ((best.answer || '').length > 80 ? '…' : '');
+
+    document.getElementById('dashThisDayLabel').textContent   = label;
+    document.getElementById('dashThisDayTitle').textContent   = title;
+    document.getElementById('dashThisDayPreview').textContent = preview;
+    tile.style.display = '';
+
+    // Tap opens entry in My Memories
+    tile.onclick = function() {
+      _entriesTypeFilter = null; _entriesPersonFilter = null; _entriesLocationFilter = null;
+      showPanel('entries', null, 2);
+      setTimeout(function() {
+        var el = document.getElementById('rev-' + (best.id || (best.timestamp || '').replace(/[:.+]/g, '-')));
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.click(); }
+      }, 300);
+    };
+  }
+
+  // ── UX-NEW-01: Re-engagement nudge ──────────────────────────────────────
+  // Checks last_seen in life_settings vs today. If gap > 14 days, opens
+  // Gethro with a warm contextual message. Fires once per re-engagement,
+  // then updates last_seen so it won't fire again until next absence.
+
+  var _reengagementChecked = false; // once per session
+
+  async function checkReengagementNudge() {
+    if (_reengagementChecked || !currentUser) return;
+    _reengagementChecked = true;
+
+    try {
+      var res = await fetch(
+        DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.last_seen',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var rows = await res.json();
+      var now = new Date();
+
+      // Always update last_seen (fire-and-forget)
+      fetch(DB_SETTINGS_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), {
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }),
+        body: JSON.stringify({ user_id: currentUser.id, key: 'last_seen', value: now.toISOString(), updated_at: now.toISOString() })
+      }).catch(function(){});
+
+      if (!rows || !rows.length) return; // first ever visit — no nudge
+
+      var lastSeen = new Date(rows[0].value);
+      if (isNaN(lastSeen.getTime())) return;
+      var daysSince = Math.floor((now - lastSeen) / 86400000);
+      if (daysSince < 14) return; // not long enough away
+
+      // Find most recent entry chapter for context
+      var real = (entries || []).filter(function(e) { return !e.category || !e.category.startsWith('_profile'); });
+      var sorted = real.slice().sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
+      var lastChapter = sorted.length && sorted[0].chapter ? sorted[0].chapter : null;
+      var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+
+      var msg;
+      if (firstName && lastChapter) {
+        msg = 'It\'s been a little while, ' + firstName + '. I noticed you were writing about ' + lastChapter + ' last time. I\'d love to hear more \u2014 even just a few lines. What comes to mind?';
+      } else if (firstName) {
+        msg = 'Welcome back, ' + firstName + '. I was thinking about you \u2014 every memory you add makes the story richer. Ready to write one today?';
+      } else if (lastChapter) {
+        msg = 'It\'s been a little while. Last time you were writing about ' + lastChapter + '. I\'d love to hear more \u2014 what comes to mind?';
+      } else {
+        msg = 'Welcome back. I was thinking about you \u2014 every memory you add makes the story richer. Ready to write one today?';
+      }
+
+      setTimeout(function() {
+        openAskGethro(true);
+        _agpAppendGethro(msg, null);
+        _gethroHistory.push({ role: 'assistant', content: msg });
+        gethroSpeak(msg).catch(function(){});
+      }, 1200);
+
+    } catch(err) { dbgWarn('NUDGE', 're-engagement check failed:', err.message); }
+  }
+
+  // ── UX-NEW-05: Milestone celebrations ───────────────────────────────────
+  // Called after every save. Checks milestone thresholds against current
+  // entry data. Fires a one-time warm Gethro message. Persists shown
+  // milestones to life_settings so they never repeat across devices.
+  //
+  // Milestones: first_entry, entries_10, first_photo, words_1000, words_5000
+
+  var _milestoneCache = null; // set of already-shown milestone keys, loaded on login
+
+  async function loadMilestones() {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(
+        DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.milestones_shown',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var rows = await res.json();
+      if (rows && rows.length && rows[0].value) {
+        try { _milestoneCache = new Set(JSON.parse(rows[0].value)); } catch(x) { _milestoneCache = new Set(); }
+      } else {
+        _milestoneCache = new Set();
+      }
+    } catch(err) { _milestoneCache = new Set(); }
+  }
+
+  async function checkMilestones() {
+    if (!currentUser || _milestoneCache === null) return;
+    var real = (entries || []).filter(function(e) { return !e.category || !e.category.startsWith('_profile'); });
+    if (!real.length) return;
+
+    var totalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
+    var photoCount = real.filter(function(e) { return e.photo_url; }).length;
+    var firstName  = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+
+    var milestones = [
+      {
+        key: 'first_entry',
+        met: real.length >= 1,
+        msg: firstName
+          ? 'You\'ve written your first memory, ' + firstName + '. That\'s the hardest part done \u2014 the story has begun.'
+          : 'You\'ve written your first memory. That\'s the hardest part done \u2014 the story has begun.'
+      },
+      {
+        key: 'entries_10',
+        met: real.length >= 10,
+        msg: firstName
+          ? 'Ten memories, ' + firstName + '. That\'s a real collection \u2014 your story is taking shape.'
+          : 'Ten memories. That\'s a real collection \u2014 your story is taking shape.'
+      },
+      {
+        key: 'first_photo',
+        met: photoCount >= 1,
+        msg: firstName
+          ? 'You\'ve added your first photo, ' + firstName + '. Moments like these make a memoir come alive.'
+          : 'You\'ve added your first photo. Moments like these make a memoir come alive.'
+      },
+      {
+        key: 'words_1000',
+        met: totalWords >= 1000,
+        msg: firstName
+          ? 'You\'ve written over 1,000 words, ' + firstName + '. That\'s roughly four pages of your memoir.'
+          : 'You\'ve written over 1,000 words. That\'s roughly four pages of your memoir.'
+      },
+      {
+        key: 'words_5000',
+        met: totalWords >= 5000,
+        msg: firstName
+          ? 'Five thousand words, ' + firstName + '. That\'s a proper memoir chapter \u2014 I\'m genuinely proud of you.'
+          : 'Five thousand words. That\'s a proper memoir chapter.'
+      },
+    ];
+
+    var toShow = milestones.filter(function(m) { return m.met && !_milestoneCache.has(m.key); });
+    if (!toShow.length) return;
+
+    // Show only the highest unshown milestone this save (avoid stacking messages)
+    var pick = toShow[toShow.length - 1];
+    _milestoneCache.add(pick.key);
+
+    // Persist updated set (fire-and-forget)
+    var now = new Date().toISOString();
+    fetch(DB_SETTINGS_URL, {
+      method: 'POST',
+      headers: Object.assign({}, getAuthHeaders(), {
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      }),
+      body: JSON.stringify({ user_id: currentUser.id, key: 'milestones_shown', value: JSON.stringify(Array.from(_milestoneCache)), updated_at: now })
+    }).catch(function(){});
+
+    // Show Gethro message after a short delay (let save toast clear first)
+    setTimeout(function() {
+      openAskGethro(true);
+      _agpAppendGethro(pick.msg, null);
+      _gethroHistory.push({ role: 'assistant', content: pick.msg });
+      gethroSpeak(pick.msg).catch(function(){});
+    }, 1500);
   }
 
   function openDashDialog(which) {
