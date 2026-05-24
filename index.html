@@ -8437,11 +8437,12 @@
   ];
 
   var _SC_STEP_META = [
-    { key: 'format', label: 'Step 1 of 4 — Format',  question: 'What style of writing would you like?' },
-    { key: 'roast',  label: 'Step 2 of 4 — Tone',    question: 'Should Gethro play it straight — or have a little fun?' },
+    { key: 'format', label: 'Step 1 of 4 — Format',   question: 'What style of writing would you like?' },
+    { key: 'roast',  label: 'Step 2 of 4 — Tone',     question: 'Should Gethro play it straight — or have a little fun?' },
     { key: 'scope',  label: 'Step 3 of 4 — Memories', question: 'Which memories should Gethro use?' },
     { key: 'length', label: 'Step 4 of 4 — Length',   question: 'How long should the story be?' },
   ];
+  // When roast is chosen, comedy sub-step makes it 5 steps total — labels patched in _scRender
 
   function _scInit() {
     _scStep              = 0;
@@ -8470,24 +8471,28 @@
     var isMywords      = (_scFormat === 'mywords');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
     var isRoastOptions  = (_scStep === 1 && _scRoastSubStep === 'options');
+    // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords)
+    var isRoastFlow     = (_scFunny === true || isRoastOptions);
+    var totalDisplay    = isMywords ? 2 : (isRoastFlow ? 5 : 4);
 
-    // Map real step to display dot index (0-based)
+    // Map real step to display dot index (0-based) and label
     var displayDot, meta;
-    if      (_scStep === 0)    { displayDot = 0; meta = _SC_STEP_META[0]; }
-    else if (_scStep === 1 && !isRoastOptions) { displayDot = 1; meta = _SC_STEP_META[1]; }
-    else if (_scStep === 1 && isRoastOptions)  { displayDot = 1; meta = { label: 'Step 2 of 4 — Comedy', question: 'How do you want Gethro to roast you?' }; }
-    else if (_scStep === 2)    { displayDot = isMywords ? 1 : 2; meta = isMywords ? { label: 'Step 2 of 2 — Memories', question: 'Which memories should Gethro use?' } : _SC_STEP_META[2]; }
-    else if (isChapterPicker)  { displayDot = 2; meta = { label: isMywords ? 'Step 2b of 2 — Chapters' : 'Step 3b of 4 — Chapters', question: 'Which chapters should Gethro focus on?' }; }
-    else                       { displayDot = 3; meta = _SC_STEP_META[3]; }
+    var n = totalDisplay; // shorthand
+    if      (_scStep === 0)    { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
+    else if (_scStep === 1 && !isRoastOptions) { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Tone',     question: 'Should Gethro play it straight — or have a little fun?' }; }
+    else if (_scStep === 1 && isRoastOptions)  { displayDot = 2; meta = { label: 'Step 3 of 5 — Comedy',  question: 'How do you want Gethro to roast you?' }; }
+    else if (_scStep === 2)    { displayDot = isMywords ? 1 : (isRoastFlow ? 3 : 2); meta = { label: 'Step ' + (isMywords ? 2 : isRoastFlow ? 4 : 3) + ' of ' + n + ' — Memories', question: 'Which memories should Gethro use?' }; }
+    else if (isChapterPicker)  { displayDot = isRoastFlow ? 3 : 2; meta = { label: 'Step ' + (isRoastFlow ? '4b' : '3b') + ' of ' + n + ' — Chapters', question: 'Which chapters should Gethro focus on?' }; }
+    else                       { displayDot = isRoastFlow ? 4 : 3; meta = { label: 'Step ' + n + ' of ' + n + ' — Length', question: 'How long should the story be?' }; }
 
-    // Show the right number of dots (2 for mywords, 4 for AI formats)
-    var totalSteps = isMywords ? 2 : 4;
+    // Progress dots — 4 physical dots represent proportional progress through totalDisplay steps
+    // Map displayDot (0-based logical step) onto 0-3 physical dots
+    var dotFilled = Math.round((displayDot / Math.max(totalDisplay - 1, 1)) * 3);
     for (var d = 0; d < 4; d++) {
       var dot = document.getElementById('scDot' + d);
       if (!dot) continue;
-      if (d >= totalSteps) { dot.style.background = 'var(--border)'; dot.style.opacity = '0.3'; continue; }
       dot.style.opacity = '1';
-      dot.style.background = d <= displayDot ? 'var(--rose)' : 'var(--border)';
+      dot.style.background = d <= dotFilled ? 'var(--rose)' : 'var(--border)';
     }
 
     var labelEl    = document.getElementById('scStepLabel');
@@ -8639,8 +8644,7 @@
     var nextBtn = document.getElementById('scNextBtn');
     if (nextBtn) {
       nextBtn.disabled = false;
-      // Final step label
-      var isLast = (_scFormat === 'mywords') ? (_scStep === 1) : (_scStep === 3);
+      var isLast = (_scFormat === 'mywords') ? (_scStep === 2) : (_scStep === 4);
       nextBtn.textContent = isLast ? 'Write my story' : 'Next';
     }
   }
@@ -8677,7 +8681,6 @@
       if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
     }
   }
-
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
     if (_scStep === 1 && _scRoastSubStep === 'options') {
@@ -8840,6 +8843,9 @@
     const out      = document.getElementById('storyOutput');
     const skeleton = document.getElementById('storySkeletonLoader');
     const timeEst  = document.getElementById('storyTimeEstimate');
+    // Hide configurator immediately so user sees skeleton not card choices
+    var configuratorEl = document.getElementById('storyConfigurator');
+    if (configuratorEl) configuratorEl.style.display = 'none';
     out.style.display      = 'none';
     skeleton.style.display = 'block';
     // UX-M08: show time estimate for long-form lengths
@@ -9022,8 +9028,16 @@
     } catch (err) {
       dbgErr('STORY', err);
       skeleton.style.display = 'none';
+      // Restore configurator so user can try again
+      var configuratorEl2 = document.getElementById('storyConfigurator');
+      if (configuratorEl2) configuratorEl2.style.display = 'block';
       out.style.display = 'block';
-      out.innerHTML = '<p style="color:var(--text-light);font-family:\'Lato\',sans-serif">Could not generate story — please try again.</p>';
+      var isRateLimit = err && (err.message || '').toLowerCase().indexOf('rate') !== -1;
+      out.innerHTML = '<p style="color:var(--text-light);font-family:\'Lato\',sans-serif;padding:20px 0">' +
+        (isRateLimit
+          ? '⏱ Gethro is a little overwhelmed right now — please wait a minute and try again.'
+          : '⚠️ Could not generate story — please try again.') +
+        '</p>';
     }
   }
 
