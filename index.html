@@ -4112,7 +4112,7 @@
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
   const APP_VERSION  = 'v4.67';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix: Book Details collapse/expand broken (missing id on trigger element). Fix: alt-tab / app-switch no longer reloads app to dashboard (TOKEN_REFRESHED now silently refreshes token only). Fix: back button now restores card highlight for all steps (was only step 1). Fix: rename "As written" to "Keep it real" to distinguish from In My Own Words. New: "Change format" button appears after story generation to re-open configurator.';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix: alt-tab / focus-return no longer reloads app to dashboard (_appFullyLoaded flag; TOKEN_REFRESHED and post-init SIGNED_IN events now only refresh token). Fix: Book Details expand/collapse broken (missing id on trigger div). Fix: back button now restores card highlight on all configurator steps. Fix: daily Groq token limit (429 TPD) now shows clear "resets at midnight UTC" message. Rename: "As written" → "Keep it real". New: Change format button after story generation.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5508,11 +5508,21 @@
         return;
       }
 
-      // TOKEN_REFRESHED fires every time the app regains focus (alt-tab, task switch).
-      // Only update the token — do NOT reload entries or navigate to dashboard.
+      // TOKEN_REFRESHED: just update the token silently — no navigation, no reload.
       if (event === 'TOKEN_REFRESHED' && session) {
         sessionToken = session.access_token;
-        dbg('AUTH', 'Token refreshed silently — no navigation');
+        dbg('AUTH', 'Token refreshed silently');
+        return;
+      }
+
+      // SIGNED_IN fires on: (a) real first login, (b) page-load session restore,
+      // (c) alt-tab / app-focus return when Supabase auto-refreshes the session.
+      // Cases (b) and (c) must NOT re-run the full init — the app is already loaded.
+      // _appFullyLoaded is set after the first complete init; once true, SIGNED_IN
+      // only updates the token — it does not navigate or reload data.
+      if (event === 'SIGNED_IN' && session && _appFullyLoaded) {
+        sessionToken = session.access_token;
+        dbg('AUTH', 'SIGNED_IN while app already loaded — token updated, no reload');
         return;
       }
 
@@ -5533,6 +5543,7 @@
         _initSessionRestored = false;
       }
       if (event === 'SIGNED_OUT') {
+        _appFullyLoaded = false; // reset so next sign-in runs full init
         logActivity('sign_out', null, 'info', 'AUTH');
       }
       if (event === 'USER_UPDATED' && session) {
@@ -5555,6 +5566,7 @@
         _startMemHeadingRotation();
         renderDashboard();
         draftRestore();
+        _appFullyLoaded = true; // mark app as fully initialised — future SIGNED_IN events skipped
       }
     });
   }
@@ -6059,6 +6071,7 @@
   // show a clear "session expired" toast and prompt the user to sign out/in.
   var _authExpiredShown = false;
   var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
+  var _appFullyLoaded = false;      // true once the full init sequence (loadEntries + renderDashboard) has completed — prevents alt-tab SIGNED_IN from re-running it
 
   function handleAuthError(res) {
     if (res.status === 401 && currentUser && !_authExpiredShown) {
@@ -9059,12 +9072,18 @@
       var configuratorEl2 = document.getElementById('storyConfigurator');
       if (configuratorEl2) configuratorEl2.style.display = 'block';
       out.style.display = 'block';
-      var isRateLimit = err && (err.message || '').toLowerCase().indexOf('rate') !== -1;
-      out.innerHTML = '<p style="color:var(--text-light);font-family:\'Lato\',sans-serif;padding:20px 0">' +
-        (isRateLimit
-          ? '⏱ Gethro is a little overwhelmed right now — please wait a minute and try again.'
-          : '⚠️ Could not generate story — please try again.') +
-        '</p>';
+      var errMsg = (err && err.message) ? err.message.toLowerCase() : '';
+      var isDailyLimit = errMsg.indexOf('429') !== -1 && (errMsg.indexOf('tpd') !== -1 || errMsg.indexOf('per day') !== -1 || errMsg.indexOf('tokens per day') !== -1);
+      var isRateLimit  = errMsg.indexOf('rate') !== -1 || errMsg.indexOf('429') !== -1;
+      var userMsg;
+      if (isDailyLimit) {
+        userMsg = '📅 Gethro has used up today\'s AI allowance — this resets at midnight UTC. Please try again tomorrow, or try a shorter format (Snapshot or Short).';
+      } else if (isRateLimit) {
+        userMsg = '⏱ Gethro is a little overwhelmed right now — please wait a minute and try again.';
+      } else {
+        userMsg = '⚠️ Could not generate story — please try again.';
+      }
+      out.innerHTML = '<p style="color:var(--text-light);font-family:\'Lato\',sans-serif;padding:20px 0">' + userMsg + '</p>';
     }
   }
 
@@ -18612,7 +18631,6 @@
     // ── My Story tab — conversational configurator (APP-STORY-01 v4.57) ──────
     // UX-M06: privacy notice dismiss
     on('changeFormatBtn', 'click', function() {
-      // Re-open the configurator so user can pick a different format
       var configuratorEl = document.getElementById('storyConfigurator');
       var outEl = document.getElementById('storyOutput');
       var cfBtn = document.getElementById('changeFormatBtn');
