@@ -2593,7 +2593,7 @@
 
     <!-- ── Book Details section ─────────────────────────────────────── -->
     <div id="bookDetailsSection" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;cursor:pointer">
+      <div id="bookDetailsTrigger" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;cursor:pointer">
         <div>
           <span style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--text)">📖 Book Details</span>
           <span style="font-size:0.78rem;color:var(--text-light);margin-left:10px">Title, author, blurb &amp; more — used when printing</span>
@@ -2704,9 +2704,10 @@
       <span style="color:var(--text)">📋 Gethro will read your entries to write this story.</span> Your original memories are never changed. <a href="https://lifetold.app/privacy" target="_blank" style="color:var(--gold-dark);text-decoration:underline">Privacy policy</a>
       <button id="storyPrivacyDismissBtn" style="float:right;background:none;border:none;cursor:pointer;font-size:0.8rem;color:var(--text-light);font-family:'Lato',sans-serif;padding:0;margin-left:8px">✕ OK</button>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:16px">
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-ghost" id="exportPdfBtn" style="display:none">📄 Export PDF</button>
       <button class="btn btn-secondary" id="printBookBtn" style="display:none">🖨️ Print as Book</button>
+      <button class="btn btn-ghost" id="changeFormatBtn" style="display:none;font-size:0.82rem">✏️ Change format</button>
     </div>
 
     <!-- Peecho Button script — must be on page so it can process the hidden <a> tag
@@ -4110,8 +4111,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.66';
-  const DEPLOY_NOTES = APP_VERSION + ' — Tabloid, Scary Story and Soap Opera moved from format step into Fun style picker (apply to any format — scary poem, tabloid interview etc). Comedy style picker renamed to Style picker with 7 options. storyNudge hidden during wizard steps 1+. Length-step loop bug fix.';
+  const APP_VERSION  = 'v4.67';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix: Book Details collapse/expand broken (missing id on trigger element). Fix: alt-tab / app-switch no longer reloads app to dashboard (TOKEN_REFRESHED now silently refreshes token only). Fix: back button now restores card highlight for all steps (was only step 1). Fix: rename "As written" to "Keep it real" to distinguish from In My Own Words. New: "Change format" button appears after story generation to re-open configurator.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5504,6 +5505,14 @@
       // Handle password reset link click
       if (event === 'PASSWORD_RECOVERY') {
         showSetNewPassword();
+        return;
+      }
+
+      // TOKEN_REFRESHED fires every time the app regains focus (alt-tab, task switch).
+      // Only update the token — do NOT reload entries or navigate to dashboard.
+      if (event === 'TOKEN_REFRESHED' && session) {
+        sessionToken = session.access_token;
+        dbg('AUTH', 'Token refreshed silently — no navigation');
         return;
       }
 
@@ -8405,7 +8414,7 @@
 
   // Roast step cards — shown after format for all non-mywords formats
   var _SC_ROAST_STEPS = [
-    { emoji: '✨', label: 'As written',      value: 'straight', desc: 'Gethro writes it straight — warm and true' },
+    { emoji: '✨', label: 'Keep it real',   value: 'straight', desc: 'Gethro writes it warmly and faithfully — no tricks' },
     { emoji: '🎉', label: 'Fun it up!',      value: 'roast',    desc: 'Gethro rewrites it with a twist — comedy, horror, drama and more' },
   ];
 
@@ -8613,12 +8622,16 @@
         if (cardsEl) {
         cardsEl.style.display = 'grid';
         cardsEl.innerHTML = '';
-        // Roast step uses wider 2-card layout; restore previous selection highlight
+        // Restore previous selection highlight on back-navigation for all steps
         cards.forEach(function(card) {
           var btn = document.createElement('button');
           btn.setAttribute('data-value', card.value);
-          // Restore highlight if user back-navigated to this step
-          var alreadySelected = (_scStep === 1 && _scFunny !== null && ((card.value === 'roast') === _scFunny));
+          // Determine if this card was previously selected on this step
+          var alreadySelected =
+            (_scStep === 0 && _scFormat === card.value) ||
+            (_scStep === 1 && _scFunny !== null && ((card.value === 'roast') === _scFunny)) ||
+            (_scStep === 2 && _scScope === card.value) ||
+            (_scStep === 4 && _scLength === card.value);
           var borderCol = alreadySelected ? 'var(--rose)' : 'var(--border)';
           var bgCol     = alreadySelected ? 'rgba(180,60,60,0.06)' : 'var(--surface)';
           btn.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:12px 14px;border:2px solid ' + borderCol + ';border-radius:12px;background:' + bgCol + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left';
@@ -9034,6 +9047,8 @@
       await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny, iComedyStyle, iComedyIntensity);
       document.getElementById('exportPdfBtn').style.display = 'inline-block';
       document.getElementById('printBookBtn').style.display = 'inline-block';
+      var cfBtn = document.getElementById('changeFormatBtn');
+      if (cfBtn) cfBtn.style.display = 'inline-block';
       const nudge = document.getElementById('storyNudge');
       if (nudge) nudge.style.display = 'none';
 
@@ -18596,6 +18611,20 @@
 
     // ── My Story tab — conversational configurator (APP-STORY-01 v4.57) ──────
     // UX-M06: privacy notice dismiss
+    on('changeFormatBtn', 'click', function() {
+      // Re-open the configurator so user can pick a different format
+      var configuratorEl = document.getElementById('storyConfigurator');
+      var outEl = document.getElementById('storyOutput');
+      var cfBtn = document.getElementById('changeFormatBtn');
+      var expBtn = document.getElementById('exportPdfBtn');
+      var prtBtn = document.getElementById('printBookBtn');
+      if (configuratorEl) configuratorEl.style.display = 'block';
+      if (outEl) outEl.style.display = 'none';
+      if (cfBtn) cfBtn.style.display = 'none';
+      if (expBtn) expBtn.style.display = 'none';
+      if (prtBtn) prtBtn.style.display = 'none';
+      _scInit();
+    });
     on('storyPrivacyDismissBtn', 'click', function() {
       var n = document.getElementById('storyPrivacyNotice');
       if (n) n.style.display = 'none';
