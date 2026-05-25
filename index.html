@@ -4110,8 +4110,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.64';
-  const DEPLOY_NOTES = APP_VERSION + ' — Comedy story: step-2 roast now offers style choice (dry wit / affectionate / self-deprecating / absurdist) + intensity (gentle / medium / full roast). comedyStyle + comedyIntensity sent to Gethro proxy. Story subtitle reflects chosen style+intensity. deploy-v50: stale comedy format test fixed; warnings now logged as errors; Schema 401 upgraded to error.';
+  const APP_VERSION  = 'v4.65';
+  const DEPLOY_NOTES = APP_VERSION + ' — Three new story formats: Tabloid (sensationalist expose), Scary Story (gothic horror), Soap Opera (melodrama). Comedy absurdist style hugely upgraded for genuine surrealism. Bug fix: story wizard length-step loop (NEXT at length step now correctly generates story). storyNudge hidden during wizard steps 1+ to remove confusing hint.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8398,8 +8398,11 @@
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
     { emoji: '✉️',  label: 'Letter',           value: 'letter',    desc: '"Dear grandchildren…" — intimate first person' },
     { emoji: '📰', label: 'Newspaper',        value: 'newspaper', desc: 'Headline + article, third-person reporting' },
+    { emoji: "🗞️", label: "Tabloid", value: "tabloid", desc: "SENSATIONAL expose — you won't believe what happened next!" },
     { emoji: '🎙️', label: 'Interview',        value: 'interview', desc: 'Q&A transcript — Gethro as interviewer' },
     { emoji: '🌿', label: 'Poetry',           value: 'poetry',    desc: 'Free verse — impressionistic and emotional' },
+    { emoji: '👻', label: 'Scary Story',      value: 'scary',     desc: 'Gothic, suspenseful — your life as a horror tale' },
+    { emoji: '🎭', label: 'Soap Opera',       value: 'drama',     desc: 'Shocking twists! Dramatic betrayals! Intense feelings!' },
     { emoji: '📓', label: 'In My Own Words',  value: 'mywords',   desc: 'Your exact entries, no AI — just you' },
   ];
 
@@ -8503,6 +8506,8 @@
     var nextBtn    = document.getElementById('scNextBtn');
     var backBtn    = document.getElementById('scBackBtn');
 
+    var nudgeEl = document.getElementById('storyNudge');
+    if (nudgeEl) nudgeEl.style.display = (_scStep === 0) ? '' : 'none';
     if (labelEl)    labelEl.textContent     = meta.label;
     if (questionEl) questionEl.textContent  = meta.question;
     if (summaryEl)  summaryEl.style.display = 'none';
@@ -8644,7 +8649,7 @@
     var nextBtn = document.getElementById('scNextBtn');
     if (nextBtn) {
       nextBtn.disabled = false;
-      var isLast = (_scFormat === 'mywords') ? (_scStep === 2) : (_scStep === 4);
+      var isLast = (_scFormat === 'mywords') ? (_scStep === 2) : (_scStep === 3 || _scStep === 4);
       nextBtn.textContent = isLast ? 'Write my story' : 'Next';
     }
   }
@@ -8757,10 +8762,17 @@
       if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity); return; }
       _scStep = 4; _scRender(); return;
     }
-    else if (_scStep === 4) { _scLength = _scSelected; }
+    else if (_scStep === 4 || (_scStep === 3 && _scScope !== 'chapter')) {
+      // Length step — reached at step 3 when scope=all/selected/single,
+      // or step 4 after chapter picker. Either way, capture the length and generate.
+      _scLength = _scSelected;
+      var length = isMywords ? null : _scLength;
+      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity);
+      return;
+    }
 
-    // Determine max step (mywords: 2 → scope is last; AI: 4 → length is last)
-    var maxStep = isMywords ? 2 : 4;
+    // Determine max step (mywords: 2 → scope is last; AI: 3 → length after scope, or 4 after chapter picker)
+    var maxStep = isMywords ? 2 : 3;
 
     if (_scStep < maxStep) {
       _scStep++;
@@ -8803,7 +8815,7 @@
     } catch(e) { dbgWarn('UX-M06','Could not load story_generated_once flag'); }
   }
 
-  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63; comedy options v4.64) ──
+  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63; comedy options v4.64; new formats + comedy upgrade v4.65) ──
   // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?, comedyStyle?, comedyIntensity?)
   //   format             : 'prose'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
   //   scope              : 'all'|'chapter'|'selected'|'single'
@@ -8981,8 +8993,11 @@
       if (format === 'prose')      { /* warm literary memoir — default AI branch */ }
       else if (format === 'letter')     { /* "Dear grandchildren…" first-person letter */ }
       else if (format === 'newspaper')  { /* headline + third-person article */ }
+      else if (format === 'tabloid')    { /* sensationalist tabloid expose */ }
       else if (format === 'interview')  { /* Q&A transcript — Gethro as interviewer */ }
       else if (format === 'poetry')     { /* free verse — impressionistic */ }
+      else if (format === 'scary')      { /* gothic horror retelling */ }
+      else if (format === 'drama')      { /* soap opera melodrama */ }
 
       const isFunny = !!funny;
       const iComedyStyle     = isFunny ? (comedyStyle     || 'affectionate') : null;
