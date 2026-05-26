@@ -2592,7 +2592,7 @@
     <p class="section-sub">Choose a format and length, then let Gethro write your story.</p>
 
     <!-- ── Book Details section ─────────────────────────────────────── -->
-    <div id="bookDetailsSection" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px">
+    <div id="bookDetailsSection" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px;display:none">
       <div id="bookDetailsTrigger" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;cursor:pointer">
         <div>
           <span style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--text)">📖 Book Details</span>
@@ -2697,7 +2697,7 @@
     </div>
     <!-- Nudge shown when no story has been generated yet -->
     <div id="storyNudge" style="padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:0.85rem;color:var(--text-light);margin-bottom:16px">
-      👆 Choose a format above and tap "Write my story" — Gethro will write it for you. Then you can export or print it as a book.
+      ✍️ Pick a style, choose your memories, and Gethro will write your story. You can export it as a PDF or order a printed book.
     </div>
     <!-- UX-M06: one-time first-generation privacy notice — shown before first AI story only -->
     <div id="storyPrivacyNotice" style="display:none;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;font-size:0.82rem;color:var(--text-light);line-height:1.6">
@@ -4111,8 +4111,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.67';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix: alt-tab / focus-return no longer reloads app to dashboard (_appFullyLoaded flag; TOKEN_REFRESHED and post-init SIGNED_IN events now only refresh token). Fix: Book Details expand/collapse broken (missing id on trigger div). Fix: back button now restores card highlight on all configurator steps. Fix: daily Groq token limit (429 TPD) now shows clear "resets at midnight UTC" message. Rename: "As written" → "Keep it real". New: Change format button after story generation.';
+  const APP_VERSION  = 'v4.68';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix: focus-return/app-resume now restores last active tab instead of always going to Dashboard (sessionStorage _lastTab). Fix: back on Step 4 of 5 — Memories in roast flow now returns to comedy options (not 2 steps back). Fix: Book Details section hidden until a story is generated. UX: removed Medium intensity — just Gentle and Full Roast (description upgraded to absurd). UX: story tab nudge updated to useful description.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5520,9 +5520,9 @@
       // Cases (b) and (c) must NOT re-run the full init — the app is already loaded.
       // _appFullyLoaded is set after the first complete init; once true, SIGNED_IN
       // only updates the token — it does not navigate or reload data.
-      if (event === 'SIGNED_IN' && session && _appFullyLoaded) {
+      if (event === 'SIGNED_IN' && session && (_appFullyLoaded || _appInitInProgress)) {
         sessionToken = session.access_token;
-        dbg('AUTH', 'SIGNED_IN while app already loaded — token updated, no reload');
+        dbg('AUTH', 'SIGNED_IN while app ' + (_appFullyLoaded ? 'fully loaded' : 'init in progress') + ' — token updated, no reload');
         return;
       }
 
@@ -5553,6 +5553,7 @@
 
       updateAuthUI();
       if (currentUser) {
+        _appInitInProgress = true; // block re-entrant SIGNED_IN during async init
         // T&Cs FIRST — must be accepted before we collect any personal data.
         // _checkDisclaimerVersion() now returns a promise that resolves only after
         // the user clicks "I Agree". loadEntries (which triggers onboarding) runs after.
@@ -5566,6 +5567,7 @@
         _startMemHeadingRotation();
         renderDashboard();
         draftRestore();
+        _appInitInProgress = false;
         _appFullyLoaded = true; // mark app as fully initialised — future SIGNED_IN events skipped
       }
     });
@@ -6071,7 +6073,8 @@
   // show a clear "session expired" toast and prompt the user to sign out/in.
   var _authExpiredShown = false;
   var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
-  var _appFullyLoaded = false;      // true once the full init sequence (loadEntries + renderDashboard) has completed — prevents alt-tab SIGNED_IN from re-running it
+  var _appFullyLoaded    = false;    // true once the full init sequence (loadEntries + renderDashboard) has completed — prevents alt-tab SIGNED_IN from re-running it
+  var _appInitInProgress = false;    // true while init is running — prevents re-entrant SIGNED_IN during slow loads from re-running init and navigating to dashboard
 
   function handleAuthError(res) {
     if (res.status === 401 && currentUser && !_authExpiredShown) {
@@ -6140,8 +6143,20 @@
         document.getElementById('onboardingOverlay').style.display = 'flex';
         _obStartStep1(); // UX-C02: kick off Gethro intro speech on step 1
       } else {
-        // UX-H02: returning users land on Dashboard (motivational home), not blank Memories form
-        showPanel('dashboard', null, 0);
+        // UX-H02: returning users land on Dashboard — but restore last tab if available
+        // (covers mobile focus-return / page reload after OS kills the tab)
+        var _restoredTab = false;
+        try {
+          var _lt = sessionStorage.getItem('_lastTab');
+          if (_lt) {
+            var _ltp = JSON.parse(_lt);
+            if (_ltp && _ltp.name && _ltp.name !== 'dashboard') {
+              showPanel(_ltp.name, null, _ltp.tabIndex !== null ? _ltp.tabIndex : undefined);
+              _restoredTab = true;
+            }
+          }
+        } catch(e) {}
+        if (!_restoredTab) showPanel('dashboard', null, 0);
       }
       populateTagDropdowns('rec');
     } catch(err) { dbgErr('DB','Load error:', err.message); }
@@ -6722,6 +6737,8 @@
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
     dbg('PANEL', 'showPanel(' + name + ') scrollY=' + scrollBefore + ' overlayVisible=' + overlayVisible + ' activePanels=[' + activePanels.join(',') + ']');
+    // Persist last tab so focus-return / page reload restores the correct screen
+    try { sessionStorage.setItem('_lastTab', JSON.stringify({ name: name, tabIndex: tabIndex !== undefined ? tabIndex : null })); } catch(e) {}
 
     document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
     document.querySelectorAll('.nav-btn').forEach(function(b){ b.classList.remove('active'); });
@@ -6743,6 +6760,7 @@
     dbg('PANEL', 'After scrollTo: scrollY=' + window.scrollY + ' docEl.scrollTop=' + document.documentElement.scrollTop + ' body.scrollTop=' + document.body.scrollTop);
 
     if (name === 'dashboard') { renderDashboard(); checkReengagementNudge(); } // UX-NEW-01
+    if (name === 'story') { var _bdsEl3 = document.getElementById('bookDetailsSection'); if (_bdsEl3) _bdsEl3.style.display = (typeof currentStory !== 'undefined' && currentStory) ? '' : 'none'; }
     if (name === 'entries')   { populateReviewFilter(_entriesChapterFilter); _entriesChapterFilter = null; renderReviewEntries(); }
     if (name !== 'entries') {
       // Clear Entries search when leaving the tab so stale Gethro filter_text
@@ -8399,7 +8417,7 @@
   var _scFormat  = null;
   var _scFunny   = null;       // true|false — set at step 1 (roast toggle); null until chosen
   var _scComedyStyle     = null;  // 'dry'|'affectionate'|'selfdep'|'absurdist' — set at step 1b
-  var _scComedyIntensity = null;  // 'gentle'|'medium'|'full' — set at step 1b
+  var _scComedyIntensity = null;  // 'gentle'|'full' — set at step 1b
   var _scRoastSubStep    = null;  // null = tone choice (straight/roast), 'options' = style+intensity
   var _scScope   = null;
   var _scLength  = null;
@@ -8443,8 +8461,7 @@
 
   var _SC_COMEDY_INTENSITIES = [
     { emoji: '😏', label: 'Gentle',     value: 'gentle',   desc: 'A little cheeky — mostly charming' },
-    { emoji: '😂', label: 'Medium',     value: 'medium',   desc: 'Properly funny — clear laughs throughout' },
-    { emoji: '😈', label: 'Full roast', value: 'full',     desc: 'No mercy — Gethro goes all in' },
+    { emoji: '😈', label: 'Full roast', value: 'full',     desc: 'Absolutely unhinged — Gethro torches everything, dignity included' },
   ];
 
   var _SC_SCOPE_STEPS = [
@@ -8724,6 +8741,10 @@
     } else if (_scStep === 2 && isMywords) {
       // mywords skips roast step — back from scope goes to format
       _scStep = 0;
+    } else if (_scStep === 2 && _scFunny === true) {
+      // Roast flow: back from memories → back to comedy options sub-step (not tone choice)
+      _scStep = 1;
+      _scRoastSubStep = 'options';
     } else if (_scStep > 0) {
       _scStep--;
     }
@@ -8752,7 +8773,7 @@
           _scRoastSubStep = 'options';
           // Set sensible defaults if first visit
           if (!_scComedyStyle)     _scComedyStyle     = 'affectionate';
-          if (!_scComedyIntensity) _scComedyIntensity = 'medium';
+          if (!_scComedyIntensity) _scComedyIntensity = 'gentle';
           _scSelected = null;
           _scRender();
           return;
@@ -8981,6 +9002,7 @@
         out.style.display = 'block'; out.className = '';
         out.innerHTML = html;
         currentStory = { text: sorted.map(e => (e.title ? e.title + '\n' : '') + e.answer).join('\n\n---\n\n'), mode: 'mywords', funny: false, funnyCaptions: {} };
+        var _bdsEl = document.getElementById('bookDetailsSection'); if (_bdsEl) _bdsEl.style.display = '';
         document.getElementById('exportPdfBtn').style.display = 'inline-block';
         document.getElementById('printBookBtn').style.display = 'inline-block';
         const nudge = document.getElementById('storyNudge');
@@ -9024,7 +9046,7 @@
 
       const isFunny = !!funny;
       const iComedyStyle     = isFunny ? (comedyStyle     || 'affectionate') : null;
-      const iComedyIntensity = isFunny ? (comedyIntensity || 'medium')       : null;
+      const iComedyIntensity = isFunny ? (comedyIntensity || 'gentle')       : null;
 
       const storyRes = await callGethro('generate_story', {
         format,
@@ -9056,6 +9078,7 @@
       }
 
       currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, funnyCaptions };
+      var _bdsEl2 = document.getElementById('bookDetailsSection'); if (_bdsEl2) _bdsEl2.style.display = '';
       skeleton.style.display = 'none';
       await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny, iComedyStyle, iComedyIntensity);
       document.getElementById('exportPdfBtn').style.display = 'inline-block';
@@ -18680,7 +18703,7 @@
     on('mineEssentialsBtn',  'click', mineEssentials);
     on('dashBookTile',       'click', function() { toggleSuper('book'); });
     on('dashBookDrill',      'click', function(e) { e.stopPropagation(); });
-    on('dashBookEditBtn',    'click', function() { showPanel('story',null,3); setTimeout(function(){ var bd=document.getElementById('bookDetailsBody'); if(bd&&bd.style.display==='none') toggleBookDetails(); },150); });
+    on('dashBookEditBtn',    'click', function() { showPanel('story',null,3); setTimeout(function(){ var bds=document.getElementById('bookDetailsSection'); if(bds) bds.style.display=''; var bd=document.getElementById('bookDetailsBody'); if(bd&&bd.style.display==='none') toggleBookDetails(); },150); });
     on('dashEntriesTile',    'click', function() { _entriesTypeFilter=null;_entriesPersonFilter=null;_entriesLocationFilter=null; showPanel('entries',null,2); });
     on('dashPeopleTile',     'click', openMyPeople);
     on('dashGoalBtn',        'click', openGoalSession);
