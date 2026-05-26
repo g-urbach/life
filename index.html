@@ -4111,8 +4111,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.68';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix: focus-return/app-resume now restores last active tab instead of always going to Dashboard (sessionStorage _lastTab). Fix: back on Step 4 of 5 — Memories in roast flow now returns to comedy options (not 2 steps back). Fix: Book Details section hidden until a story is generated. UX: removed Medium intensity — just Gentle and Full Roast (description upgraded to absurd). UX: story tab nudge updated to useful description.';
+  const APP_VERSION  = 'v4.69';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-41: Poetry sub-type picker added to story wizard. Choosing Poetry now shows a sub-step (Free verse, Rhyming, Haiku sequence, Nursery rhyme, Sonnet, Ode, Ballad) before the memories step. Length step is skipped for all poetry types — type determines length. Back navigation updated: memories → poem type picker → format. Step count and progress dots updated for poetry flow (3 steps). poetryType passed to proxy and stored in currentStory. Proxy: per-type prompt branches for all 7 poetry types with tuned maxTokens. Backlog: APP-40 Songs format (MusicBrainz style picker, background music, Suno roadmap).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8419,6 +8419,8 @@
   var _scComedyStyle     = null;  // 'dry'|'affectionate'|'selfdep'|'absurdist' — set at step 1b
   var _scComedyIntensity = null;  // 'gentle'|'full' — set at step 1b
   var _scRoastSubStep    = null;  // null = tone choice (straight/roast), 'options' = style+intensity
+  var _scPoetryType      = null;  // APP-41: null until chosen in poetry sub-step
+  var _scPoetrySubStep   = false; // APP-41: true when showing poem type picker (between format and roast)
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8433,14 +8435,26 @@
   var _scStoryPendingFunny  = null;  // carries _scFunny through the Entries tab select flow
   var _scStoryPendingComedyStyle     = null;
   var _scStoryPendingComedyIntensity = null;
+  var _scStoryPendingPoetryType      = null;  // APP-41: carries _scPoetryType through Entries tab select flow
   var _scStorySelected      = [];
   var _SC_FORMAT_STEPS = [
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
     { emoji: '✉️',  label: 'Letter',           value: 'letter',    desc: '"Dear grandchildren…" — intimate first person' },
     { emoji: '📰', label: 'Newspaper',        value: 'newspaper', desc: 'Headline + article, third-person reporting' },
     { emoji: '🎙️', label: 'Interview',        value: 'interview', desc: 'Q&A transcript — Gethro as interviewer' },
-    { emoji: '🌿', label: 'Poetry',           value: 'poetry',    desc: 'Free verse — impressionistic and emotional' },
+    { emoji: '🌿', label: 'Poetry',           value: 'poetry',    desc: 'Free verse, haiku, sonnet, ballad and more' },
     { emoji: '📓', label: 'In My Own Words',  value: 'mywords',   desc: 'Your exact entries, no AI — just you' },
+  ];
+
+  // APP-41: Poetry sub-type picker — shown after choosing Poetry at step 0
+  var _SC_POETRY_TYPES = [
+    { emoji: '🌊', label: 'Free verse',     value: 'freeverse', desc: 'No rhyme or rigid metre — rhythm from the language itself' },
+    { emoji: '🎵', label: 'Rhyming poem',   value: 'rhyming',   desc: 'ABAB or AABB — warm, accessible, easy to read aloud' },
+    { emoji: '🍃', label: 'Haiku sequence', value: 'haiku',     desc: 'One haiku per memory — 5-7-5, meditative and precise' },
+    { emoji: '🧸', label: 'Nursery rhyme',  value: 'nursery',   desc: 'Bouncy and playful — perfect to share with grandchildren' },
+    { emoji: '📜', label: 'Sonnet',         value: 'sonnet',    desc: '14 lines — Shakespearean or Petrarchan, elevated and timeless' },
+    { emoji: '🎙️', label: 'Ode',           value: 'ode',       desc: 'One memory celebrated in full — lyrical and expansive' },
+    { emoji: '🪕', label: 'Ballad',         value: 'ballad',    desc: 'Narrative poem with a repeated refrain — storytelling in verse' },
   ];
 
   // Roast step cards — shown after format for all non-mywords formats
@@ -8493,6 +8507,8 @@
     _scComedyStyle       = null;
     _scComedyIntensity   = null;
     _scRoastSubStep      = null;
+    _scPoetryType        = null;
+    _scPoetrySubStep     = false;
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -8503,28 +8519,33 @@
   function _scRender() {
     // Step layout:
     //   0 = format
+    //   0b = poetry type picker (_scPoetrySubStep=true, _scStep still 0) — APP-41
     //   1 = roast toggle (skipped for mywords)
     //       1b = comedy options sub-step (style + intensity, only when roast chosen)
     //   2 = scope
     //   3 = chapter picker (virtual — only when scope='chapter')
-    //   4 = length (skipped for mywords)
+    //   4 = length (skipped for mywords AND poetry — type determines length)
     // mywords flow: 0 (format) → 2 (scope) — steps 1 and 4 are skipped
+    // poetry flow:  0 (format) → 0b (poem type) → 1 (roast) → 2 (scope) — step 4 skipped
 
     var isMywords      = (_scFormat === 'mywords');
+    var isPoetry       = (_scFormat === 'poetry');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
     var isRoastOptions  = (_scStep === 1 && _scRoastSubStep === 'options');
-    // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords)
+    // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords non-poetry)
     var isRoastFlow     = (_scFunny === true || isRoastOptions);
-    var totalDisplay    = isMywords ? 2 : (isRoastFlow ? 5 : 4);
+    // Poetry: 3 steps (format→type→scope); roast poetry: 4 (format→type→tone→scope)
+    var totalDisplay    = isMywords ? 2 : (isPoetry ? (isRoastFlow ? 4 : 3) : (isRoastFlow ? 5 : 4));
 
     // Map real step to display dot index (0-based) and label
     var displayDot, meta;
     var n = totalDisplay; // shorthand
-    if      (_scStep === 0)    { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
-    else if (_scStep === 1 && !isRoastOptions) { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Tone',     question: 'Should Gethro play it straight — or have a little fun?' }; }
-    else if (_scStep === 1 && isRoastOptions)  { displayDot = 2; meta = { label: 'Step 3 of 5 — Style',   question: 'Pick a flavour — and how far Gethro should go.' }; }
-    else if (_scStep === 2)    { displayDot = isMywords ? 1 : (isRoastFlow ? 3 : 2); meta = { label: 'Step ' + (isMywords ? 2 : isRoastFlow ? 4 : 3) + ' of ' + n + ' — Memories', question: 'Which memories should Gethro use?' }; }
-    else if (isChapterPicker)  { displayDot = isRoastFlow ? 3 : 2; meta = { label: 'Step ' + (isRoastFlow ? '4b' : '3b') + ' of ' + n + ' — Chapters', question: 'Which chapters should Gethro focus on?' }; }
+    if      (_scPoetrySubStep)   { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Poem type', question: 'What kind of poem would you like?' }; }
+    else if (_scStep === 0)      { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
+    else if (_scStep === 1 && !isRoastOptions) { displayDot = isPoetry ? 2 : 1; meta = { label: 'Step ' + (isPoetry ? 3 : 2) + ' of ' + n + ' — Tone', question: 'Should Gethro play it straight — or have a little fun?' }; }
+    else if (_scStep === 1 && isRoastOptions)  { displayDot = isPoetry ? 3 : 2; meta = { label: 'Step ' + (isPoetry ? 4 : 3) + ' of ' + n + ' — Style', question: 'Pick a flavour — and how far Gethro should go.' }; }
+    else if (_scStep === 2)    { displayDot = isMywords ? 1 : (isPoetry ? (isRoastFlow ? 3 : 2) : (isRoastFlow ? 3 : 2)); meta = { label: 'Step ' + (isMywords ? 2 : isPoetry ? (isRoastFlow ? 4 : 3) : isRoastFlow ? 4 : 3) + ' of ' + n + ' — Memories', question: 'Which memories should Gethro use?' }; }
+    else if (isChapterPicker)  { displayDot = isPoetry ? (isRoastFlow ? 3 : 2) : (isRoastFlow ? 3 : 2); meta = { label: 'Step ' + (isRoastFlow ? '4b' : '3b') + ' of ' + n + ' — Chapters', question: 'Which chapters should Gethro focus on?' }; }
     else                       { displayDot = isRoastFlow ? 4 : 3; meta = { label: 'Step ' + n + ' of ' + n + ' — Length', question: 'How long should the story be?' }; }
 
     // Progress dots — 4 physical dots represent proportional progress through totalDisplay steps
@@ -8546,12 +8567,12 @@
     var backBtn    = document.getElementById('scBackBtn');
 
     var nudgeEl = document.getElementById('storyNudge');
-    if (nudgeEl) nudgeEl.style.display = (_scStep === 0) ? '' : 'none';
+    if (nudgeEl) nudgeEl.style.display = (_scStep === 0 && !_scPoetrySubStep) ? '' : 'none';
     if (labelEl)    labelEl.textContent     = meta.label;
     if (questionEl) questionEl.textContent  = meta.question;
     if (summaryEl)  summaryEl.style.display = 'none';
     if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Next'; }
-    if (backBtn) backBtn.style.display = _scStep > 0 ? 'inline-block' : 'none';
+    if (backBtn) backBtn.style.display = (_scStep > 0 || _scPoetrySubStep) ? 'inline-block' : 'none';
 
     _scSelected = null;
 
@@ -8602,7 +8623,8 @@
     } else {
       if (pickerEl) pickerEl.style.display = 'none';
       var cards;
-      if      (_scStep === 0) cards = _SC_FORMAT_STEPS;
+      if      (_scPoetrySubStep) cards = _SC_POETRY_TYPES;
+      else if (_scStep === 0) cards = _SC_FORMAT_STEPS;
       else if (_scStep === 1 && _scRoastSubStep !== 'options') cards = _SC_ROAST_STEPS;
       else if (_scStep === 2) cards = _SC_SCOPE_STEPS;
       else if (_scStep !== 1) cards = _SC_LENGTH_STEPS;
@@ -8658,7 +8680,8 @@
           btn.setAttribute('data-value', card.value);
           // Determine if this card was previously selected on this step
           var alreadySelected =
-            (_scStep === 0 && _scFormat === card.value) ||
+            (_scPoetrySubStep && _scPoetryType === card.value) ||
+            (_scStep === 0 && !_scPoetrySubStep && _scFormat === card.value) ||
             (_scStep === 1 && _scFunny !== null && ((card.value === 'roast') === _scFunny)) ||
             (_scStep === 2 && _scScope === card.value) ||
             (_scStep === 4 && _scLength === card.value);
@@ -8692,7 +8715,11 @@
     var nextBtn = document.getElementById('scNextBtn');
     if (nextBtn) {
       nextBtn.disabled = false;
-      var isLast = (_scFormat === 'mywords') ? (_scStep === 2) : (_scStep === 3 || _scStep === 4);
+      // isLast: mywords ends at scope; poetry ends at scope (skips length); others end at length/scope
+      var isPoetryFlow = (_scFormat === 'poetry') || _scPoetrySubStep;
+      var isLast = (_scFormat === 'mywords') ? (_scStep === 2) :
+                   (isPoetryFlow && _scStep === 2) ? true :
+                   (_scStep === 3 || _scStep === 4);
       nextBtn.textContent = isLast ? 'Write my story' : 'Next';
     }
   }
@@ -8731,7 +8758,12 @@
   }
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
-    if (_scStep === 1 && _scRoastSubStep === 'options') {
+    if (_scPoetrySubStep) {
+      // Back from poetry type picker → back to format choice
+      _scPoetrySubStep = false;
+      _scFormat = null;
+      _scStep = 0;
+    } else if (_scStep === 1 && _scRoastSubStep === 'options') {
       // Back from comedy options → back to straight/roast choice
       _scRoastSubStep = null;
       _scSelected = 'roast'; // keep roast selected
@@ -8741,6 +8773,12 @@
     } else if (_scStep === 2 && isMywords) {
       // mywords skips roast step — back from scope goes to format
       _scStep = 0;
+    } else if (_scStep === 2 && _scFormat === 'poetry') {
+      // Poetry: back from memories → back to roast/tone step
+      _scStep = 1; _scRoastSubStep = null;
+    } else if (_scStep === 1 && _scFormat === 'poetry') {
+      // Poetry: back from tone step → back to poetry type picker
+      _scPoetrySubStep = true; _scStep = 0;
     } else if (_scStep === 2 && _scFunny === true) {
       // Roast flow: back from memories → back to comedy options sub-step (not tone choice)
       _scStep = 1;
@@ -8753,12 +8791,24 @@
 
   function _scNext() {
     var isMywords       = (_scFormat === 'mywords');
+    var isPoetry        = (_scFormat === 'poetry');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
+
+    // APP-41: Poetry type picker sub-step (between format and roast)
+    if (_scPoetrySubStep) {
+      _scPoetryType    = _scSelected;
+      _scPoetrySubStep = false;
+      _scStep          = 1;  // advance to roast/tone step
+      _scRender();
+      return;
+    }
 
     if      (_scStep === 0) {
       _scFormat = _scSelected;
       // mywords skips the roast step — jump straight to scope
       if (_scFormat === 'mywords') { _scStep = 2; _scRender(); return; }
+      // poetry: show poem type picker sub-step before roast
+      if (_scFormat === 'poetry') { _scPoetrySubStep = true; _scRender(); return; }
     }
     else if (_scStep === 1) {
       if (_scRoastSubStep === 'options') {
@@ -8794,6 +8844,7 @@
         _scStoryPendingFunny  = _scFunny;
         _scStoryPendingComedyStyle     = _scComedyStyle;
         _scStoryPendingComedyIntensity = _scComedyIntensity;
+        _scStoryPendingPoetryType      = _scPoetryType;
         _scStorySelectLimit   = (_scScope === 'single') ? 1 : 0;
         _scStorySelected      = [];
         _scStorySelectMode    = true;
@@ -8803,10 +8854,16 @@
       }
       // C2: scope=chapter → show chapter picker sub-step (virtual step 3)
       if (_scScope === 'chapter') { _scStep = 3; _scRender(); return; }
+      // Poetry: skip length step — generate immediately after scope
+      if (isPoetry) {
+        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType);
+        return;
+      }
     }
     else if (isChapterPicker) {
-      // Chapter picker confirmed — advance to length step (step 4)
+      // Chapter picker confirmed — poetry skips length step; others advance to step 4
       if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity); return; }
+      if (isPoetry)  { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType); return; }
       _scStep = 4; _scRender(); return;
     }
     else if (_scStep === 4 || (_scStep === 3 && _scScope !== 'chapter')) {
@@ -8866,14 +8923,15 @@
   // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?, comedyStyle?, comedyIntensity?)
   //   format             : 'prose'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
   //   scope              : 'all'|'chapter'|'selected'|'single'
-  //   length             : 'snapshot'|'short'|'standard'|'book'|null (mywords)
+  //   length             : 'snapshot'|'short'|'standard'|'book'|null (mywords/poetry)
   //   selectedTimestamps : string[] — provided by _entriesStoryConfirm for selected/single scope
   //                        chapter scope uses _scChapterSelections directly
   //   funny              : boolean — true = comedy roast overlay on any AI format (not mywords)
   //   comedyStyle        : 'dry'|'affectionate'|'selfdep'|'absurdist' — only when funny=true
   //   comedyIntensity    : 'gentle'|'medium'|'full' — only when funny=true
+  //   poetryType         : 'freeverse'|'rhyming'|'haiku'|'nursery'|'sonnet'|'ode'|'ballad' — only when format=poetry
 
-  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity) {
+  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity, poetryType) {
     if (!currentUser) return toast('Please sign in first');
     var allRealEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!allRealEntries.length) return toast('Add some entries first!');
@@ -9042,11 +9100,12 @@
       else if (format === 'letter')     { /* "Dear grandchildren…" first-person letter */ }
       else if (format === 'newspaper')  { /* headline + third-person article */ }
       else if (format === 'interview')  { /* Q&A transcript — Gethro as interviewer */ }
-      else if (format === 'poetry')     { /* free verse — impressionistic */ }
+      else if (format === 'poetry')     { /* poem type determined by poetryType param — APP-41 */ }
 
       const isFunny = !!funny;
       const iComedyStyle     = isFunny ? (comedyStyle     || 'affectionate') : null;
       const iComedyIntensity = isFunny ? (comedyIntensity || 'gentle')       : null;
+      const iPoetryType      = (format === 'poetry') ? (poetryType || 'freeverse') : null;
 
       const storyRes = await callGethro('generate_story', {
         format,
@@ -9055,6 +9114,7 @@
         funny: isFunny,
         comedyStyle:     iComedyStyle,
         comedyIntensity: iComedyIntensity,
+        poetryType:      iPoetryType,
         profileContext,
         entriesText,
         chapterText,
@@ -9077,7 +9137,7 @@
         }));
       }
 
-      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, funnyCaptions };
+      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, poetryType: iPoetryType, funnyCaptions };
       var _bdsEl2 = document.getElementById('bookDetailsSection'); if (_bdsEl2) _bdsEl2.style.display = '';
       skeleton.style.display = 'none';
       await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny, iComedyStyle, iComedyIntensity);
@@ -11628,6 +11688,10 @@
     var funny         = _scStoryPendingFunny;
     var comedyStyle   = _scStoryPendingComedyStyle;
     var comedyInt     = _scStoryPendingComedyIntensity;
+    var poetryType    = _scStoryPendingPoetryType;
+
+    // Poetry skips length — null length is correct; no length configurator needed
+    // (length was already null when pending vars were set for poetry)
 
     // Disable bar to prevent double-tap
     var genBtn = document.getElementById('entriesStoryGenBtn');
@@ -11636,7 +11700,7 @@
     _scStorySelectMode = false;   // prevent showPanel from double-hiding
     showPanel('story', null, 3);
 
-    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt);
+    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt, poetryType);
   }
 
   // ── UX-M10: Select mode for manual merge ─────────────────────────
