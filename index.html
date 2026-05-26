@@ -1399,6 +1399,99 @@
       border-bottom: 2px solid var(--gold);
     }
 
+    /* ── APP-40 Phase 1b: Song lyrics layout ── */
+    .song-lyrics-wrap {
+      font-family: 'Lato', sans-serif;
+      font-size: 1.05rem;
+      line-height: 2;
+      color: var(--text);
+    }
+    .song-section-marker {
+      font-family: 'Lato', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin: 2em 0 0.35em;
+      padding: 4px 10px;
+      background: var(--surface2);
+      border-left: 3px solid var(--gold);
+      border-radius: 0 4px 4px 0;
+      display: inline-block;
+    }
+    .song-chorus-marker {
+      color: var(--rose);
+      border-left-color: var(--rose);
+    }
+    .song-bridge-marker {
+      color: var(--text-light);
+      border-left-color: var(--text-light);
+    }
+    .song-lyric-line {
+      margin: 0;
+      padding: 0;
+      display: block;
+      min-height: 1.2em;
+    }
+    .song-lyric-blank { display: block; height: 0.6em; }
+    /* Song readback bar — shown below storyOutput when format=song */
+    #songReadbackBar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-top: 14px;
+      display: none;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    #songReadbackBar .srb-play {
+      background: var(--gold);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 18px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    #songReadbackBar .srb-play:hover { background: var(--gold-dark); }
+    #songReadbackBar .srb-play:disabled { opacity: 0.5; cursor: not-allowed; }
+    #songReadbackBar .srb-mute {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-family: 'Lato', sans-serif;
+      font-size: 0.82rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #songReadbackBar .srb-label {
+      font-family: 'Lato', sans-serif;
+      font-size: 0.82rem;
+      color: var(--text-light);
+      flex: 1;
+      min-width: 120px;
+    }
+    #songReadbackBar .srb-teaser {
+      font-family: 'Lato', sans-serif;
+      font-size: 0.78rem;
+      color: var(--text-light);
+      font-style: italic;
+      padding: 6px 10px;
+      background: var(--surface2);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
       display: flex; align-items: center; justify-content: space-between;
       margin: 32px 0 14px; gap: 12px; flex-wrap: wrap;
     }
@@ -2755,6 +2848,14 @@
       </div>
     </div>
     <div id="storyOutput" style="display:none"></div>
+
+    <!-- APP-40 Phase 1b: Song readback bar — shown only after a Song format story is generated -->
+    <div id="songReadbackBar" role="region" aria-label="Song readback">
+      <button class="srb-play" id="songReadbackPlayBtn" aria-label="Hear Gethro read your song">▶ Hear Gethro read your song</button>
+      <button class="srb-mute" id="songReadbackMuteBtn" title="Toggle background music" aria-label="Toggle background music" style="display:none">🎵 Music: On</button>
+      <span class="srb-label" id="songReadbackLabel">Gethro reads your lyrics aloud with soft background music</span>
+      <span class="srb-teaser" title="Coming in a future update">🎤 AI singing — coming soon</span>
+    </div>
   </div>
 
   <!-- ── PRINT PREVIEW OVERLAY ─────────────────────────────────────────── -->
@@ -4111,8 +4212,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.69';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-41: Poetry sub-type picker added to story wizard. Choosing Poetry now shows a sub-step (Free verse, Rhyming, Haiku sequence, Nursery rhyme, Sonnet, Ode, Ballad) before the memories step. Length step is skipped for all poetry types — type determines length. Back navigation updated: memories → poem type picker → format. Step count and progress dots updated for poetry flow (3 steps). poetryType passed to proxy and stored in currentStory. Proxy: per-type prompt branches for all 7 poetry types with tuned maxTokens. Backlog: APP-40 Songs format (MusicBrainz style picker, background music, Suno roadmap).';
+  const APP_VERSION  = 'v4.71';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-40 Phase 1b: Song TTS readback + FMA background music. After Song lyrics are generated, a readback bar appears with ▶ Hear Gethro read your song button. Gethro reads lyrics aloud (via existing TTS). Background music fetched from Free Music Archive (CC-licensed), genre-matched to songStyle, ducked to 20% volume. Mute toggle for background music. Coming Soon teaser for Suno AI singing (Phase 3). renderStory() extended: song format gets dedicated lyrics layout (section markers styled as verse/chorus headers, monospace-inspired lyric font, no drop cap, no pull quotes). Zero DB changes. Proxy unchanged.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8421,6 +8522,8 @@
   var _scRoastSubStep    = null;  // null = tone choice (straight/roast), 'options' = style+intensity
   var _scPoetryType      = null;  // APP-41: null until chosen in poetry sub-step
   var _scPoetrySubStep   = false; // APP-41: true when showing poem type picker (between format and roast)
+  var _scSongSubStep     = false; // APP-40: true when showing song style picker (between format and roast)
+  var _scSongStyle       = null;  // APP-40: null until chosen in song sub-step
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8436,6 +8539,7 @@
   var _scStoryPendingComedyStyle     = null;
   var _scStoryPendingComedyIntensity = null;
   var _scStoryPendingPoetryType      = null;  // APP-41: carries _scPoetryType through Entries tab select flow
+  var _scStoryPendingSongStyle       = null;  // APP-40: carries _scSongStyle through Entries tab select flow
   var _scStorySelected      = [];
   var _SC_FORMAT_STEPS = [
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
@@ -8443,7 +8547,32 @@
     { emoji: '📰', label: 'Newspaper',        value: 'newspaper', desc: 'Headline + article, third-person reporting' },
     { emoji: '🎙️', label: 'Interview',        value: 'interview', desc: 'Q&A transcript — Gethro as interviewer' },
     { emoji: '🌿', label: 'Poetry',           value: 'poetry',    desc: 'Free verse, haiku, sonnet, ballad and more' },
+    { emoji: '🎵', label: 'Song',             value: 'song',      desc: 'Your memories as song lyrics — pick a style' },
     { emoji: '📓', label: 'In My Own Words',  value: 'mywords',   desc: 'Your exact entries, no AI — just you' },
+  ];
+
+  // APP-40: Song style picker — shown after choosing Song at step 0 (Phase 1a)
+  var _SC_SONG_STYLES = [
+    { emoji: '💿', label: 'Pop Ballad',          value: 'pop_ballad',        desc: 'Soaring chorus, heartfelt — think Adele or Ed Sheeran' },
+    { emoji: '🤠', label: 'Country',             value: 'country',           desc: 'Plain-spoken storytelling — think Dolly or Johnny Cash' },
+    { emoji: '🪵', label: 'Folk',                value: 'folk',              desc: 'Intimate, literary — think Joni Mitchell or Bob Dylan' },
+    { emoji: '🎤', label: 'R&B / Soul',          value: 'rnb',               desc: 'Lush and soulful — think Beyoncé or Alicia Keys' },
+    { emoji: '✝️',  label: 'Gospel',             value: 'gospel',            desc: 'Triumphant and uplifting — faith and community' },
+    { emoji: '🎷', label: 'Jazz',                value: 'jazz',              desc: 'Sophisticated and unexpected — think Nina Simone' },
+    { emoji: '🎸', label: 'Blues',               value: 'blues',             desc: 'Honest and earthy — hard times and quiet joys' },
+    { emoji: '🤘', label: 'Rock Anthem',         value: 'rock',              desc: 'Cinematic and declarative — think Springsteen' },
+    { emoji: '⚡', label: 'Punk',                value: 'punk',              desc: 'Short, raw, urgent — no frills, maximum truth' },
+    { emoji: '🎤', label: 'Hip-Hop',             value: 'hiphop',            desc: 'Rhythmic flow, vivid imagery — confident voice' },
+    { emoji: '🌴', label: 'Reggae',              value: 'reggae',            desc: 'Laid-back, uplifting — think Bob Marley' },
+    { emoji: '🎻', label: 'Classical / Lieder',  value: 'classical',         desc: 'Elevated and formal — art song tradition' },
+    { emoji: '🎭', label: 'Musical Theatre',     value: 'musical_theatre',   desc: 'Character-driven ballad — think Sondheim or Hamilton' },
+    { emoji: '🍀', label: 'Celtic / Irish Folk', value: 'celtic',            desc: 'Longing and landscape — think Dubliners or Loreena McKennitt' },
+    { emoji: '🌺', label: 'Bossa Nova',          value: 'bossa_nova',        desc: 'Gentle, sophisticated — understated warmth' },
+    { emoji: '🌲', label: 'Indie Folk',          value: 'indie_folk',        desc: 'Introspective, literary — think Phoebe Bridgers or Bon Iver' },
+    { emoji: '🕺', label: 'Motown',              value: 'motown',            desc: 'Infectious hook, gospel roots — think The Supremes' },
+    { emoji: '🎩', label: 'Cabaret',             value: 'cabaret',           desc: 'Theatrical and witty — sung directly to an audience' },
+    { emoji: '🪑', label: 'Singer-Songwriter',   value: 'singer_songwriter', desc: 'Personal, specific, a little raw — think Carole King' },
+    { emoji: '🧸', label: "Children's Song",     value: 'childrens',         desc: "Warm and simple — a song a grandparent might sing" },
   ];
 
   // APP-41: Poetry sub-type picker — shown after choosing Poetry at step 0
@@ -8509,6 +8638,8 @@
     _scRoastSubStep      = null;
     _scPoetryType        = null;
     _scPoetrySubStep     = false;
+    _scSongStyle         = null;
+    _scSongSubStep       = false;
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -8520,27 +8651,31 @@
     // Step layout:
     //   0 = format
     //   0b = poetry type picker (_scPoetrySubStep=true, _scStep still 0) — APP-41
+    //   0c = song style picker (_scSongSubStep=true, _scStep still 0) — APP-40
     //   1 = roast toggle (skipped for mywords)
     //       1b = comedy options sub-step (style + intensity, only when roast chosen)
     //   2 = scope
     //   3 = chapter picker (virtual — only when scope='chapter')
-    //   4 = length (skipped for mywords AND poetry — type determines length)
+    //   4 = length (skipped for mywords AND poetry AND song — type/structure determines length)
     // mywords flow: 0 (format) → 2 (scope) — steps 1 and 4 are skipped
     // poetry flow:  0 (format) → 0b (poem type) → 1 (roast) → 2 (scope) — step 4 skipped
+    // song flow:    0 (format) → 0c (song style) → 1 (roast) → 2 (scope) — step 4 skipped
 
     var isMywords      = (_scFormat === 'mywords');
     var isPoetry       = (_scFormat === 'poetry');
+    var isSong         = (_scFormat === 'song');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
     var isRoastOptions  = (_scStep === 1 && _scRoastSubStep === 'options');
     // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords non-poetry)
     var isRoastFlow     = (_scFunny === true || isRoastOptions);
     // Poetry: 3 steps (format→type→scope); roast poetry: 4 (format→type→tone→scope)
-    var totalDisplay    = isMywords ? 2 : (isPoetry ? (isRoastFlow ? 4 : 3) : (isRoastFlow ? 5 : 4));
+    var totalDisplay    = isMywords ? 2 : ((isPoetry || isSong) ? (isRoastFlow ? 4 : 3) : (isRoastFlow ? 5 : 4));
 
     // Map real step to display dot index (0-based) and label
     var displayDot, meta;
     var n = totalDisplay; // shorthand
-    if      (_scPoetrySubStep)   { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Poem type', question: 'What kind of poem would you like?' }; }
+    if      (_scSongSubStep)     { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Song style', question: 'What style of song would you like?' }; }
+    else if (_scPoetrySubStep)   { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Poem type', question: 'What kind of poem would you like?' }; }
     else if (_scStep === 0)      { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
     else if (_scStep === 1 && !isRoastOptions) { displayDot = isPoetry ? 2 : 1; meta = { label: 'Step ' + (isPoetry ? 3 : 2) + ' of ' + n + ' — Tone', question: 'Should Gethro play it straight — or have a little fun?' }; }
     else if (_scStep === 1 && isRoastOptions)  { displayDot = isPoetry ? 3 : 2; meta = { label: 'Step ' + (isPoetry ? 4 : 3) + ' of ' + n + ' — Style', question: 'Pick a flavour — and how far Gethro should go.' }; }
@@ -8567,12 +8702,12 @@
     var backBtn    = document.getElementById('scBackBtn');
 
     var nudgeEl = document.getElementById('storyNudge');
-    if (nudgeEl) nudgeEl.style.display = (_scStep === 0 && !_scPoetrySubStep) ? '' : 'none';
+    if (nudgeEl) nudgeEl.style.display = (_scStep === 0 && !_scPoetrySubStep && !_scSongSubStep) ? '' : 'none';
     if (labelEl)    labelEl.textContent     = meta.label;
     if (questionEl) questionEl.textContent  = meta.question;
     if (summaryEl)  summaryEl.style.display = 'none';
     if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Next'; }
-    if (backBtn) backBtn.style.display = (_scStep > 0 || _scPoetrySubStep) ? 'inline-block' : 'none';
+    if (backBtn) backBtn.style.display = (_scStep > 0 || _scPoetrySubStep || _scSongSubStep) ? 'inline-block' : 'none';
 
     _scSelected = null;
 
@@ -8623,7 +8758,8 @@
     } else {
       if (pickerEl) pickerEl.style.display = 'none';
       var cards;
-      if      (_scPoetrySubStep) cards = _SC_POETRY_TYPES;
+      if      (_scSongSubStep)    cards = _SC_SONG_STYLES;
+      else if (_scPoetrySubStep) cards = _SC_POETRY_TYPES;
       else if (_scStep === 0) cards = _SC_FORMAT_STEPS;
       else if (_scStep === 1 && _scRoastSubStep !== 'options') cards = _SC_ROAST_STEPS;
       else if (_scStep === 2) cards = _SC_SCOPE_STEPS;
@@ -8680,8 +8816,9 @@
           btn.setAttribute('data-value', card.value);
           // Determine if this card was previously selected on this step
           var alreadySelected =
-            (_scPoetrySubStep && _scPoetryType === card.value) ||
-            (_scStep === 0 && !_scPoetrySubStep && _scFormat === card.value) ||
+            (_scSongSubStep    && _scSongStyle  === card.value) ||
+            (_scPoetrySubStep  && _scPoetryType === card.value) ||
+            (_scStep === 0 && !_scPoetrySubStep && !_scSongSubStep && _scFormat === card.value) ||
             (_scStep === 1 && _scFunny !== null && ((card.value === 'roast') === _scFunny)) ||
             (_scStep === 2 && _scScope === card.value) ||
             (_scStep === 4 && _scLength === card.value);
@@ -8715,10 +8852,11 @@
     var nextBtn = document.getElementById('scNextBtn');
     if (nextBtn) {
       nextBtn.disabled = false;
-      // isLast: mywords ends at scope; poetry ends at scope (skips length); others end at length/scope
+      // isLast: mywords ends at scope; poetry/song end at scope (skip length); others end at length/scope
       var isPoetryFlow = (_scFormat === 'poetry') || _scPoetrySubStep;
+      var isSongFlow   = (_scFormat === 'song')   || _scSongSubStep;
       var isLast = (_scFormat === 'mywords') ? (_scStep === 2) :
-                   (isPoetryFlow && _scStep === 2) ? true :
+                   ((isPoetryFlow || isSongFlow) && _scStep === 2) ? true :
                    (_scStep === 3 || _scStep === 4);
       nextBtn.textContent = isLast ? 'Write my story' : 'Next';
     }
@@ -8758,7 +8896,13 @@
   }
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
-    if (_scPoetrySubStep) {
+    var isSong    = (_scFormat === 'song');
+    if (_scSongSubStep) {
+      // Back from song style picker → back to format choice
+      _scSongSubStep = false;
+      _scFormat = null;
+      _scStep = 0;
+    } else if (_scPoetrySubStep) {
       // Back from poetry type picker → back to format choice
       _scPoetrySubStep = false;
       _scFormat = null;
@@ -8773,9 +8917,15 @@
     } else if (_scStep === 2 && isMywords) {
       // mywords skips roast step — back from scope goes to format
       _scStep = 0;
+    } else if (_scStep === 2 && _scFormat === 'song') {
+      // Song: back from memories → back to roast/tone step
+      _scStep = 1; _scRoastSubStep = null;
     } else if (_scStep === 2 && _scFormat === 'poetry') {
       // Poetry: back from memories → back to roast/tone step
       _scStep = 1; _scRoastSubStep = null;
+    } else if (_scStep === 1 && _scFormat === 'song') {
+      // Song: back from tone step → back to song style picker
+      _scSongSubStep = true; _scStep = 0;
     } else if (_scStep === 1 && _scFormat === 'poetry') {
       // Poetry: back from tone step → back to poetry type picker
       _scPoetrySubStep = true; _scStep = 0;
@@ -8792,7 +8942,17 @@
   function _scNext() {
     var isMywords       = (_scFormat === 'mywords');
     var isPoetry        = (_scFormat === 'poetry');
+    var isSong          = (_scFormat === 'song');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
+
+    // APP-40: Song style picker sub-step (between format and roast)
+    if (_scSongSubStep) {
+      _scSongStyle    = _scSelected;
+      _scSongSubStep  = false;
+      _scStep         = 1;  // advance to roast/tone step
+      _scRender();
+      return;
+    }
 
     // APP-41: Poetry type picker sub-step (between format and roast)
     if (_scPoetrySubStep) {
@@ -8807,6 +8967,8 @@
       _scFormat = _scSelected;
       // mywords skips the roast step — jump straight to scope
       if (_scFormat === 'mywords') { _scStep = 2; _scRender(); return; }
+      // song: show song style picker sub-step before roast
+      if (_scFormat === 'song') { _scSongSubStep = true; _scRender(); return; }
       // poetry: show poem type picker sub-step before roast
       if (_scFormat === 'poetry') { _scPoetrySubStep = true; _scRender(); return; }
     }
@@ -8845,6 +9007,7 @@
         _scStoryPendingComedyStyle     = _scComedyStyle;
         _scStoryPendingComedyIntensity = _scComedyIntensity;
         _scStoryPendingPoetryType      = _scPoetryType;
+        _scStoryPendingSongStyle       = _scSongStyle;
         _scStorySelectLimit   = (_scScope === 'single') ? 1 : 0;
         _scStorySelected      = [];
         _scStorySelectMode    = true;
@@ -8854,7 +9017,12 @@
       }
       // C2: scope=chapter → show chapter picker sub-step (virtual step 3)
       if (_scScope === 'chapter') { _scStep = 3; _scRender(); return; }
-      // Poetry: skip length step — generate immediately after scope
+      // Song: skip length step — song structure determines length
+      if (isSong) {
+        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle);
+        return;
+      }
+      // Poetry: skip length step — poem type determines length
       if (isPoetry) {
         generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType);
         return;
@@ -8863,6 +9031,7 @@
     else if (isChapterPicker) {
       // Chapter picker confirmed — poetry skips length step; others advance to step 4
       if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity); return; }
+      if (isSong)    { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle); return; }
       if (isPoetry)  { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType); return; }
       _scStep = 4; _scRender(); return;
     }
@@ -8930,8 +9099,9 @@
   //   comedyStyle        : 'dry'|'affectionate'|'selfdep'|'absurdist' — only when funny=true
   //   comedyIntensity    : 'gentle'|'medium'|'full' — only when funny=true
   //   poetryType         : 'freeverse'|'rhyming'|'haiku'|'nursery'|'sonnet'|'ode'|'ballad' — only when format=poetry
+  //   songStyle          : 'pop_ballad'|'country'|'folk'|... — only when format=song (APP-40)
 
-  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity, poetryType) {
+  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity, poetryType, songStyle) {
     if (!currentUser) return toast('Please sign in first');
     var allRealEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!allRealEntries.length) return toast('Add some entries first!');
@@ -9101,11 +9271,13 @@
       else if (format === 'newspaper')  { /* headline + third-person article */ }
       else if (format === 'interview')  { /* Q&A transcript — Gethro as interviewer */ }
       else if (format === 'poetry')     { /* poem type determined by poetryType param — APP-41 */ }
+      else if (format === 'song')       { /* song style determined by songStyle param — APP-40 */ }
 
       const isFunny = !!funny;
       const iComedyStyle     = isFunny ? (comedyStyle     || 'affectionate') : null;
       const iComedyIntensity = isFunny ? (comedyIntensity || 'gentle')       : null;
       const iPoetryType      = (format === 'poetry') ? (poetryType || 'freeverse') : null;
+      const iSongStyle       = (format === 'song')    ? (songStyle    || 'pop_ballad') : null;
 
       const storyRes = await callGethro('generate_story', {
         format,
@@ -9115,6 +9287,7 @@
         comedyStyle:     iComedyStyle,
         comedyIntensity: iComedyIntensity,
         poetryType:      iPoetryType,
+        songStyle:       iSongStyle,
         profileContext,
         entriesText,
         chapterText,
@@ -9137,7 +9310,7 @@
         }));
       }
 
-      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, poetryType: iPoetryType, funnyCaptions };
+      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, poetryType: iPoetryType, songStyle: iSongStyle, funnyCaptions };
       var _bdsEl2 = document.getElementById('bookDetailsSection'); if (_bdsEl2) _bdsEl2.style.display = '';
       skeleton.style.display = 'none';
       await renderStory(story, photoEntries, length || format, funnyCaptions, isFunny, iComedyStyle, iComedyIntensity);
@@ -9170,6 +9343,147 @@
     }
   }
 
+  // ── APP-40 Phase 1b: Song TTS readback + FMA background music ───────────
+
+  // Genre → FMA genre_handle mapping (best matches from FMA taxonomy)
+  var _SONG_STYLE_FMA_GENRE = {
+    pop_ballad:        'pop',
+    country:           'country',
+    folk:              'folk',
+    rnb:               'rnb',
+    gospel:            'gospel',
+    jazz:              'jazz',
+    blues:             'blues',
+    rock:              'rock',
+    punk:              'punk',
+    hiphop:            'hip-hop',
+    reggae:            'reggae',
+    classical:         'classical',
+    musical_theatre:   'musical',
+    celtic:            'celtic',
+    bossa_nova:        'bossa-nova',
+    indie_folk:        'folk',
+    motown:            'soul-rnb',
+    cabaret:           'jazz',
+    singer_songwriter: 'folk',
+    childrens:         'children',
+  };
+
+  var _songBgAudio    = null;   // HTMLAudioElement for background music
+  var _songBgMuted    = false;  // user mute toggle state
+  var _songReadbackActive = false;
+
+  // Fetch a CC-licensed track from Free Music Archive for a given genre
+  async function _fetchFmaTrack(genreHandle) {
+    try {
+      var url = 'https://freemusicarchive.org/api/get/tracks.json?genre_handle=' +
+        encodeURIComponent(genreHandle || 'folk') + '&limit=20&sort_by=track_date_recorded&api_key=60BLHNQCAOUFPIBZ';
+      var res = await fetch(url);
+      if (!res.ok) return null;
+      var data = await res.json();
+      var tracks = data && data.dataset;
+      if (!tracks || !tracks.length) return null;
+      // Pick a random track from the results that has a playable URL
+      var playable = tracks.filter(function(t) { return t.track_url || t.track_file; });
+      if (!playable.length) return null;
+      var t = playable[Math.floor(Math.random() * Math.min(playable.length, 10))];
+      return t.track_file || t.track_url || null;
+    } catch(e) {
+      dbgWarn('SONG', 'FMA fetch failed:', e.message);
+      return null;
+    }
+  }
+
+  // Start background music for a given songStyle
+  async function _startSongBgMusic(songStyle) {
+    _stopSongBgMusic();
+    if (_songBgMuted) return;
+    var genre = _SONG_STYLE_FMA_GENRE[songStyle] || 'folk';
+    var trackUrl = await _fetchFmaTrack(genre);
+    if (!trackUrl) {
+      dbgWarn('SONG', 'No FMA track found for genre:', genre);
+      return;
+    }
+    try {
+      _songBgAudio = new Audio(trackUrl);
+      _songBgAudio.volume = 0.18;
+      _songBgAudio.loop = true;
+      _songBgAudio.crossOrigin = 'anonymous';
+      _songBgAudio.play().catch(function(e) { dbgWarn('SONG', 'BG music play failed:', e.message); _songBgAudio = null; });
+    } catch(e) {
+      dbgWarn('SONG', 'BG music error:', e.message);
+      _songBgAudio = null;
+    }
+  }
+
+  function _stopSongBgMusic() {
+    if (_songBgAudio) {
+      try { _songBgAudio.pause(); _songBgAudio.src = ''; } catch(e) {}
+      _songBgAudio = null;
+    }
+  }
+
+  // Strip section markers from lyrics text for cleaner TTS reading
+  // Adds slight pauses by inserting ". " between sections
+  function _prepareSongLyricsForTts(text) {
+    return text
+      .replace(/^##\s*(VERSE\s*\d*|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO)/gim, '\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  // Show/hide the readback bar
+  function _showSongReadbackBar(show) {
+    var bar = document.getElementById('songReadbackBar');
+    if (!bar) return;
+    bar.style.display = show ? 'flex' : 'none';
+  }
+
+  // Main readback start
+  async function _startSongReadback() {
+    if (_songReadbackActive) { _stopSongReadback(); return; }
+
+    var playBtn = document.getElementById('songReadbackPlayBtn');
+    var muteBtn = document.getElementById('songReadbackMuteBtn');
+    var label   = document.getElementById('songReadbackLabel');
+
+    if (!currentStory || !currentStory.text) return;
+    _primeAudioContext();
+    _songReadbackActive = true;
+
+    if (playBtn) { playBtn.textContent = '⏹ Stop reading'; }
+    if (muteBtn) { muteBtn.style.display = 'inline-block'; }
+    if (label)   { label.textContent = 'Gethro is reading your song…'; }
+
+    // Start background music
+    var songStyle = (currentStory && currentStory.songStyle) || 'pop_ballad';
+    if (!_songBgMuted) { _startSongBgMusic(songStyle); }
+
+    // TTS read
+    var cleaned = _prepareSongLyricsForTts(currentStory.text);
+    try {
+      await gethroSpeak(cleaned);
+    } catch(e) {
+      dbgWarn('SONG', 'TTS readback error:', e.message);
+    }
+
+    _stopSongReadback();
+  }
+
+  function _stopSongReadback() {
+    _songReadbackActive = false;
+    _stopSongBgMusic();
+    gethroCancel();
+    var playBtn = document.getElementById('songReadbackPlayBtn');
+    var muteBtn = document.getElementById('songReadbackMuteBtn');
+    var label   = document.getElementById('songReadbackLabel');
+    if (playBtn) { playBtn.textContent = '▶ Hear Gethro read your song'; playBtn.disabled = false; }
+    if (muteBtn) { muteBtn.style.display = 'none'; }
+    if (label)   { label.textContent = 'Gethro reads your lyrics aloud with soft background music'; }
+  }
+
+  // ── End APP-40 Phase 1b ──────────────────────────────────────────────────
+
   async function renderStory(story, photoEntries, mode, funnyCaptions, funnyOverride, comedyStyleOverride, comedyIntensityOverride) {
     const out = document.getElementById('storyOutput');
     out.style.display = 'block';
@@ -9181,6 +9495,65 @@
     const cStyle = comedyStyleOverride || (currentStory && currentStory.comedyStyle) || null;
     const cInt   = comedyIntensityOverride || (currentStory && currentStory.comedyIntensity) || null;
     const name   = userProfile.name || 'Their';
+
+    // ── APP-40 Phase 1b: Song lyrics renderer ──────────────────────────────
+    const isSongMode = (mode === 'song') || (currentStory && currentStory.mode === 'song');
+    if (isSongMode) {
+      _stopSongReadback();
+
+      // Song style label map for display
+      const songStyleLabel = {
+        pop_ballad:'Pop Ballad', country:'Country', folk:'Folk', rnb:'R&B',
+        gospel:'Gospel', jazz:'Jazz', blues:'Blues', rock:'Rock', punk:'Punk',
+        hiphop:'Hip-Hop', reggae:'Reggae', classical:'Classical',
+        musical_theatre:'Musical Theatre', celtic:'Celtic', bossa_nova:'Bossa Nova',
+        indie_folk:'Indie Folk', motown:'Motown', cabaret:'Cabaret',
+        singer_songwriter:'Singer-Songwriter', childrens:"Children's",
+      };
+      const sStyle = (currentStory && currentStory.songStyle) || 'pop_ballad';
+      const sLabel = songStyleLabel[sStyle] || sStyle;
+
+      // Title block
+      const songTitleHtml =
+        '<div class="story-title">🎵 ' + (name !== 'Their' ? name + '\u2019s ' : '') + 'Song</div>' +
+        '<div class="story-subtitle">' + escHtml(sLabel) + (funny ? ' · 😄 Comedy Edition' : '') +
+        ' · ' + new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'}) + '</div>';
+
+      // Render lyrics: parse section markers, render lines
+      function renderLyricsHtml(text) {
+        var lines = text.split('\n');
+        var html = '<div class="song-lyrics-wrap">';
+        lines.forEach(function(line) {
+          var sectionMatch = line.match(/^##\s*(VERSE\s*\d*|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO)(.*)/i);
+          if (sectionMatch) {
+            var sectionName = sectionMatch[1].trim().toUpperCase();
+            var isChorus = /CHORUS/.test(sectionName);
+            var isBridge = /BRIDGE/.test(sectionName);
+            var cls = 'song-section-marker' + (isChorus ? ' song-chorus-marker' : '') + (isBridge ? ' song-bridge-marker' : '');
+            html += '<div style="margin-top:1.8em"><span class="' + cls + '">' + escHtml(sectionName) + '</span></div>';
+          } else if (line.trim() === '') {
+            html += '<span class="song-lyric-blank"></span>';
+          } else {
+            html += '<span class="song-lyric-line">' + escHtml(line) + '</span>';
+          }
+        });
+        html += '</div>';
+        return html;
+      }
+
+      var rawSongHtml = songTitleHtml + renderLyricsHtml(story);
+      out.innerHTML = (typeof DOMPurify !== 'undefined')
+        ? DOMPurify.sanitize(rawSongHtml, { ALLOWED_TAGS: ['div','h1','h2','p','br','strong','em','span'], ALLOWED_ATTR: ['class','style'] })
+        : rawSongHtml;
+
+      // Show the readback bar
+      _showSongReadbackBar(true);
+      return;
+    }
+    // ── End song renderer ──────────────────────────────────────────────────
+
+    // Hide readback bar for non-song formats
+    _showSongReadbackBar(false);
 
     const photosWithUrls = await Promise.all(photos.map(async e => ({
       ...e, signedUrl: await getSignedUrl(e.photo_url)
@@ -11689,8 +12062,9 @@
     var comedyStyle   = _scStoryPendingComedyStyle;
     var comedyInt     = _scStoryPendingComedyIntensity;
     var poetryType    = _scStoryPendingPoetryType;
+    var songStyle     = _scStoryPendingSongStyle;
 
-    // Poetry skips length — null length is correct; no length configurator needed
+    // Poetry/Song skips length — null length is correct; no length configurator needed
     // (length was already null when pending vars were set for poetry)
 
     // Disable bar to prevent double-tap
@@ -11700,7 +12074,7 @@
     _scStorySelectMode = false;   // prevent showPanel from double-hiding
     showPanel('story', null, 3);
 
-    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt, poetryType);
+    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt, poetryType, songStyle);
   }
 
   // ── UX-M10: Select mode for manual merge ─────────────────────────
@@ -18728,6 +19102,9 @@
       if (cfBtn) cfBtn.style.display = 'none';
       if (expBtn) expBtn.style.display = 'none';
       if (prtBtn) prtBtn.style.display = 'none';
+      // APP-40 Phase 1b: stop readback and hide bar
+      _stopSongReadback();
+      _showSongReadbackBar(false);
       _scInit();
     });
     on('storyPrivacyDismissBtn', 'click', function() {
@@ -18739,6 +19116,26 @@
     on('scNextBtn', 'click', _scNext);
     on('exportPdfBtn',     'click', exportPDF);
     on('printBookBtn',     'click', openPrintPreview);
+
+    // ── APP-40 Phase 1b: Song readback bar ───────────────────────────────
+    on('songReadbackPlayBtn', 'click', function() {
+      _primeAudioContext();
+      _startSongReadback();
+    });
+    on('songReadbackMuteBtn', 'click', function() {
+      _songBgMuted = !_songBgMuted;
+      var muteBtn = document.getElementById('songReadbackMuteBtn');
+      if (_songBgMuted) {
+        _stopSongBgMusic();
+        if (muteBtn) muteBtn.textContent = '🔇 Music: Off';
+      } else {
+        if (muteBtn) muteBtn.textContent = '🎵 Music: On';
+        // Restart bg music if readback is active
+        if (_songReadbackActive && currentStory && currentStory.songStyle) {
+          _startSongBgMusic(currentStory.songStyle);
+        }
+      }
+    });
 
     // ── Print preview overlay ─────────────────────────────────────────────
     on('ppoCloseBtn',  'click', closePrintPreview);
