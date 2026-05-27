@@ -4271,8 +4271,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.80';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 Phase 3b: Music ducking/swelling. _abDuck() ramps bgAudio to 0.04 over 400ms; _abSwell() ramps back to 0.22 over 600ms. _abSpeak() calls _abDuck() before TTS fetch and _abSwell() in onended/onerror/stopFlag paths. pause_after_ms gaps in _abPlayFrom call _abSwell() for swell during inter-verse pauses. Pause/resume hooks added: _abPauseAudio() pauses bgAudio, _abResumeAudio() restores bgAudio. _abToggleMusicMute() updated to respect duck state. Volume ramp uses setInterval at 30ms ticks, clears on target reached or bgAudio gone. All ramp intervals stored in _abPlayer.rampInterval and cancelled cleanly on stop/skip.';
+  const APP_VERSION  = 'v4.81';
+  const DEPLOY_NOTES = APP_VERSION + ' — BUG: Alt-tab / focus-return drops user to wrong panel. Root cause: _lastTab in sessionStorage stored panel name + tabIndex but not the My Story sub-tab (generate/library/build/audiobook). On restore, showPanel("story") called _scInit() but never _storyTabSwitch() so sub-tab always defaulted to whatever the DOM was. Fix: (1) _storyTabSwitch() now writes storySubTab into _lastTab alongside name+tabIndex. (2) showPanel() also writes storySubTab when switching to the story panel (captures state even when user never clicked a sub-tab directly). (3) _lastTab restore in loadEntries() reads storySubTab and calls _storyTabSwitch() after showPanel() when restoring the story panel.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6313,6 +6313,10 @@
             var _ltp = JSON.parse(_lt);
             if (_ltp && _ltp.name && _ltp.name !== 'dashboard') {
               showPanel(_ltp.name, null, _ltp.tabIndex !== null ? _ltp.tabIndex : undefined);
+              // BUG FIX v4.81: restore My Story sub-tab if it was persisted
+              if (_ltp.name === 'story' && _ltp.storySubTab && _ltp.storySubTab !== 'generate') {
+                _storyTabSwitch(_ltp.storySubTab);
+              }
               _restoredTab = true;
             }
           }
@@ -6899,7 +6903,11 @@
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
     dbg('PANEL', 'showPanel(' + name + ') scrollY=' + scrollBefore + ' overlayVisible=' + overlayVisible + ' activePanels=[' + activePanels.join(',') + ']');
     // Persist last tab so focus-return / page reload restores the correct screen
-    try { sessionStorage.setItem('_lastTab', JSON.stringify({ name: name, tabIndex: tabIndex !== undefined ? tabIndex : null })); } catch(e) {}
+    // BUG FIX v4.81: also persist storySubTab so My Story sub-tab is restored correctly
+    try {
+      var _ltSubTab = (name === 'story' && typeof _storyLibCurrentTab !== 'undefined') ? _storyLibCurrentTab : null;
+      sessionStorage.setItem('_lastTab', JSON.stringify({ name: name, tabIndex: tabIndex !== undefined ? tabIndex : null, storySubTab: _ltSubTab }));
+    } catch(e) {}
 
     document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
     document.querySelectorAll('.nav-btn').forEach(function(b){ b.classList.remove('active'); });
@@ -9555,6 +9563,13 @@
 
   function _storyTabSwitch(tab) {
     _storyLibCurrentTab = tab;
+    // BUG FIX v4.81: keep _lastTab in sync so alt-tab restore picks up the current sub-tab
+    try {
+      var _ltRaw = sessionStorage.getItem('_lastTab');
+      var _ltObj = _ltRaw ? JSON.parse(_ltRaw) : { name: 'story', tabIndex: 3 };
+      _ltObj.storySubTab = tab;
+      sessionStorage.setItem('_lastTab', JSON.stringify(_ltObj));
+    } catch(e) {}
     var genBtn   = document.getElementById('storyTabGenBtn');
     var libBtn   = document.getElementById('storyTabLibBtn');
     var buildBtn = document.getElementById('storyTabBuildBtn');
