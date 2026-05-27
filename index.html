@@ -2772,6 +2772,7 @@
           <button onclick="_abSkipNext()" title="Next"
             style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);padding:4px">⏭</button>
           <button id="abStopBtn" onclick="_abStop()" title="Stop" style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:var(--text-light);padding:4px">⏹</button>
+          <button id="abMuteBtn" onclick="_abToggleMusicMute()" title="Toggle background music" style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:var(--text-light);padding:4px">🎵</button>
         </div>
         <div id="abProgressText" style="font-size:0.7rem;color:var(--text-light);text-align:center;margin-top:8px"></div>
       </div>
@@ -4270,8 +4271,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.78';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 Phase 1: Audiobook playlist UI + TTS sequencing. Fourth sub-tab "🎧 Audiobook" added to My Story tab. life_audiobook_queue table backed (SQL run by developer). _abQueue[] array + _abLoadQueue()/_abAddPiece()/_abRemovePiece()/_abSaveOrder()/_abToggleEnabled() mirror Book Builder patterns. _renderAudiobookView() renders two-column picker + queue with drag-to-reorder. _abPlayer object manages sequential TTS playback: play/pause/skip-next/skip-prev controls. gethroSpeak() extended via _abSpeak() to return a Promise that resolves on audio end. _abPlayNext() chains pieces in order, announces chapter titles between pieces, handles song verse-by-verse and poem stanza-by-stanza pacing. Mute-music toggle stub ready for Phase 2.';
+  const APP_VERSION  = 'v4.80';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 Phase 3b: Music ducking/swelling. _abDuck() ramps bgAudio to 0.04 over 400ms; _abSwell() ramps back to 0.22 over 600ms. _abSpeak() calls _abDuck() before TTS fetch and _abSwell() in onended/onerror/stopFlag paths. pause_after_ms gaps in _abPlayFrom call _abSwell() for swell during inter-verse pauses. Pause/resume hooks added: _abPauseAudio() pauses bgAudio, _abResumeAudio() restores bgAudio. _abToggleMusicMute() updated to respect duck state. Volume ramp uses setInterval at 30ms ticks, clears on target reached or bgAudio gone. All ramp intervals stored in _abPlayer.rampInterval and cancelled cleanly on stop/skip.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4296,6 +4297,7 @@
   const VIDEO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-video';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
+  const PIXABAY_MUSIC_KEY  = 'YOUR_PIXABAY_KEY_HERE'; // APP-46 Phase 3a — free key from pixabay.com/api/docs/
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -10350,7 +10352,10 @@
     curIdx:     0,       // index into enabled queue items
     audio:      null,    // current HTMLAudioElement (from gethroSpeak)
     stopFlag:   false,
-    resolveSpeak: null   // resolve fn for the current _abSpeak() Promise
+    resolveSpeak: null,  // resolve fn for the current _abSpeak() Promise
+    bgAudio:      null,    // APP-46 Phase 3a: background music HTMLAudioElement
+    musicMuted:   false,   // APP-46 Phase 3a: user-toggled music mute
+    rampInterval: null     // APP-46 Phase 3b: active volume-ramp setInterval id
   };
 
   // ── Queue DB operations ──────────────────────────────────────────────────
@@ -10593,16 +10598,19 @@
       // We call the TTS proxy directly here to get full control over the audio element
       if (!sessionToken) { resolve(); return; }
       dbg('AUDIOBOOK', 'Speaking (' + text.length + ' chars)');
+      _abDuck(); // APP-46 Phase 3b: duck music before TTS starts
       var audio = new Audio();
       _abPlayer.audio = audio;
       audio.onended = function() {
         _abPlayer.audio = null;
         _abPlayer.resolveSpeak = null;
+        _abSwell(); // APP-46 Phase 3b: swell music after speech ends
         resolve();
       };
       audio.onerror = function() {
         _abPlayer.audio = null;
         _abPlayer.resolveSpeak = null;
+        _abSwell(); // APP-46 Phase 3b: swell on error path too
         resolve(); // resolve anyway so chain continues
       };
       fetch(TTS_PROXY_URL, {
@@ -10613,10 +10621,11 @@
         if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
         return res.blob();
       }).then(function(blob) {
-        if (_abPlayer.stopFlag) { resolve(); return; }
+        if (_abPlayer.stopFlag) { _abSwell(); resolve(); return; } // APP-46 Phase 3b
         audio.src = URL.createObjectURL(blob);
         audio.play().catch(function(e) {
           dbgWarn('AUDIOBOOK', 'audio.play() failed: ' + e.message);
+          _abSwell(); // APP-46 Phase 3b
           resolve();
         });
       }).catch(function(err) {
@@ -10624,11 +10633,11 @@
         // Fall back to browser TTS
         if (window.speechSynthesis) {
           var utt = new SpeechSynthesisUtterance(text);
-          utt.onend = function() { resolve(); };
-          utt.onerror = function() { resolve(); };
+          utt.onend = function() { _abSwell(); resolve(); }; // APP-46 Phase 3b
+          utt.onerror = function() { _abSwell(); resolve(); };
           window.speechSynthesis.speak(utt);
         } else {
-          resolve();
+          _abSwell(); resolve(); // APP-46 Phase 3b
         }
       });
     });
@@ -10641,6 +10650,8 @@
     } else if (window.speechSynthesis && window.speechSynthesis.speaking) {
       window.speechSynthesis.pause();
     }
+    // APP-46 Phase 3b: also pause background music
+    if (_abPlayer.bgAudio) _abPlayer.bgAudio.pause();
   }
 
   // Resume the current audio (if any)
@@ -10650,11 +10661,18 @@
     } else if (window.speechSynthesis && window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
+    // APP-46 Phase 3b: resume background music
+    if (_abPlayer.bgAudio) _abPlayer.bgAudio.play().catch(function() {});
   }
 
   // Stop and abort current audio — resolves the pending _abSpeak promise
   function _abStopAudio() {
     _abPlayer.stopFlag = true;
+    // APP-46 Phase 3b: cancel any in-progress volume ramp
+    if (_abPlayer.rampInterval) {
+      clearInterval(_abPlayer.rampInterval);
+      _abPlayer.rampInterval = null;
+    }
     if (_abPlayer.audio) {
       _abPlayer.audio.pause();
       _abPlayer.audio.src = '';
@@ -10716,6 +10734,11 @@
     _abPlayer.curIdx   = startIdx || 0;
     _abUpdatePlayBtn();
 
+    // APP-46 Phase 3a: start background music based on first enabled piece genre
+    _abStopMusic();
+    var _firstGenre = _abMusicGenreFor(enabledItems[startIdx || 0] && enabledItems[startIdx || 0].piece);
+    _abFetchAndPlayMusic(_firstGenre);
+
     for (var i = _abPlayer.curIdx; i < enabledItems.length; i++) {
       if (_abPlayer.stopFlag) break;
       _abPlayer.curIdx = i;
@@ -10728,9 +10751,11 @@
       _abSetProgress('');
       _renderAudiobookView(); // refresh playing indicator
 
+      // APP-46 Phase 3a: song-style intro announcement (Phase 2 spec folded in)
       var announce = 'Chapter ' + (i + 1) + '. ' + (piece.title || (meta.label + ' ' + (i + 1)));
       if (piece.type === 'song') {
-        announce = 'Next — a song' + (piece.title ? ' called ' + piece.title : '') + '.';
+        announce = 'Next — a song' + (piece.title ? ' called ' + piece.title : '')
+          + (piece.songStyle ? ', written in the style of ' + piece.songStyle.replace(/_/g, ' ') : '') + '.';
       }
       await _abSpeak(announce);
       if (_abPlayer.stopFlag) break;
@@ -10747,12 +10772,16 @@
         await _abSpeak(seg.text);
         if (_abPlayer.stopFlag) break;
         if (seg.pause_after_ms > 0) {
+          // APP-46 Phase 3b: swell during the inter-section gap, then duck for next segment
+          _abSwell();
           await new Promise(function(r) { setTimeout(r, seg.pause_after_ms); });
+          if (!_abPlayer.stopFlag) _abDuck();
         }
       }
 
       // Brief pause between pieces
       if (!_abPlayer.stopFlag && i < enabledItems.length - 1) {
+        _abSwell(); // APP-46 Phase 3b: swell between pieces
         await new Promise(function(r) { setTimeout(r, 1200); });
       }
     }
@@ -10761,6 +10790,9 @@
     if (!_abPlayer.stopFlag) {
       _abSetNowPlaying('Finished');
       _abSetProgress('');
+      _abSwell(); // APP-46 Phase 3b: swell briefly after last piece, then music fades via _abStopMusic
+      await new Promise(function(r) { setTimeout(r, 1500); });
+      _abStopMusic();
     }
     _abPlayer.playing = false;
     _abPlayer.paused  = false;
@@ -10786,6 +10818,7 @@
 
   function _abStop() {
     _abStopAudio();
+    _abStopMusic(); // APP-46 Phase 3a
     _abPlayer.playing = false;
     _abPlayer.paused  = false;
     _abPlayer.curIdx  = 0;
@@ -10800,6 +10833,7 @@
     var enabledItems = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; });
     if (_abPlayer.curIdx < enabledItems.length - 1) {
       _abStopAudio();
+      _abStopMusic(); // APP-46 Phase 3a — new track starts in _abPlayFrom
       _abPlayer.stopFlag = false;  // reset so _abPlayFrom continues
       _abPlayFrom(_abPlayer.curIdx + 1);
     }
@@ -10809,6 +10843,7 @@
     if (!_abPlayer.playing) return;
     var newIdx = Math.max(0, _abPlayer.curIdx - 1);
     _abStopAudio();
+    _abStopMusic(); // APP-46 Phase 3a
     _abPlayer.stopFlag = false;
     _abPlayFrom(newIdx);
   }
@@ -10834,6 +10869,130 @@
     var el = document.getElementById('abProgressText');
     if (el) el.textContent = text;
   }
+
+  // ── APP-46 Phase 3a: Background music (flat volume) ─────────────────────
+
+  // Maps a piece to a Pixabay music category string.
+  function _abMusicGenreFor(piece) {
+    var songStyleMap = {
+      pop_ballad: 'pop', country: 'country', folk: 'folk', classical: 'classical',
+      jazz: 'jazz', blues: 'blues', rock: 'rock', punk: 'rock',
+      hiphop: 'hiphop', reggae: 'reggae', bossa_nova: 'jazz',
+      musical_theatre: 'classical', celtic: 'folk', rnb: 'rnb'
+    };
+    if (piece && piece.type === 'song' && piece.songStyle) {
+      return songStyleMap[piece.songStyle] || 'pop';
+    }
+    var typeMap = { poem: 'ambient', poetry: 'ambient', letter: 'ambient', interview: 'upbeat' };
+    return (piece && typeMap[piece.type]) || 'ambient';
+  }
+
+  // Fetch a random CC0 track from Pixabay and play it at low volume.
+  // Silently falls back to no music if the fetch fails or key is not set.
+  async function _abFetchAndPlayMusic(genre) {
+    if (_abPlayer.musicMuted) return;
+    if (!PIXABAY_MUSIC_KEY || PIXABAY_MUSIC_KEY === 'YOUR_PIXABAY_KEY_HERE') return;
+    try {
+      var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
+              + '&music=true&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=10';
+      var resp = await fetch(url);
+      if (!resp.ok) return;
+      var data = await resp.json();
+      var hits = (data.hits || []).filter(function(h) { return h.previewURL || h.audio; });
+      if (hits.length === 0) return;
+      var track = hits[Math.floor(Math.random() * hits.length)];
+      var src   = track.audio || track.previewURL;
+      if (!src) return;
+
+      var audio = new Audio(src);
+      audio.loop   = true;
+      audio.volume = _abPlayer.musicMuted ? 0 : 0.22;
+      _abPlayer.bgAudio = audio;
+      audio.play().catch(function() { _abPlayer.bgAudio = null; });
+    } catch (err) {
+      dbgWarn('AUDIOBOOK', 'Music fetch failed: ' + (err && err.message));
+      _abPlayer.bgAudio = null;
+    }
+  }
+
+  // Stop and release background music.
+  function _abStopMusic() {
+    if (_abPlayer.bgAudio) {
+      _abPlayer.bgAudio.pause();
+      _abPlayer.bgAudio = null;
+    }
+  }
+
+  // Toggle mute — persists across tracks. Respects current duck state.
+  function _abToggleMusicMute() {
+    _abPlayer.musicMuted = !_abPlayer.musicMuted;
+    if (_abPlayer.bgAudio) {
+      if (_abPlayer.musicMuted) {
+        // Cancel any ramp and snap to 0
+        if (_abPlayer.rampInterval) { clearInterval(_abPlayer.rampInterval); _abPlayer.rampInterval = null; }
+        _abPlayer.bgAudio.volume = 0;
+      } else {
+        // Restore to duck level if speaking, full level otherwise
+        var targetVol = (_abPlayer.audio || (window.speechSynthesis && window.speechSynthesis.speaking))
+          ? _AB_VOL_DUCK : _AB_VOL_FULL;
+        _abPlayer.bgAudio.volume = targetVol;
+      }
+    }
+    var btn = document.getElementById('abMuteBtn');
+    if (btn) btn.textContent = _abPlayer.musicMuted ? '🔇' : '🎵';
+  }
+
+  // ── End APP-46 Phase 3a music helpers ────────────────────────────────────
+  // ── APP-46 Phase 3b: Volume ducking / swelling ──────────────────────────
+
+  var _AB_VOL_FULL  = 0.22;   // normal background volume
+  var _AB_VOL_DUCK  = 0.04;   // volume while Gethro is speaking
+  var _AB_RAMP_MS   = 30;     // interval tick (ms)
+
+  // Ramp bgAudio volume toward `target` over `durationMs` ms.
+  // Cancels any in-progress ramp first.
+  function _abRampVolume(target, durationMs) {
+    if (_abPlayer.rampInterval) {
+      clearInterval(_abPlayer.rampInterval);
+      _abPlayer.rampInterval = null;
+    }
+    if (!_abPlayer.bgAudio || _abPlayer.musicMuted) return;
+    var steps     = Math.max(1, Math.round(durationMs / _AB_RAMP_MS));
+    var startVol  = _abPlayer.bgAudio.volume;
+    var delta     = (target - startVol) / steps;
+    var step      = 0;
+    _abPlayer.rampInterval = setInterval(function() {
+      if (!_abPlayer.bgAudio) {
+        clearInterval(_abPlayer.rampInterval);
+        _abPlayer.rampInterval = null;
+        return;
+      }
+      step++;
+      var next = startVol + delta * step;
+      // Clamp and snap on last step
+      if (step >= steps) {
+        _abPlayer.bgAudio.volume = Math.max(0, Math.min(1, target));
+        clearInterval(_abPlayer.rampInterval);
+        _abPlayer.rampInterval = null;
+      } else {
+        _abPlayer.bgAudio.volume = Math.max(0, Math.min(1, next));
+      }
+    }, _AB_RAMP_MS);
+  }
+
+  // Duck: fade music down before Gethro speaks (400ms)
+  function _abDuck() {
+    _abRampVolume(_AB_VOL_DUCK, 400);
+  }
+
+  // Swell: fade music back up after Gethro finishes (600ms)
+  function _abSwell() {
+    if (!_abPlayer.musicMuted) {
+      _abRampVolume(_AB_VOL_FULL, 600);
+    }
+  }
+
+  // ── End APP-46 Phase 3b ducking helpers ──────────────────────────────────
 
   // ── End APP-46 Audiobook ─────────────────────────────────────────────────
 
