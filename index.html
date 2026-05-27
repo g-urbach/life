@@ -2674,7 +2674,7 @@
       </div>
     </div>
 
-    <!-- APP-45: Generate / My Library / Build a Book toggle -->
+    <!-- APP-45: Generate / My Library / Build a Book / Audiobook toggle -->
     <div id="storyTabToggle" style="display:flex;gap:6px;margin-bottom:18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:4px">
       <button id="storyTabGenBtn" onclick="_storyTabSwitch('generate')"
         style="flex:1;padding:8px 6px;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;transition:all 0.15s;background:var(--rose);color:#fff">
@@ -2687,6 +2687,10 @@
       <button id="storyTabBuildBtn" onclick="_storyTabSwitch('build')"
         style="flex:1;padding:8px 6px;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;transition:all 0.15s;background:transparent;color:var(--text-light)">
         📖 Book
+      </button>
+      <button id="storyTabAudioBtn" onclick="_storyTabSwitch('audiobook')"
+        style="flex:1;padding:8px 6px;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;transition:all 0.15s;background:transparent;color:var(--text-light)">
+        🎧 Listen
       </button>
     </div>
 
@@ -2733,14 +2737,63 @@
         </div>
       </div>
 
-      <!-- Bottom: Preview & Print button -->
+      <!-- Bottom: Preview & Print + Export buttons -->
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
         <button id="bookPreviewBtn" onclick="_bookPreview()"
           style="width:100%;padding:12px;background:var(--rose);color:#fff;border:none;border-radius:10px;font-family:'Lato',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer;opacity:0.4;pointer-events:none"
           disabled>
           🖨️ Preview &amp; Print
         </button>
+        <button id="bookExportBtn" onclick="exportBookPDF()"
+          style="width:100%;padding:10px;margin-top:8px;background:transparent;color:var(--rose);border:1.5px solid var(--rose);border-radius:10px;font-family:'Lato',sans-serif;font-size:0.83rem;font-weight:700;cursor:pointer;opacity:0.4;pointer-events:none"
+          disabled>
+          ⬇️ Download as HTML
+        </button>
         <div style="font-size:0.72rem;color:var(--text-light);text-align:center;margin-top:8px">Add at least one piece to enable preview</div>
+      </div>
+    </div>
+
+    <!-- APP-46: Audiobook view (hidden by default) -->
+    <div id="storyAudiobookView" style="display:none">
+      <!-- Header -->
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.95rem;font-weight:700;color:var(--text);margin-bottom:4px">🎧 Your Audiobook</div>
+        <div style="font-size:0.78rem;color:var(--text-light);line-height:1.5">Add pieces to your playlist. Gethro will narrate them in order.</div>
+      </div>
+
+      <!-- Player controls -->
+      <div id="abPlayerBar" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+        <div id="abNowPlaying" style="font-size:0.8rem;color:var(--text-light);margin-bottom:10px;min-height:18px;text-align:center">—</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:14px">
+          <button onclick="_abSkipPrev()" title="Previous"
+            style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);padding:4px">⏮</button>
+          <button id="abPlayBtn" onclick="_abTogglePlay()"
+            style="background:var(--rose);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center">▶</button>
+          <button onclick="_abSkipNext()" title="Next"
+            style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);padding:4px">⏭</button>
+          <button id="abStopBtn" onclick="_abStop()" title="Stop" style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:var(--text-light);padding:4px">⏹</button>
+        </div>
+        <div id="abProgressText" style="font-size:0.7rem;color:var(--text-light);text-align:center;margin-top:8px"></div>
+      </div>
+
+      <!-- Two-column: picker + queue -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <!-- Left: Library pieces to add -->
+        <div>
+          <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px">Your pieces</div>
+          <div id="abPickerList" style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:0.8rem;color:var(--text-light);padding:12px 0">Loading…</div>
+          </div>
+        </div>
+        <!-- Right: Playlist queue -->
+        <div>
+          <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px">Playlist <span id="abQueueCount" style="color:var(--rose)"></span></div>
+          <div id="abQueueList" style="display:flex;flex-direction:column;gap:8px;min-height:48px">
+            <div id="abQueueEmpty" style="font-size:0.8rem;color:var(--text-light);padding:12px 0;text-align:center">
+              No pieces yet — add from the left
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -4217,8 +4270,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.77';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-42 Phase 2: drag-to-reorder book sections (HTML5 drag, PATCH sort_order to DB) + enable/disable toggle per section (PATCH enabled to DB). Section rows show drag handle, toggle switch, title, remove button. Disabled sections dimmed with strikethrough. _bookToggleEnabled() + _bookSaveOrder() added. _renderBookSectionList() extracted for clean re-renders. Duplicate stale _storyTabSwitch (2-tab version) removed — canonical 3-tab version at line ~11900 retained.';
+  const APP_VERSION  = 'v4.78';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 Phase 1: Audiobook playlist UI + TTS sequencing. Fourth sub-tab "🎧 Audiobook" added to My Story tab. life_audiobook_queue table backed (SQL run by developer). _abQueue[] array + _abLoadQueue()/_abAddPiece()/_abRemovePiece()/_abSaveOrder()/_abToggleEnabled() mirror Book Builder patterns. _renderAudiobookView() renders two-column picker + queue with drag-to-reorder. _abPlayer object manages sequential TTS playback: play/pause/skip-next/skip-prev controls. gethroSpeak() extended via _abSpeak() to return a Promise that resolves on audio end. _abPlayNext() chains pieces in order, announces chapter titles between pieces, handles song verse-by-verse and poem stanza-by-stanza pacing. Mute-music toggle stub ready for Phase 2.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -9496,13 +9549,14 @@
   // Phase 1: saveStoryComponent() — auto-save on every successful generation
   // Phase 2: Library viewer UI — renderLibrary(), _storyTabSwitch(), etc.
 
-  var _storyLibCurrentTab = 'generate'; // 'generate' | 'library' | 'build'
+  var _storyLibCurrentTab = 'generate'; // 'generate' | 'library' | 'build' | 'audiobook'
 
   function _storyTabSwitch(tab) {
     _storyLibCurrentTab = tab;
     var genBtn   = document.getElementById('storyTabGenBtn');
     var libBtn   = document.getElementById('storyTabLibBtn');
     var buildBtn = document.getElementById('storyTabBuildBtn');
+    var audioBtn = document.getElementById('storyTabAudioBtn');
     var genView  = document.getElementById('storyConfigurator');
     var outView  = document.getElementById('storyOutput');
     var nudge    = document.getElementById('storyNudge');
@@ -9512,6 +9566,7 @@
     var prtBtn   = document.getElementById('printBookBtn');
     var libView  = document.getElementById('storyLibraryView');
     var bldView  = document.getElementById('storyBookBuilderView');
+    var abView   = document.getElementById('storyAudiobookView');
 
     // Reset all tab buttons
     var activeSty = 'var(--rose)'; var activeCol = '#fff';
@@ -9519,10 +9574,12 @@
     if (genBtn)   { genBtn.style.background   = offSty; genBtn.style.color   = offCol; }
     if (libBtn)   { libBtn.style.background   = offSty; libBtn.style.color   = offCol; }
     if (buildBtn) { buildBtn.style.background = offSty; buildBtn.style.color = offCol; }
+    if (audioBtn) { audioBtn.style.background = offSty; audioBtn.style.color = offCol; }
 
     // Hide all sub-views
     if (libView) libView.style.display = 'none';
     if (bldView) bldView.style.display = 'none';
+    if (abView)  abView.style.display  = 'none';
     // Hide generate-side elements (re-shown below if needed)
     if (genView) genView.style.display = 'none';
     if (outView) outView.style.display = 'none';
@@ -9551,6 +9608,10 @@
       if (buildBtn) { buildBtn.style.background = activeSty; buildBtn.style.color = activeCol; }
       if (bldView) bldView.style.display = 'block';
       _renderBookBuilder();
+    } else if (tab === 'audiobook') {
+      if (audioBtn) { audioBtn.style.background = activeSty; audioBtn.style.color = activeCol; }
+      if (abView) abView.style.display = 'block';
+      _renderAudiobookView();
     }
   }
 
@@ -10100,6 +10161,12 @@
       previewBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
       previewBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
     }
+    var exportBtn = document.getElementById('bookExportBtn');
+    if (exportBtn) {
+      exportBtn.disabled = enabledCount === 0;
+      exportBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
+      exportBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
+    }
   }
 
   // Persist updated sort_order for all sections after a drag
@@ -10131,6 +10198,12 @@
       previewBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
       previewBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
     }
+    var exportBtn2 = document.getElementById('bookExportBtn');
+    if (exportBtn2) {
+      exportBtn2.disabled = enabledCount === 0;
+      exportBtn2.style.opacity = enabledCount > 0 ? '1' : '0.4';
+      exportBtn2.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
+    }
     try {
       var { error } = await sb.from('life_book_sections').update({ enabled: enabled }).eq('id', sectionId);
       if (error) throw error;
@@ -10139,27 +10212,630 @@
     }
   }
 
-  // Preview & Print — placeholder until Phase 3 (next build) delivers full rendering
-  function _bookPreview() {
-    if (_bookSections.length === 0) return;
-    var enabledPieces = _bookSections.filter(function(s) { return s.enabled !== false && s.piece; }).map(function(s) { return s.piece; });
-    if (enabledPieces.length === 0) { alert('No enabled pieces to preview — use the toggles to include at least one section.'); return; }
-    // Full multi-section rendering ships in Phase 3 (v4.78).
-    // For now, open the existing single-story print flow on the first enabled piece
-    // so the button is never dead — users can at least see something.
-    var first = enabledPieces[0];
-    if (typeof openPrintPreview === 'function') {
-      // Seed currentStory so openPrintPreview has something to render
-      if (!currentStory) {
-        currentStory = { text: first.content || '', mode: first.type || 'prose', title: first.title || '' };
+  // ── APP-42 Phase 3: multi-section print/PDF ──────────────────────────────────
+
+  // Build combined sanitised HTML from all enabled _bookSections.
+  // Returns { html, text, pieces } where html is ready for preview/PDF injection,
+  // text is stripped plaintext, and pieces is the filtered piece array.
+  function _buildBookHtmlContent() {
+    var pieces = _bookSections
+      .filter(function(s) { return s.enabled !== false && s.piece; })
+      .map(function(s) { return s.piece; });
+
+    if (pieces.length === 0) return null;
+
+    var sanitise = function(raw) {
+      if (typeof DOMPurify !== 'undefined') {
+        return DOMPurify.sanitize(raw, {
+          ALLOWED_TAGS: ['div','h1','h2','h3','p','br','strong','em','img','span','ul','li'],
+          ALLOWED_ATTR: ['class','style','src','alt','loading']
+        });
       }
-      openPrintPreview();
-    } else {
-      alert('Print preview coming in the next build (Phase 3). Your book has ' + enabledPieces.length + ' section' + (enabledPieces.length === 1 ? '' : 's') + ' ready.');
+      return raw;
+    };
+
+    var html = '';
+    pieces.forEach(function(piece, idx) {
+      var typeMeta = _STORY_TYPE_META[piece.type] || { emoji: '📖', label: 'Story' };
+      var chapterNum = idx + 1;
+      var chapterTitle = piece.title || (typeMeta.label + ' ' + chapterNum);
+
+      // Chapter divider page
+      html += '<div class="book-chapter-divider" style="page-break-before:' + (idx === 0 ? 'avoid' : 'always') + ';'
+            + 'text-align:center;padding:40px 0 32px;border-bottom:2px solid var(--gold-mid,#c9a96e);margin-bottom:28px">'
+            + '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;'
+            + 'color:var(--text-light,#8b7355);margin-bottom:8px">'
+            + typeMeta.emoji + '&ensp;' + typeMeta.label + '&ensp;' + chapterNum + '</div>'
+            + '<div style="font-size:1.45rem;font-weight:700;color:var(--text,#2c2416);font-family:Georgia,serif;line-height:1.25">'
+            + escHtml(chapterTitle) + '</div>'
+            + '</div>';
+
+      // Piece content — use stored HTML if available, else wrap plaintext
+      var rawContent = piece.content || '';
+      // If content looks like plain text (no tags), wrap in paragraphs
+      var isHtml = /<[a-z][\s\S]*>/i.test(rawContent);
+      var contentHtml;
+      if (isHtml) {
+        contentHtml = sanitise(rawContent);
+      } else {
+        contentHtml = rawContent.split(/\n\n+/).map(function(para) {
+          return '<p>' + escHtml(para.replace(/\n/g, ' ').trim()) + '</p>';
+        }).join('');
+      }
+      html += '<div class="book-section-content" style="margin-bottom:48px">' + contentHtml + '</div>';
+    });
+
+    var text = html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    return { html: html, text: text, pieces: pieces };
+  }
+
+  // Export multi-section book as downloadable HTML file
+  function exportBookPDF() {
+    var built = _buildBookHtmlContent();
+    if (!built) return toast('No enabled sections to export — add pieces to your book first.');
+    var name = userProfile.name || 'My';
+    var title = (_bookSettings.title || name + "'s Life Story");
+    var author = (_bookSettings.author || name);
+    var fileHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + escHtml(title) + '</title>'
+      + '<style>body{font-family:Georgia,serif;max-width:620px;margin:40px auto;padding:0 40px;color:#2c2416;line-height:1.9;font-size:11pt}'
+      + 'h1{font-size:2rem;text-align:center}h2{font-size:1.3rem;margin:2em 0 0.6em;border-bottom:2px solid #c9a96e;padding-bottom:6px}'
+      + 'p{margin-bottom:1.4em;text-align:justify}'
+      + '.book-chapter-divider{text-align:center;padding:40px 0 32px;border-bottom:2px solid #c9a96e;margin-bottom:28px}'
+      + '.footer{text-align:center;margin-top:48px;color:#c9a96e;font-size:0.8rem}'
+      + '@media print{body{margin:0}.book-chapter-divider{page-break-before:always}}</style></head><body>'
+      + '<h1>' + escHtml(title) + '</h1>'
+      + '<div style="text-align:center;color:#8b7355;font-style:italic;margin-bottom:8px">' + escHtml(author) + '</div>';
+    if (_bookSettings.dedication) {
+      fileHtml += '<div style="text-align:center;margin:24px 0 32px;font-style:italic;color:#6b5a3e;border-top:1px solid #e8dcc8;border-bottom:1px solid #e8dcc8;padding:16px">'
+        + escHtml(_bookSettings.dedication) + '</div>';
+    }
+    fileHtml += built.html + '<div class="footer">Created with LifeTold</div></body></html>';
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([fileHtml], { type: 'text/html' }));
+    a.download = (title + '.html').replace(/[^a-zA-Z0-9 .]/g, '');
+    a.click();
+    logActivity('book_exported', null, 'info', 'BOOK');
+  }
+
+  // Open the print preview overlay with all enabled book sections
+  function _bookPreview() {
+    if (_bookSections.length === 0) { toast('Add pieces to your book first.'); return; }
+    var built = _buildBookHtmlContent();
+    if (!built) { toast('No enabled sections — use the toggles to include at least one piece.'); return; }
+
+    // Inject multi-section content into the shared preview state so openPrintPreview()
+    // picks it up. We stash the current single-story state and restore on close.
+    _bookPreview._prevStory = currentStory;
+    _bookPreview._prevHtml  = ppoStoryHtml || '';
+    _bookPreview._prevText  = ppoStoryText || '';
+    _bookPreview._isBook    = true;
+
+    // Create a synthetic currentStory so openPrintPreview() guard passes
+    currentStory = {
+      text:  built.text,
+      mode:  'prose',
+      title: _bookSettings.title || (userProfile.name ? userProfile.name + "'s Life Story" : 'My Life Story'),
+      _isMultiSection: true
+    };
+
+    // Pre-populate ppo state so updatePreview() uses combined content
+    ppoStoryHtml = built.html;
+    ppoStoryText = built.text;
+
+    openPrintPreview();
+  }
+
+  // Hook: when the print preview overlay closes, restore single-story state
+  // Wrap closePrintPreview to undo Book Builder state injection
+  (function() {
+    var _origClose = window.closePrintPreview;
+    window._closePrintPreviewOrig = _origClose; // keep reference
+    // Patched version installed after page load (see bottom of script)
+  })();
+
+  // ── End APP-42 Book Builder ─────────────────────────────────────────────────
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // APP-46 Phase 1: Audiobook playlist + TTS sequencing
+  // ══════════════════════════════════════════════════════════════════════════
+
+  var _abQueue   = [];   // [{id, component_id, sort_order, enabled, piece:{...}}]
+  var _abPieces  = [];   // all library pieces (for picker column)
+  var _abDragSrcIdx = null;
+
+  // Player state
+  var _abPlayer = {
+    playing:    false,
+    paused:     false,
+    curIdx:     0,       // index into enabled queue items
+    audio:      null,    // current HTMLAudioElement (from gethroSpeak)
+    stopFlag:   false,
+    resolveSpeak: null   // resolve fn for the current _abSpeak() Promise
+  };
+
+  // ── Queue DB operations ──────────────────────────────────────────────────
+
+  async function _abLoadQueue() {
+    try {
+      var { data: rows, error } = await sb
+        .from('life_audiobook_queue')
+        .select('*, piece:life_story_components(*)')
+        .eq('user_id', currentUser.id)
+        .order('sort_order', { ascending: true });
+      if (error) throw error;
+      _abQueue = (rows || []).map(function(r) {
+        return Object.assign({}, r, { piece: r.piece || null });
+      });
+    } catch(err) {
+      dbgErr('AUDIOBOOK', '_abLoadQueue error: ' + err.message);
+      _abQueue = [];
     }
   }
 
-  // ── End APP-42 Book Builder ─────────────────────────────────────────────────
+  async function _abAddPiece(componentId) {
+    if (!currentUser) return;
+    if (_abQueue.some(function(q) { return q.component_id === componentId; })) return;
+    var newSort = _abQueue.length;
+    try {
+      var { data: inserted, error } = await sb
+        .from('life_audiobook_queue')
+        .insert({ user_id: currentUser.id, component_id: componentId, sort_order: newSort })
+        .select()
+        .single();
+      if (error) throw error;
+      var piece = _abPieces.find(function(p) { return p.id === componentId; }) || null;
+      _abQueue.push(Object.assign({}, inserted, { piece: piece }));
+      _renderAudiobookView();
+    } catch(err) {
+      dbgErr('AUDIOBOOK', '_abAddPiece error: ' + err.message);
+    }
+  }
+
+  async function _abRemovePiece(queueId) {
+    try {
+      var { error } = await sb.from('life_audiobook_queue').delete().eq('id', queueId);
+      if (error) throw error;
+      _abQueue = _abQueue.filter(function(q) { return q.id !== queueId; });
+      _renderAudiobookView();
+    } catch(err) {
+      dbgErr('AUDIOBOOK', '_abRemovePiece error: ' + err.message);
+    }
+  }
+
+  async function _abSaveOrder() {
+    try {
+      var updates = _abQueue.map(function(q, i) {
+        return sb.from('life_audiobook_queue').update({ sort_order: i }).eq('id', q.id);
+      });
+      await Promise.all(updates);
+      _abQueue.forEach(function(q, i) { q.sort_order = i; });
+    } catch(err) {
+      dbgErr('AUDIOBOOK', '_abSaveOrder error: ' + err.message);
+    }
+  }
+
+  async function _abToggleEnabled(queueId, enabled) {
+    var q = _abQueue.find(function(x) { return x.id === queueId; });
+    if (q) q.enabled = enabled;
+    _abUpdatePlayerControls();
+    try {
+      var { error } = await sb.from('life_audiobook_queue').update({ enabled: enabled }).eq('id', queueId);
+      if (error) throw error;
+    } catch(err) {
+      dbgErr('AUDIOBOOK', '_abToggleEnabled error: ' + err.message);
+    }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+
+  async function _renderAudiobookView() {
+    var pickerEl = document.getElementById('abPickerList');
+    var queueEl  = document.getElementById('abQueueList');
+    var emptyEl  = document.getElementById('abQueueEmpty');
+    var countEl  = document.getElementById('abQueueCount');
+    if (!pickerEl || !queueEl) return;
+
+    // Load pieces and queue from DB on first render
+    if (_abPieces.length === 0 || _abQueue.length === 0) {
+      pickerEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-light);padding:12px 0">Loading…</div>';
+      await _abLoadQueue();
+      var { data: pieces } = await sb
+        .from('life_story_components')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
+      _abPieces = pieces || [];
+    }
+
+    // Build a quick lookup of what's already queued
+    var inQueue = {};
+    _abQueue.forEach(function(q) { inQueue[q.component_id] = true; });
+
+    // Render picker (left column)
+    if (_abPieces.length === 0) {
+      pickerEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-light);padding:12px 0">No pieces in your library yet.</div>';
+    } else {
+      pickerEl.innerHTML = '';
+      _abPieces.forEach(function(piece) {
+        var meta = _STORY_TYPE_META[piece.type] || { emoji: '📖', label: 'Story' };
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:0.8rem';
+        var added = !!inQueue[piece.id];
+        row.innerHTML = '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+          + meta.emoji + ' ' + escHtml(piece.title || (meta.label)) + '</span>';
+        var btn = document.createElement('button');
+        btn.style.cssText = 'flex-shrink:0;padding:4px 8px;font-size:0.72rem;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-family:Lato,sans-serif;';
+        if (added) {
+          btn.textContent = '✓';
+          btn.style.background = 'var(--surface2)';
+          btn.style.color = 'var(--text-light)';
+          btn.disabled = true;
+        } else {
+          btn.textContent = '+ Add';
+          btn.style.background = 'var(--rose)';
+          btn.style.color = '#fff';
+          btn.onclick = (function(pid) { return function() { _abAddPiece(pid); }; })(piece.id);
+        }
+        row.appendChild(btn);
+        pickerEl.appendChild(row);
+      });
+    }
+
+    // Render queue (right column) with drag-to-reorder
+    if (_abQueue.length === 0) {
+      if (emptyEl) emptyEl.style.display = 'block';
+      queueEl.innerHTML = '';
+      queueEl.appendChild(emptyEl || document.createTextNode(''));
+    } else {
+      queueEl.innerHTML = '';
+      _abQueue.forEach(function(item, idx) {
+        var piece = item.piece;
+        var meta = piece ? (_STORY_TYPE_META[piece.type] || { emoji: '📖', label: 'Story' }) : { emoji: '📖', label: 'Story' };
+        var isEnabled = item.enabled !== false;
+        var isPlaying = _abPlayer.playing && !_abPlayer.paused && _abPlayer.curIdx === idx;
+
+        var row = document.createElement('div');
+        row.dataset.idx = idx;
+        row.draggable = true;
+        row.style.cssText = 'display:flex;align-items:center;gap:7px;padding:8px 10px;'
+          + 'background:var(--surface);border:1px solid var(--border);border-radius:8px;'
+          + 'font-size:0.8rem;cursor:grab;opacity:' + (isEnabled ? '1' : '0.45') + ';'
+          + (isPlaying ? 'border-color:var(--rose);' : '');
+
+        // Drag handle
+        var handle = document.createElement('span');
+        handle.textContent = '⠿';
+        handle.style.cssText = 'font-size:0.95rem;color:var(--text-light);flex-shrink:0;cursor:grab';
+        row.appendChild(handle);
+
+        // Playing indicator
+        if (isPlaying) {
+          var playInd = document.createElement('span');
+          playInd.textContent = '🔊';
+          playInd.style.cssText = 'flex-shrink:0;font-size:0.75rem';
+          row.appendChild(playInd);
+        }
+
+        // Title
+        var titleSpan = document.createElement('span');
+        titleSpan.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+          + (isEnabled ? '' : ';text-decoration:line-through');
+        titleSpan.textContent = meta.emoji + ' ' + (piece ? (piece.title || meta.label) : '?');
+        row.appendChild(titleSpan);
+
+        // Enable toggle
+        var tog = document.createElement('input');
+        tog.type = 'checkbox';
+        tog.checked = isEnabled;
+        tog.title = 'Include in playback';
+        tog.style.cssText = 'flex-shrink:0;cursor:pointer;accent-color:var(--rose)';
+        tog.onchange = (function(qid, cb) { return function() { _abToggleEnabled(qid, cb.checked); }; })(item.id, tog);
+        row.appendChild(tog);
+
+        // Remove button
+        var removeBtn = document.createElement('button');
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove';
+        removeBtn.style.cssText = 'flex-shrink:0;background:none;border:none;font-size:1rem;color:var(--text-light);cursor:pointer;padding:0 2px;line-height:1';
+        removeBtn.onclick = (function(qid) { return function() { _abRemovePiece(qid); }; })(item.id);
+        row.appendChild(removeBtn);
+
+        // Drag events
+        row.addEventListener('dragstart', function(e) {
+          _abDragSrcIdx = parseInt(this.dataset.idx, 10);
+          e.dataTransfer.effectAllowed = 'move';
+          this.style.opacity = '0.4';
+        });
+        row.addEventListener('dragend', function() {
+          this.style.opacity = isEnabled ? '1' : '0.45';
+        });
+        row.addEventListener('dragover', function(e) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        });
+        row.addEventListener('drop', function(e) {
+          e.preventDefault();
+          var destIdx = parseInt(this.dataset.idx, 10);
+          if (_abDragSrcIdx === null || _abDragSrcIdx === destIdx) return;
+          var moved = _abQueue.splice(_abDragSrcIdx, 1)[0];
+          _abQueue.splice(destIdx, 0, moved);
+          _abDragSrcIdx = null;
+          _renderAudiobookView();
+          _abSaveOrder();
+        });
+
+        queueEl.appendChild(row);
+      });
+    }
+
+    // Update count badge and controls
+    if (countEl) countEl.textContent = _abQueue.length > 0 ? '(' + _abQueue.length + ')' : '';
+    _abUpdatePlayerControls();
+  }
+
+  function _abUpdatePlayerControls() {
+    var enabledCount = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; }).length;
+    var playBtn = document.getElementById('abPlayBtn');
+    if (playBtn) {
+      playBtn.disabled = enabledCount === 0;
+      playBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
+    }
+  }
+
+  // ── TTS Player ───────────────────────────────────────────────────────────
+
+  // Wraps gethroSpeak() to return a Promise that resolves when audio ends (or on stop)
+  function _abSpeak(text) {
+    return new Promise(function(resolve) {
+      if (_abPlayer.stopFlag) { resolve(); return; }
+      _abPlayer.resolveSpeak = resolve;
+      // Use gethroSpeak but hook into audio end
+      // We call the TTS proxy directly here to get full control over the audio element
+      if (!sessionToken) { resolve(); return; }
+      dbg('AUDIOBOOK', 'Speaking (' + text.length + ' chars)');
+      var audio = new Audio();
+      _abPlayer.audio = audio;
+      audio.onended = function() {
+        _abPlayer.audio = null;
+        _abPlayer.resolveSpeak = null;
+        resolve();
+      };
+      audio.onerror = function() {
+        _abPlayer.audio = null;
+        _abPlayer.resolveSpeak = null;
+        resolve(); // resolve anyway so chain continues
+      };
+      fetch(TTS_PROXY_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ text: text, voice: GETHRO_VOICE })
+      }).then(function(res) {
+        if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
+        return res.blob();
+      }).then(function(blob) {
+        if (_abPlayer.stopFlag) { resolve(); return; }
+        audio.src = URL.createObjectURL(blob);
+        audio.play().catch(function(e) {
+          dbgWarn('AUDIOBOOK', 'audio.play() failed: ' + e.message);
+          resolve();
+        });
+      }).catch(function(err) {
+        dbgWarn('AUDIOBOOK', '_abSpeak fetch error: ' + err.message);
+        // Fall back to browser TTS
+        if (window.speechSynthesis) {
+          var utt = new SpeechSynthesisUtterance(text);
+          utt.onend = function() { resolve(); };
+          utt.onerror = function() { resolve(); };
+          window.speechSynthesis.speak(utt);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Pause the current audio (if any)
+  function _abPauseAudio() {
+    if (_abPlayer.audio) {
+      _abPlayer.audio.pause();
+    } else if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+    }
+  }
+
+  // Resume the current audio (if any)
+  function _abResumeAudio() {
+    if (_abPlayer.audio) {
+      _abPlayer.audio.play().catch(function() {});
+    } else if (window.speechSynthesis && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+  }
+
+  // Stop and abort current audio — resolves the pending _abSpeak promise
+  function _abStopAudio() {
+    _abPlayer.stopFlag = true;
+    if (_abPlayer.audio) {
+      _abPlayer.audio.pause();
+      _abPlayer.audio.src = '';
+      _abPlayer.audio = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (_abPlayer.resolveSpeak) {
+      _abPlayer.resolveSpeak();
+      _abPlayer.resolveSpeak = null;
+    }
+  }
+
+  // Extract narration segments from a piece based on its type.
+  // Returns an array of {text, pause_after_ms} objects.
+  function _abGetSegments(piece) {
+    var content = (piece.content || '').trim();
+    var type    = piece.type || 'prose';
+
+    if (type === 'song') {
+      // Split on section markers (## VERSE 1, ## CHORUS, ## BRIDGE etc)
+      var sections = content.split(/\n(?=##\s*(VERSE|CHORUS|BRIDGE|OUTRO|INTRO))/i);
+      return sections.map(function(sec) {
+        return { text: sec.replace(/^##\s*/gm, '').trim(), pause_after_ms: 2000 };
+      }).filter(function(s) { return s.text.length > 0; });
+    } else if (type === 'poem' || type === 'poetry') {
+      // Split on double newlines (stanzas)
+      var stanzas = content.split(/\n\s*\n/);
+      return stanzas.map(function(st) {
+        return { text: st.trim(), pause_after_ms: 1500 };
+      }).filter(function(s) { return s.text.length > 0; });
+    } else {
+      // Prose, letter, interview etc — one chunk, split at ~400 chars on sentence boundaries to stay under TTS limit
+      var chunks = [];
+      var remaining = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      while (remaining.length > 0) {
+        if (remaining.length <= 400) {
+          chunks.push({ text: remaining, pause_after_ms: 0 });
+          break;
+        }
+        // Find last sentence end before 400 chars
+        var sub = remaining.substring(0, 400);
+        var lastEnd = Math.max(sub.lastIndexOf('. '), sub.lastIndexOf('! '), sub.lastIndexOf('? '));
+        var cutAt = lastEnd > 50 ? lastEnd + 1 : 400;
+        chunks.push({ text: remaining.substring(0, cutAt).trim(), pause_after_ms: 0 });
+        remaining = remaining.substring(cutAt).trim();
+      }
+      return chunks;
+    }
+  }
+
+  // The main sequential play loop
+  async function _abPlayFrom(startIdx) {
+    var enabledItems = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; });
+    if (enabledItems.length === 0) { toast('No pieces in playlist — add some first.'); return; }
+
+    _abPlayer.playing  = true;
+    _abPlayer.paused   = false;
+    _abPlayer.stopFlag = false;
+    _abPlayer.curIdx   = startIdx || 0;
+    _abUpdatePlayBtn();
+
+    for (var i = _abPlayer.curIdx; i < enabledItems.length; i++) {
+      if (_abPlayer.stopFlag) break;
+      _abPlayer.curIdx = i;
+      var item  = enabledItems[i];
+      var piece = item.piece;
+      var meta  = _STORY_TYPE_META[piece.type] || { emoji: '📖', label: 'Story' };
+
+      // Announce chapter
+      _abSetNowPlaying((i + 1) + ' of ' + enabledItems.length + ' — ' + (piece.title || meta.label));
+      _abSetProgress('');
+      _renderAudiobookView(); // refresh playing indicator
+
+      var announce = 'Chapter ' + (i + 1) + '. ' + (piece.title || (meta.label + ' ' + (i + 1)));
+      if (piece.type === 'song') {
+        announce = 'Next — a song' + (piece.title ? ' called ' + piece.title : '') + '.';
+      }
+      await _abSpeak(announce);
+      if (_abPlayer.stopFlag) break;
+
+      // Play segments
+      var segments = _abGetSegments(piece);
+      for (var j = 0; j < segments.length; j++) {
+        if (_abPlayer.stopFlag) break;
+        while (_abPlayer.paused && !_abPlayer.stopFlag) {
+          await new Promise(function(r) { setTimeout(r, 150); });
+        }
+        _abSetProgress('Part ' + (j + 1) + ' of ' + segments.length);
+        var seg = segments[j];
+        await _abSpeak(seg.text);
+        if (_abPlayer.stopFlag) break;
+        if (seg.pause_after_ms > 0) {
+          await new Promise(function(r) { setTimeout(r, seg.pause_after_ms); });
+        }
+      }
+
+      // Brief pause between pieces
+      if (!_abPlayer.stopFlag && i < enabledItems.length - 1) {
+        await new Promise(function(r) { setTimeout(r, 1200); });
+      }
+    }
+
+    // Playback finished or stopped
+    if (!_abPlayer.stopFlag) {
+      _abSetNowPlaying('Finished');
+      _abSetProgress('');
+    }
+    _abPlayer.playing = false;
+    _abPlayer.paused  = false;
+    _abUpdatePlayBtn();
+    _renderAudiobookView();
+  }
+
+  // ── Player UI controls ───────────────────────────────────────────────────
+
+  function _abTogglePlay() {
+    if (!_abPlayer.playing) {
+      _abPlayFrom(_abPlayer.curIdx || 0);
+    } else if (_abPlayer.paused) {
+      _abPlayer.paused = false;
+      _abResumeAudio();
+      _abUpdatePlayBtn();
+    } else {
+      _abPlayer.paused = true;
+      _abPauseAudio();
+      _abUpdatePlayBtn();
+    }
+  }
+
+  function _abStop() {
+    _abStopAudio();
+    _abPlayer.playing = false;
+    _abPlayer.paused  = false;
+    _abPlayer.curIdx  = 0;
+    _abSetNowPlaying('—');
+    _abSetProgress('');
+    _abUpdatePlayBtn();
+    _renderAudiobookView();
+  }
+
+  function _abSkipNext() {
+    if (!_abPlayer.playing) return;
+    var enabledItems = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; });
+    if (_abPlayer.curIdx < enabledItems.length - 1) {
+      _abStopAudio();
+      _abPlayer.stopFlag = false;  // reset so _abPlayFrom continues
+      _abPlayFrom(_abPlayer.curIdx + 1);
+    }
+  }
+
+  function _abSkipPrev() {
+    if (!_abPlayer.playing) return;
+    var newIdx = Math.max(0, _abPlayer.curIdx - 1);
+    _abStopAudio();
+    _abPlayer.stopFlag = false;
+    _abPlayFrom(newIdx);
+  }
+
+  function _abUpdatePlayBtn() {
+    var btn = document.getElementById('abPlayBtn');
+    if (!btn) return;
+    if (!_abPlayer.playing) {
+      btn.textContent = '▶';
+    } else if (_abPlayer.paused) {
+      btn.textContent = '▶'; // resume
+    } else {
+      btn.textContent = '⏸';
+    }
+  }
+
+  function _abSetNowPlaying(text) {
+    var el = document.getElementById('abNowPlaying');
+    if (el) el.textContent = text;
+  }
+
+  function _abSetProgress(text) {
+    var el = document.getElementById('abProgressText');
+    if (el) el.textContent = text;
+  }
+
+  // ── End APP-46 Audiobook ─────────────────────────────────────────────────
 
   async function renderStory(story, photoEntries, mode, funnyCaptions, funnyOverride, comedyStyleOverride, comedyIntensityOverride) {
     const out = document.getElementById('storyOutput');
@@ -15196,10 +15872,17 @@
     if (!currentUser)  return toast('Please sign in first');
     if (!currentStory) return toast('Generate a story first');
 
-    // Capture story content
-    ppoStoryHtml = document.getElementById('storyOutput')?.innerHTML || '';
-    ppoStoryText = ppoStoryHtml.replace(/<[^>]+>/g, '').trim();
-    if (!ppoStoryText || ppoStoryText.length < 50) return toast('Please generate a story first');
+    // APP-42 Phase 3: if _bookPreview() pre-populated ppoStoryHtml, use it directly;
+    // otherwise capture from storyOutput as normal.
+    if (!(_bookPreview && _bookPreview._isBook)) {
+      // Capture story content from the single-story output
+      ppoStoryHtml = document.getElementById('storyOutput')?.innerHTML || '';
+      ppoStoryText = ppoStoryHtml.replace(/<[^>]+>/g, '').trim();
+      if (!ppoStoryText || ppoStoryText.length < 50) return toast('Please generate a story first');
+    } else {
+      // Book mode — ppoStoryHtml/Text already set by _bookPreview()
+      if (!ppoStoryText || ppoStoryText.length < 50) return toast('No content in book sections.');
+    }
 
     // Restore from Supabase book settings (persistent), falling back to localStorage then defaults
     const name  = userProfile.name || 'My';
@@ -15251,6 +15934,15 @@
     var btn = document.getElementById('ppoOrderBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Preparing…';
+
+    // APP-42 Phase 3: if this preview was opened by _bookPreview(), restore single-story state
+    if (_bookPreview && _bookPreview._isBook) {
+      currentStory  = _bookPreview._prevStory  || null;
+      ppoStoryHtml  = _bookPreview._prevHtml   || '';
+      ppoStoryText  = _bookPreview._prevText   || '';
+      _bookPreview._isBook = false;
+    }
+
     // Force scroll reset after overlay closes — the overlay is position:fixed
     // but on some browsers closing it leaves the underlying page scrolled.
     // Use rAF to ensure the browser has repainted before we read/write scrollY.
@@ -15757,12 +16449,18 @@
     try {
       // 1. Generate PDF using jsPDF from story text.
       if (printBookBtn) printBookBtn.textContent = '📄 Generating PDF…';
-      const storyHtml  = document.getElementById('storyOutput')?.innerHTML || '';
+      // APP-42 Phase 3: use pre-built ppoStoryHtml when in book mode; fall back to storyOutput
+      const storyHtml  = (ppoStoryHtml && ppoStoryHtml.length > 50)
+        ? ppoStoryHtml
+        : (document.getElementById('storyOutput')?.innerHTML || '');
       const storyText  = storyHtml.replace(/<[^>]+>/g, '').trim();
       dbg('PEECHO', 'storyOutput text length:', storyText.length);
       if (!storyText || storyText.length < 50) throw new Error('Story is empty — please generate a story first');
       const name  = userProfile.name || 'My';
-      const title = currentStory.funny ? name + "\'s Life Story (Comedy Edition)" : name + "\'s Life Story";
+      // APP-42 Phase 3: use book title when opened from Book Builder
+      const title = (_bookPreview && _bookPreview._isBook && _bookSettings.title)
+        ? _bookSettings.title
+        : (currentStory && currentStory.funny ? name + "'s Life Story (Comedy Edition)" : name + "'s Life Story");
       let pageCount = Math.max(20, Math.ceil(storyText.length / 1800));
 
       // Build PDF with jsPDF
