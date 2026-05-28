@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.95';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 songs music: Pixabay key set. _abFetchAndPlayMusic now accepts piece — reads bg_music_url if already persisted (same track every play), else fetches from Pixabay and persists to DB immediately. Genre mapping extended to handle freetext artist/song inputs (Yesterday → folk, Johnny Cash → country, etc). bg_music_url added to all life_story_components selects.';
+  const APP_VERSION  = 'v4.96';
+  const DEPLOY_NOTES = APP_VERSION + ' — Audiobook silence fix: _abSpeak now uses AudioContext (same as gethroSpeak) instead of new Audio().play() — bypasses Chrome/Android autoplay block. Pause/resume uses ctx.suspend()/resume(). _abTogglePlay and _storyLibListen call _primeAudioContext() in gesture. Listen button plays single piece directly (no tab switch), flips to Stop while playing. Elapsed seconds timer replaces Part X of Y progress.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -10011,9 +10011,16 @@
     actions.appendChild(shareBtn);
     // Phase 2: Listen button — queues piece and starts audiobook player immediately
     var listenBtn = document.createElement('button');
+    listenBtn.id = 'listenBtn_' + piece.id;
     listenBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer';
     listenBtn.textContent = '🎧 Listen';
-    (function(pid) { listenBtn.onclick = function() { _storyLibListen(pid); }; })(piece.id);
+    (function(pid) { listenBtn.onclick = function() {
+      if (_abPlayer.playing && _abQueue.length === 1 && _abQueue[0].component_id === pid) {
+        _abStop(); // already playing this piece — stop it
+      } else {
+        _storyLibListen(pid);
+      }
+    }; })(piece.id);
     actions.appendChild(listenBtn);
     actions.appendChild(delBtn);
     card.appendChild(actions);
@@ -10127,24 +10134,54 @@
   // ── Phase 2: Listen from library / post-gen ──────────────────────────────
 
   // Called from library card "🎧 Listen" button.
-  // Adds piece to audiobook queue (if not already there), switches to the
-  // audiobook view, and starts playing from that piece.
+  // Listen button: plays a single piece immediately, directly — no queue navigation.
+  // Fetches the piece from DB, plays it inline as a mini-player without switching tabs.
+  // _primeAudioContext() called here (inside the gesture) to unlock Chrome desktop autoplay.
   async function _storyLibListen(pieceId) {
     if (!currentUser) { toast('Please sign in first.'); return; }
-    // Make sure piece is in queue
-    await _abAddPiece(pieceId);
-    // Find its index in enabled queue
-    await _abLoadQueue();
-    var enabledItems = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; });
-    var idx = enabledItems.findIndex(function(q) { return q.component_id === pieceId; });
+    _primeAudioContext(); // must be called synchronously inside gesture handler
+
     // Stop any current playback
-    if (_abPlayer.playing) _abStopAudio();
-    // Switch to audiobook view so the player UI is visible
-    _storyTabSwitch('audiobook');
-    // Start playing (small delay so view renders first)
-    setTimeout(function() {
-      _abPlayFrom(idx >= 0 ? idx : 0);
-    }, 300);
+    if (_abPlayer.playing || _abPlayer.paused) {
+      _abStop();
+      await new Promise(function(r) { setTimeout(r, 150); });
+    }
+
+    // Fetch the piece directly (may already be in _abQueue, but fetch fresh to get bg_music_url)
+    var piece = null;
+    try {
+      var { data, error } = await sb
+        .from('life_story_components')
+        .select('id, type, title, content, metadata, created_at, bg_music_url')
+        .eq('id', pieceId)
+        .single();
+      if (error) throw error;
+      piece = data;
+      // Fold metadata fields into piece for easy access
+      if (piece.metadata) {
+        piece.songStyle  = piece.metadata.songStyle  || null;
+        piece.songLength = piece.metadata.songLength || null;
+      }
+    } catch(err) {
+      dbgWarn('AUDIOBOOK', '_storyLibListen fetch error: ' + (err && err.message));
+      toast('Could not load piece — please try again.');
+      return;
+    }
+
+    // Build a synthetic single-item queue and play it directly
+    _abQueue = [{ id: 'single_' + pieceId, component_id: pieceId, enabled: true, piece: piece }];
+    _abPlayer.curIdx = 0;
+
+    // Show a lightweight now-playing bar in the library (doesn't switch tabs)
+    _abSetNowPlaying('▶ ' + (piece.title || piece.type || 'Playing…'));
+    _abSetProgress('');
+
+    // Ensure the mini player bar is visible (it lives inside the audiobook tab but
+    // we show a toast-style indicator in the library tab instead)
+    toast('🎧 Playing: ' + (piece.title || 'your piece') + ' — tap ⏹ to stop', 4000);
+
+    // Start playback from the single item
+    _abPlayFrom(0);
   }
 
   // Called from post-gen "🎧 Listen" button.
@@ -10869,37 +10906,23 @@
 
   // ── TTS Player ───────────────────────────────────────────────────────────
 
-  // Wraps gethroSpeak() to return a Promise that resolves when audio ends (or on stop)
+  // Wraps TTS into a Promise that resolves when the audio ends (or on stop).
+  // Uses AudioContext (same as gethroSpeak) — NOT new Audio().play() — so Chrome/Android
+  // autoplay policy is bypassed as long as _primeAudioContext() was called in the gesture.
   function _abSpeak(text) {
     return new Promise(function(resolve) {
       if (_abPlayer.stopFlag) { resolve(); return; }
-      _abPlayer.resolveSpeak = resolve;
-      // Use gethroSpeak but hook into audio end
-      // We call the TTS proxy directly here to get full control over the audio element
+      if (!text || !text.trim()) { resolve(); return; }
       if (!sessionToken) { resolve(); return; }
-      dbg('AUDIOBOOK', 'Speaking (' + text.length + ' chars)');
-      _abDuck(); // APP-46 Phase 3b: duck music before TTS starts
-      var audio = new Audio();
-      _abPlayer.audio = audio;
-      // Create AbortController so _abStopAudio() can cancel the in-flight fetch
+      _abPlayer.resolveSpeak = resolve;
+      dbg('AUDIOBOOK', '_abSpeak (' + text.length + ' chars)');
+      _abDuck();
+
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       _abPlayer.fetchAbort = controller;
-      audio.onended = function() {
-        _abPlayer.audio = null;
-        _abPlayer.resolveSpeak = null;
-        _abSwell(); // APP-46 Phase 3b: swell music after speech ends
-        resolve();
-      };
-      audio.onerror = function() {
-        _abPlayer.audio = null;
-        _abPlayer.resolveSpeak = null;
-        _abSwell(); // APP-46 Phase 3b: swell on error path too
-        resolve(); // resolve anyway so chain continues
-      };
-      // Refresh token before TTS call (same pattern as gethroSpeak) so the
-      // TTS proxy can verify the caller is a valid logged-in user.
+
+      var freshToken = sessionToken;
       sb.auth.getSession().then(function(sess) {
-        var freshToken = sessionToken;
         if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
         return fetch(TTS_PROXY_URL, {
           method: 'POST',
@@ -10909,53 +10932,98 @@
         });
       }).then(function(res) {
         if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
-        return res.blob();
-      }).then(function(blob) {
-        _abPlayer.fetchAbort = null; // fetch complete
-        if (_abPlayer.stopFlag) { _abSwell(); resolve(); return; } // APP-46 Phase 3b
-        audio.src = URL.createObjectURL(blob);
-        audio.play().catch(function(e) {
-          dbgWarn('AUDIOBOOK', 'audio.play() failed: ' + e.message);
-          _abSwell(); // APP-46 Phase 3b
+        return res.arrayBuffer();
+      }).then(function(arrayBuf) {
+        _abPlayer.fetchAbort = null;
+        if (_abPlayer.stopFlag) { _abSwell(); resolve(); return; }
+        if (!arrayBuf || !arrayBuf.byteLength) throw new Error('empty TTS buffer');
+
+        // Use AudioContext so playback works on Chrome desktop + Android without
+        // being blocked by autoplay policy (_primeAudioContext called at gesture time).
+        if (!_gethroAudioCtx) {
+          _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        var ctx = _gethroAudioCtx;
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(function(){});
+        }
+
+        ctx.decodeAudioData(arrayBuf, function(decoded) {
+          if (_abPlayer.stopFlag) { _abSwell(); resolve(); return; }
+          var source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          // Store source so _abStopAudio can call source.stop()
+          _abPlayer.audio = source;
+          source.onended = function() {
+            _abPlayer.audio = null;
+            _abPlayer.resolveSpeak = null;
+            _abSwell();
+            resolve();
+          };
+          source.start(0);
+          dbg('AUDIOBOOK', 'AudioContext source started, duration=' + decoded.duration.toFixed(1) + 's');
+          // Update elapsed time display while speaking
+          _abStartElapsedTimer(decoded.duration);
+        }, function(decodeErr) {
+          dbgWarn('AUDIOBOOK', 'decodeAudioData failed: ' + (decodeErr && decodeErr.message));
+          _abPlayer.audio = null;
+          _abSwell();
           resolve();
         });
       }).catch(function(err) {
-        _abPlayer.fetchAbort = null; // fetch complete (or aborted)
-        // If aborted by stop, just resolve silently
-        if (err && (err.name === 'AbortError' || _abPlayer.stopFlag)) { resolve(); return; }
-        dbgWarn('AUDIOBOOK', '_abSpeak fetch error: ' + err.message);
-        // Fall back to browser TTS
+        _abPlayer.fetchAbort = null;
+        if (err && (err.name === 'AbortError' || _abPlayer.stopFlag)) { _abSwell(); resolve(); return; }
+        dbgWarn('AUDIOBOOK', '_abSpeak error: ' + (err && err.message));
+        // Fallback: browser speechSynthesis
         if (window.speechSynthesis) {
           var utt = new SpeechSynthesisUtterance(text);
-          utt.onend = function() { _abSwell(); resolve(); }; // APP-46 Phase 3b
-          utt.onerror = function() { _abSwell(); resolve(); };
+          utt.onend  = function() { _abSwell(); resolve(); };
+          utt.onerror= function() { _abSwell(); resolve(); };
           window.speechSynthesis.speak(utt);
         } else {
-          _abSwell(); resolve(); // APP-46 Phase 3b
+          _abSwell(); resolve();
         }
       });
     });
   }
 
-  // Pause the current audio (if any)
+  // Counts up elapsed seconds in the progress display while a segment is playing.
+  var _abElapsedInterval = null;
+  function _abStartElapsedTimer(durationSec) {
+    if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
+    var start = Date.now();
+    var total = Math.round(durationSec);
+    _abElapsedInterval = setInterval(function() {
+      if (_abPlayer.stopFlag || !_abPlayer.playing) {
+        clearInterval(_abElapsedInterval); _abElapsedInterval = null; return;
+      }
+      var elapsed = Math.round((Date.now() - start) / 1000);
+      if (elapsed >= total) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; return; }
+      _abSetProgress(elapsed + 's / ' + total + 's');
+    }, 1000);
+  }
+
+  // Pause the current audio (if any).
+  // _abPlayer.audio is an AudioBufferSourceNode — AudioContext doesn't support pause/resume
+  // on a source directly, so we suspend/resume the whole context instead.
   function _abPauseAudio() {
-    if (_abPlayer.audio) {
-      _abPlayer.audio.pause();
+    if (_gethroAudioCtx && _gethroAudioCtx.state === 'running') {
+      _gethroAudioCtx.suspend().catch(function(){});
     } else if (window.speechSynthesis && window.speechSynthesis.speaking) {
       window.speechSynthesis.pause();
     }
-    // APP-46 Phase 3b: also pause background music
+    if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
     if (_abPlayer.bgAudio) _abPlayer.bgAudio.pause();
   }
 
-  // Resume the current audio (if any)
+  // Resume the current audio (if any).
   function _abResumeAudio() {
-    if (_abPlayer.audio) {
-      _abPlayer.audio.play().catch(function() {});
+    if (_gethroAudioCtx && _gethroAudioCtx.state === 'suspended') {
+      _gethroAudioCtx.resume().catch(function(){});
     } else if (window.speechSynthesis && window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
-    // APP-46 Phase 3b: resume background music
     if (_abPlayer.bgAudio) _abPlayer.bgAudio.play().catch(function() {});
   }
 
@@ -10973,10 +11041,14 @@
       _abPlayer.fetchAbort = null;
     }
     if (_abPlayer.audio) {
-      _abPlayer.audio.pause();
-      _abPlayer.audio.src = '';
+      // _abPlayer.audio is now an AudioBufferSourceNode (not HTMLAudioElement)
+      try {
+        if (typeof _abPlayer.audio.stop === 'function') _abPlayer.audio.stop();
+        else if (typeof _abPlayer.audio.pause === 'function') _abPlayer.audio.pause();
+      } catch(e) {}
       _abPlayer.audio = null;
     }
+    if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (_abPlayer.resolveSpeak) {
       _abPlayer.resolveSpeak();
@@ -11124,6 +11196,7 @@
   // ── Player UI controls ───────────────────────────────────────────────────
 
   function _abTogglePlay() {
+    _primeAudioContext(); // unlock AudioContext on the gesture before any async work
     if (!_abPlayer.playing) {
       _abPlayFrom(_abPlayer.curIdx || 0);
     } else if (_abPlayer.paused) {
@@ -11140,6 +11213,11 @@
   function _abStop() {
     _abStopAudio();
     _abStopMusic(); // APP-46 Phase 3a
+    // Restore library card Listen button label if we were playing a single piece
+    if (_abQueue.length === 1 && _abQueue[0] && _abQueue[0].component_id) {
+      var lBtn = document.getElementById('listenBtn_' + _abQueue[0].component_id);
+      if (lBtn) lBtn.textContent = '🎧 Listen';
+    }
     _abPlayer.playing = false;
     _abPlayer.paused  = false;
     _abPlayer.curIdx  = 0;
@@ -11184,6 +11262,12 @@
   function _abSetNowPlaying(text) {
     var el = document.getElementById('abNowPlaying');
     if (el) el.textContent = text;
+    // Flip the library card Listen button to ⏹ Stop while this single piece is playing
+    if (_abQueue.length === 1 && _abQueue[0] && _abQueue[0].component_id) {
+      var pid = _abQueue[0].component_id;
+      var lBtn = document.getElementById('listenBtn_' + pid);
+      if (lBtn) lBtn.textContent = (_abPlayer.playing && !_abPlayer.paused) ? '⏹ Stop' : '🎧 Listen';
+    }
   }
 
   function _abSetProgress(text) {
