@@ -9759,14 +9759,14 @@
   // ── APP-45: Create tab click — resets to fresh configurator, guards unsaved work ──
   // If user has a generated story not yet saved to library, ask before discarding.
   function _storyTabSwitchCreate() {
-    var saveLibBtn = document.getElementById('saveToLibBtn');
-    var hasSavedThisSession = saveLibBtn && saveLibBtn.textContent === '✓ Saved';
-    var hasUnsaved = currentStory && currentStory.text && !hasSavedThisSession;
-    if (hasUnsaved) {
-      var dlg = document.getElementById('createTabUnsavedDlg');
-      if (dlg) { dlg.style.display = 'flex'; }
+    var btn = document.getElementById('saveToLibBtn');
+    var saved = btn && btn.textContent === '✓ Saved';
+    if (currentStory && currentStory.text && !saved) {
+      var d = document.getElementById('createTabUnsavedDlg');
+      if (d) d.style.display = 'flex';
       return;
     }
+    _scInit();
     _storyTabSwitchCreateConfirmed();
   }
 
@@ -9854,19 +9854,7 @@
   async function saveStoryComponent(storyText, meta, userTitle) {
     try {
       if (!storyText || !storyText.trim()) return null;
-      var hash = _contentHash(storyText);
-
-      // Dedup: check if same hash already exists for this user
-      var { data: existing } = await sb
-        .from('life_story_components')
-        .select('id')
-        .eq('metadata->>contentHash', hash)
-        .limit(1);
-      if (existing && existing.length > 0) {
-        dbgWarn('LIB', 'Skipping duplicate save (hash match)');
-        return existing[0].id;
-      }
-
+      var hash    = _contentHash(storyText);
       var dateStr = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
       var title   = userTitle || _autoStoryTitle(meta, dateStr);
       var type    = meta.format || 'prose';
@@ -9879,6 +9867,17 @@
         metadata:   Object.assign({}, meta, { contentHash: hash }),
         sort_order: 0,
       };
+
+      // Dedup: check if same hash already exists for this user
+      var { data: existing } = await sb
+        .from('life_story_components')
+        .select('id')
+        .eq('metadata->>contentHash', hash)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        dbgWarn('LIB', 'Skipping duplicate save (hash match)');
+        return existing[0].id;
+      }
 
       var { data, error } = await sb
         .from('life_story_components')
@@ -16072,7 +16071,7 @@
           getEntryTypeBadge(type) +
           '<span class="entry-cat">' + escHtml(e.category || 'Unspecified') + '</span>' +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
-          (e.id ? '<button class="entry-delete-btn" onclick="deleteEntry(\'' + e.id + '\')" title="Delete entry">✕</button>' : '') +
+          (e.id ? '<button class="entry-delete-btn" data-action="delete-entry" data-id="' + e.id + '" title="Delete entry">✕</button>' : '') +
         '</div>' +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + escHtml(e.title) + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
