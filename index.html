@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.92';
-  const DEPLOY_NOTES = APP_VERSION + ' — Audiobook Phase 2: (1) Gethro voice now consistent in audiobook — _abSpeak passes fresh JWT token to TTS proxy (same as gethroSpeak), fixing inconsistent voice. (2) Listen tab removed — replaced by 🎧 Listen button on every library card and in the post-gen action row. (3) 🔗 Share button added to post-gen action row. (4) Android tab-toggle alignment fixed — 4 tabs reduced to 3, overflow clipping resolved on narrow screens.';
+  const APP_VERSION  = 'v4.95';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-46 songs music: Pixabay key set. _abFetchAndPlayMusic now accepts piece — reads bg_music_url if already persisted (same track every play), else fetches from Pixabay and persists to DB immediately. Genre mapping extended to handle freetext artist/song inputs (Yesterday → folk, Johnny Cash → country, etc). bg_music_url added to all life_story_components selects.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4383,7 +4383,7 @@
   const VIDEO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-video';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
-  const PIXABAY_MUSIC_KEY  = 'YOUR_PIXABAY_KEY_HERE'; // APP-46 Phase 3a — free key from pixabay.com/api/docs/
+  const PIXABAY_MUSIC_KEY  = '56058758-28ef472d9ebeac8dffdcd011a'; // APP-46 Phase 3a — free key from pixabay.com/api/docs/
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -9909,7 +9909,7 @@
     try {
       var { data: pieces, error } = await sb
         .from('life_story_components')
-        .select('id, type, title, content, metadata, created_at')
+        .select('id, type, title, content, metadata, created_at, bg_music_url')
         .order('created_at', { ascending: false })
         .limit(50);
 
@@ -10252,7 +10252,7 @@
       if (compIds.length > 0) {
         var { data: pieces2 } = await sb
           .from('life_story_components')
-          .select('id, type, title, content, metadata, created_at')
+          .select('id, type, title, content, metadata, created_at, bg_music_url')
           .in('id', compIds);
         (pieces2 || []).forEach(function(p) { piecesMap[p.id] = p; });
       }
@@ -10315,7 +10315,7 @@
     try {
       var { data: pieces, error } = await sb
         .from('life_story_components')
-        .select('id, type, title, content, metadata, created_at')
+        .select('id, type, title, content, metadata, created_at, bg_music_url')
         .order('created_at', { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -11053,10 +11053,12 @@
     _abPlayer.curIdx   = startIdx || 0;
     _abUpdatePlayBtn();
 
-    // APP-46 Phase 3a: start background music based on first enabled piece genre
+    // APP-46 Phase 3a: start background music based on first enabled piece genre.
+    // Pass piece so _abFetchAndPlayMusic can use/persist bg_music_url for consistency.
     _abStopMusic();
-    var _firstGenre = _abMusicGenreFor(enabledItems[startIdx || 0] && enabledItems[startIdx || 0].piece);
-    _abFetchAndPlayMusic(_firstGenre);
+    var _firstPiece = enabledItems[startIdx || 0] && enabledItems[startIdx || 0].piece;
+    var _firstGenre = _abMusicGenreFor(_firstPiece);
+    _abFetchAndPlayMusic(_firstGenre, _firstPiece);
 
     for (var i = _abPlayer.curIdx; i < enabledItems.length; i++) {
       if (_abPlayer.stopFlag) break;
@@ -11192,42 +11194,100 @@
   // ── APP-46 Phase 3a: Background music (flat volume) ─────────────────────
 
   // Maps a piece to a Pixabay music category string.
+  // Handles both genre slugs (from mood card) and freetext (from song/artist search input).
   function _abMusicGenreFor(piece) {
-    var songStyleMap = {
+    // Genre slug map (mood card selections)
+    var slugMap = {
       pop_ballad: 'pop', country: 'country', folk: 'folk', classical: 'classical',
       jazz: 'jazz', blues: 'blues', rock: 'rock', punk: 'rock',
       hiphop: 'hiphop', reggae: 'reggae', bossa_nova: 'jazz',
-      musical_theatre: 'classical', celtic: 'folk', rnb: 'rnb'
+      musical_theatre: 'classical', celtic: 'folk', rnb: 'rnb',
+      piano_ballad: 'classical', motown: 'rnb', bluegrass: 'country'
     };
+    // Artist/song keyword to genre map for common freetext references.
+    // Covers the most likely inputs — anything unmatched falls back to 'pop'.
+    var artistMap = [
+      { keys: ['beatles','lennon','mccartney','yesterday','hey jude','let it be','dylan','bob dylan','joni mitchell','paul kelly','simon garfunkel','neil young','cat stevens','james taylor','carole king','leonard cohen','hallelujah','tracy chapman','sufjan'], genre: 'folk' },
+      { keys: ['dolly parton','jolene','kenny rogers','johnny cash','kasey chambers','slim dusty','taylor swift','luke combs','chris stapleton','kacey musgraves','hank williams','patsy cline','willie nelson','garth brooks'], genre: 'country' },
+      { keys: ['beethoven','mozart','bach','chopin','debussy','sondheim','hamilton','les mis','les miserables','phantom','west side','broadway','musical','orchestra'], genre: 'classical' },
+      { keys: ['sinatra','frank sinatra','nina simone','ella fitzgerald','nat king cole','bossa nova','jobim','billie holiday','louis armstrong','miles davis','chet baker','norah jones'], genre: 'jazz' },
+      { keys: ['springsteen','born to run','cold chisel','u2','rolling stones','led zeppelin','queen','bohemian rhapsody','david bowie','fleetwood mac','eagles','hotel california','acdc','ac/dc'], genre: 'rock' },
+      { keys: ['beyonce','beyonce','adele','alicia keys','aretha','marvin gaye','stevie wonder','sam cooke','otis redding','amy winehouse','john legend','whitney houston'], genre: 'rnb' },
+      { keys: ['ed sheeran','shape of you','thinking out loud','elton john','rocket man','billy joel','piano man','coldplay','fix you','yellow','abba','dancing queen','michael jackson','thriller'], genre: 'pop' }
+    ];
     if (piece && piece.type === 'song' && piece.songStyle) {
-      return songStyleMap[piece.songStyle] || 'pop';
+      var style = piece.songStyle;
+      if (slugMap[style]) return slugMap[style];
+      var lower = style.toLowerCase();
+      for (var i = 0; i < artistMap.length; i++) {
+        var entry = artistMap[i];
+        for (var j = 0; j < entry.keys.length; j++) {
+          if (lower.indexOf(entry.keys[j]) !== -1) return entry.genre;
+        }
+      }
+      return 'pop';
     }
     var typeMap = { poem: 'ambient', poetry: 'ambient', letter: 'ambient', interview: 'upbeat' };
     return (piece && typeMap[piece.type]) || 'ambient';
   }
 
-  // Fetch a random CC0 track from Pixabay and play it at low volume.
+  // Fetch a CC0 track from Pixabay and play it at low volume.
+  // On first play: picks a random track for the genre, persists the URL to bg_music_url
+  // so the same track plays every time this piece is played.
+  // On subsequent plays: uses the stored bg_music_url directly — no Pixabay call needed.
   // Silently falls back to no music if the fetch fails or key is not set.
-  async function _abFetchAndPlayMusic(genre) {
+  async function _abFetchAndPlayMusic(genre, piece) {
     if (_abPlayer.musicMuted) return;
     if (!PIXABAY_MUSIC_KEY || PIXABAY_MUSIC_KEY === 'YOUR_PIXABAY_KEY_HERE') return;
     try {
-      var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
-              + '&music=true&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=10';
-      var resp = await fetch(url);
-      if (!resp.ok) return;
-      var data = await resp.json();
-      var hits = (data.hits || []).filter(function(h) { return h.previewURL || h.audio; });
-      if (hits.length === 0) return;
-      var track = hits[Math.floor(Math.random() * hits.length)];
-      var src   = track.audio || track.previewURL;
-      if (!src) return;
+      var src = null;
+
+      // If a consistent track has already been chosen for this piece, use it
+      if (piece && piece.bg_music_url) {
+        src = piece.bg_music_url;
+        dbg('AUDIOBOOK', 'Using persisted bg_music_url for piece ' + piece.id);
+      } else {
+        // First play — fetch from Pixabay and pick a track
+        var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
+                + '&music=true&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=20';
+        var resp = await fetch(url);
+        if (!resp.ok) { dbgWarn('AUDIOBOOK', 'Pixabay music fetch HTTP ' + resp.status); return; }
+        var data = await resp.json();
+        var hits = (data.hits || []).filter(function(h) { return h.audio || h.previewURL; });
+        if (hits.length === 0) { dbgWarn('AUDIOBOOK', 'No Pixabay tracks found for genre: ' + genre); return; }
+        // Pick a deterministic-feeling track: use piece id hash if available, else random
+        var idx = piece && piece.id
+          ? (piece.id.split('').reduce(function(a, c) { return a + c.charCodeAt(0); }, 0) % hits.length)
+          : Math.floor(Math.random() * hits.length);
+        var track = hits[idx];
+        src = track.audio || track.previewURL;
+        if (!src) return;
+        dbg('AUDIOBOOK', 'Selected Pixabay track idx=' + idx + ' genre=' + genre + ' src=' + src.substring(0, 60));
+
+        // Persist to DB so this piece always gets the same track from now on
+        if (piece && piece.id) {
+          sb.from('life_story_components')
+            .update({ bg_music_url: src })
+            .eq('id', piece.id)
+            .then(function(res) {
+              if (res.error) {
+                dbgWarn('AUDIOBOOK', 'Could not persist bg_music_url: ' + res.error.message);
+              } else {
+                piece.bg_music_url = src; // update in-memory so repeat plays in same session use it
+                dbg('AUDIOBOOK', 'Persisted bg_music_url for piece ' + piece.id);
+              }
+            });
+        }
+      }
 
       var audio = new Audio(src);
       audio.loop   = true;
       audio.volume = _abPlayer.musicMuted ? 0 : 0.22;
       _abPlayer.bgAudio = audio;
-      audio.play().catch(function() { _abPlayer.bgAudio = null; });
+      audio.play().catch(function(e) {
+        dbgWarn('AUDIOBOOK', 'bg audio play() rejected: ' + (e && e.message));
+        _abPlayer.bgAudio = null;
+      });
     } catch (err) {
       dbgWarn('AUDIOBOOK', 'Music fetch failed: ' + (err && err.message));
       _abPlayer.bgAudio = null;
@@ -16602,9 +16662,25 @@
 
   // Background preparation — runs while user customises the preview.
   // Generates PDF, uploads, registers proxy token. On completion, enables Order button.
+  // Phase 3 fix: bails immediately if story is too short — preserves the "needs 20 pages"
+  // message that updatePreview() already set, instead of overwriting it with "⏳ Preparing…".
   async function prepareForPrint() {
     ppoOrderReady = false;
     const btn = document.getElementById('ppoOrderBtn');
+
+    // ppoPageCount is set synchronously by updatePreview() which always runs before this.
+    // Peecho minimum: 20 pages total (18 interior + 2 covers).
+    // If we already know the book is too short, don't start preparation at all —
+    // updatePreview() has already shown the right grey state and notice.
+    const storyPagesNow = ppoPageCount - 2; // subtract cover + back
+    if (storyPagesNow < 18) {
+      dbg('PEECHO', 'prepareForPrint: book too short (' + storyPagesNow + ' story pages) — skipping preparation');
+      btn.disabled = true;
+      btn.textContent = '🖨️ Print & Ship My Book';
+      btn.title = 'Your story needs at least 20 pages to print. Add more memories to grow it!';
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = '⏳ Preparing…';
 
@@ -16815,14 +16891,26 @@
 
       // ── Register proxy token ──────────────────────────────────────────────
       btn.textContent = '🔗 Getting print link…';
+      dbg('PEECHO', 'Calling PEECHO_PROXY registerPrintFile…', PEECHO_PROXY_URL);
       const regRes = await fetch(PEECHO_PROXY_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'registerPrintFile', storagePath: fileName, ttlSeconds: 7200 })
       });
-      if (!regRes.ok) throw new Error('Print link failed: ' + await regRes.text());
+      if (!regRes.ok) {
+        const regErrBody = await regRes.text();
+        const regErrMsg = 'PEECHO_PROXY registerPrintFile failed — HTTP ' + regRes.status + ': ' + regErrBody;
+        notifyDev('error', 'PEECHO', regErrMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+        logActivity('peecho_proxy_error', regErrMsg, 'error', 'PEECHO');
+        throw new Error(regErrMsg);
+      }
       const regData = await regRes.json();
-      if (!regData.proxyUrl) throw new Error('No proxy URL: ' + JSON.stringify(regData));
+      if (!regData.proxyUrl) {
+        const noUrlMsg = 'PEECHO_PROXY returned no proxyUrl — response: ' + JSON.stringify(regData);
+        notifyDev('error', 'PEECHO', noUrlMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+        logActivity('peecho_proxy_no_url', noUrlMsg, 'error', 'PEECHO');
+        throw new Error(noUrlMsg);
+      }
       ppoProxyUrl = regData.proxyUrl;
       dbg('PEECHO', 'Proxy URL ready:', ppoProxyUrl.substring(0, 60) + '…');
 
@@ -16835,7 +16923,30 @@
       } else {
         peechoBtn.removeAttribute('data-thumbnail');
       }
-      if (window.peecho && window.peecho.attach) window.peecho.attach(peechoBtn);
+      if (window.peecho && window.peecho.attach) {
+        window.peecho.attach(peechoBtn);
+        // Diagnostic: check if the Button script replaced href with configurator URL.
+        // If href is still the Peecho homepage, the script silently rejected our data-src.
+        setTimeout(function() {
+          var hrefNow = peechoBtn.getAttribute('href') || '';
+          var dataSrcNow = peechoBtn.getAttribute('data-src') || '';
+          dbg('PEECHO', 'post-attach href:', hrefNow.substring(0, 80));
+          if (hrefNow === 'https://www.peecho.com/' || hrefNow === 'https://www.peecho.com') {
+            var warnMsg = 'peecho.attach() left href as homepage — data-src may be invalid or PEECHO_PROXY unreachable. data-src=' + dataSrcNow.substring(0, 80);
+            dbgWarn('PEECHO', warnMsg);
+            notifyDev('warn', 'PEECHO', warnMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+            logActivity('peecho_attach_homepage_fallback', warnMsg, 'warn', 'PEECHO');
+            toast('⚠️ Peecho link issue — if Print & Ship opens the Peecho homepage, please try again or contact support.');
+          } else if (hrefNow.includes('peecho.com/')) {
+            dbg('PEECHO', 'attach() successful — configurator URL set');
+            logActivity('peecho_attach_ok', 'href=' + hrefNow.substring(0, 80), 'info', 'PEECHO');
+          } else {
+            dbgWarn('PEECHO', 'attach() set unexpected href:', hrefNow.substring(0, 80));
+          }
+        }, 800);
+      } else {
+        dbgWarn('PEECHO', 'window.peecho not ready at attach time in prepareForPrint');
+      }
 
       // Cleanup old files (keepToken so we don't delete the one we just registered)
       fetch(PEECHO_PROXY_URL, {
@@ -16882,7 +16993,19 @@
     }
     const peechoBtn = document.getElementById('peechoPrintBtn');
     if (!peechoBtn.getAttribute('data-src')) return toast('Print link not ready — please try again');
-    dbg('PEECHO', 'Navigating to Peecho configurator…');
+    var hrefAtClick = peechoBtn.getAttribute('href') || '';
+    var dataSrcAtClick = peechoBtn.getAttribute('data-src') || '';
+    dbg('PEECHO', 'orderViaPeecho — href at click:', hrefAtClick.substring(0, 80), '| data-src:', dataSrcAtClick.substring(0, 60));
+    if (hrefAtClick === 'https://www.peecho.com/' || hrefAtClick === 'https://www.peecho.com') {
+      var clickWarn = 'User clicked Order but href is still Peecho homepage — Button script did not attach configurator URL. data-src=' + dataSrcAtClick.substring(0, 80);
+      dbgWarn('PEECHO', clickWarn);
+      notifyDev('warn', 'PEECHO', clickWarn + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+      logActivity('peecho_order_homepage_href', clickWarn, 'warn', 'PEECHO');
+      toast('⚠️ Print link issue — opening Peecho, but you may land on the homepage. Contact support if this repeats.');
+    } else {
+      dbg('PEECHO', 'Navigating to Peecho configurator…');
+      logActivity('peecho_order_clicked', 'href=' + hrefAtClick.substring(0, 80), 'info', 'PEECHO');
+    }
     peechoBtn.click();  // real gesture propagates from ppoOrderBtn click → peechoBtn.click()
   }
 
@@ -17122,14 +17245,26 @@
       //    Peecho fetches PDFs with no auth headers — proxy serves from private storage.
       if (!sessionToken) throw new Error('Not signed in — please sign out and back in');
       if (printBookBtn) printBookBtn.textContent = '🔗 Getting print link…';
+      dbg('PEECHO', 'Calling PEECHO_PROXY registerPrintFile (printBook path)…');
       const regRes = await fetch(PEECHO_PROXY_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'registerPrintFile', storagePath: fileName, ttlSeconds: 7200 })
       });
-      if (!regRes.ok) throw new Error('Print link failed: ' + await regRes.text());
+      if (!regRes.ok) {
+        const regErrBody = await regRes.text();
+        const regErrMsg = 'PEECHO_PROXY registerPrintFile failed — HTTP ' + regRes.status + ': ' + regErrBody;
+        notifyDev('error', 'PEECHO', regErrMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+        logActivity('peecho_proxy_error', regErrMsg, 'error', 'PEECHO');
+        throw new Error(regErrMsg);
+      }
       const regData = await regRes.json();
-      if (!regData.proxyUrl) throw new Error('No proxy URL: ' + JSON.stringify(regData));
+      if (!regData.proxyUrl) {
+        const noUrlMsg = 'PEECHO_PROXY returned no proxyUrl (printBook) — response: ' + JSON.stringify(regData);
+        notifyDev('error', 'PEECHO', noUrlMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+        logActivity('peecho_proxy_no_url', noUrlMsg, 'error', 'PEECHO');
+        throw new Error(noUrlMsg);
+      }
       dbg('PEECHO', 'Proxy URL ready (2hr):', regData.proxyUrl.substring(0, 80) + '…');
 
       // 4. Cleanup AFTER token is saved — prevents race condition where cleanup
@@ -17161,7 +17296,22 @@
 
       if (window.peecho && window.peecho.attach) {
         window.peecho.attach(btn);
-        dbg('PEECHO', 'peecho.attach() called, button revealed for user click');
+        dbg('PEECHO', 'peecho.attach() called (printBook path), button revealed for user click');
+        setTimeout(function() {
+          var hrefNow = btn.getAttribute('href') || '';
+          var dataSrcNow = btn.getAttribute('data-src') || '';
+          dbg('PEECHO', 'printBook post-attach href:', hrefNow.substring(0, 80));
+          if (hrefNow === 'https://www.peecho.com/' || hrefNow === 'https://www.peecho.com') {
+            var warnMsg = 'printBook: peecho.attach() left href as homepage — data-src may be invalid. data-src=' + dataSrcNow.substring(0, 80);
+            dbgWarn('PEECHO', warnMsg);
+            notifyDev('warn', 'PEECHO', warnMsg + ' | user=' + (currentUser ? currentUser.email : 'unknown'));
+            logActivity('peecho_attach_homepage_fallback', warnMsg, 'warn', 'PEECHO');
+            toast('⚠️ Peecho link issue — if the button opens the Peecho homepage, please try again or contact support.');
+          } else if (hrefNow.includes('peecho.com/')) {
+            dbg('PEECHO', 'printBook attach() successful — configurator URL set');
+            logActivity('peecho_attach_ok', 'href=' + hrefNow.substring(0, 80), 'info', 'PEECHO');
+          }
+        }, 800);
       } else {
         dbgWarn('PEECHO', 'window.peecho not ready — button shown anyway, script may load before click');
       }
