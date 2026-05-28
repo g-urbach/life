@@ -396,9 +396,16 @@
     }
 
     @media (max-width: 700px) {
-      .ppo-controls { width: 100%; max-height: 200px; }
+      .ppo-controls { width: 100%; max-height: 220px; border-right: none; border-bottom: 1px solid #3a3020; padding: 14px 16px; }
       .ppo-body { flex-direction: column; }
       .book-page { width: calc(100vw - 32px); max-width: none; }
+      .ppo-header { flex-direction: column; align-items: flex-start; gap: 10px; padding: 12px 16px; }
+      .ppo-header .gethro-avatar-wrap { display: none; }
+      .ppo-title { font-size: 0.95rem; }
+      .ppo-actions { width: 100%; justify-content: flex-end; gap: 8px; }
+      .ppo-actions .ppo-page-count { flex: 1; }
+      .ppo-preview { padding: 16px 12px; gap: 16px; }
+      .ppo-page-label { margin-left: 0; }
     }
 
     /* ── LANDING SCREEN ── */
@@ -4350,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.88';
-  const DEPLOY_NOTES = APP_VERSION + ' — Comedy roast: removed intensity picker — always full roast now. Style sub-step retained (dry/affectionate/self-dep/absurdist). Step count corrected. Book Builder: fixed RLS crash on Add to Book — user_id now included in insert.';
+  const APP_VERSION  = 'v4.90';
+  const DEPLOY_NOTES = APP_VERSION + ' — Book Builder: removed enable/disable toggle. If it\'s in the list it\'s in the book — delete to remove. Cleaned up _bookToggleEnabled, enabled filter, and all opacity/strikethrough logic tied to enabled state.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -10320,13 +10327,11 @@
         var piece    = section.piece;
         var typeMeta = piece ? _storyTypeMeta(piece.type || (piece.metadata || {}).format || '') : { emoji: '📄', label: 'Piece' };
         var title    = piece ? (piece.title || _autoStoryTitle(piece.metadata || {}, '')) : 'Untitled';
-        var enabled  = section.enabled !== false;
 
         var row = document.createElement('div');
         row.setAttribute('draggable', 'true');
         row.dataset.idx = idx;
         row.style.cssText = 'display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 9px;transition:opacity 0.2s,border-color 0.2s;cursor:default;user-select:none';
-        if (!enabled) row.style.opacity = '0.45';
 
         // Drag handle
         var handle = document.createElement('span');
@@ -10342,34 +10347,7 @@
         // Label
         var label = document.createElement('div');
         label.style.cssText = 'flex:1;min-width:0;font-size:0.76rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-        if (!enabled) label.style.textDecoration = 'line-through';
         label.textContent = typeMeta.emoji + ' ' + title;
-
-        // Enable/disable toggle (pill switch)
-        var toggleWrap = document.createElement('label');
-        toggleWrap.title = enabled ? 'Click to exclude from book' : 'Click to include in book';
-        toggleWrap.style.cssText = 'flex-shrink:0;display:flex;align-items:center;cursor:pointer;position:relative;width:28px;height:16px';
-        var toggleInput = document.createElement('input');
-        toggleInput.type = 'checkbox';
-        toggleInput.checked = enabled;
-        toggleInput.style.cssText = 'opacity:0;position:absolute;width:0;height:0';
-        var toggleTrack = document.createElement('span');
-        toggleTrack.style.cssText = 'position:absolute;inset:0;border-radius:8px;transition:background 0.2s;background:' + (enabled ? 'var(--sage)' : 'var(--border)');
-        var toggleThumb = document.createElement('span');
-        toggleThumb.style.cssText = 'position:absolute;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform 0.2s;transform:translateX(' + (enabled ? '14px' : '2px') + ')';
-        toggleWrap.appendChild(toggleInput);
-        toggleWrap.appendChild(toggleTrack);
-        toggleWrap.appendChild(toggleThumb);
-        toggleInput.onchange = (function(sid, track, thumb, lbl, r) {
-          return function() {
-            var on = this.checked;
-            track.style.background = on ? 'var(--sage)' : 'var(--border)';
-            thumb.style.transform  = 'translateX(' + (on ? '14px' : '2px') + ')';
-            lbl.style.textDecoration = on ? '' : 'line-through';
-            r.style.opacity = on ? '1' : '0.45';
-            _bookToggleEnabled(sid, on);
-          };
-        })(section.id, toggleTrack, toggleThumb, label, row);
 
         // Remove button
         var removeBtn = document.createElement('button');
@@ -10381,7 +10359,6 @@
         row.appendChild(handle);
         row.appendChild(num);
         row.appendChild(label);
-        row.appendChild(toggleWrap);
         row.appendChild(removeBtn);
         sectionEl.appendChild(row);
 
@@ -10392,7 +10369,7 @@
           this.style.opacity = '0.4';
         });
         row.addEventListener('dragend', function() {
-          this.style.opacity = (_bookSections[parseInt(this.dataset.idx, 10)] && _bookSections[parseInt(this.dataset.idx, 10)].enabled === false) ? '0.45' : '1';
+          this.style.opacity = '1';
           // Clear drop highlights
           var rows = sectionEl.querySelectorAll('[draggable]');
           rows.forEach(function(r) { r.style.borderColor = 'var(--border)'; });
@@ -10423,17 +10400,17 @@
 
     // Update count badge and preview button enabled state
     if (countEl) countEl.textContent = _bookSections.length > 0 ? '(' + _bookSections.length + ')' : '';
-    var enabledCount = _bookSections.filter(function(s) { return s.enabled !== false && s.piece; }).length;
+    var hasContent = _bookSections.filter(function(s) { return s.piece; }).length > 0;
     if (previewBtn) {
-      previewBtn.disabled = enabledCount === 0;
-      previewBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
-      previewBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
+      previewBtn.disabled = !hasContent;
+      previewBtn.style.opacity = hasContent ? '1' : '0.4';
+      previewBtn.style.pointerEvents = hasContent ? 'auto' : 'none';
     }
     var exportBtn = document.getElementById('bookExportBtn');
     if (exportBtn) {
-      exportBtn.disabled = enabledCount === 0;
-      exportBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
-      exportBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
+      exportBtn.disabled = !hasContent;
+      exportBtn.style.opacity = hasContent ? '1' : '0.4';
+      exportBtn.style.pointerEvents = hasContent ? 'auto' : 'none';
     }
   }
 
@@ -10451,43 +10428,14 @@
     }
   }
 
-  // Persist enabled/disabled state for a single section
-  async function _bookToggleEnabled(sectionId, enabled) {
-    // Optimistic update in local state
-    var s = _bookSections.find(function(x) { return x.id === sectionId; });
-    if (s) s.enabled = enabled;
-    // Re-render count/preview button without rebuilding rows
-    var countEl    = document.getElementById('bookSectionCount');
-    var previewBtn = document.getElementById('bookPreviewBtn');
-    var enabledCount = _bookSections.filter(function(x) { return x.enabled !== false && x.piece; }).length;
-    if (countEl) countEl.textContent = _bookSections.length > 0 ? '(' + _bookSections.length + ')' : '';
-    if (previewBtn) {
-      previewBtn.disabled = enabledCount === 0;
-      previewBtn.style.opacity = enabledCount > 0 ? '1' : '0.4';
-      previewBtn.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
-    }
-    var exportBtn2 = document.getElementById('bookExportBtn');
-    if (exportBtn2) {
-      exportBtn2.disabled = enabledCount === 0;
-      exportBtn2.style.opacity = enabledCount > 0 ? '1' : '0.4';
-      exportBtn2.style.pointerEvents = enabledCount > 0 ? 'auto' : 'none';
-    }
-    try {
-      var { error } = await sb.from('life_book_sections').update({ enabled: enabled }).eq('id', sectionId);
-      if (error) throw error;
-    } catch(err) {
-      dbgErr('BOOK', '_bookToggleEnabled error: ' + err.message);
-    }
-  }
-
   // ── APP-42 Phase 3: multi-section print/PDF ──────────────────────────────────
 
-  // Build combined sanitised HTML from all enabled _bookSections.
+  // Build combined sanitised HTML from all _bookSections.
   // Returns { html, text, pieces } where html is ready for preview/PDF injection,
   // text is stripped plaintext, and pieces is the filtered piece array.
   function _buildBookHtmlContent() {
     var pieces = _bookSections
-      .filter(function(s) { return s.enabled !== false && s.piece; })
+      .filter(function(s) { return s.piece; })
       .map(function(s) { return s.piece; });
 
     if (pieces.length === 0) return null;
@@ -10508,14 +10456,13 @@
       var chapterNum = idx + 1;
       var chapterTitle = piece.title || (typeMeta.label + ' ' + chapterNum);
 
-      // Chapter divider page
+      // Chapter divider — uses <h2> so updatePreview() paginator creates a new page + styled heading.
+      // Emoji + type label folded into the h2 so nothing leaks as orphan text in the preview.
+      var dividerLabel = typeMeta.emoji + ' ' + typeMeta.label + ' ' + chapterNum + ' — ' + chapterTitle;
       html += '<div class="book-chapter-divider" style="page-break-before:' + (idx === 0 ? 'avoid' : 'always') + ';'
             + 'text-align:center;padding:40px 0 32px;border-bottom:2px solid var(--gold-mid,#c9a96e);margin-bottom:28px">'
-            + '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;'
-            + 'color:var(--text-light,#8b7355);margin-bottom:8px">'
-            + typeMeta.emoji + '&ensp;' + typeMeta.label + '&ensp;' + chapterNum + '</div>'
-            + '<div style="font-size:1.45rem;font-weight:700;color:var(--text,#2c2416);font-family:Georgia,serif;line-height:1.25">'
-            + escHtml(chapterTitle) + '</div>'
+            + '<h2 style="font-size:1.3rem;font-weight:700;color:var(--text,#2c2416);font-family:Georgia,serif;line-height:1.3;margin:0">'
+            + escHtml(dividerLabel) + '</h2>'
             + '</div>';
 
       // Piece content — use stored HTML if available, else wrap plaintext
@@ -10569,7 +10516,7 @@
   function _bookPreview() {
     if (_bookSections.length === 0) { toast('Add pieces to your book first.'); return; }
     var built = _buildBookHtmlContent();
-    if (!built) { toast('No enabled sections — use the toggles to include at least one piece.'); return; }
+    if (!built) { toast('No pieces in your book — add some from the left column.'); return; }
 
     // Inject multi-section content into the shared preview state so openPrintPreview()
     // picks it up. We stash the current single-story state and restore on close.
