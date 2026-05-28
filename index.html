@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.96';
-  const DEPLOY_NOTES = APP_VERSION + ' — Audiobook silence fix: _abSpeak now uses AudioContext (same as gethroSpeak) instead of new Audio().play() — bypasses Chrome/Android autoplay block. Pause/resume uses ctx.suspend()/resume(). _abTogglePlay and _storyLibListen call _primeAudioContext() in gesture. Listen button plays single piece directly (no tab switch), flips to Stop while playing. Elapsed seconds timer replaces Part X of Y progress.';
+  const APP_VERSION  = 'v4.98';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix bg music: AudioContext path (was new Audio() — autoplay blocked on Chrome/Android). Fix progress: elapsed timer shows for single-segment pieces. GETHRO_PROXY song branch hardened (see notes in this file).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -10963,7 +10963,7 @@
           };
           source.start(0);
           dbg('AUDIOBOOK', 'AudioContext source started, duration=' + decoded.duration.toFixed(1) + 's');
-          // Update elapsed time display while speaking
+          // Start elapsed seconds display now that we know the real duration
           _abStartElapsedTimer(decoded.duration);
         }, function(decodeErr) {
           dbgWarn('AUDIOBOOK', 'decodeAudioData failed: ' + (decodeErr && decodeErr.message));
@@ -11014,7 +11014,7 @@
       window.speechSynthesis.pause();
     }
     if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
-    if (_abPlayer.bgAudio) _abPlayer.bgAudio.pause();
+    // bg music pauses automatically when _gethroAudioCtx.suspend() is called above (shared AudioContext)
   }
 
   // Resume the current audio (if any).
@@ -11024,7 +11024,7 @@
     } else if (window.speechSynthesis && window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
-    if (_abPlayer.bgAudio) _abPlayer.bgAudio.play().catch(function() {});
+    // bg music resumes automatically when _gethroAudioCtx.resume() is called above (shared AudioContext)
   }
 
   // Stop and abort current audio — resolves the pending _abSpeak promise
@@ -11160,7 +11160,9 @@
         while (_abPlayer.paused && !_abPlayer.stopFlag) {
           await new Promise(function(r) { setTimeout(r, 150); });
         }
-        _abSetProgress('Part ' + (j + 1) + ' of ' + segments.length);
+        // Only show "Part X of Y" when there are multiple chunks; otherwise clear so
+        // _abStartElapsedTimer (called inside _abSpeak once decode completes) shows Xs/Ys.
+        _abSetProgress(segments.length > 1 ? 'Part ' + (j + 1) + ' of ' + segments.length : '');
         var seg = segments[j];
         await _abSpeak(seg.text);
         if (_abPlayer.stopFlag) break;
@@ -11332,8 +11334,9 @@
         dbg('AUDIOBOOK', 'Using persisted bg_music_url for piece ' + piece.id);
       } else {
         // First play — fetch from Pixabay and pick a track
-        var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
-                + '&music=true&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=20';
+        // Music endpoint is /api/music/ — NOT /api/ with &music=true (that's images only)
+        var url = 'https://pixabay.com/api/music/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
+                + '&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=20';
         var resp = await fetch(url);
         if (!resp.ok) { dbgWarn('AUDIOBOOK', 'Pixabay music fetch HTTP ' + resp.status); return; }
         var data = await resp.json();
@@ -11364,14 +11367,50 @@
         }
       }
 
-      var audio = new Audio(src);
-      audio.loop   = true;
-      audio.volume = _abPlayer.musicMuted ? 0 : 0.22;
-      _abPlayer.bgAudio = audio;
-      audio.play().catch(function(e) {
-        dbgWarn('AUDIOBOOK', 'bg audio play() rejected: ' + (e && e.message));
-        _abPlayer.bgAudio = null;
-      });
+      // Use AudioContext so Chrome/Android autoplay policy cannot block bg music.
+      // _primeAudioContext() was already called in the gesture handler.
+      if (!_gethroAudioCtx) {
+        _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      var bgCtx = _gethroAudioCtx;
+      if (bgCtx.state === 'suspended') bgCtx.resume().catch(function(){});
+
+      // Fetch and decode the audio file via AudioContext
+      (function(bgSrc) {
+        fetch(bgSrc).then(function(r) {
+          if (!r.ok) { dbgWarn('AUDIOBOOK', 'bg music HTTP ' + r.status); return; }
+          return r.arrayBuffer();
+        }).then(function(buf) {
+          if (!buf || _abPlayer.stopFlag || _abPlayer.musicMuted) return;
+          bgCtx.decodeAudioData(buf, function(decoded) {
+            if (_abPlayer.stopFlag || _abPlayer.musicMuted) return;
+            var gainNode = bgCtx.createGain();
+            gainNode.gain.value = 0.22;
+            var bgSource = bgCtx.createBufferSource();
+            bgSource.buffer = decoded;
+            bgSource.loop   = true;
+            bgSource.connect(gainNode);
+            gainNode.connect(bgCtx.destination);
+            bgSource.start(0);
+            dbg('AUDIOBOOK', 'bg music AudioContext source started');
+            // Store a duck/swell-compatible object
+            _abPlayer.bgAudio = {
+              _source: bgSource,
+              _gain:   gainNode,
+              pause:   function() {
+                try { bgSource.stop(); } catch(e) {}
+                _abPlayer.bgAudio = null;
+              },
+              get volume() { return gainNode.gain.value; },
+              set volume(v) { gainNode.gain.value = Math.max(0, Math.min(1, v)); }
+            };
+          }, function(e) {
+            dbgWarn('AUDIOBOOK', 'bg music decode failed: ' + (e && e.message));
+          });
+        }).catch(function(e) {
+          dbgWarn('AUDIOBOOK', 'bg music fetch failed: ' + (e && e.message));
+        });
+      })(src);
     } catch (err) {
       dbgWarn('AUDIOBOOK', 'Music fetch failed: ' + (err && err.message));
       _abPlayer.bgAudio = null;
