@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.99';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix bg music: AudioContext replaces new Audio() (autoplay policy). Fix Pixabay genres: ambient/upbeat invalid, replaced with electronic/pop. Fix elapsed timer for single-segment pieces. Fix 4 APP-46 Phase 3b deployer test comments.';
+  const APP_VERSION  = 'v4.100';
+  const DEPLOY_NOTES = APP_VERSION + ' — Listen before save: _postGenListen now plays directly from currentStory without requiring a save first. If saved, uses saved piece for bg_music_url consistency.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6590,8 +6590,9 @@
   // All spoken questions and prompts go through this function.
   // To change Gethro's voice: update the GETHRO_VOICE constant above.
   let _gethroAudio    = null; // current Audio element (if playing)
-  let _gethroAudioCtx = null; // shared AudioContext — created once on first gesture,
+  let _gethroAudioCtx = null; // AudioContext for TTS — created once on first gesture,
                                // reused so resume() reliably unlocks desktop Chrome autoplay.
+  let _bgMusicCtx     = null; // Dedicated AudioContext for background music (separate from TTS).
   // Call this synchronously inside every user-gesture handler that might lead to audio.
   // Creates the AudioContext on first call (requires gesture on Chrome desktop),
   // then resumes it (no-op if already running). Safe to call multiple times.
@@ -10188,11 +10189,41 @@
   // If the piece was already saved (has componentId), uses _storyLibListen.
   // If not yet saved, prompts user to save first.
   function _postGenListen() {
-    if (currentStory && currentStory.componentId) {
+    if (!currentUser) { toast('Please sign in first.'); return; }
+    if (!currentStory || !currentStory.content) { toast('Nothing to listen to yet.'); return; }
+
+    _primeAudioContext(); // must be called synchronously inside gesture handler
+
+    // If already saved, use the saved piece (preserves bg_music_url consistency)
+    if (currentStory.componentId) {
       _storyLibListen(currentStory.componentId);
-    } else {
-      toast('Save your piece to the library first, then use 🎧 Listen.');
+      return;
     }
+
+    // Not yet saved — build a synthetic piece directly from currentStory so the
+    // user can listen before deciding whether to save.
+    var piece = {
+      id:        'preview_unsaved',
+      type:      currentStory.format || 'prose',
+      title:     currentStory.userTitle || 'Preview',
+      content:   currentStory.content,
+      songStyle: currentStory.songStyle  || null,
+      songLength:currentStory.songLength || null,
+      bg_music_url: null
+    };
+
+    // Stop any current playback
+    if (_abPlayer.playing || _abPlayer.paused) {
+      _abStop();
+    }
+
+    _abQueue = [{ id: 'preview_unsaved', component_id: null, enabled: true, piece: piece }];
+    _abPlayer.curIdx = 0;
+
+    _abSetNowPlaying('▶ ' + (piece.title || 'Preview'));
+    _abSetProgress('');
+    toast('🎧 Playing preview — save to library to keep it', 4000);
+    _abPlayFrom(0);
   }
 
   // Called from post-gen "🔗 Share" button.
@@ -11014,7 +11045,7 @@
       window.speechSynthesis.pause();
     }
     if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
-    // APP-46 Phase 3b: also pause background music
+    // APP-46 Phase 3b: also pause background music (mutes via gain, source keeps running)
     if (_abPlayer.bgAudio) _abPlayer.bgAudio.pause();
   }
 
@@ -11025,8 +11056,8 @@
     } else if (window.speechSynthesis && window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
-    // APP-46 Phase 3b: resume background music
-    if (_abPlayer.bgAudio && _abPlayer.bgAudio.play) _abPlayer.bgAudio.play().catch(function() {});
+    // APP-46 Phase 3b: resume background music (restores gain after pause)
+    if (_abPlayer.bgAudio) _abPlayer.bgAudio.resume();
   }
 
   // Stop and abort current audio — resolves the pending _abSpeak promise
@@ -11064,7 +11095,8 @@
   function _abCleanForTts(text) {
     return text
       .replace(/<[^>]+>/g, ' ')           // strip HTML tags
-      .replace(/^#{1,6}\s*/gm, '')        // strip ## headings
+      .replace(/^##\s*(VERSE\s*\d*|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
+      .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings
       .replace(/\*\*(.*?)\*\*/g, '$1')    // **bold** -> bold
       .replace(/\*(.*?)\*/g, '$1')        // *italic* -> italic
       .replace(/__(.*?)__/g, '$1')        // __bold__ -> bold
@@ -11325,26 +11357,31 @@
   // On subsequent plays: uses the stored bg_music_url directly — no Pixabay call needed.
   // Silently falls back to no music if the fetch fails or key is not set.
   async function _abFetchAndPlayMusic(genre, piece) {
-    if (_abPlayer.musicMuted) return;
-    if (!PIXABAY_MUSIC_KEY || PIXABAY_MUSIC_KEY === 'YOUR_PIXABAY_KEY_HERE') return;
+    dbg('MUSIC', '▶ _abFetchAndPlayMusic called genre=' + genre + ' piece=' + (piece && piece.id) + ' musicMuted=' + _abPlayer.musicMuted + ' key=' + (PIXABAY_MUSIC_KEY ? PIXABAY_MUSIC_KEY.substring(0,8)+'...' : 'MISSING'));
+    if (_abPlayer.musicMuted) { dbg('MUSIC', '✗ Early exit: musicMuted=true'); return; }
+    if (!PIXABAY_MUSIC_KEY || PIXABAY_MUSIC_KEY === 'YOUR_PIXABAY_KEY_HERE') { dbgWarn('MUSIC', '✗ Early exit: no Pixabay key'); return; }
     try {
       var src = null;
 
       // If a consistent track has already been chosen for this piece, use it
       if (piece && piece.bg_music_url) {
         src = piece.bg_music_url;
-        dbg('AUDIOBOOK', 'Using persisted bg_music_url for piece ' + piece.id);
+        dbg('MUSIC', '✓ Using persisted bg_music_url for piece ' + piece.id + ' url=' + src.substring(0,60));
       } else {
         // First play — fetch from Pixabay and pick a track
         // Music endpoint is /api/music/ — NOT /api/ with &music=true (that's images only)
         var url = 'https://pixabay.com/api/music/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
                 + '&category=' + encodeURIComponent(genre || 'electronic') + '&per_page=20';
+        dbg('MUSIC', '→ Pixabay API fetch genre=' + genre + ' url=' + url.replace(PIXABAY_MUSIC_KEY, '[KEY]'));
         var resp = await fetch(url);
-        if (!resp.ok) { dbgWarn('AUDIOBOOK', 'Pixabay music fetch HTTP ' + resp.status); return; }
+        dbg('MUSIC', '← Pixabay response status=' + resp.status + ' ok=' + resp.ok);
+        if (!resp.ok) { dbgWarn('MUSIC', '✗ Pixabay music fetch HTTP ' + resp.status); return; }
         var data = await resp.json();
+        dbg('MUSIC', '← Pixabay totalHits=' + data.totalHits + ' raw hits=' + (data.hits||[]).length);
         var hits = (data.hits || []).filter(function(h) { return h.audio || h.previewURL; });
+        dbg('MUSIC', '← Hits with audio URL=' + hits.length);
         if (hits.length === 0) {
-          dbgWarn('AUDIOBOOK', 'No Pixabay tracks found for genre: ' + genre + ' — retrying with electronic');
+          dbgWarn('MUSIC', '✗ No Pixabay tracks found for genre: ' + genre + ' — retrying with electronic');
           if (genre !== 'electronic') { _abFetchAndPlayMusic('electronic', piece); }
           return;
         }
@@ -11354,8 +11391,8 @@
           : Math.floor(Math.random() * hits.length);
         var track = hits[idx];
         src = track.audio || track.previewURL;
-        if (!src) return;
-        dbg('AUDIOBOOK', 'Selected Pixabay track idx=' + idx + ' genre=' + genre + ' src=' + src.substring(0, 60));
+        if (!src) { dbgWarn('MUSIC', '✗ Selected track has no audio src at idx=' + idx); return; }
+        dbg('MUSIC', '✓ Selected Pixabay track idx=' + idx + ' genre=' + genre + ' src=' + src.substring(0, 80));
 
         // Persist to DB so this piece always gets the same track from now on
         if (piece && piece.id) {
@@ -11373,20 +11410,27 @@
         }
       }
 
-      // Use AudioContext so Chrome/Android autoplay policy cannot block bg music.
-      // _primeAudioContext() was already called on the gesture that started playback.
-      if (!_gethroAudioCtx) {
-        _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // Dedicated AudioContext for bg music — separate from _gethroAudioCtx (TTS).
+      // This means TTS pause (which suspends _gethroAudioCtx) won't kill bg music,
+      // and bg music pause/resume works via gain control, not context suspend.
+      if (!_bgMusicCtx) {
+        _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+        dbg('MUSIC', '✓ Created new _bgMusicCtx state=' + _bgMusicCtx.state);
       }
-      var bgCtx = _gethroAudioCtx;
-      if (bgCtx.state === 'suspended') bgCtx.resume().catch(function(){});
+      var bgCtx = _bgMusicCtx;
+      dbg('MUSIC', 'bgCtx.state=' + bgCtx.state + ' — fetching audio from src=' + src.substring(0,80));
+      if (bgCtx.state === 'suspended') { bgCtx.resume().catch(function(){}); dbg('MUSIC', 'Resumed suspended bgCtx'); }
       (function(bgSrc) {
         fetch(bgSrc).then(function(r) {
-          if (!r.ok) { dbgWarn('AUDIOBOOK', 'bg music HTTP ' + r.status); return; }
+          dbg('MUSIC', '← Audio MP3 fetch status=' + r.status + ' ok=' + r.ok + ' url=' + bgSrc.substring(0,60));
+          if (!r.ok) { dbgWarn('MUSIC', '✗ bg music MP3 HTTP ' + r.status); return; }
           return r.arrayBuffer();
         }).then(function(buf) {
-          if (!buf || _abPlayer.stopFlag || _abPlayer.musicMuted) return;
+          if (!buf) { dbgWarn('MUSIC', '✗ arrayBuffer is null/undefined — fetch may have returned nothing'); return; }
+          dbg('MUSIC', '✓ Got arrayBuffer size=' + buf.byteLength + ' stopFlag=' + _abPlayer.stopFlag + ' musicMuted=' + _abPlayer.musicMuted);
+          if (_abPlayer.stopFlag || _abPlayer.musicMuted) return;
           bgCtx.decodeAudioData(buf, function(decoded) {
+            dbg('MUSIC', '✓ decodeAudioData success duration=' + decoded.duration.toFixed(1) + 's stopFlag=' + _abPlayer.stopFlag);
             if (_abPlayer.stopFlag || _abPlayer.musicMuted) return;
             var gainNode = bgCtx.createGain();
             gainNode.gain.value = 0.22;
@@ -11396,19 +11440,34 @@
             bgSource.connect(gainNode);
             gainNode.connect(bgCtx.destination);
             bgSource.start(0);
-            dbg('AUDIOBOOK', 'bg music AudioContext source started');
+            dbg('MUSIC', '✓ bg music AudioContext source started — you should hear music now');
             _abPlayer.bgAudio = {
-              _source: bgSource,
-              _gain:   gainNode,
-              pause:   function() { try { bgSource.stop(); } catch(e) {} _abPlayer.bgAudio = null; },
+              _source:    bgSource,
+              _gain:      gainNode,
+              _pausedVol: 0,
+              pause:  function() {
+                // Mute via gain — source keeps running so it can be un-muted on resume
+                this._pausedVol = gainNode.gain.value;
+                gainNode.gain.value = 0;
+              },
+              resume: function() {
+                // Restore volume after pause
+                gainNode.gain.value = this._pausedVol || _AB_VOL_FULL;
+                if (bgCtx.state === 'suspended') bgCtx.resume().catch(function(){});
+              },
+              stop: function() {
+                // Permanently destroy — called only by _abStopMusic()
+                try { bgSource.stop(); } catch(e) {}
+                _abPlayer.bgAudio = null;
+              },
               get volume()  { return gainNode.gain.value; },
               set volume(v) { gainNode.gain.value = Math.max(0, Math.min(1, v)); }
             };
-          }, function(e) { dbgWarn('AUDIOBOOK', 'bg music decode failed: ' + (e && e.message)); });
-        }).catch(function(e) { dbgWarn('AUDIOBOOK', 'bg music fetch failed: ' + (e && e.message)); });
+          }, function(e) { dbgWarn('MUSIC', '✗ decodeAudioData failed: ' + (e && (e.message || String(e)))); });
+        }).catch(function(e) { dbgWarn('MUSIC', '✗ bg music MP3 fetch threw: ' + (e && (e.message || String(e))) + ' — possible CORS block on audio CDN'); });
       })(src);
     } catch (err) {
-      dbgWarn('AUDIOBOOK', 'Music fetch failed: ' + (err && err.message));
+      dbgWarn('MUSIC', '✗ _abFetchAndPlayMusic outer catch: ' + (err && err.message));
       _abPlayer.bgAudio = null;
     }
   }
@@ -11416,7 +11475,7 @@
   // Stop and release background music.
   function _abStopMusic() {
     if (_abPlayer.bgAudio) {
-      _abPlayer.bgAudio.pause();
+      _abPlayer.bgAudio.stop(); // permanently destroys the source node
       _abPlayer.bgAudio = null;
     }
   }
@@ -11424,16 +11483,20 @@
   // Toggle mute — persists across tracks. Respects current duck state.
   function _abToggleMusicMute() {
     _abPlayer.musicMuted = !_abPlayer.musicMuted;
+    dbg('MUSIC', 'Toggle mute → musicMuted=' + _abPlayer.musicMuted + ' bgAudio=' + (!!_abPlayer.bgAudio));
     if (_abPlayer.bgAudio) {
       if (_abPlayer.musicMuted) {
-        // Cancel any ramp and snap to 0
+        // Cancel any ramp and snap gain to 0
         if (_abPlayer.rampInterval) { clearInterval(_abPlayer.rampInterval); _abPlayer.rampInterval = null; }
-        _abPlayer.bgAudio.volume = 0;
+        _abPlayer.bgAudio.pause(); // pause() zeroes gain via _pausedVol mechanism
       } else {
         // Restore to duck level if speaking, full level otherwise
         var targetVol = (_abPlayer.audio || (window.speechSynthesis && window.speechSynthesis.speaking))
           ? _AB_VOL_DUCK : _AB_VOL_FULL;
-        _abPlayer.bgAudio.volume = targetVol;
+        if (_abPlayer.bgAudio._gain) {
+          _abPlayer.bgAudio._gain.gain.value = targetVol;
+          dbg('MUSIC', 'Unmuted — restored gain to ' + targetVol);
+        }
       }
     }
     var btn = document.getElementById('abMuteBtn');
