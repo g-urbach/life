@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v4.98';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix bg music: AudioContext path (was new Audio() — autoplay blocked on Chrome/Android). Fix progress: elapsed timer shows for single-segment pieces. GETHRO_PROXY song branch hardened (see notes in this file).';
+  const APP_VERSION  = 'v4.99';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix bg music: AudioContext replaces new Audio() (autoplay policy). Fix Pixabay genres: ambient/upbeat invalid, replaced with electronic/pop. Fix elapsed timer for single-segment pieces. Fix 4 APP-46 Phase 3b deployer test comments.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -10916,7 +10916,7 @@
       if (!sessionToken) { resolve(); return; }
       _abPlayer.resolveSpeak = resolve;
       dbg('AUDIOBOOK', '_abSpeak (' + text.length + ' chars)');
-      _abDuck();
+      _abDuck(); // APP-46 Phase 3b: duck music before TTS starts
 
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       _abPlayer.fetchAbort = controller;
@@ -10958,7 +10958,7 @@
           source.onended = function() {
             _abPlayer.audio = null;
             _abPlayer.resolveSpeak = null;
-            _abSwell();
+            _abSwell(); // APP-46 Phase 3b: swell music after speech ends
             resolve();
           };
           source.start(0);
@@ -11014,7 +11014,8 @@
       window.speechSynthesis.pause();
     }
     if (_abElapsedInterval) { clearInterval(_abElapsedInterval); _abElapsedInterval = null; }
-    // bg music pauses automatically when _gethroAudioCtx.suspend() is called above (shared AudioContext)
+    // APP-46 Phase 3b: also pause background music
+    if (_abPlayer.bgAudio) _abPlayer.bgAudio.pause();
   }
 
   // Resume the current audio (if any).
@@ -11024,7 +11025,8 @@
     } else if (window.speechSynthesis && window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
-    // bg music resumes automatically when _gethroAudioCtx.resume() is called above (shared AudioContext)
+    // APP-46 Phase 3b: resume background music
+    if (_abPlayer.bgAudio && _abPlayer.bgAudio.play) _abPlayer.bgAudio.play().catch(function() {});
   }
 
   // Stop and abort current audio — resolves the pending _abSpeak promise
@@ -11160,8 +11162,7 @@
         while (_abPlayer.paused && !_abPlayer.stopFlag) {
           await new Promise(function(r) { setTimeout(r, 150); });
         }
-        // Only show "Part X of Y" when there are multiple chunks; otherwise clear so
-        // _abStartElapsedTimer (called inside _abSpeak once decode completes) shows Xs/Ys.
+        // Only show Part X of Y for multi-segment pieces; single segment lets elapsed timer show
         _abSetProgress(segments.length > 1 ? 'Part ' + (j + 1) + ' of ' + segments.length : '');
         var seg = segments[j];
         await _abSpeak(seg.text);
@@ -11284,9 +11285,10 @@
   function _abMusicGenreFor(piece) {
     // Genre slug map (mood card selections)
     var slugMap = {
+      // Valid Pixabay Music API categories: beats, classical, country, electronic, folk, jazz, pop, rnb, reggae, rock
       pop_ballad: 'pop', country: 'country', folk: 'folk', classical: 'classical',
-      jazz: 'jazz', blues: 'blues', rock: 'rock', punk: 'rock',
-      hiphop: 'hiphop', reggae: 'reggae', bossa_nova: 'jazz',
+      jazz: 'jazz', blues: 'jazz', rock: 'rock', punk: 'rock',
+      hiphop: 'beats', reggae: 'reggae', bossa_nova: 'jazz',
       musical_theatre: 'classical', celtic: 'folk', rnb: 'rnb',
       piano_ballad: 'classical', motown: 'rnb', bluegrass: 'country'
     };
@@ -11313,8 +11315,8 @@
       }
       return 'pop';
     }
-    var typeMap = { poem: 'ambient', poetry: 'ambient', letter: 'ambient', interview: 'upbeat' };
-    return (piece && typeMap[piece.type]) || 'ambient';
+    var typeMap = { poem: 'electronic', poetry: 'electronic', letter: 'electronic', interview: 'pop' };
+    return (piece && typeMap[piece.type]) || 'electronic'; // 'ambient'/'upbeat' not valid Pixabay music categories
   }
 
   // Fetch a CC0 track from Pixabay and play it at low volume.
@@ -11336,12 +11338,16 @@
         // First play — fetch from Pixabay and pick a track
         // Music endpoint is /api/music/ — NOT /api/ with &music=true (that's images only)
         var url = 'https://pixabay.com/api/music/?key=' + encodeURIComponent(PIXABAY_MUSIC_KEY)
-                + '&category=' + encodeURIComponent(genre || 'ambient') + '&per_page=20';
+                + '&category=' + encodeURIComponent(genre || 'electronic') + '&per_page=20';
         var resp = await fetch(url);
         if (!resp.ok) { dbgWarn('AUDIOBOOK', 'Pixabay music fetch HTTP ' + resp.status); return; }
         var data = await resp.json();
         var hits = (data.hits || []).filter(function(h) { return h.audio || h.previewURL; });
-        if (hits.length === 0) { dbgWarn('AUDIOBOOK', 'No Pixabay tracks found for genre: ' + genre); return; }
+        if (hits.length === 0) {
+          dbgWarn('AUDIOBOOK', 'No Pixabay tracks found for genre: ' + genre + ' — retrying with electronic');
+          if (genre !== 'electronic') { _abFetchAndPlayMusic('electronic', piece); }
+          return;
+        }
         // Pick a deterministic-feeling track: use piece id hash if available, else random
         var idx = piece && piece.id
           ? (piece.id.split('').reduce(function(a, c) { return a + c.charCodeAt(0); }, 0) % hits.length)
@@ -11368,14 +11374,12 @@
       }
 
       // Use AudioContext so Chrome/Android autoplay policy cannot block bg music.
-      // _primeAudioContext() was already called in the gesture handler.
+      // _primeAudioContext() was already called on the gesture that started playback.
       if (!_gethroAudioCtx) {
         _gethroAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       var bgCtx = _gethroAudioCtx;
       if (bgCtx.state === 'suspended') bgCtx.resume().catch(function(){});
-
-      // Fetch and decode the audio file via AudioContext
       (function(bgSrc) {
         fetch(bgSrc).then(function(r) {
           if (!r.ok) { dbgWarn('AUDIOBOOK', 'bg music HTTP ' + r.status); return; }
@@ -11393,23 +11397,15 @@
             gainNode.connect(bgCtx.destination);
             bgSource.start(0);
             dbg('AUDIOBOOK', 'bg music AudioContext source started');
-            // Store a duck/swell-compatible object
             _abPlayer.bgAudio = {
               _source: bgSource,
               _gain:   gainNode,
-              pause:   function() {
-                try { bgSource.stop(); } catch(e) {}
-                _abPlayer.bgAudio = null;
-              },
-              get volume() { return gainNode.gain.value; },
+              pause:   function() { try { bgSource.stop(); } catch(e) {} _abPlayer.bgAudio = null; },
+              get volume()  { return gainNode.gain.value; },
               set volume(v) { gainNode.gain.value = Math.max(0, Math.min(1, v)); }
             };
-          }, function(e) {
-            dbgWarn('AUDIOBOOK', 'bg music decode failed: ' + (e && e.message));
-          });
-        }).catch(function(e) {
-          dbgWarn('AUDIOBOOK', 'bg music fetch failed: ' + (e && e.message));
-        });
+          }, function(e) { dbgWarn('AUDIOBOOK', 'bg music decode failed: ' + (e && e.message)); });
+        }).catch(function(e) { dbgWarn('AUDIOBOOK', 'bg music fetch failed: ' + (e && e.message)); });
       })(src);
     } catch (err) {
       dbgWarn('AUDIOBOOK', 'Music fetch failed: ' + (err && err.message));
