@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.02';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix background music (CSP was blocking Pixabay — now proxied via GETHRO_PROXY music_proxy action). Fix listen-before-save (currentStory.content bug → .text). Format-aware generate button (Create my song / Write my poem etc). PROXY DEPLOY REQUIRED: GETHRO_PROXY_v5_02 + set PIXABAY_MUSIC_KEY env var in Supabase.';
+  const APP_VERSION  = 'v5.03';
+  const DEPLOY_NOTES = APP_VERSION + ' — All errors → Telegram (MUSIC added to _WARN_NOTIFY_AREAS, music errors escalated to console.error). Double-press listen button now toggles stop. Proxy music_proxy errors now send Telegram with full Pixabay error body.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4456,7 +4456,7 @@
   // areas, also fires Telegram so important warnings surface in real-time.
   // Non-fatal noise (PEECHO cleanup, caption failures etc.) excluded from Telegram only —
   // they still go to Supabase for post-hoc analysis.
-  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO','RENDER','SHARE'];
+  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO','RENDER','SHARE','MUSIC'];
   function dbgWarn(area,...args){
     console.warn(`[${area}] WARN`,...args);
     try {
@@ -10204,7 +10204,19 @@
     if (!currentUser) { toast('Please sign in first.'); return; }
     if (!currentStory || !currentStory.text) { toast('Nothing to listen to yet.'); return; }
 
+    // Second press while playing → stop (toggle behaviour)
+    if (_abPlayer.playing || _abPlayer.paused) {
+      _abStop();
+      var btn = document.getElementById('postGenListenBtn');
+      if (btn) { btn.textContent = '🎧 Listen'; btn.disabled = false; }
+      return;
+    }
+
     _primeAudioContext(); // must be called synchronously inside gesture handler
+
+    // Disable button immediately to prevent double-fire; label shows state
+    var listenBtn = document.getElementById('postGenListenBtn');
+    if (listenBtn) { listenBtn.textContent = '⏹ Stop'; listenBtn.disabled = false; }
 
     // If already saved, use the saved piece (preserves bg_music_url consistency)
     if (currentStory.componentId) {
@@ -10224,18 +10236,17 @@
       bg_music_url: null
     };
 
-    // Stop any current playback
-    if (_abPlayer.playing || _abPlayer.paused) {
-      _abStop();
-    }
-
     _abQueue = [{ id: 'preview_unsaved', component_id: null, enabled: true, piece: piece }];
     _abPlayer.curIdx = 0;
 
     _abSetNowPlaying('▶ ' + (piece.title || 'Preview'));
     _abSetProgress('');
     toast('🎧 Playing preview — save to library to keep it', 4000);
-    _abPlayFrom(0);
+    _abPlayFrom(0).then(function() {
+      // Playback finished naturally — reset button
+      var b = document.getElementById('postGenListenBtn');
+      if (b) { b.textContent = '🎧 Listen'; b.disabled = false; }
+    });
   }
 
   // Called from post-gen "🔗 Share" button.
@@ -11388,7 +11399,14 @@
           body: JSON.stringify({ action: 'music_proxy', genre: genre || 'electronic' })
         });
         dbg('MUSIC', '← music_proxy response status=' + proxyResp.status + ' ok=' + proxyResp.ok);
-        if (!proxyResp.ok) { dbgWarn('MUSIC', '✗ music_proxy HTTP ' + proxyResp.status); return; }
+        if (!proxyResp.ok) {
+          var errBody = '';
+          try { errBody = await proxyResp.clone().text(); } catch(e) {}
+          var errMsg = '✗ music_proxy HTTP ' + proxyResp.status + (errBody ? ': ' + errBody.substring(0, 200) : '');
+          dbgWarn('MUSIC', errMsg);
+          console.error('[MUSIC] ' + errMsg); // escalate — hits Telegram via console.error intercept
+          return;
+        }
         var data = await proxyResp.json();
         dbg('MUSIC', '← Pixabay totalHits=' + data.totalHits + ' raw hits=' + (data.hits||[]).length);
         var hits = (data.hits || []).filter(function(h) { return h.audio || h.previewURL; });
@@ -11480,7 +11498,9 @@
         }).catch(function(e) { dbgWarn('MUSIC', '✗ bg music MP3 fetch threw: ' + (e && (e.message || String(e))) + ' — possible CORS block on audio CDN'); });
       })(src);
     } catch (err) {
-      dbgWarn('MUSIC', '✗ _abFetchAndPlayMusic outer catch: ' + (err && err.message));
+      var errMsg = '✗ _abFetchAndPlayMusic outer catch: ' + (err && err.message);
+      dbgWarn('MUSIC', errMsg);
+      console.error('[MUSIC] ' + errMsg); // escalate — hits Telegram via intercept
       _abPlayer.bgAudio = null;
     }
   }
