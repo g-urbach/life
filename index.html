@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.05';
-  const DEPLOY_NOTES = APP_VERSION + ' — Switch music to curated CC0 Internet Archive tracks (no API key, no geo-blocking). PROXY DEPLOY REQUIRED: GETHRO_PROXY_v5_05.';
+  const APP_VERSION  = 'v5.06';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix music CSP (add archive.org to connect-src in _headers). Fix preview_unsaved bg_music_url persist error (skip DB update for non-UUID piece ids).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -11423,7 +11423,8 @@
         dbg('MUSIC', '✓ Selected Freesound track idx=' + idx + ' name="' + track.name + '" src=' + src.substring(0, 80));
 
         // Persist to DB so this piece always gets the same track from now on
-        if (piece && piece.id) {
+        // Skip for preview_unsaved — not a real DB record, has no UUID
+        if (piece && piece.id && piece.id !== 'preview_unsaved') {
           sb.from('life_story_components')
             .update({ bg_music_url: src })
             .eq('id', piece.id)
@@ -11435,6 +11436,8 @@
                 dbg('AUDIOBOOK', 'Persisted bg_music_url for piece ' + piece.id);
               }
             });
+        } else if (piece) {
+          piece.bg_music_url = src; // still cache in-memory for the session
         }
       }
 
