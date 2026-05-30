@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.03';
-  const DEPLOY_NOTES = APP_VERSION + ' — All errors → Telegram (MUSIC added to _WARN_NOTIFY_AREAS, music errors escalated to console.error). Double-press listen button now toggles stop. Proxy music_proxy errors now send Telegram with full Pixabay error body.';
+  const APP_VERSION  = 'v5.04';
+  const DEPLOY_NOTES = APP_VERSION + ' — Switch background music from Pixabay (no public music API) to Freesound.org CC0. PROXY DEPLOY REQUIRED: GETHRO_PROXY_v5_04 + add FREESOUND_API_KEY secret in Supabase (free account at freesound.org/apiv2).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4383,7 +4383,7 @@
   const VIDEO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-video';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
-  const PIXABAY_MUSIC_KEY  = '56058758-28ef472d9ebeac8dffdcd011a'; // APP-46 Phase 3a — free key from pixabay.com/api/docs/
+  const PIXABAY_MUSIC_KEY  = null; // APP-46: replaced by Freesound via music_proxy (Pixabay has no public music API on free tier)
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -11380,9 +11380,8 @@
   // On subsequent plays: uses the stored bg_music_url directly — no Pixabay call needed.
   // Silently falls back to no music if the fetch fails or key is not set.
   async function _abFetchAndPlayMusic(genre, piece) {
-    dbg('MUSIC', '▶ _abFetchAndPlayMusic called genre=' + genre + ' piece=' + (piece && piece.id) + ' musicMuted=' + _abPlayer.musicMuted + ' key=' + (PIXABAY_MUSIC_KEY ? PIXABAY_MUSIC_KEY.substring(0,8)+'...' : 'MISSING'));
+    dbg('MUSIC', '▶ _abFetchAndPlayMusic called genre=' + genre + ' piece=' + (piece && piece.id) + ' musicMuted=' + _abPlayer.musicMuted);
     if (_abPlayer.musicMuted) { dbg('MUSIC', '✗ Early exit: musicMuted=true'); return; }
-    if (!PIXABAY_MUSIC_KEY || PIXABAY_MUSIC_KEY === 'YOUR_PIXABAY_KEY_HERE') { dbgWarn('MUSIC', '✗ Early exit: no Pixabay key'); return; }
     try {
       var src = null;
 
@@ -11391,12 +11390,12 @@
         src = piece.bg_music_url;
         dbg('MUSIC', '✓ Using persisted bg_music_url for piece ' + piece.id + ' url=' + src.substring(0,60));
       } else {
-        // First play — fetch track list via GETHRO_PROXY (Pixabay is blocked by CSP connect-src)
+        // First play — fetch track list via GETHRO_PROXY → Freesound
         dbg('MUSIC', '→ music_proxy fetch genre=' + genre);
         var proxyResp = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + (sessionToken || SUPABASE_ANON) },
-          body: JSON.stringify({ action: 'music_proxy', genre: genre || 'electronic' })
+          body: JSON.stringify({ action: 'music_proxy', genre: genre || 'ambient' })
         });
         dbg('MUSIC', '← music_proxy response status=' + proxyResp.status + ' ok=' + proxyResp.ok);
         if (!proxyResp.ok) {
@@ -11404,26 +11403,24 @@
           try { errBody = await proxyResp.clone().text(); } catch(e) {}
           var errMsg = '✗ music_proxy HTTP ' + proxyResp.status + (errBody ? ': ' + errBody.substring(0, 200) : '');
           dbgWarn('MUSIC', errMsg);
-          console.error('[MUSIC] ' + errMsg); // escalate — hits Telegram via console.error intercept
+          console.error('[MUSIC] ' + errMsg);
           return;
         }
         var data = await proxyResp.json();
-        dbg('MUSIC', '← Pixabay totalHits=' + data.totalHits + ' raw hits=' + (data.hits||[]).length);
-        var hits = (data.hits || []).filter(function(h) { return h.audio || h.previewURL; });
-        dbg('MUSIC', '← Hits with audio URL=' + hits.length);
-        if (hits.length === 0) {
-          dbgWarn('MUSIC', '✗ No Pixabay tracks found for genre: ' + genre + ' — retrying with electronic');
-          if (genre !== 'electronic') { _abFetchAndPlayMusic('electronic', piece); }
+        var tracks = (data.tracks || []);
+        dbg('MUSIC', '← Freesound totalHits=' + data.totalHits + ' usable tracks=' + tracks.length);
+        if (tracks.length === 0) {
+          dbgWarn('MUSIC', '✗ No Freesound tracks found for genre: ' + genre);
           return;
         }
-        // Pick a deterministic-feeling track: use piece id hash if available, else random
+        // Pick a deterministic track: hash piece id so same piece always gets same track
         var idx = piece && piece.id
-          ? (piece.id.split('').reduce(function(a, c) { return a + c.charCodeAt(0); }, 0) % hits.length)
-          : Math.floor(Math.random() * hits.length);
-        var track = hits[idx];
-        src = track.audio || track.previewURL;
-        if (!src) { dbgWarn('MUSIC', '✗ Selected track has no audio src at idx=' + idx); return; }
-        dbg('MUSIC', '✓ Selected Pixabay track idx=' + idx + ' genre=' + genre + ' src=' + src.substring(0, 80));
+          ? (piece.id.split('').reduce(function(a, c) { return a + c.charCodeAt(0); }, 0) % tracks.length)
+          : Math.floor(Math.random() * tracks.length);
+        var track = tracks[idx];
+        src = track.src;
+        if (!src) { dbgWarn('MUSIC', '✗ Selected track has no src at idx=' + idx); return; }
+        dbg('MUSIC', '✓ Selected Freesound track idx=' + idx + ' name="' + track.name + '" src=' + src.substring(0, 80));
 
         // Persist to DB so this piece always gets the same track from now on
         if (piece && piece.id) {
