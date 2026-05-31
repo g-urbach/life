@@ -2677,6 +2677,14 @@
       </div>
     </div>
 
+    <!-- APP-48: Themed chapter assembly modal -->
+    <div id="app48Modal" style="display:none;position:fixed;inset:0;z-index:9200;background:rgba(0,0,0,0.55);overflow-y:auto">
+      <div style="max-width:520px;margin:40px auto 40px;background:var(--bg);border-radius:16px;padding:24px 24px 28px;position:relative;box-sizing:border-box">
+        <button onclick="_a48Close()" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light)">✕</button>
+        <div id="app48ModalContent"></div>
+      </div>
+    </div>
+
     <!-- APP-42: Book Builder view (hidden by default) -->
     <div id="storyBookBuilderView" style="display:none">
 
@@ -2739,6 +2747,8 @@
         <!-- Right: Book section list -->
         <div>
           <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px">In your book <span id="bookSectionCount" style="color:var(--rose)"></span></div>
+          <!-- APP-48: Assemble button (shown when ≥2 pieces exist, injected by _renderBookBuilder) -->
+          <div id="app48AssembleRow" style="display:none;margin-bottom:12px"></div>
           <div id="bookSectionList" style="display:flex;flex-direction:column;gap:8px;min-height:48px">
             <div id="bookSectionEmpty" style="font-size:0.8rem;color:var(--text-light);padding:12px 0;text-align:center">
               No pieces yet — add from the left
@@ -4357,8 +4367,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.12';
-  const DEPLOY_NOTES = APP_VERSION + ' — Backlog tidy: APP-45 marked DONE v4.82 (Phase 3 was done, header was stale). APP-46 marked DONE v4.80 (all phases built, header was stale). APP-48 added as formal backlog entry (thematic collection/book-by-theme). APP-47e added as formal backlog entry (theme suggestions from library). No code changes.';
+  const APP_VERSION  = 'v5.14';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-48 COMPLETE (sprints 12a–12c). PROXY: handleThemeCurate() added to GETHRO_PROXY_v5_14.ts — expensive tier, max 30 pieces, returns ranked [{id,reason}]. CLIENT: _a48Open/Close/Render/FindPieces/AddToBook(). "✨ Assemble a themed chapter" button in Book Builder (≥2 pieces). Modal: step 0 theme picker (APP-47 chips reused), step 1 ranked results with ✕ exclude, step 2 confirm + add flat to book list. Chapter intro cut from scope. No new DB tables.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8715,9 +8725,10 @@
   var _scSongStyleMode   = 'search'; // APP-40-V2: 'search' | 'genre'
   var _scSongSearchText  = '';    // APP-40-V2: raw freetext input value
   var _scSongLength      = 'full'; // APP-40-V2: 'full' | 'short'
-  var _scTheme           = null;   // APP-47: string | null — the chosen theme text
-  var _scThemeMode       = null;   // APP-47: 'chip' | 'freetext' | null
-  var _scThemeSubStep    = false;  // APP-47: true when showing theme step (after format/substep, before roast)
+  var _scTheme              = null;   // APP-47: string | null — the chosen theme text
+  var _scThemeMode          = null;   // APP-47: 'chip' | 'freetext' | null
+  var _scThemeSubStep       = false;  // APP-47: true when showing theme step (after format/substep, before roast)
+  var _scThemeSuggestions   = null;   // APP-47e: [{theme, note}] | null | 'loading' | 'error'
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8831,6 +8842,7 @@
     _scTheme             = null;   // APP-47
     _scThemeMode         = null;   // APP-47
     _scThemeSubStep      = false;  // APP-47
+    _scThemeSuggestions  = null;   // APP-47e
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -9120,6 +9132,32 @@
           });
           themeHtml += '</div></div>';
 
+          // APP-47e — "✨ Suggest a theme" button + suggested chips row
+          themeHtml += '<div id="scThemeSuggestRow" style="margin-top:4px;margin-bottom:2px">';
+          if (_scThemeSuggestions === 'loading') {
+            themeHtml += '<div style="font-size:0.8rem;color:var(--text-light);font-family:\'Lato\',sans-serif;padding:6px 0">✨ Finding themes in your entries…</div>';
+          } else if (_scThemeSuggestions === 'error') {
+            themeHtml += '<button onclick="_scSuggestThemes()" style="background:none;border:none;font-size:0.8rem;color:var(--rose);cursor:pointer;padding:0;font-family:\'Lato\',sans-serif">✨ Suggest a theme</button>' +
+              '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">Couldn\'t load — tap to retry</span>';
+          } else if (Array.isArray(_scThemeSuggestions) && _scThemeSuggestions.length) {
+            themeHtml += '<div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--rose);margin-bottom:6px;font-family:\'Lato\',sans-serif">✨ Suggested for you</div>';
+            themeHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+            _scThemeSuggestions.forEach(function(s) {
+              var sel = (_scTheme === s.theme && _scThemeMode === 'chip');
+              var safeTheme = s.theme.replace(/'/g, "\\'");
+              themeHtml += '<button onclick="_scSelectThemeChip(\'' + safeTheme + '\',this)" title="' + escHtml(s.note) + '" ' +
+                'style="padding:5px 12px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--rose)') + ';border-radius:20px;' +
+                'background:' + (sel ? 'rgba(180,60,60,0.12)' : 'rgba(180,60,60,0.06)') + ';' +
+                'font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--rose);cursor:pointer;transition:all 0.15s">' +
+                '✨ ' + escHtml(s.theme) + '</button>';
+            });
+            themeHtml += '</div>';
+          } else {
+            // Initial state — show the suggest button
+            themeHtml += '<button onclick="_scSuggestThemes()" style="background:none;border:none;font-size:0.8rem;color:var(--rose);cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">✨ Suggest a theme</button>';
+          }
+          themeHtml += '</div>';
+
           cardsEl.innerHTML = themeHtml;
 
           // Wire up freetext input
@@ -9321,6 +9359,34 @@
     if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
   }
 
+  // APP-47e: Fetch theme suggestions from the proxy and re-render the suggest row.
+  // Called when user taps "✨ Suggest a theme" in the Theme Lens wizard step.
+  async function _scSuggestThemes() {
+    if (_scThemeSuggestions === 'loading') return; // debounce double-tap
+    _scThemeSuggestions = 'loading';
+    _scRender(); // show spinner text
+
+    try {
+      // Build a lightweight entriesText — same format as generateStory but capped at 4000 chars.
+      var allRealEntries = entries.filter(function(e) { return !e.category.startsWith('_profile'); });
+      var entriesText = allRealEntries.map(function(e, i) {
+        var line = (i + 1) + '. [' + sanitiseForPrompt(e.category, 80) + ']';
+        if (e.title)  line += ' [Title: '  + sanitiseForPrompt(e.title,  120) + ']';
+        if (e.people) line += ' [People: ' + sanitiseForPrompt(e.people, 100) + ']';
+        line += ' <entry>' + sanitiseForPrompt(e.answer, 400) + '</entry>';
+        return line;
+      }).join('\n').substring(0, 4000);
+
+      var result = await callGethro('suggest_themes', { entriesText: entriesText });
+      var themes = (result && Array.isArray(result.themes)) ? result.themes : [];
+      _scThemeSuggestions = themes.length ? themes : 'error';
+    } catch (err) {
+      console.warn('_scSuggestThemes error:', err);
+      _scThemeSuggestions = 'error';
+    }
+    _scRender();
+  }
+
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
     if (_scSongSubStep) {
@@ -9335,9 +9401,10 @@
       _scStep = 0;
     } else if (_scThemeSubStep) {
       // APP-47: Back from theme step → back to format (or poetry-type substep for poetry)
-      _scThemeSubStep = false;
-      _scTheme        = null;
-      _scThemeMode    = null;
+      _scThemeSubStep      = false;
+      _scTheme             = null;
+      _scThemeMode         = null;
+      _scThemeSuggestions  = null;  // APP-47e: reset so suggestions re-fetch if user returns
       if (_scFormat === 'poetry') {
         _scPoetrySubStep = true; _scStep = 0;
       } else {
@@ -10624,6 +10691,20 @@
 
     // Render section list (right column) — extracted to _renderBookSectionList()
     _renderBookSectionList(sectionEl, emptyEl, countEl, previewBtn);
+
+    // APP-48: show/hide the Assemble button based on whether pieces exist
+    var assembleRow = document.getElementById('app48AssembleRow');
+    if (assembleRow) {
+      if (_bookPieces.length >= 2) {
+        assembleRow.style.display = '';
+        assembleRow.innerHTML =
+          '<button onclick="_a48Open()" style="width:100%;padding:8px 12px;background:none;border:1.5px dashed var(--rose);border-radius:9px;' +
+          'font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--rose);cursor:pointer;text-align:left;transition:background 0.15s">' +
+          '✨ Assemble a themed chapter</button>';
+      } else {
+        assembleRow.style.display = 'none';
+      }
+    }
   }
 
   // ── APP-42 Phase 2: drag-to-reorder + enable/disable ──────────────────────
@@ -10751,6 +10832,301 @@
     } catch(err) {
       dbgErr('BOOK', '_bookSaveOrder error: ' + err.message);
     }
+  }
+
+  // ── APP-48: Themed chapter assembly ──────────────────────────────────────────
+  // Sprints 12a–12c. Entry point: "✨ Assemble a themed chapter" in Book Builder.
+  // Flow: theme picker (step 0) → proxy fetch → results (step 1) → confirm (step 2)
+  //       → _a48AddToBook() → pieces added flat to book, modal closed.
+
+  var _a48Theme    = null;   // string | null — chosen theme
+  var _a48Step     = 0;      // 0=picker, 1=results, 2=confirm
+  var _a48Ranked   = [];     // [{id, reason}] from proxy — filtered to existing pieces
+  var _a48Selected = [];     // piece IDs still selected (user may ✕ exclude)
+  var _a48Loading  = false;  // true while proxy call is in flight
+
+  // Open the modal and render step 0
+  function _a48Open() {
+    _a48Theme    = null;
+    _a48Step     = 0;
+    _a48Ranked   = [];
+    _a48Selected = [];
+    _a48Loading  = false;
+    var modal = document.getElementById('app48Modal');
+    if (modal) modal.style.display = 'block';
+    _a48Render();
+  }
+
+  // Close the modal
+  function _a48Close() {
+    var modal = document.getElementById('app48Modal');
+    if (modal) modal.style.display = 'none';
+    _a48Loading = false;
+  }
+
+  // Central render — called after every state change
+  function _a48Render() {
+    var el = document.getElementById('app48ModalContent');
+    if (!el) return;
+
+    if (_a48Loading) {
+      el.innerHTML =
+        '<div style="padding:32px 0;text-align:center">' +
+        '<div style="font-size:0.9rem;color:var(--text-light);font-family:\'Lato\',sans-serif">' +
+        '✨ Reading your library for <em>' + escHtml(_a48Theme || '') + '</em> threads…</div></div>';
+      return;
+    }
+
+    if (_a48Step === 0) { _a48RenderPicker(el); return; }
+    if (_a48Step === 1) { _a48RenderResults(el); return; }
+    if (_a48Step === 2) { _a48RenderConfirm(el); return; }
+  }
+
+  // Step 0 — Theme picker
+  function _a48RenderPicker(el) {
+    var chipStyle = function(label) {
+      var sel = (_a48Theme === label);
+      return 'padding:5px 10px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--border)') +
+        ';border-radius:20px;background:' + (sel ? 'rgba(180,60,60,0.07)' : 'var(--surface)') +
+        ';font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;transition:all 0.15s';
+    };
+
+    var html = '<div style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin-bottom:4px">Assemble a themed chapter</div>';
+    html += '<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:18px;font-family:\'Lato\',sans-serif">Pick a theme — Gethro will find the pieces in your library that connect to it.</div>';
+
+    // Freetext input
+    html += '<div style="margin-bottom:14px"><input id="a48ThemeInput" type="text" maxlength="100" placeholder="e.g. Food, Travel, Resilience…" ' +
+      'value="' + escHtml((_a48Theme && !_chipThemes().includes(_a48Theme)) ? _a48Theme : '') + '" ' +
+      'style="width:100%;box-sizing:border-box;padding:10px 14px;border:2px solid var(--border);border-radius:10px;' +
+      'font-family:\'Lato\',sans-serif;font-size:0.88rem;color:var(--text);background:var(--surface);outline:none" /></div>';
+
+    // Life topics row
+    html += '<div style="margin-bottom:10px"><div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Life topics</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+    [['🍽️','Food'],['✈️','Travel'],['👨‍👩‍👧','Family'],['❤️','Love'],['💼','Work'],['⚽','Sport'],['🎵','Music'],['🧒','Childhood']].forEach(function(c) {
+      html += '<button onclick="_a48SelectChip(\'' + c[1] + '\')" style="' + chipStyle(c[1]) + '">' + c[0] + ' ' + c[1] + '</button>';
+    });
+    html += '</div></div>';
+
+    // Story moods row
+    html += '<div style="margin-bottom:18px"><div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Story moods</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+    [['💪','Resilience'],['🌱','Coming of age'],['🥹','Bittersweet'],['🏆','Triumph'],['🤝','Forgiveness'],['🌍','Adventure']].forEach(function(c) {
+      html += '<button onclick="_a48SelectChip(\'' + c[1].replace(/'/g, "\\'") + '\')" style="' + chipStyle(c[1]) + '">' + c[0] + ' ' + c[1] + '</button>';
+    });
+    html += '</div></div>';
+
+    // CTA
+    html += '<button id="a48FindBtn" onclick="_a48FindPieces()" ' +
+      'style="width:100%;padding:12px;background:var(--rose);color:#fff;border:none;border-radius:10px;' +
+      'font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer;' +
+      (_a48Theme ? '' : 'opacity:0.4;pointer-events:none') + '">' +
+      'Find pieces →</button>';
+
+    el.innerHTML = html;
+
+    // Wire freetext input
+    var input = document.getElementById('a48ThemeInput');
+    if (input) {
+      input.addEventListener('input', function() {
+        var val = this.value.trim();
+        _a48Theme = val || null;
+        // Clear chip highlights
+        el.querySelectorAll('button[onclick*="_a48SelectChip"]').forEach(function(b) {
+          b.style.borderColor = 'var(--border)'; b.style.background = 'var(--surface)';
+        });
+        var findBtn = document.getElementById('a48FindBtn');
+        if (findBtn) { findBtn.style.opacity = val ? '1' : '0.4'; findBtn.style.pointerEvents = val ? '' : 'none'; }
+      });
+      // Restore chip highlight if a chip was previously selected
+      if (_a48Theme && _chipThemes().includes(_a48Theme)) {
+        el.querySelectorAll('button[onclick*="_a48SelectChip"]').forEach(function(b) {
+          if (b.textContent.includes(_a48Theme)) {
+            b.style.borderColor = 'var(--rose)'; b.style.background = 'rgba(180,60,60,0.07)';
+          }
+        });
+      }
+    }
+  }
+
+  // All chip label values (for freetext vs chip detection)
+  function _chipThemes() {
+    return ['Food','Travel','Family','Love','Work','Sport','Music','Childhood','Resilience','Coming of age','Bittersweet','Triumph','Forgiveness','Adventure'];
+  }
+
+  // Chip tap handler
+  function _a48SelectChip(value) {
+    _a48Theme = value;
+    var input = document.getElementById('a48ThemeInput');
+    if (input) { input.value = value; }
+    var el = document.getElementById('app48ModalContent');
+    if (el) {
+      el.querySelectorAll('button[onclick*="_a48SelectChip"]').forEach(function(b) {
+        b.style.borderColor = 'var(--border)'; b.style.background = 'var(--surface)';
+      });
+      // Highlight matching chip
+      el.querySelectorAll('button[onclick*="_a48SelectChip"]').forEach(function(b) {
+        if (b.onclick && b.onclick.toString().includes("'" + value.replace(/'/g, "\\'") + "'")) {
+          b.style.borderColor = 'var(--rose)'; b.style.background = 'rgba(180,60,60,0.07)';
+        }
+      });
+    }
+    var findBtn = document.getElementById('a48FindBtn');
+    if (findBtn) { findBtn.style.opacity = '1'; findBtn.style.pointerEvents = ''; }
+  }
+
+  // Call the proxy to find matching pieces
+  async function _a48FindPieces() {
+    if (!_a48Theme || _a48Loading) return;
+    _a48Loading = true;
+    _a48Render();
+
+    try {
+      // Build piece payload — max 30, 300-char snippet each
+      var pieces = _bookPieces.slice(0, 30).map(function(p) {
+        return {
+          id:              p.id,
+          title:           p.title || '',
+          content_snippet: (p.content || '').slice(0, 300),
+          metadata:        { format: (p.metadata || {}).format || p.type || '', theme: (p.metadata || {}).theme || '', wordCount: (p.metadata || {}).wordCount || 0 },
+        };
+      });
+
+      var result = await callGethro('theme_curate', { theme: _a48Theme, pieces: pieces });
+      var ranked = (result && Array.isArray(result.ranked)) ? result.ranked : [];
+
+      // Filter to IDs that exist in _bookPieces and aren't already in the book
+      var existingIds  = _bookPieces.reduce(function(m, p) { m[p.id] = true; return m; }, {});
+      var inBookIds    = _bookSections.reduce(function(m, s) { m[s.component_id] = true; return m; }, {});
+      _a48Ranked   = ranked.filter(function(r) { return existingIds[r.id] && !inBookIds[r.id]; });
+      _a48Selected = _a48Ranked.map(function(r) { return r.id; }); // start with all selected
+
+      _a48Loading = false;
+      _a48Step    = 1;
+    } catch(err) {
+      _a48Loading = false;
+      dbgErr('APP48', '_a48FindPieces error: ' + err.message);
+      toast('Couldn\'t reach Gethro — try again?');
+    }
+    _a48Render();
+  }
+
+  // Step 1 — Results screen
+  function _a48RenderResults(el) {
+    var html = '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:4px">';
+
+    if (_a48Ranked.length === 0) {
+      html += 'No matches found</div>';
+      html += '<div style="font-size:0.84rem;color:var(--text-light);margin-bottom:20px;font-family:\'Lato\',sans-serif;line-height:1.5">' +
+        'None of your library pieces connected clearly to <em>' + escHtml(_a48Theme) + '</em>.<br>Try a different theme — or add more story pieces to your library.</div>';
+      html += '<button onclick="_a48Step=0;_a48Render()" style="width:100%;padding:10px;background:none;border:1.5px solid var(--border);border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.85rem;color:var(--text);cursor:pointer">← Try a different theme</button>';
+      el.innerHTML = html;
+      return;
+    }
+
+    html += _a48Ranked.length + ' piece' + (_a48Ranked.length === 1 ? '' : 's') + ' connected to <em style="font-style:italic">' + escHtml(_a48Theme) + '</em></div>';
+    html += '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:14px;font-family:\'Lato\',sans-serif">Tap ✕ to exclude a piece before adding.</div>';
+
+    html += '<div id="a48ResultsList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">';
+    _a48Ranked.forEach(function(r) {
+      var piece    = _bookPieces.find(function(p) { return p.id === r.id; });
+      var excluded = _a48Selected.indexOf(r.id) === -1;
+      var typeMeta = piece ? _storyTypeMeta(piece.type || (piece.metadata || {}).format || '') : { emoji: '📄' };
+      var title    = piece ? (piece.title || _autoStoryTitle(piece.metadata || {}, '')) : 'Untitled';
+
+      html += '<div data-a48id="' + escHtml(r.id) + '" style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border:1.5px solid ' +
+        (excluded ? 'var(--border)' : 'var(--rose)') + ';border-radius:10px;background:' +
+        (excluded ? 'var(--surface2)' : 'var(--surface)') + ';opacity:' + (excluded ? '0.45' : '1') + ';transition:all 0.15s">';
+      html += '<div style="flex:1;min-width:0">';
+      html += '<div style="font-size:0.82rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + typeMeta.emoji + ' ' + escHtml(title) + '</div>';
+      html += '<div style="font-size:0.73rem;color:var(--rose);margin-top:3px;font-family:\'Lato\',sans-serif">' + escHtml(r.reason || '') + '</div>';
+      html += '</div>';
+      html += '<button onclick="_a48TogglePiece(\'' + escHtml(r.id) + '\')" style="flex-shrink:0;background:none;border:none;font-size:1rem;cursor:pointer;color:' +
+        (excluded ? 'var(--text-light)' : 'var(--rose)') + ';padding:0 2px;line-height:1" title="' + (excluded ? 'Include' : 'Exclude') + '">' +
+        (excluded ? '＋' : '✕') + '</button>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    html += '<div style="display:flex;gap:8px">';
+    html += '<button onclick="_a48Step=0;_a48Render()" style="flex:0 0 auto;padding:10px 14px;background:none;border:1.5px solid var(--border);border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.82rem;color:var(--text);cursor:pointer">← Back</button>';
+
+    var selectedCount = _a48Selected.length;
+    html += '<button onclick="_a48Step=2;_a48Render()" ' +
+      (selectedCount === 0 ? 'disabled style="flex:1;padding:10px;background:var(--rose);color:#fff;border:none;border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.85rem;font-weight:700;opacity:0.4;pointer-events:none"' :
+        'style="flex:1;padding:10px;background:var(--rose);color:#fff;border:none;border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.85rem;font-weight:700;cursor:pointer"') + '>' +
+      (selectedCount === 0 ? 'Select at least one piece' : 'Add ' + selectedCount + ' piece' + (selectedCount === 1 ? '' : 's') + ' →') +
+      '</button>';
+    html += '</div>';
+
+    el.innerHTML = html;
+  }
+
+  // Toggle a piece in/out of the selected list (results screen)
+  function _a48TogglePiece(id) {
+    var idx = _a48Selected.indexOf(id);
+    if (idx === -1) { _a48Selected.push(id); } else { _a48Selected.splice(idx, 1); }
+    _a48RenderResults(document.getElementById('app48ModalContent'));
+  }
+
+  // Step 2 — Confirm screen
+  function _a48RenderConfirm(el) {
+    var count = _a48Selected.length;
+    var defaultName = (_a48Theme || 'Themed') + ' — curated by Gethro';
+
+    var html = '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:14px">';
+    html += 'Add ' + count + ' piece' + (count === 1 ? '' : 's') + ' to your book?</div>';
+
+    // Piece list summary
+    html += '<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:18px">';
+    _a48Selected.forEach(function(id) {
+      var r     = _a48Ranked.find(function(r) { return r.id === id; });
+      var piece = _bookPieces.find(function(p) { return p.id === id; });
+      var typeMeta = piece ? _storyTypeMeta(piece.type || (piece.metadata || {}).format || '') : { emoji: '📄' };
+      var title    = piece ? (piece.title || _autoStoryTitle(piece.metadata || {}, '')) : 'Untitled';
+      html += '<div style="font-size:0.8rem;color:var(--text);font-family:\'Lato\',sans-serif;padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">' +
+        typeMeta.emoji + ' ' + escHtml(title) +
+        (r && r.reason ? '<span style="color:var(--text-light);margin-left:6px;font-size:0.72rem">— ' + escHtml(r.reason) + '</span>' : '') +
+        '</div>';
+    });
+    html += '</div>';
+
+    // Section name (informational label — stored in book title, not a DB section group)
+    html += '<div style="margin-bottom:18px">';
+    html += '<label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);font-family:\'Lato\',sans-serif;display:block;margin-bottom:6px">Chapter label (optional)</label>';
+    html += '<input id="a48SectionName" type="text" maxlength="80" value="' + escHtml(defaultName) + '" ' +
+      'style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:\'Lato\',sans-serif;font-size:0.85rem;color:var(--text);background:var(--surface);outline:none" />';
+    html += '<div style="font-size:0.72rem;color:var(--text-light);margin-top:5px;font-family:\'Lato\',sans-serif">For your reference only — pieces join the flat book list in ranked order.</div>';
+    html += '</div>';
+
+    html += '<div style="display:flex;gap:8px">';
+    html += '<button onclick="_a48Step=1;_a48Render()" style="flex:0 0 auto;padding:10px 14px;background:none;border:1.5px solid var(--border);border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.82rem;color:var(--text);cursor:pointer">← Back</button>';
+    html += '<button id="a48ConfirmBtn" onclick="_a48AddToBook()" style="flex:1;padding:10px;background:var(--rose);color:#fff;border:none;border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer">Add to book →</button>';
+    html += '</div>';
+
+    el.innerHTML = html;
+  }
+
+  // Final step — add selected pieces to book and close
+  async function _a48AddToBook() {
+    var confirmBtn = document.getElementById('a48ConfirmBtn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Adding…'; }
+
+    var added = 0;
+    for (var i = 0; i < _a48Selected.length; i++) {
+      try {
+        await _bookAddPiece(_a48Selected[i]);
+        added++;
+      } catch(err) {
+        dbgErr('APP48', '_a48AddToBook piece error: ' + err.message);
+      }
+    }
+
+    _a48Close();
+    toast('✨ ' + added + ' piece' + (added === 1 ? '' : 's') + ' added to your book');
+    // Switch to Book Builder and re-render
+    _storyTabSwitch('build');
+    await _renderBookBuilder();
   }
 
   // ── APP-42 Phase 3: multi-section print/PDF ──────────────────────────────────
