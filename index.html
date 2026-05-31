@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.07';
-  const DEPLOY_NOTES = APP_VERSION + ' — Music now served from Supabase Storage bg-music bucket (country, folk, hiphop, jazz, piano, pop, rock, soul). No more third-party dependencies. Genre mapping updated to match available files. PROXY DEPLOY REQUIRED: GETHRO_PROXY_v5_07.';
+  const APP_VERSION  = 'v5.11';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-47b/c: Theme Lens prompt injection + persistence. buildThemeLens() in GETHRO_PROXY injects THEME LENS block into all non-song non-mywords formats. theme stored in currentStory and in life_story_components metadata. Library cards show 🎭 theme tag when set. Audiobook announce appends theme. APP-47 complete.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8715,6 +8715,9 @@
   var _scSongStyleMode   = 'search'; // APP-40-V2: 'search' | 'genre'
   var _scSongSearchText  = '';    // APP-40-V2: raw freetext input value
   var _scSongLength      = 'full'; // APP-40-V2: 'full' | 'short'
+  var _scTheme           = null;   // APP-47: string | null — the chosen theme text
+  var _scThemeMode       = null;   // APP-47: 'chip' | 'freetext' | null
+  var _scThemeSubStep    = false;  // APP-47: true when showing theme step (after format/substep, before roast)
   var _scScope   = null;
   var _scLength  = null;
   var _scSelected = null;
@@ -8731,6 +8734,7 @@
   var _scStoryPendingComedyIntensity = null;
   var _scStoryPendingPoetryType      = null;  // APP-41: carries _scPoetryType through Entries tab select flow
   var _scStoryPendingSongStyle       = null;  // APP-40: carries _scSongStyle through Entries tab select flow
+  var _scStoryPendingTheme           = null;  // APP-47: carries _scTheme through Entries tab select flow
   var _scStorySelected      = [];
   var _SC_FORMAT_STEPS = [
     { emoji: '📖', label: 'Prose Narrative',  value: 'prose',     desc: 'Warm, literary memoir — the classic' },
@@ -8752,11 +8756,8 @@
     { emoji: '🎷', label: 'Jazz standard',       value: 'jazz',            desc: 'Sophisticated and smoky — Nina Simone, Sinatra' },
     { emoji: '💃', label: 'Motown soul',         value: 'motown',          desc: 'Infectious hook, gospel roots — The Supremes' },
     { emoji: '🎤', label: 'Pop',                 value: 'pop',             desc: 'Catchy and warm — bright chorus, accessible verse' },
-    { emoji: '🪕', label: 'Bluegrass',           value: 'bluegrass',       desc: 'Lively, rootsy — fiddles and harmonies' },
-    { emoji: '🎼', label: 'Musical theatre',     value: 'musical_theatre', desc: 'Character-driven — Sondheim, Hamilton, Les Mis' },
     { emoji: '🧊', label: 'R&B',                 value: 'rnb',             desc: 'Lush and soulful — Beyoncé, Alicia Keys' },
     { emoji: '🎧', label: 'Hip-hop spoken word', value: 'hiphop',          desc: 'Rhythmic flow, vivid imagery — confident voice' },
-    { emoji: '🎵', label: 'Bossa nova',          value: 'bossa_nova',      desc: 'Gentle, sophisticated — understated warmth' },
   ];
 
   // APP-41: Poetry sub-type picker — shown after choosing Poetry at step 0
@@ -8827,6 +8828,9 @@
     _scSongSearchText    = '';
     _scSongLength        = 'full';
     _scSongSubStep       = false;
+    _scTheme             = null;   // APP-47
+    _scThemeMode         = null;   // APP-47
+    _scThemeSubStep      = false;  // APP-47
     _scScope             = null;
     _scLength            = null;
     _scSelected          = null;
@@ -8839,14 +8843,16 @@
     //   0 = format
     //   0b = poetry type picker (_scPoetrySubStep=true, _scStep still 0) — APP-41
     //   0c = song style picker (_scSongSubStep=true, _scStep still 0) — APP-40
+    //   0d = theme lens picker (_scThemeSubStep=true, _scStep still 0) — APP-47
+    //        (shown after format/sub-step commit, before step 1 roast; skipped for mywords)
     //   1 = roast toggle (skipped for mywords)
     //       1b = comedy options sub-step (style + intensity, only when roast chosen)
     //   2 = scope
     //   3 = chapter picker (virtual — only when scope='chapter')
     //   4 = length (skipped for mywords AND poetry AND song — type/structure determines length)
-    // mywords flow: 0 (format) → 2 (scope) — steps 1 and 4 are skipped
-    // poetry flow:  0 (format) → 0b (poem type) → 1 (roast) → 2 (scope) — step 4 skipped
-    // song flow:    0 (format) → 0c (song style/length) → 2 (scope) — steps 1 and 4 skipped
+    // mywords flow: 0 (format) → 2 (scope) — steps 1, 0d, and 4 are skipped
+    // poetry flow:  0 (format) → 0b (poem type) → 0d (theme) → 1 (roast) → 2 (scope) — step 4 skipped
+    // song flow:    0 (format) → 0c (song style/length) → 2 (scope) — steps 0d, 1, and 4 skipped
 
     var isMywords      = (_scFormat === 'mywords');
     var isPoetry       = (_scFormat === 'poetry');
@@ -8855,21 +8861,25 @@
     var isRoastOptions  = (_scStep === 1 && _scRoastSubStep === 'options');
     // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords non-poetry)
     var isRoastFlow     = (_scFunny === true || isRoastOptions);
+    // APP-47: theme step inserted after format/substep, before roast — not for mywords or song
+    var hasThemeStep    = !isMywords && !isSong;
     // Poetry: 3 steps (format→type→scope); roast poetry: 4 (format→type→tone→scope)
     // Song: always 3 steps (format→song-style→scope) — no roast/tone step
-    var totalDisplay    = isMywords ? 2 : isSong ? 3 : (isPoetry ? (isRoastFlow ? 4 : 3) : (isRoastFlow ? 4 : 4));
+    // With theme: adds 1 to non-mywords non-song totals
+    var totalDisplay    = isMywords ? 2 : isSong ? 3 : (isPoetry ? (isRoastFlow ? 5 : 4) : (isRoastFlow ? 5 : 5));
 
     // Map real step to display dot index (0-based) and label
     var displayDot, meta;
     var n = totalDisplay; // shorthand
     if      (_scSongSubStep)     { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Song style', question: 'What style of song would you like?' }; }
     else if (_scPoetrySubStep)   { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Poem type', question: 'What kind of poem would you like?' }; }
+    else if (_scThemeSubStep)    { displayDot = isPoetry ? 2 : 1; meta = { label: 'Step ' + (isPoetry ? 3 : 2) + ' of ' + n + ' — Theme', question: 'Apply a theme lens? (optional)' }; }
     else if (_scStep === 0)      { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
-    else if (_scStep === 1 && !isRoastOptions) { displayDot = isPoetry ? 2 : 1; meta = { label: 'Step ' + (isPoetry ? 3 : 2) + ' of ' + n + ' — Tone', question: 'Should Gethro play it straight — or have a little fun?' }; }
-    else if (_scStep === 1 && isRoastOptions)  { displayDot = isPoetry ? 3 : 2; meta = { label: 'Step ' + (isPoetry ? 4 : 3) + ' of ' + n + ' — Style', question: 'What flavour of chaos would you like? Gethro\'s going full send.' }; }
-    else if (_scStep === 2)    { displayDot = isMywords ? 1 : 2; meta = { label: 'Step ' + (isMywords ? 2 : 3) + ' of ' + n + ' — Memories', question: 'Which memories should Gethro use?' }; }
-    else if (isChapterPicker)  { displayDot = 2; meta = { label: 'Step 3b of ' + n + ' — Chapters', question: 'Which chapters should Gethro focus on?' }; }
-    else                       { displayDot = 3; meta = { label: 'Step ' + n + ' of ' + n + ' — Length', question: 'How long should the story be?' }; }
+    else if (_scStep === 1 && !isRoastOptions) { displayDot = isPoetry ? 3 : 2; meta = { label: 'Step ' + (isPoetry ? 4 : 3) + ' of ' + n + ' — Tone', question: 'Should Gethro play it straight — or have a little fun?' }; }
+    else if (_scStep === 1 && isRoastOptions)  { displayDot = isPoetry ? 4 : 3; meta = { label: 'Step ' + (isPoetry ? 5 : 4) + ' of ' + n + ' — Style', question: 'What flavour of chaos would you like? Gethro\'s going full send.' }; }
+    else if (_scStep === 2)    { displayDot = isMywords ? 1 : 3; meta = { label: 'Step ' + (isMywords ? 2 : 4) + ' of ' + n + ' — Memories', question: 'Which memories should Gethro use?' }; }
+    else if (isChapterPicker)  { displayDot = 3; meta = { label: 'Step 4b of ' + n + ' — Chapters', question: 'Which chapters should Gethro focus on?' }; }
+    else                       { displayDot = 4; meta = { label: 'Step ' + n + ' of ' + n + ' — Length', question: 'How long should the story be?' }; }
 
     // Progress dots — 4 physical dots represent proportional progress through totalDisplay steps
     // Map displayDot (0-based logical step) onto 0-3 physical dots
@@ -8890,12 +8900,12 @@
     var backBtn    = document.getElementById('scBackBtn');
 
     var nudgeEl = document.getElementById('storyNudge');
-    if (nudgeEl) nudgeEl.style.display = (_scStep === 0 && !_scPoetrySubStep && !_scSongSubStep) ? '' : 'none';
+    if (nudgeEl) nudgeEl.style.display = (_scStep === 0 && !_scPoetrySubStep && !_scSongSubStep && !_scThemeSubStep) ? '' : 'none';
     if (labelEl)    labelEl.textContent     = meta.label;
     if (questionEl) questionEl.textContent  = meta.question;
     if (summaryEl)  summaryEl.style.display = 'none';
     if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Next'; }
-    if (backBtn) backBtn.style.display = (_scStep > 0 || _scPoetrySubStep || _scSongSubStep) ? 'inline-block' : 'none';
+    if (backBtn) backBtn.style.display = (_scStep > 0 || _scPoetrySubStep || _scSongSubStep || _scThemeSubStep) ? 'inline-block' : 'none';
 
     _scSelected = null;
 
@@ -8984,20 +8994,12 @@
           cardsEl.style.display = 'block';
           var songHtml = '';
 
-          // Freetext search input
-          var searchVal = _scSongStyleMode === 'search' ? _scSongSearchText : '';
-          songHtml += '<div style="margin-bottom:18px">';
-          songHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px;font-family:\'Lato\',sans-serif">Type a song and artist</div>';
-          songHtml += '<input id="scSongSearchInput" type="text" placeholder="e.g. Yesterday – The Beatles, Jolene – Dolly Parton…" value="' + escHtml(searchVal) + '" ' +
-            'style="width:100%;box-sizing:border-box;padding:10px 14px;border:2px solid ' + (_scSongStyleMode === 'search' && _scSongSearchText ? 'var(--rose)' : 'var(--border)') + ';border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.88rem;color:var(--text);background:var(--surface);outline:none" />';
-          songHtml += '</div>';
-
           // Mood genre cards
           songHtml += '<div style="margin-bottom:16px">';
-          songHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px;font-family:\'Lato\',sans-serif">Or choose a mood</div>';
+          songHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px;font-family:\'Lato\',sans-serif">Choose a mood</div>';
           songHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
           _SC_SONG_MOODS.forEach(function(m) {
-            var sel = _scSongStyleMode === 'genre' && _scSongStyle === m.value;
+            var sel = _scSongStyle === m.value;
             songHtml += '<button data-mood="' + m.value + '" onclick="_scSelectSongMood(\'' + m.value + '\',this)" ' +
               'style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:10px 12px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--border)') + ';border-radius:10px;background:' + (sel ? 'rgba(180,60,60,0.06)' : 'var(--surface)') + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left">' +
               '<span style="font-size:1.1rem">' + m.emoji + '</span>' +
@@ -9058,6 +9060,100 @@
 
           // Enable Next if we already have enough state (back-navigation restore)
           _scMaybeEnableSongNext();
+        }
+      } else if (_scThemeSubStep) {
+        // ── APP-47: Theme Lens sub-step ────────────────────────────────
+        if (cardsEl) {
+          cardsEl.style.display = 'block';
+
+          // APP-47d: premium check stub
+          if (!_userCanUseTheme()) {
+            cardsEl.innerHTML =
+              '<div style="text-align:center;padding:32px 20px;border:2px solid var(--border);border-radius:14px;background:var(--surface)">' +
+              '<div style="font-size:2rem;margin-bottom:10px">✨</div>' +
+              '<div style="font-family:\'Playfair Display\',serif;font-size:1rem;font-weight:700;color:var(--text);margin-bottom:8px">Premium feature</div>' +
+              '<div style="font-size:0.82rem;color:var(--text-light);max-width:300px;margin:0 auto">Theme Lens is coming to premium plans. Skip for now to continue writing your story.</div>' +
+              '</div>';
+            // Theme not available — auto-enable Next/Skip so user isn't stuck
+            if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Skip'; }
+            return;
+          }
+
+          var themeHtml = '';
+
+          // Current value restore (back-navigation)
+          var curThemeVal = (_scThemeMode === 'freetext') ? '' : (_scTheme || '');
+
+          // Freetext input
+          themeHtml += '<div style="margin-bottom:16px">';
+          themeHtml += '<input id="scThemeInput" type="text" maxlength="100" placeholder="e.g. food, resilience, Hey Jude…" value="' + escHtml(curThemeVal) + '" ' +
+            'style="width:100%;box-sizing:border-box;padding:10px 14px;border:2px solid ' + (_scTheme && _scThemeMode === 'freetext' ? 'var(--rose)' : 'var(--border)') + ';border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.88rem;color:var(--text);background:var(--surface);outline:none" />';
+          themeHtml += '</div>';
+
+          // Row 1 — Life topics
+          themeHtml += '<div style="margin-bottom:10px">';
+          themeHtml += '<div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Life topics</div>';
+          themeHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+          [['🍽️','Food'],['✈️','Travel'],['👨‍👩‍👧','Family'],['❤️','Love'],['💼','Work'],['⚽','Sport'],['🎵','Music'],['🧒','Childhood']].forEach(function(c) {
+            var sel = (_scTheme === c[1] && _scThemeMode === 'chip');
+            themeHtml += '<button onclick="_scSelectThemeChip(\'' + c[1] + '\',this)" style="padding:5px 10px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--border)') + ';border-radius:20px;background:' + (sel ? 'rgba(180,60,60,0.07)' : 'var(--surface)') + ';font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;transition:all 0.15s">' + c[0] + ' ' + c[1] + '</button>';
+          });
+          themeHtml += '</div></div>';
+
+          // Row 2 — Story moods
+          themeHtml += '<div style="margin-bottom:10px">';
+          themeHtml += '<div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Story moods</div>';
+          themeHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+          [['💪','Resilience'],['🌱','Coming of age'],['🥹','Bittersweet'],['🏆','Triumph'],['🤝','Forgiveness'],['🌍','Adventure']].forEach(function(c) {
+            var sel = (_scTheme === c[1] && _scThemeMode === 'chip');
+            themeHtml += '<button onclick="_scSelectThemeChip(\'' + c[1].replace(/'/g, "\\'") + '\',this)" style="padding:5px 10px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--border)') + ';border-radius:20px;background:' + (sel ? 'rgba(180,60,60,0.07)' : 'var(--surface)') + ';font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;transition:all 0.15s">' + c[0] + ' ' + c[1] + '</button>';
+          });
+          themeHtml += '</div></div>';
+
+          // Row 3 — Song/film (prefixed with "in the spirit of" in the prompt, not the label)
+          themeHtml += '<div style="margin-bottom:14px">';
+          themeHtml += '<div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">In the spirit of…</div>';
+          themeHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+          [['🎵','Hey Jude'],['🎭','Bohemian Rhapsody'],['🏠','The Castle'],['🎄','Love Actually'],['🥊','Rocky'],['💃','Mamma Mia']].forEach(function(c) {
+            var sel = (_scTheme === c[1] && _scThemeMode === 'chip');
+            themeHtml += '<button onclick="_scSelectThemeChip(\'' + c[1].replace(/'/g, "\\'") + '\',this)" style="padding:5px 10px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--border)') + ';border-radius:20px;background:' + (sel ? 'rgba(180,60,60,0.07)' : 'var(--surface)') + ';font-family:\'Lato\',sans-serif;font-size:0.8rem;color:var(--text);cursor:pointer;transition:all 0.15s">' + c[0] + ' ' + c[1] + '</button>';
+          });
+          themeHtml += '</div></div>';
+
+          cardsEl.innerHTML = themeHtml;
+
+          // Wire up freetext input
+          var themeInput = document.getElementById('scThemeInput');
+          if (themeInput) {
+            // Restore freetext value if previously entered
+            if (_scThemeMode === 'freetext' && _scTheme) {
+              themeInput.value = _scTheme;
+              themeInput.style.borderColor = 'var(--rose)';
+            }
+            themeInput.addEventListener('input', function() {
+              var val = this.value.trim();
+              if (val) {
+                _scTheme     = val;
+                _scThemeMode = 'freetext';
+                this.style.borderColor = 'var(--rose)';
+                // Clear chip highlights
+                var chips = cardsEl.querySelectorAll('button[onclick*="_scSelectThemeChip"]');
+                for (var ci = 0; ci < chips.length; ci++) {
+                  chips[ci].style.borderColor = 'var(--border)';
+                  chips[ci].style.background  = 'var(--surface)';
+                }
+              } else {
+                _scTheme     = null;
+                _scThemeMode = null;
+                this.style.borderColor = 'var(--border)';
+              }
+            });
+            themeInput.addEventListener('focus', function() { if (!this.value) this.style.borderColor = 'var(--rose)'; });
+            themeInput.addEventListener('blur',  function() { if (!this.value) this.style.borderColor = 'var(--border)'; });
+          }
+
+          // Theme step: Next always enabled (theme is optional — empty = skip)
+          if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = _scTheme ? 'Next' : 'Skip'; }
         }
       } else if (cards) {
         if (cardsEl) {
@@ -9190,6 +9286,41 @@
     }
   }
 
+  // APP-47d: Premium stub — returns true for all users at launch.
+  // TODO: check subscription tier when premium is introduced.
+  function _userCanUseTheme() {
+    return true;
+  }
+
+  // APP-47a: Chip selection handler for the theme step.
+  // Fills the freetext field with the chip label and highlights the tapped chip.
+  function _scSelectThemeChip(value, btn) {
+    _scTheme     = value;
+    _scThemeMode = 'chip';
+    // Update freetext input to reflect chip value
+    var themeInput = document.getElementById('scThemeInput');
+    if (themeInput) {
+      themeInput.value = value;
+      themeInput.style.borderColor = 'var(--border)';
+    }
+    // Highlight selected chip, clear others
+    var cardsEl = document.getElementById('scCards');
+    if (cardsEl) {
+      var chips = cardsEl.querySelectorAll('button[onclick*="_scSelectThemeChip"]');
+      for (var ci = 0; ci < chips.length; ci++) {
+        chips[ci].style.borderColor = 'var(--border)';
+        chips[ci].style.background  = 'var(--surface)';
+      }
+    }
+    if (btn) {
+      btn.style.borderColor = 'var(--rose)';
+      btn.style.background  = 'rgba(180,60,60,0.07)';
+    }
+    // Update Next button label
+    var nextBtn = document.getElementById('scNextBtn');
+    if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
+  }
+
   function _scBack() {
     var isMywords = (_scFormat === 'mywords');
     if (_scSongSubStep) {
@@ -9202,10 +9333,23 @@
       _scPoetrySubStep = false;
       _scFormat = null;
       _scStep = 0;
+    } else if (_scThemeSubStep) {
+      // APP-47: Back from theme step → back to format (or poetry-type substep for poetry)
+      _scThemeSubStep = false;
+      _scTheme        = null;
+      _scThemeMode    = null;
+      if (_scFormat === 'poetry') {
+        _scPoetrySubStep = true; _scStep = 0;
+      } else {
+        _scFormat = null; _scStep = 0;
+      }
     } else if (_scStep === 1 && _scRoastSubStep === 'options') {
       // Back from comedy options → back to straight/roast choice
       _scRoastSubStep = null;
       _scSelected = 'roast'; // keep roast selected
+    } else if (_scStep === 1) {
+      // APP-47: Back from tone step → back to theme step
+      _scThemeSubStep = true; _scStep = 0;
     } else if (_scStep === 3 && _scScope === 'chapter') {
       // Back from chapter picker → back to scope step
       _scStep = 2; _scScope = null; _scChapterSelections = [];
@@ -9215,16 +9359,9 @@
     } else if (_scStep === 2 && _scFormat === 'song') {
       // Song: back from memories → back to song style sub-step
       _scSongSubStep = true; _scStep = 0;
-    } else if (_scStep === 2 && _scFormat === 'poetry') {
-      // Poetry: back from memories → back to poetry type picker
-      _scPoetrySubStep = true; _scStep = 0;
-    } else if (_scStep === 1 && _scFormat === 'poetry') {
-      // Poetry: back from tone step → back to poetry type picker
-      _scPoetrySubStep = true; _scStep = 0;
-    } else if (_scStep === 2 && _scFunny === true) {
-      // Roast flow: back from memories → back to comedy options sub-step (not tone choice)
-      _scStep = 1;
-      _scRoastSubStep = 'options';
+    } else if (_scStep === 2 && (_scFormat === 'poetry' || _scFormat)) {
+      // APP-47: back from memories → back to theme step (for all non-song non-mywords formats)
+      _scThemeSubStep = true; _scStep = 0;
     } else if (_scStep > 0) {
       _scStep--;
     }
@@ -9237,7 +9374,7 @@
     var isSong          = (_scFormat === 'song');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
 
-    // APP-40-V2: Song style sub-step — commit style and skip to scope (no roast/tone step)
+    // APP-40-V2: Song style sub-step — commit style and skip to scope (no roast/tone step, no theme step)
     if (_scSongSubStep) {
       // Resolve final songStyle from whichever mode was used
       _scSongStyle   = (_scSongStyleMode === 'search' && _scSongSearchText)
@@ -9249,23 +9386,43 @@
       return;
     }
 
-    // APP-41: Poetry type picker sub-step (between format and roast)
+    // APP-47: Theme sub-step — commit theme (or skip), advance to tone step (step 1)
+    if (_scThemeSubStep) {
+      // Commit freetext value if user typed without picking a chip
+      var themeInputEl = document.getElementById('scThemeInput');
+      if (themeInputEl && themeInputEl.value.trim() && _scThemeMode !== 'chip') {
+        _scTheme     = themeInputEl.value.trim();
+        _scThemeMode = 'freetext';
+      }
+      // Empty input or Skip → null theme
+      if (!_scTheme) { _scTheme = null; _scThemeMode = null; }
+      _scThemeSubStep = false;
+      _scStep         = 1;  // advance to roast/tone step
+      _scRender();
+      return;
+    }
+
+    // APP-41: Poetry type picker sub-step (between format and theme)
     if (_scPoetrySubStep) {
       _scPoetryType    = _scSelected;
       _scPoetrySubStep = false;
-      _scStep          = 1;  // advance to roast/tone step
+      // APP-47: after poetry type → show theme step
+      _scThemeSubStep  = true;
+      _scStep          = 0;  // keep step 0 (substep handles it)
       _scRender();
       return;
     }
 
     if      (_scStep === 0) {
       _scFormat = _scSelected;
-      // mywords skips the roast step — jump straight to scope
+      // mywords skips the roast step and theme step — jump straight to scope
       if (_scFormat === 'mywords') { _scStep = 2; _scRender(); return; }
-      // song: show song style sub-step; song skips the roast/tone step entirely
+      // song: show song style sub-step; song skips the theme + roast/tone step entirely
       if (_scFormat === 'song') { _scSongSubStep = true; _scRender(); return; }
-      // poetry: show poem type picker sub-step before roast
+      // poetry: show poem type picker sub-step before theme
       if (_scFormat === 'poetry') { _scPoetrySubStep = true; _scRender(); return; }
+      // all other formats: show theme step after format selection
+      _scThemeSubStep = true; _scRender(); return;
     }
     else if (_scStep === 1) {
       if (_scRoastSubStep === 'options') {
@@ -9303,6 +9460,7 @@
         _scStoryPendingComedyIntensity = _scComedyIntensity;
         _scStoryPendingPoetryType      = _scPoetryType;
         _scStoryPendingSongStyle       = _scSongStyle;
+        _scStoryPendingTheme           = _scTheme;   // APP-47
         _scStorySelectLimit   = (_scScope === 'single') ? 1 : 0;
         _scStorySelected      = [];
         _scStorySelectMode    = true;
@@ -9314,20 +9472,20 @@
       if (_scScope === 'chapter') { _scStep = 3; _scRender(); return; }
       // Song: skip length step — song structure determines length
       if (isSong) {
-        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle, _scSongLength);
+        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle, _scSongLength, null);
         return;
       }
       // Poetry: skip length step — poem type determines length
       if (isPoetry) {
-        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType);
+        generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType, null, null, _scTheme);
         return;
       }
     }
     else if (isChapterPicker) {
       // Chapter picker confirmed — poetry skips length step; others advance to step 4
-      if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity); return; }
-      if (isSong)    { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle, _scSongLength); return; }
-      if (isPoetry)  { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType); return; }
+      if (isMywords) { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, null, null, null); return; }
+      if (isSong)    { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, _scSongStyle, _scSongLength, null); return; }
+      if (isPoetry)  { generateStory(_scFormat, _scScope, null, null, _scFunny, _scComedyStyle, _scComedyIntensity, _scPoetryType, null, null, _scTheme); return; }
       _scStep = 4; _scRender(); return;
     }
     else if (_scStep === 4 || (_scStep === 3 && _scScope !== 'chapter')) {
@@ -9335,7 +9493,7 @@
       // or step 4 after chapter picker. Either way, capture the length and generate.
       _scLength = _scSelected;
       var length = isMywords ? null : _scLength;
-      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity);
+      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, null, null, _scTheme);
       return;
     }
 
@@ -9347,7 +9505,7 @@
       _scRender();
     } else {
       var length = isMywords ? null : _scLength;
-      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity);
+      generateStory(_scFormat, _scScope, length, null, _scFunny, _scComedyStyle, _scComedyIntensity, null, null, null, _scTheme);
     }
   }
 
@@ -9383,8 +9541,8 @@
     } catch(e) { dbgWarn('UX-M06','Could not load story_generated_once flag'); }
   }
 
-  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63; comedy options v4.64; new formats + comedy upgrade v4.65; tone system v4.66) ──
-  // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?, comedyStyle?, comedyIntensity?)
+  // ── generateStory (APP-STORY-01 Sub-sprint C2, v4.58; roast rework v4.63; comedy options v4.64; new formats + comedy upgrade v4.65; tone system v4.66; theme lens APP-47 v5.10-v5.11) ──
+  // Signature: generateStory(format, scope, length, selectedTimestamps?, funny?, comedyStyle?, comedyIntensity?, poetryType?, songStyle?, songLength?, theme?)
   //   format             : 'prose'|'letter'|'newspaper'|'interview'|'poetry'|'mywords'
   //   scope              : 'all'|'chapter'|'selected'|'single'
   //   length             : 'snapshot'|'short'|'standard'|'book'|null (mywords/poetry)
@@ -9395,8 +9553,9 @@
   //   comedyIntensity    : 'gentle'|'medium'|'full' — only when funny=true
   //   poetryType         : 'freeverse'|'rhyming'|'haiku'|'nursery'|'sonnet'|'ode'|'ballad' — only when format=poetry
   //   songStyle          : 'pop_ballad'|'country'|'folk'|... — only when format=song (APP-40)
+  //   theme              : string|null — optional theme lens (APP-47); proxy injects into prompt in v5.11
 
-  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity, poetryType, songStyle, songLength) {
+  async function generateStory(format, scope, length, selectedTimestamps, funny, comedyStyle, comedyIntensity, poetryType, songStyle, songLength, theme) {
     if (!currentUser) return toast('Please sign in first');
     var allRealEntries = entries.filter(e => !e.category.startsWith('_profile'));
     if (!allRealEntries.length) return toast('Add some entries first!');
@@ -9589,6 +9748,7 @@
         poetryType:      iPoetryType,
         songStyle:       iSongStyle,
         songLength:      iSongLength,
+        theme:           (theme && format !== 'mywords') ? String(theme).slice(0, 100) : null,  // APP-47
         profileContext,
         entriesText,
         chapterText,
@@ -9611,7 +9771,7 @@
         }));
       }
 
-      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, poetryType: iPoetryType, songStyle: iSongStyle, songLength: iSongLength, funnyCaptions, photoEntries };
+      currentStory = { text: story, mode: length || format, funny: isFunny, comedyStyle: iComedyStyle, comedyIntensity: iComedyIntensity, poetryType: iPoetryType, songStyle: iSongStyle, songLength: iSongLength, funnyCaptions, photoEntries, theme: (theme && format !== 'mywords') ? theme : null };  // APP-47c: theme stored
 
       // APP-45-P3: auto-save removed (was broken). User saves explicitly via "Save to Library" button.
       // APP-42-P4: bookDetailsSection now lives in Book tab — no longer shown here
@@ -9820,6 +9980,7 @@
       format:     currentStory.mode,
       songStyle:  currentStory.songStyle,
       poetryType: currentStory.poetryType,
+      theme:      currentStory.theme || null,  // APP-47c
     };
     var autoTitle = _autoStoryTitle(meta, dateStr);
     var inp = document.getElementById('saveToLibTitleInput');
@@ -9853,6 +10014,7 @@
       comedyStyle:     currentStory.comedyStyle,
       comedyIntensity: currentStory.comedyIntensity,
       wordCount:       currentStory.text.split(/\s+/).filter(Boolean).length,
+      theme:           currentStory.theme || null,  // APP-47c
     };
 
     var savedId = await saveStoryComponent(currentStory.text, meta, userTitle);
@@ -10000,7 +10162,13 @@
       card.appendChild(prevEl);
     }
 
-    // Action buttons
+    // APP-47c: Theme tag (shown only when theme is set in metadata)
+    if (meta.theme) {
+      var themeTag = document.createElement('div');
+      themeTag.style.cssText = 'display:inline-block;font-size:0.7rem;color:var(--gold-dark);background:rgba(var(--gold-rgb,180,140,60),0.1);border:1px solid rgba(var(--gold-rgb,180,140,60),0.25);border-radius:20px;padding:2px 9px;margin-bottom:8px;font-weight:600';
+      themeTag.textContent = '🎭 ' + meta.theme;
+      card.appendChild(themeTag);
+    }
     var actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
 
@@ -11118,7 +11286,8 @@
   function _abCleanForTts(text) {
     return text
       .replace(/<[^>]+>/g, ' ')           // strip HTML tags
-      .replace(/^##\s*(VERSE\s*\d*|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
+      .replace(/^##\s*(VERSE\s*\d*|PRE.?CHORUS|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
+      .replace(/^\[(VERSE\s*\d*|PRE.?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\]]*\]\s*$/gim, '') // also strip [Verse 1] bracket format
       .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings
       .replace(/\*\*(.*?)\*\*/g, '$1')    // **bold** -> bold
       .replace(/\*(.*?)\*/g, '$1')        // *italic* -> italic
@@ -11206,6 +11375,11 @@
       if (piece.type === 'song') {
         announce = 'Next — a song' + (piece.title ? ' called ' + piece.title : '')
           + (piece.songStyle ? ', written in the style of ' + piece.songStyle.replace(/_/g, ' ') : '') + '.';
+      }
+      // APP-47c: append theme lens description to announcement
+      var pieceMeta = (piece.metadata || {});
+      if (pieceMeta.theme) {
+        announce += ' Theme lens: ' + pieceMeta.theme + '.';
       }
       await _abSpeak(announce);
       if (_abPlayer.stopFlag) break;
@@ -11467,7 +11641,7 @@
             dbg('MUSIC', '✓ decodeAudioData success duration=' + decoded.duration.toFixed(1) + 's stopFlag=' + _abPlayer.stopFlag);
             if (_abPlayer.stopFlag || _abPlayer.musicMuted) return;
             var gainNode = bgCtx.createGain();
-            gainNode.gain.value = 0.22;
+            gainNode.gain.value = _AB_VOL_FULL;
             var bgSource = bgCtx.createBufferSource();
             bgSource.buffer = decoded;
             bgSource.loop   = true;
@@ -11542,8 +11716,8 @@
   // ── End APP-46 Phase 3a music helpers ────────────────────────────────────
   // ── APP-46 Phase 3b: Volume ducking / swelling ──────────────────────────
 
-  var _AB_VOL_FULL  = 0.22;   // normal background volume
-  var _AB_VOL_DUCK  = 0.04;   // volume while Gethro is speaking
+  var _AB_VOL_FULL  = 0.15;   // background volume when Gethro is not speaking
+  var _AB_VOL_DUCK  = 0.05;   // background volume while Gethro is speaking
   var _AB_RAMP_MS   = 30;     // interval tick (ms)
 
   // Ramp bgAudio volume toward `target` over `durationMs` ms.
@@ -14157,6 +14331,7 @@
     var poetryType    = _scStoryPendingPoetryType;
     var songStyle     = _scStoryPendingSongStyle;
     var songLength    = _scSongLength; // current song length selection carries through
+    var theme         = _scStoryPendingTheme;  // APP-47
 
     // Poetry/Song skips length — null length is correct; no length configurator needed
     // (length was already null when pending vars were set for poetry)
@@ -14168,7 +14343,7 @@
     _scStorySelectMode = false;   // prevent showPanel from double-hiding
     showPanel('story', null, 3);
 
-    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt, poetryType, songStyle, songLength);
+    await generateStory(fmt, scope, length, selectedTs, funny, comedyStyle, comedyInt, poetryType, songStyle, songLength, theme);
   }
 
   // ── UX-M10: Select mode for manual merge ─────────────────────────
