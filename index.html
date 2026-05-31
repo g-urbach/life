@@ -4357,8 +4357,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.06';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix music CSP (add archive.org to connect-src in _headers). Fix preview_unsaved bg_music_url persist error (skip DB update for non-UUID piece ids).';
+  const APP_VERSION  = 'v5.07';
+  const DEPLOY_NOTES = APP_VERSION + ' — Music now served from Supabase Storage bg-music bucket (country, folk, hiphop, jazz, piano, pop, rock, soul). No more third-party dependencies. Genre mapping updated to match available files. PROXY DEPLOY REQUIRED: GETHRO_PROXY_v5_07.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -11335,17 +11335,20 @@
 
   // ── APP-46 Phase 3a: Background music (flat volume) ─────────────────────
 
-  // Maps a piece to a Pixabay music category string.
-  // Handles both genre slugs (from mood card) and freetext (from song/artist search input).
+  // Maps a piece to a bg-music genre string matching our Supabase Storage files.
+  // Available: country, folk, hiphop, jazz, classical (piano), pop, rock, soul
   function _abMusicGenreFor(piece) {
-    // Genre slug map (mood card selections)
+    // Genre slug → available file mapping
     var slugMap = {
-      // Valid Pixabay Music API categories: beats, classical, country, electronic, folk, jazz, pop, rnb, reggae, rock
-      pop_ballad: 'pop', country: 'country', folk: 'folk', classical: 'classical',
-      jazz: 'jazz', blues: 'jazz', rock: 'rock', punk: 'rock',
-      hiphop: 'beats', reggae: 'reggae', bossa_nova: 'jazz',
-      musical_theatre: 'classical', celtic: 'folk', rnb: 'rnb',
-      piano_ballad: 'classical', motown: 'rnb', bluegrass: 'country'
+      pop_ballad: 'pop',     country: 'country',  folk: 'folk',
+      classical: 'classical', jazz: 'jazz',        blues: 'jazz',
+      rock: 'rock',           punk: 'rock',        metal: 'rock',
+      hiphop: 'hiphop',       hip_hop: 'hiphop',   rap: 'hiphop',
+      beats: 'hiphop',        lofi: 'hiphop',      bossa_nova: 'jazz',
+      swing: 'jazz',          musical_theatre: 'classical', celtic: 'folk',
+      rnb: 'soul',            soul: 'soul',        motown: 'soul',
+      piano_ballad: 'classical', bluegrass: 'country', reggae: 'pop',
+      electronic: 'hiphop',   ambient: 'classical', cinematic: 'classical'
     };
     // Artist/song keyword to genre map for common freetext references.
     // Covers the most likely inputs — anything unmatched falls back to 'pop'.
@@ -11370,8 +11373,8 @@
       }
       return 'pop';
     }
-    var typeMap = { poem: 'electronic', poetry: 'electronic', letter: 'electronic', interview: 'pop' };
-    return (piece && typeMap[piece.type]) || 'electronic'; // 'ambient'/'upbeat' not valid Pixabay music categories
+    var typeMap = { poem: 'classical', poetry: 'classical', letter: 'classical', interview: 'pop', prose: 'pop' };
+    return (piece && typeMap[piece.type]) || 'pop';
   }
 
   // Fetch a CC0 track from Pixabay and play it at low volume.
