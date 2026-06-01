@@ -4367,8 +4367,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.14';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-48 COMPLETE (sprints 12a–12c). PROXY: handleThemeCurate() added to GETHRO_PROXY_v5_14.ts — expensive tier, max 30 pieces, returns ranked [{id,reason}]. CLIENT: _a48Open/Close/Render/FindPieces/AddToBook(). "✨ Assemble a themed chapter" button in Book Builder (≥2 pieces). Modal: step 0 theme picker (APP-47 chips reused), step 1 ranked results with ✕ exclude, step 2 confirm + add flat to book list. Chapter intro cut from scope. No new DB tables.';
+  const APP_VERSION  = 'v5.15';
+  const DEPLOY_NOTES = APP_VERSION + ' — TTS fix: _abCleanForTts() catch-all added for bare VERSE/CHORUS/BRIDGE lines left after ## heading strip (regression where TTS spoke section labels). Song wizard now includes theme step: hasThemeStep no longer excludes song, _scSongSubStep routes through _scThemeSubStep before scope, back-nav updated, step dot labels updated. Pixabay fallback genre changed from ambient (invalid music API category) to pop. 3 stale deployer tests fixed. 15 new deployer tests added (APP-47e, APP-47 song theme, APP-47 TTS catch-all, APP-48).';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8874,18 +8874,18 @@
     // When roast chosen, comedy sub-step makes it 5 total (for AI non-mywords non-poetry)
     var isRoastFlow     = (_scFunny === true || isRoastOptions);
     // APP-47: theme step inserted after format/substep, before roast — not for mywords or song
-    var hasThemeStep    = !isMywords && !isSong;
+    var hasThemeStep    = !isMywords;
     // Poetry: 3 steps (format→type→scope); roast poetry: 4 (format→type→tone→scope)
-    // Song: always 3 steps (format→song-style→scope) — no roast/tone step
-    // With theme: adds 1 to non-mywords non-song totals
-    var totalDisplay    = isMywords ? 2 : isSong ? 3 : (isPoetry ? (isRoastFlow ? 5 : 4) : (isRoastFlow ? 5 : 5));
+    // Song: always 3 steps (format→song-style→scope) — length step skipped when isPoetry || isSong
+    // With theme: adds 1 to non-mywords totals (all formats including song)
+    var totalDisplay    = isMywords ? 2 : isSong ? 4 : (isPoetry ? (isRoastFlow ? 6 : 5) : (isRoastFlow ? 6 : 6));
 
     // Map real step to display dot index (0-based) and label
     var displayDot, meta;
     var n = totalDisplay; // shorthand
     if      (_scSongSubStep)     { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Song style', question: 'What style of song would you like?' }; }
     else if (_scPoetrySubStep)   { displayDot = 1; meta = { label: 'Step 2 of ' + n + ' — Poem type', question: 'What kind of poem would you like?' }; }
-    else if (_scThemeSubStep)    { displayDot = isPoetry ? 2 : 1; meta = { label: 'Step ' + (isPoetry ? 3 : 2) + ' of ' + n + ' — Theme', question: 'Apply a theme lens? (optional)' }; }
+    else if (_scThemeSubStep)    { displayDot = isSong ? 2 : isPoetry ? 2 : 1; meta = { label: 'Step ' + (isSong ? 3 : isPoetry ? 3 : 2) + ' of ' + n + ' — Theme', question: 'Apply a theme lens? (optional)' }; }
     else if (_scStep === 0)      { displayDot = 0; meta = { label: 'Step 1 of ' + n + ' — Format',   question: 'What style of writing would you like?' }; }
     else if (_scStep === 1 && !isRoastOptions) { displayDot = isPoetry ? 3 : 2; meta = { label: 'Step ' + (isPoetry ? 4 : 3) + ' of ' + n + ' — Tone', question: 'Should Gethro play it straight — or have a little fun?' }; }
     else if (_scStep === 1 && isRoastOptions)  { displayDot = isPoetry ? 4 : 3; meta = { label: 'Step ' + (isPoetry ? 5 : 4) + ' of ' + n + ' — Style', question: 'What flavour of chaos would you like? Gethro\'s going full send.' }; }
@@ -9400,12 +9400,14 @@
       _scFormat = null;
       _scStep = 0;
     } else if (_scThemeSubStep) {
-      // APP-47: Back from theme step → back to format (or poetry-type substep for poetry)
+      // APP-47: Back from theme step → back to song-style (song) or poetry-type (poetry) or format (others)
       _scThemeSubStep      = false;
       _scTheme             = null;
       _scThemeMode         = null;
       _scThemeSuggestions  = null;  // APP-47e: reset so suggestions re-fetch if user returns
-      if (_scFormat === 'poetry') {
+      if (_scFormat === 'song') {
+        _scSongSubStep = true; _scStep = 0;
+      } else if (_scFormat === 'poetry') {
         _scPoetrySubStep = true; _scStep = 0;
       } else {
         _scFormat = null; _scStep = 0;
@@ -9424,10 +9426,10 @@
       // mywords skips roast step — back from scope goes to format
       _scStep = 0;
     } else if (_scStep === 2 && _scFormat === 'song') {
-      // Song: back from memories → back to song style sub-step
-      _scSongSubStep = true; _scStep = 0;
+      // Song: back from scope → back to theme step (song now has theme)
+      _scThemeSubStep = true; _scStep = 0;
     } else if (_scStep === 2 && (_scFormat === 'poetry' || _scFormat)) {
-      // APP-47: back from memories → back to theme step (for all non-song non-mywords formats)
+      // APP-47: back from memories → back to theme step (for all non-mywords formats)
       _scThemeSubStep = true; _scStep = 0;
     } else if (_scStep > 0) {
       _scStep--;
@@ -9441,19 +9443,20 @@
     var isSong          = (_scFormat === 'song');
     var isChapterPicker = (_scStep === 3 && _scScope === 'chapter');
 
-    // APP-40-V2: Song style sub-step — commit style and skip to scope (no roast/tone step, no theme step)
+    // APP-40-V2: Song style sub-step — commit style then show theme step (APP-47 now applies to song too)
     if (_scSongSubStep) {
       // Resolve final songStyle from whichever mode was used
       _scSongStyle   = (_scSongStyleMode === 'search' && _scSongSearchText)
         ? _scSongSearchText
         : (_scSongStyle || '');
-      _scSongSubStep = false;
-      _scStep        = 2;   // jump straight to scope — song skips the roast/tone step
+      _scSongSubStep  = false;
+      _scThemeSubStep = true;   // songs now go through theme step before scope
+      _scStep         = 0;
       _scRender();
       return;
     }
 
-    // APP-47: Theme sub-step — commit theme (or skip), advance to tone step (step 1)
+    // APP-47: Theme sub-step — commit theme (or skip), advance to next step
     if (_scThemeSubStep) {
       // Commit freetext value if user typed without picking a chip
       var themeInputEl = document.getElementById('scThemeInput');
@@ -9464,7 +9467,9 @@
       // Empty input or Skip → null theme
       if (!_scTheme) { _scTheme = null; _scThemeMode = null; }
       _scThemeSubStep = false;
-      _scStep         = 1;  // advance to roast/tone step
+      // Song skips roast/tone step — jump straight to scope
+      if ((_scFormat === 'song')) { _scStep = 2; _scRender(); return; }
+      _scStep = 1;  // all other formats advance to roast/tone step
       _scRender();
       return;
     }
@@ -11664,7 +11669,10 @@
       .replace(/<[^>]+>/g, ' ')           // strip HTML tags
       .replace(/^##\s*(VERSE\s*\d*|PRE.?CHORUS|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
       .replace(/^\[(VERSE\s*\d*|PRE.?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\]]*\]\s*$/gim, '') // also strip [Verse 1] bracket format
-      .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings
+      .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings (removes ## prefix, leaves text)
+      // Catch-all: bare section keyword left on its own line after ## was stripped above
+      // e.g. "VERSE 1" or "CHORUS" or "PRE-CHORUS" sitting alone — TTS must not read these
+      .replace(/^(VERSE\s*\d*|PRE-?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)\s*\d*\s*$/gim, '')
       .replace(/\*\*(.*?)\*\*/g, '$1')    // **bold** -> bold
       .replace(/\*(.*?)\*/g, '$1')        // *italic* -> italic
       .replace(/__(.*?)__/g, '$1')        // __bold__ -> bold
@@ -11948,7 +11956,7 @@
         var proxyResp = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + (sessionToken || SUPABASE_ANON) },
-          body: JSON.stringify({ action: 'music_proxy', genre: genre || 'ambient' })
+          body: JSON.stringify({ action: 'music_proxy', genre: genre || 'pop' })
         });
         dbg('MUSIC', '← music_proxy response status=' + proxyResp.status + ' ok=' + proxyResp.ok);
         if (!proxyResp.ok) {
