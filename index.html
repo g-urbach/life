@@ -24,11 +24,31 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js"
           integrity="sha384-4eCDoMN/7A46qQ5Tj0rZ/D2VEolFGNIINDTLAcWZcvhkRSsvTfqNfaBMlRRoGEZ5"
           crossorigin="anonymous"></script>
-  <!-- Fallback CDN if jsDelivr fails (e.g. Chrome on iOS network issues) -->
+  <!-- SEC-18 / SEC-BUG-01: Fallback CDN if jsDelivr fails.
+       MUST NOT use document.write — Chrome/Brave block cross-origin document.write scripts
+       on uncertain network conditions (Chromium subresource policy), causing supabase=undefined
+       and a blank login screen. Use dynamic createElement instead. The window.__supabaseReady
+       promise lets the INIT block wait for async load before proceeding. -->
   <script>
-    if (typeof supabase === 'undefined') {
-      document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js" crossorigin="anonymous"><\/script>');
-    }
+    (function() {
+      if (typeof supabase !== 'undefined') return; // primary CDN loaded fine
+      window.__supabaseReady = new Promise(function(resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'https://unpkg.com/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js';
+        s.crossOrigin = 'anonymous';
+        s.onload  = function() { resolve(); };
+        s.onerror = function() {
+          // Both CDNs failed — try one more (cdnjs mirror)
+          var s2 = document.createElement('script');
+          s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.105.4/umd/supabase.min.js';
+          s2.crossOrigin = 'anonymous';
+          s2.onload  = function() { resolve(); };
+          s2.onerror = function() { reject(new Error('All Supabase CDNs failed')); };
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s);
+      });
+    })();
   </script>
   <!-- jsPDF for PDF generation -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
@@ -4367,8 +4387,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.15';
-  const DEPLOY_NOTES = APP_VERSION + ' — TTS fix: _abCleanForTts() catch-all added for bare VERSE/CHORUS/BRIDGE lines left after ## heading strip (regression where TTS spoke section labels). Song wizard now includes theme step: hasThemeStep no longer excludes song, _scSongSubStep routes through _scThemeSubStep before scope, back-nav updated, step dot labels updated. Pixabay fallback genre changed from ambient (invalid music API category) to pop. 3 stale deployer tests fixed. 15 new deployer tests added (APP-47e, APP-47 song theme, APP-47 TTS catch-all, APP-48).';
+  const APP_VERSION  = 'v5.16';
+  const DEPLOY_NOTES = APP_VERSION + ' — SEC-BUG-01: Fixed Supabase CDN fallback. document.write cross-origin script was blocked by Chrome/Brave on uncertain network connections (Chromium subresource policy), causing supabase=undefined and blank login screen. Replaced with dynamic createElement injection + window.__supabaseReady Promise. INIT awaits the promise. Triple-CDN chain: jsDelivr → unpkg → cdnjs. No functional changes.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5684,18 +5704,29 @@
     if (lbl) lbl.textContent = APP_VERSION;
     initTheme();
 
-    // Guard: if Supabase JS failed to load from both CDNs (e.g. Chrome on iOS network block),
-    // show a clear message rather than hanging silently on a blank screen.
+    // SEC-BUG-01: Primary CDN (jsDelivr) may be blocked on certain browsers/networks.
+    // The fallback script block above injects a dynamic <script> and sets window.__supabaseReady.
+    // Wait for it here so we never hit "supabase is undefined" due to a race or CDN block.
     if (typeof supabase === 'undefined') {
-      document.getElementById('landingScreen').style.display = 'block';
-      document.getElementById('appShell').style.display = 'none';
-      var errEl = document.getElementById('landingAuthError');
-      if (errEl) {
-        errEl.textContent = 'Could not load the app — please check your internet connection and reload the page. If using Chrome on iPad, try opening in Safari instead.';
-        errEl.style.display = 'block';
+      if (window.__supabaseReady) {
+        try {
+          await window.__supabaseReady;
+        } catch (e) {
+          document.getElementById('landingScreen').style.display = 'block';
+          document.getElementById('appShell').style.display = 'none';
+          var errEl = document.getElementById('landingAuthError');
+          if (errEl) { errEl.textContent = 'Could not load the app — please check your internet connection and reload the page.'; errEl.style.display = 'block'; }
+          dbgErr('INIT', 'supabase CDN load failed — all fallbacks exhausted: ' + (e && e.message));
+          return;
+        }
+      } else {
+        document.getElementById('landingScreen').style.display = 'block';
+        document.getElementById('appShell').style.display = 'none';
+        var errEl2 = document.getElementById('landingAuthError');
+        if (errEl2) { errEl2.textContent = 'Could not load the app — please check your internet connection and reload the page.'; errEl2.style.display = 'block'; }
+        dbgErr('INIT', 'supabase is undefined — CDN load failed, no fallback promise');
+        return;
       }
-      dbgErr('INIT', 'supabase is undefined — CDN load failed');
-      return;
     }
 
     // Detect return from Peecho after successful order
