@@ -1208,15 +1208,15 @@
       max-width: 480px; width: 100%; text-align: center;
     }
     .ob-eyebrow {
-      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.14em;
-      text-transform: uppercase; color: var(--gold); margin-bottom: 20px; opacity: 0.8;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 20px; opacity: 1;
     }
     .ob-title {
       font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
       font-size: 1.75rem; font-weight: 600; line-height: 1.25;
       color: #f0e8d8; margin-bottom: 12px;
     }
-    .ob-sub { font-size: 0.95rem; color: rgba(240,232,216,0.65); line-height: 1.7; margin-bottom: 0; font-family: 'Lato', Arial, sans-serif; }
+    .ob-sub { font-size: 0.95rem; color: rgba(240,232,216,0.85); line-height: 1.7; margin-bottom: 0; font-family: 'Lato', Arial, sans-serif; }
     .ob-name-input {
       width: 100%; padding: 16px 18px;
       border: 2px solid rgba(201,169,110,0.4); border-radius: 12px;
@@ -1263,7 +1263,7 @@
     .ob-dot.active { background: var(--gold); transform: scale(1.4); }
     .ob-skip {
       display: block; margin: 14px auto 0; background: none; border: none;
-      color: rgba(201,169,110,0.5); font-family: 'Lato', sans-serif; font-size: 0.82rem;
+      color: rgba(201,169,110,0.75); font-family: 'Lato', sans-serif; font-size: 0.85rem;
       cursor: pointer; letter-spacing: 0.04em; transition: color 0.2s; padding: 4px 8px;
     }
     .ob-skip:hover { color: var(--gold); }
@@ -1273,9 +1273,9 @@
     .ob-goal-card {
       display: flex; flex-direction: column; align-items: center; gap: 6px;
       padding: 14px 10px; background: rgba(201,169,110,0.08); border: 1px solid rgba(201,169,110,0.2);
-      border-radius: 12px; font-family: 'Lato', sans-serif; font-size: 0.78rem; color: var(--text);
+      border-radius: 12px; font-family: 'Lato', sans-serif; font-size: 0.92rem; color: #f0e8d8;
       cursor: pointer; transition: background 0.2s, border-color 0.2s; text-align: center;
-      line-height: 1.3;
+      line-height: 1.3; font-weight: 600;
     }
     .ob-goal-card span { display: block; }
     .ob-goal-card:hover { background: rgba(201,169,110,0.16); border-color: var(--gold); }
@@ -1285,7 +1285,7 @@
     }
     .ob-how-list li {
       padding: 10px 0; border-bottom: 1px solid rgba(201,169,110,0.1);
-      font-size: 0.88rem; color: var(--text); line-height: 1.5;
+      font-size: 0.95rem; color: #f0e8d8; line-height: 1.5;
     }
     .ob-how-list li:last-child { border-bottom: none; }
     @media (max-width: 480px) {
@@ -4389,8 +4389,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.19';
-  const DEPLOY_NOTES = APP_VERSION + ' — Backlog-only: Anthropic API direct chosen as premium AI provider (replaces earlier Venice consideration — see SUB-P01/P02/P03). APP-49 prompt system/user split, APP-50 theme string cleanup, APP-51 style examples lookup table documented. AI quality strategy fully documented. PRODUCT DECISIONS, tier definitions, SUB-31 privacy copy, and APP-14-AI updated. Change format button renamed Back.';
+  const APP_VERSION  = 'v5.21';
+  const DEPLOY_NOTES = APP_VERSION + ' — UX-M07 done (icon-192.png generated, both PWA icons in repo). UX-M11 done (SHARE_PROXY v3.67 already returned expiresAt — fully live). APP-02 all 5 items done (lazy photo, revoke count warning, setTabBadge helper). Onboarding readability: goal cards 0.78→0.92rem+bold, how-list 0.88→0.95rem, sub/skip/eyebrow contrast lifted. Double Gethro on first save fixed via _gethroNudgeFired flag.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -4791,7 +4791,7 @@
       if (photoList.length) {
         photosEl.innerHTML = photoList.map(function(p) {
           return '<div style="margin-bottom:12px">' +
-            '<img src="' + escHtml(p.signedUrl) + '" alt="photo" style="width:100%;border-radius:8px;display:block;max-height:320px;object-fit:cover">' +
+            '<img src="' + escHtml(p.signedUrl) + '" alt="photo" loading="lazy" style="width:100%;border-radius:8px;display:block;max-height:320px;object-fit:cover">' +
             (p.caption ? '<p style="font-size:0.8rem;color:var(--text-light);margin-top:5px;font-style:italic">' + escHtml(p.caption) + '</p>' : '') +
           '</div>';
         }).join('');
@@ -5343,6 +5343,13 @@
     }
   }
 
+  // APP-02(5): generic tab badge helper — show/hide a dot on any tab icon
+  // Usage: setTabBadge('dashResponsesBadge', true/false)
+  function setTabBadge(badgeId, visible) {
+    var b = document.getElementById(badgeId);
+    if (b) b.style.display = visible ? 'inline-block' : 'none';
+  }
+
   function copyShareLink(token) {
     var link = 'https://lifetold.app/?share=' + token;
     try {
@@ -5353,7 +5360,24 @@
   }
 
   async function revokeShareLink(tokenId, entryId) {
-    if (!confirm('Remove this link? Anyone with it will no longer be able to view the memory.')) return;
+    // APP-02(3): count unimported responses before confirming, so user knows what will be lost
+    var responseCount = 0;
+    try {
+      var countRes = await fetch(
+        DB_SHARE_FEEDBACK_URL + '?share_token_id=eq.' + tokenId + '&imported=eq.false&select=id',
+        { headers: getAuthHeaders() }
+      );
+      if (countRes.ok) {
+        var countData = await countRes.json();
+        responseCount = countData.length;
+      }
+    } catch(e) { /* non-fatal — proceed with generic warning */ }
+
+    var msg = responseCount > 0
+      ? 'Remove this link? ' + responseCount + ' unimported response' + (responseCount === 1 ? '' : 's') + ' will also be deleted. This cannot be undone.'
+      : 'Remove this link? Anyone with it will no longer be able to view the memory.';
+    if (!confirm(msg)) return;
+
     try {
       var res = await fetch(DB_SHARE_TOKENS_URL + '?id=eq.' + tokenId, {
         method: 'DELETE',
@@ -5425,16 +5449,14 @@
       if (!feedback.length) {
         tile.style.display = 'none';
         _agpPendingResponseCount = 0;
-        var badge = document.getElementById('dashResponsesBadge');
-        if (badge) badge.style.display = 'none';
+        setTabBadge('dashResponsesBadge', false);
         return;
       }
 
       tile.style.display = 'block';
       _agpPendingResponseCount = feedback.length;
       // Show red dot on Dashboard nav tab
-      var badge = document.getElementById('dashResponsesBadge');
-      if (badge) badge.style.display = 'inline-block';
+      setTabBadge('dashResponsesBadge', true);
       countEl.textContent = feedback.length + (feedback.length === 1 ? ' new response' : ' new responses');
 
       // Look up entry titles for context
@@ -5607,7 +5629,7 @@
       if (remaining && !remaining.children.length) {
         document.getElementById('dashResponsesTile').style.display = 'none';
         _agpPendingResponseCount = 0;
-        var b = document.getElementById('dashResponsesBadge'); if (b) b.style.display = 'none';
+        setTabBadge('dashResponsesBadge', false);
       } else {
         var countEl = document.getElementById('dashResponsesCount');
         if (countEl && remaining) {
@@ -5642,7 +5664,7 @@
       if (remaining && !remaining.children.length) {
         document.getElementById('dashResponsesTile').style.display = 'none';
         _agpPendingResponseCount = 0;
-        var b = document.getElementById('dashResponsesBadge'); if (b) b.style.display = 'none';
+        setTabBadge('dashResponsesBadge', false);
       } else {
         var countEl = document.getElementById('dashResponsesCount');
         if (countEl && remaining) {
@@ -13943,12 +13965,22 @@
       body: JSON.stringify({ user_id: currentUser.id, key: 'milestones_shown', value: JSON.stringify(Array.from(_milestoneCache)), updated_at: now })
     }).catch(function(){});
 
-    // Show Gethro message after a short delay (let save toast clear first)
+    // Show Gethro message after a short delay (let save toast clear first).
+    // If featCheckNudge already opened Gethro (saves===1), append into that same panel
+    // rather than calling openAskGethro() again — avoids two simultaneous messages.
     setTimeout(function() {
-      openAskGethro(true);
-      _agpAppendGethro(pick.msg, null);
-      _gethroHistory.push({ role: 'assistant', content: pick.msg });
-      gethroSpeak(pick.msg).catch(function(){});
+      if (_gethroNudgeFired && pick.key === 'first_entry') {
+        // Panel already opening via featCheckNudge — just append after its message settles
+        setTimeout(function() {
+          _agpAppendGethro(pick.msg, null);
+          _gethroHistory.push({ role: 'assistant', content: pick.msg });
+        }, 1200); // let the nudge message finish speaking first
+      } else {
+        openAskGethro(true);
+        _agpAppendGethro(pick.msg, null);
+        _gethroHistory.push({ role: 'assistant', content: pick.msg });
+        gethroSpeak(pick.msg).catch(function(){});
+      }
     }, 1500);
   }
 
@@ -18253,6 +18285,7 @@
 
     if (saves === 1 && interviews === 0) {
       // First ever save, never chatted with Gethro — introduce the interview feature
+      _gethroNudgeFired = true; // prevent checkMilestones from also opening Gethro for first_entry
       setTimeout(function() {
         var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var msg = firstName
@@ -18287,6 +18320,7 @@
   // Started on first message, updated on each exchange, closed on panel close.
   // Linked to a memory entry when seeded from the Memories tab.
   //
+  var _gethroNudgeFired = false; // set true when featCheckNudge fires; prevents milestone double-open
   var _currentConvoId   = null;  // uuid of the active conversation row
   var _convoEntryId     = null;  // entry_id when seeded from a memory (for linking)
   var _convoContext     = 'general'; // 'memory_entry' | 'general'
