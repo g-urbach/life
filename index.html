@@ -4738,7 +4738,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.27';
+  const APP_VERSION  = 'v5.28';
   const DEPLOY_NOTES = APP_VERSION + ' — Tour v2: 6 slides (Add Memory, Gethro, My Memories, My Story+destination, Dashboard, Let\'s go). Gethro slide explains memoir partnership role. My Memories slide added. Destination vision woven into My Story. Final slide navigates to Add Memory. Flash-between-slides bug fixed. Post-first-save Gethro seeds real follow-up from saved entry.';
 
   // ── Line number offset for debugging ────────────────────────────────
@@ -14445,17 +14445,14 @@
     // rather than calling openAskGethro() again — avoids two simultaneous messages.
     setTimeout(function() {
       if (_gethroNudgeFired && pick.key === 'first_entry') {
-        // Panel already opening via featCheckNudge — just append after its message settles
-        setTimeout(function() {
-          _agpAppendGethro(pick.msg, null);
-          _gethroHistory.push({ role: 'assistant', content: pick.msg });
-        }, 1200); // let the nudge message finish speaking first
-      } else {
-        openAskGethro(true);
-        _agpAppendGethro(pick.msg, null);
-        _gethroHistory.push({ role: 'assistant', content: pick.msg });
-        gethroSpeak(pick.msg).catch(function(){});
+        // featCheckNudge already opened Gethro with a seed question —
+        // suppress the milestone message entirely to avoid two back-to-back Gethro messages.
+        return;
       }
+      openAskGethro(true);
+      _agpAppendGethro(pick.msg, null);
+      _gethroHistory.push({ role: 'assistant', content: pick.msg });
+      gethroSpeak(pick.msg).catch(function(){});
     }, 1500);
   }
 
@@ -18779,8 +18776,14 @@
           _agpMemoryMode = false;
           _convoStart('memory_entry', latest.id || null);
           openAskGethro(true); // open panel immediately, skip generic greeting
+          // Show onboarding context first, then ask the follow-up question
           setTimeout(function() {
-            _agpSeedMemoryQuestion(firstName, seedText, seedTitle);
+            var introMsg = 'Just press me any time while you’re writing a memory and I’ll help you uncover more detail through our discussions. Let’s try it now —';
+            _agpAppendGethro(introMsg, null);
+            _gethroHistory.push({ role: 'assistant', content: introMsg });
+            gethroSpeak(introMsg).catch(function(){}).finally(function() {
+              _agpSeedMemoryQuestion(firstName, seedText, seedTitle);
+            });
           }, 200);
         } else {
           // Fallback: no entry found — show warm static message
@@ -19322,6 +19325,11 @@
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
     featTrackGethroOpen();
+    // Stop memory mic if running — two simultaneous SpeechRecognition instances
+    // fight each other and cause a rapid onend restart loop in the Gethro mic.
+    if (typeof memMicActive !== 'undefined' && memMicActive) {
+      if (typeof stopMemMic === 'function') stopMemMic();
+    }
     // Prime browser audio on the user gesture — required for iOS and Chrome desktop autoplay policy.
     _primeAudioContext();
     if (window.speechSynthesis) {
@@ -19393,6 +19401,12 @@
   function closeAskGethro() {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
+    // Restart memory mic if user is on the Memories tab and had it running
+    var onMemTab = !!(document.getElementById('panel-memories') &&
+                      document.getElementById('panel-memories').classList.contains('active'));
+    if (onMemTab && typeof memMicActive !== 'undefined' && !memMicActive) {
+      if (typeof startMemMic === 'function') setTimeout(startMemMic, 300);
+    }
     if (panel) panel.classList.remove('open');
     if (fab)   fab.classList.remove('panel-open');
     // Stop Gethro mic AND cancel any in-flight TTS audio immediately.
