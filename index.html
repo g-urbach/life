@@ -4738,7 +4738,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.25';
+  const APP_VERSION  = 'v5.26';
   const DEPLOY_NOTES = APP_VERSION + ' — Tour v2: 6 slides (Add Memory, Gethro, My Memories, My Story+destination, Dashboard, Let\'s go). Gethro slide explains memoir partnership role. My Memories slide added. Destination vision woven into My Story. Final slide navigates to Add Memory. Flash-between-slides bug fixed. Post-first-save Gethro seeds real follow-up from saved entry.';
 
   // ── Line number offset for debugging ────────────────────────────────
@@ -7169,6 +7169,13 @@
       rec.onerror = (e) => {
         if (e.error === 'aborted' || e.error === 'no-speech') return;
         dbgWarn('SPEECH', 'Error:', e.error);
+        if (e.error === 'network') {
+          // Edge/Chromium: speech service hiccup — stop cleanly, do NOT retry (causes browser crash)
+          dbgErr('MIC', 'ERROR onerror: network');
+          listeningActive = false; recActive = false; recognition = null;
+          toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
+          return;
+        }
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
           toast('Microphone permission denied');
         }
@@ -7738,6 +7745,12 @@
         // 'aborted' fires on programmatic stop — not an error; 'no-speech' is routine silence
         if (e.error === 'aborted' || e.error === 'no-speech') return;
         dbgErr('MIC', 'onerror:', e.error);
+        if (e.error === 'network') {
+          // Edge/Chromium: speech service hiccup — MUST stop and not retry or it crashes the browser
+          stopMemMic();
+          toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
+          return;
+        }
         if (e.error === 'not-allowed') {
           if (navigator.permissions) {
             navigator.permissions.query({ name: 'microphone' }).then(function(result) {
@@ -20198,6 +20211,13 @@
     rec.onerror = function(e) {
       if (e.error === 'aborted' || e.error === 'no-speech') return;
       dbgWarn('GETHRO_MIC', 'onerror:', e.error);
+      if (e.error === 'network') {
+        // Edge/Chromium: stop cleanly — retrying on network error crashes the browser
+        dbgErr('GETHRO_MIC', 'ERROR onerror: network — stopping mic');
+        _agpStopMic();
+        toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
+        return;
+      }
       if (_agpMicActive) setTimeout(function() {
         try { rec.start(); } catch(err) { dbgWarn('GETHRO_MIC', 'restart after error failed'); }
       }, 400);
