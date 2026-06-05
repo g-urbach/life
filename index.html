@@ -5033,8 +5033,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.38';
-  const DEPLOY_NOTES = APP_VERSION + ' — LANDING POLISH v5.38: (1) em shimmer dark box fixed — overflow:hidden on .landing-title em clips ::after correctly. (2) Headline clamp reined in: clamp(2.2rem,3.8vw,3.2rem). (3) Right panel alignment: align-items:start on .landing-inner. (4) Gethro avatar 40px→52px.';
+  const APP_VERSION  = 'v5.39';
+  const DEPLOY_NOTES = APP_VERSION + ' — PREMIUM UI REFRESH v5.39: Added refreshPremiumGates() — calls renderPremiumSettingsSection() + updates Settings button badge (✨ Settings when premium) + re-renders dashboard if active. _handleUpgradeSuccess now calls refreshPremiumGates() instead of renderPremiumSettingsSection() so all premium UI gates update on upgrade, not just the Settings overlay. openSettings also calls refreshPremiumGates() on tier load so badge stays in sync.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -22337,7 +22337,7 @@
     var el = document.getElementById('settingsOverlay');
     if (el) el.style.display = 'flex';
     renderEmailPrefsUI();
-    loadSubscriptionTier().then(renderPremiumSettingsSection); // SUB-05
+    loadSubscriptionTier().then(refreshPremiumGates); // SUB-05
   }
 
   async function saveSettingsName() {
@@ -22415,7 +22415,7 @@
       attempts++;
       await loadSubscriptionTier();
       if (isPremium() || attempts >= maxAttempts) {
-        renderPremiumSettingsSection();
+        refreshPremiumGates();
         var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var msg = firstName
           ? 'Welcome to Premium, ' + firstName + ' — Gethro is thrilled.'
@@ -22451,6 +22451,22 @@
     } catch(e) {
       toast('Could not open checkout — please try again');
       dbgWarn('SUB', 'startUpgradeCheckout error:', e.message);
+    }
+  }
+
+  // SUB-05: Refresh all premium-gated UI after tier change (upgrade or cancel).
+  // Call this instead of renderPremiumSettingsSection() whenever _subscriptionTier changes.
+  function refreshPremiumGates() {
+    // 1. Settings overlay premium section
+    renderPremiumSettingsSection();
+    // 2. Settings button badge in header
+    var settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) {
+      settingsBtn.textContent = isPremium() ? '✨ Settings' : '⚙️ Settings';
+    }
+    // 3. Dashboard tiles (some may show premium state / unlock callouts)
+    if (document.getElementById('panel-dashboard')?.classList.contains('active')) {
+      try { renderDashboard(); } catch(e) {}
     }
   }
 
