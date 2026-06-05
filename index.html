@@ -5033,8 +5033,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.40';
-  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: Fixed DOA syntax error (Unexpected identifier "manual") introduced in v5.39. Inline onclick on "Already a member? Tap to refresh" button contained single quotes inside a single-quoted JS string, breaking the parser. Extracted to named helper _subManualRefresh() — same behaviour, no quoting issue.';
+  const APP_VERSION  = 'v5.41';
+  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: loadSubscriptionTier() was correctly fetching premium from DB but catch block was resetting _subscriptionTier to free after a dbgLog (undefined fn) error. Fixed: replaced dbgLog with dbgWarn, removed _subscriptionTier=free from catch — a logging error must never wipe correctly-fetched subscription state.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -22404,11 +22404,11 @@
       console.log('[SUB] loadSubscriptionTier: raw data', JSON.stringify(data));
       _subscriptionTier = (data[0]?.value === 'premium') ? 'premium' : 'free';
       console.log('[SUB] loadSubscriptionTier: _subscriptionTier set to', _subscriptionTier);
-      dbgLog('SUB', 'subscription tier loaded:', _subscriptionTier);
+      dbgWarn('SUB', 'subscription tier loaded:', _subscriptionTier);
     } catch(e) {
       console.error('[SUB] loadSubscriptionTier error:', e.message);
-      dbgWarn('SUB', 'loadSubscriptionTier error:', e.message);
-      _subscriptionTier = 'free'; // safe default
+      // Do NOT reset _subscriptionTier here — if the fetch succeeded and set the value
+      // correctly, a secondary error (e.g. in logging) must not wipe out good data.
     }
   }
 
