@@ -5033,8 +5033,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.39';
-  const DEPLOY_NOTES = APP_VERSION + ' — PREMIUM UI REFRESH v5.39: Added refreshPremiumGates() — calls renderPremiumSettingsSection() + updates Settings button badge (✨ Settings when premium) + re-renders dashboard if active. _handleUpgradeSuccess now calls refreshPremiumGates() instead of renderPremiumSettingsSection() so all premium UI gates update on upgrade, not just the Settings overlay. openSettings also calls refreshPremiumGates() on tier load so badge stays in sync.';
+  const APP_VERSION  = 'v5.40';
+  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: Fixed DOA syntax error (Unexpected identifier "manual") introduced in v5.39. Inline onclick on "Already a member? Tap to refresh" button contained single quotes inside a single-quoted JS string, breaking the parser. Extracted to named helper _subManualRefresh() — same behaviour, no quoting issue.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -22387,20 +22387,37 @@
 
   // SUB-05: Load subscription tier from life_settings into _subscriptionTier cache
   async function loadSubscriptionTier() {
-    if (!currentUser) return;
+    if (!currentUser) {
+      console.warn('[SUB] loadSubscriptionTier: currentUser is null — skipping');
+      return;
+    }
     try {
-      var res = await fetch(
-        DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.subscription_tier',
-        { headers: getAuthHeaders() }
-      );
-      if (!res.ok) return;
+      var url = DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.subscription_tier';
+      console.log('[SUB] loadSubscriptionTier: fetching', url);
+      var res = await fetch(url, { headers: getAuthHeaders() });
+      console.log('[SUB] loadSubscriptionTier: response status', res.status, res.ok);
+      if (!res.ok) {
+        console.warn('[SUB] loadSubscriptionTier: non-ok response, status=' + res.status);
+        return;
+      }
       var data = await res.json();
+      console.log('[SUB] loadSubscriptionTier: raw data', JSON.stringify(data));
       _subscriptionTier = (data[0]?.value === 'premium') ? 'premium' : 'free';
+      console.log('[SUB] loadSubscriptionTier: _subscriptionTier set to', _subscriptionTier);
       dbgLog('SUB', 'subscription tier loaded:', _subscriptionTier);
     } catch(e) {
+      console.error('[SUB] loadSubscriptionTier error:', e.message);
       dbgWarn('SUB', 'loadSubscriptionTier error:', e.message);
       _subscriptionTier = 'free'; // safe default
     }
+  }
+
+  // SUB-05: Named helper for "Already a member? Tap to refresh" button — avoids quote-escaping issues in onclick.
+  function _subManualRefresh() {
+    loadSubscriptionTier().then(function() {
+      console.log('[SUB] manual re-check: isPremium=' + isPremium() + ', _subscriptionTier=' + _subscriptionTier);
+      refreshPremiumGates();
+    });
   }
 
   // SUB-05: Handle post-auth upgrade success — called when app inits with _pendingUpgradeSuccess flag.
@@ -22504,7 +22521,11 @@
         '</button>' +
         '<p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;text-align:center">' +
           'Cancel anytime. No lock-in.' +
-        '</p>';
+        '</p>' +
+        '<button onclick="_subManualRefresh()" ' +
+          'style="width:100%;margin-top:12px;padding:8px;border-radius:8px;border:1px dashed var(--border);background:transparent;font-family:Lato,sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer">' +
+          'Already a member? Tap to refresh ↻' +
+        '</button>';
     }
   }
 
