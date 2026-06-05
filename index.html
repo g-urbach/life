@@ -1298,32 +1298,35 @@
       position: relative;
       overflow: hidden;
     }
-    /* Override ob-step absolute positioning inside the tour box —
-       the onboarding uses full-screen absolute stacking; the tour uses
-       a normal-flow modal where only the active slide is shown.
-       Flash fix: use visibility:hidden (not display:none) so no reflow during transition. */
+    /* Tour slide transitions — cross-fade so the box never collapses between slides.
+       Inactive slides are display:none (no layout impact).
+       Exiting slide goes absolute so incoming slide drives the box height immediately. */
     #tourBox .ob-step {
       position: relative !important;
       inset: auto !important;
       transform: none !important;
       opacity: 0 !important;
-      visibility: hidden !important;
       display: none !important;
       pointer-events: none;
       padding: 0 !important;
+      transition: opacity 0.22s ease !important;
     }
     #tourBox .ob-step.ob-active {
       display: flex !important;
       opacity: 1 !important;
-      visibility: visible !important;
       pointer-events: auto;
+      position: relative !important;
+      z-index: 1 !important;
     }
     #tourBox .ob-step.ob-exit {
       display: flex !important;
-      opacity: 0 !important;
-      visibility: hidden !important;
       position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      opacity: 0 !important;
       pointer-events: none !important;
+      z-index: 0 !important;
     }
     .tour-close {
       position: absolute; top: 14px; right: 16px;
@@ -4741,7 +4744,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.31';
+  const APP_VERSION  = 'v5.32';
   const DEPLOY_NOTES = APP_VERSION + ' — SUB-05: isPremium() helper, _subscriptionTier state var, loadSubscriptionTier() (loaded on login + settings open), startUpgradeCheckout(), renderPremiumSettingsSection(). Settings overlay: Premium section at top (free: gold Upgrade CTA; premium: member badge + Manage billing link). ?upgrade=success handler: reloads tier + warm toast. ?upgrade=cancelled: cleans URL silently. _subscriptionTier reset on SIGNED_OUT.';
 
   // ── Line number offset for debugging ────────────────────────────────
@@ -14269,13 +14272,16 @@
     if (!fromEl || !toEl) return;
     if (fromDot) fromDot.classList.remove('active');
     if (toDot)   toDot.classList.add('active');
+    // Cross-fade: bring incoming slide into flow immediately so box height
+    // is always driven by real content — exiting slide goes absolute to avoid
+    // any layout gap or collapse flash between cards.
     fromEl.classList.add('ob-exit');
     fromEl.classList.remove('ob-active');
+    _tourCurrentSlide = target;
+    toEl.classList.add('ob-active');
+    if (target === 2) _tourAnimateGethro();
     setTimeout(function() {
       fromEl.classList.remove('ob-exit');
-      _tourCurrentSlide = target;
-      toEl.classList.add('ob-active');
-      if (target === 2) _tourAnimateGethro();
     }, 280);
   }
 
