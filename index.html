@@ -5054,8 +5054,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.43';
-  const DEPLOY_NOTES = APP_VERSION + ' — SUB POLISH v5.42 + hotfix v5.43: Removed debug button. Errors route to dbgErr. subscription_upgraded/cancelled logged to DB+Telegram. Header premium glow fixed — replaced broken background-clip border trick with box-shadow (was causing landing screen bleed). Premium email pill retained.';
+  const APP_VERSION  = 'v5.44';
+  const DEPLOY_NOTES = APP_VERSION + ' — INIT hardening: CDN failure now disables sign-in button + shows reload link (was leaving sb=null, causing unhandled crash if user tapped Sign In). landingSignIn() guards against null sb explicitly as belt-and-braces.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -6406,16 +6406,20 @@
           document.getElementById('landingScreen').style.display = 'block';
           document.getElementById('appShell').style.display = 'none';
           var errEl = document.getElementById('landingAuthError');
-          if (errEl) { errEl.textContent = 'Could not load the app — please check your internet connection and reload the page.'; errEl.style.display = 'block'; }
+          if (errEl) { errEl.innerHTML = 'Could not load the app — please check your connection and <a href="" style="color:var(--gold);text-decoration:underline" onclick="location.reload();return false;">reload the page</a>.'; errEl.style.display = 'block'; }
           dbgErr('INIT', 'supabase CDN load failed — all fallbacks exhausted: ' + (e && e.message));
+          var _pb = document.getElementById('landingPrimaryBtn');
+          if (_pb) { _pb.disabled = true; _pb.textContent = 'App unavailable — reload'; }
           return;
         }
       } else {
         document.getElementById('landingScreen').style.display = 'block';
         document.getElementById('appShell').style.display = 'none';
         var errEl2 = document.getElementById('landingAuthError');
-        if (errEl2) { errEl2.textContent = 'Could not load the app — please check your internet connection and reload the page.'; errEl2.style.display = 'block'; }
+        if (errEl2) { errEl2.innerHTML = 'Could not load the app — please check your connection and <a href="" style="color:var(--gold);text-decoration:underline" onclick="location.reload();return false;">reload the page</a>.'; errEl2.style.display = 'block'; }
         dbgErr('INIT', 'supabase is undefined — CDN load failed, no fallback promise');
+        var _pb2 = document.getElementById('landingPrimaryBtn');
+        if (_pb2) { _pb2.disabled = true; _pb2.textContent = 'App unavailable — reload'; }
         return;
       }
     }
@@ -6711,6 +6715,7 @@
   }
 
   async function landingSignIn() {
+    if (!sb) { showAuthError('App failed to load — please reload the page and try again.'); return; }
     const email   = document.getElementById('landingEmail').value.trim();
     const pass    = document.getElementById('landingPassword').value;
     document.getElementById('landingAuthError').style.display = 'none';
