@@ -677,6 +677,36 @@
     }
     #userStatus { font-size: 0.8rem; color: var(--gold); font-weight: 300; letter-spacing: 0.05em; }
 
+    /* ── Premium header treatment (SUB-05 v5.42) ─────────────────────── */
+    /* Subtle gold shimmer along the bottom edge of the header */
+    header.premium-active {
+      border-bottom: 2px solid transparent;
+      background-image:
+        linear-gradient(var(--surface), var(--surface)),
+        linear-gradient(90deg, transparent 0%, var(--gold) 30%, #e8c97e 50%, var(--gold) 70%, transparent 100%);
+      background-origin: border-box;
+      background-clip: padding-box, border-box;
+      animation: premium-border-glow 4s ease-in-out infinite;
+    }
+    @keyframes premium-border-glow {
+      0%, 100% { background-image:
+        linear-gradient(var(--surface), var(--surface)),
+        linear-gradient(90deg, transparent 0%, var(--gold) 30%, #e8c97e 50%, var(--gold) 70%, transparent 100%); }
+      50% { background-image:
+        linear-gradient(var(--surface), var(--surface)),
+        linear-gradient(90deg, transparent 0%, #d4b87e 25%, #fff3c4 50%, #d4b87e 75%, transparent 100%); }
+    }
+    /* Premium email pill shown next to version number */
+    .premium-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: linear-gradient(110deg, rgba(201,169,110,0.18) 0%, rgba(232,201,126,0.28) 100%);
+      border: 1px solid rgba(201,169,110,0.5);
+      border-radius: 20px; padding: 2px 9px 2px 7px;
+      font-size: 0.72rem; color: var(--gold); letter-spacing: 0.04em;
+      font-family: 'Lato', sans-serif; font-weight: 600;
+      white-space: nowrap;
+    }
+
     /* Dark mode toggle */
     .theme-toggle {
       background: none; border: 1px solid rgba(201,169,110,0.3);
@@ -5033,8 +5063,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.41';
-  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: loadSubscriptionTier() was correctly fetching premium from DB but catch block was resetting _subscriptionTier to free after a dbgLog (undefined fn) error. Fixed: replaced dbgLog with dbgWarn, removed _subscriptionTier=free from catch — a logging error must never wipe correctly-fetched subscription state.';
+  const APP_VERSION  = 'v5.42';
+  const DEPLOY_NOTES = APP_VERSION + ' — SUB POLISH: Removed debug button + _subManualRefresh(). All SUB errors now route to dbgErr (Telegram+DB). subscription_upgraded and subscription_cancelled events logged to DB+Telegram on tier change. Header gains subtle gold border glow + premium email pill when premium (✨ user@email). SUB added to Telegram warn areas.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5134,7 +5164,7 @@
   // areas, also fires Telegram so important warnings surface in real-time.
   // Non-fatal noise (PEECHO cleanup, caption failures etc.) excluded from Telegram only —
   // they still go to Supabase for post-hoc analysis.
-  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO','RENDER','SHARE','MUSIC'];
+  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO','RENDER','SHARE','MUSIC','SUB'];
   function dbgWarn(area,...args){
     console.warn(`[${area}] WARN`,...args);
     try {
@@ -22385,39 +22415,30 @@
     return _subscriptionTier === 'premium';
   }
 
-  // SUB-05: Load subscription tier from life_settings into _subscriptionTier cache
+  // SUB-05: Load subscription tier from life_settings into _subscriptionTier cache.
+  // Detects tier changes (upgrade confirmed, cancellation) and logs them to DB + Telegram.
   async function loadSubscriptionTier() {
-    if (!currentUser) {
-      console.warn('[SUB] loadSubscriptionTier: currentUser is null — skipping');
-      return;
-    }
+    if (!currentUser) return;
     try {
+      var prevTier = _subscriptionTier;
       var url = DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.subscription_tier';
-      console.log('[SUB] loadSubscriptionTier: fetching', url);
       var res = await fetch(url, { headers: getAuthHeaders() });
-      console.log('[SUB] loadSubscriptionTier: response status', res.status, res.ok);
       if (!res.ok) {
-        console.warn('[SUB] loadSubscriptionTier: non-ok response, status=' + res.status);
+        dbgErr('SUB', 'loadSubscriptionTier: non-ok response status=' + res.status);
         return;
       }
       var data = await res.json();
-      console.log('[SUB] loadSubscriptionTier: raw data', JSON.stringify(data));
       _subscriptionTier = (data[0]?.value === 'premium') ? 'premium' : 'free';
-      console.log('[SUB] loadSubscriptionTier: _subscriptionTier set to', _subscriptionTier);
-      dbgWarn('SUB', 'subscription tier loaded:', _subscriptionTier);
+      // Detect cancellation: was premium, now free (webhook must have fired)
+      if (prevTier === 'premium' && _subscriptionTier === 'free') {
+        var cancelDetail = 'user=' + (currentUser.email || currentUser.id) + ' tier changed premium→free';
+        logActivity('subscription_cancelled', cancelDetail, 'info', 'SUB');
+        notifyDev('info', 'SUB', 'SUBSCRIPTION CANCELLED: ' + cancelDetail);
+      }
     } catch(e) {
-      console.error('[SUB] loadSubscriptionTier error:', e.message);
-      // Do NOT reset _subscriptionTier here — if the fetch succeeded and set the value
-      // correctly, a secondary error (e.g. in logging) must not wipe out good data.
+      // Do NOT reset _subscriptionTier here — keep any previously good value.
+      dbgErr('SUB', 'loadSubscriptionTier error: ' + e.message);
     }
-  }
-
-  // SUB-05: Named helper for "Already a member? Tap to refresh" button — avoids quote-escaping issues in onclick.
-  function _subManualRefresh() {
-    loadSubscriptionTier().then(function() {
-      console.log('[SUB] manual re-check: isPremium=' + isPremium() + ', _subscriptionTier=' + _subscriptionTier);
-      refreshPremiumGates();
-    });
   }
 
   // SUB-05: Handle post-auth upgrade success — called when app inits with _pendingUpgradeSuccess flag.
@@ -22434,12 +22455,20 @@
       if (isPremium() || attempts >= maxAttempts) {
         refreshPremiumGates();
         var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
-        var msg = firstName
-          ? 'Welcome to Premium, ' + firstName + ' — Gethro is thrilled.'
-          : 'Welcome to Premium — Gethro is thrilled.';
-        toast(msg);
-        if (!isPremium()) {
-          dbgWarn('SUB', '_handleUpgradeSuccess: tier still free after ' + attempts + ' attempts');
+        if (isPremium()) {
+          // Log confirmed upgrade to DB + Telegram
+          var upgradeDetail = 'user=' + (currentUser ? currentUser.email : '?') + ' tier=premium';
+          logActivity('subscription_upgraded', upgradeDetail, 'info', 'SUB');
+          notifyDev('info', 'SUB', 'UPGRADE CONFIRMED: ' + upgradeDetail);
+          var msg = firstName
+            ? 'Welcome to Premium, ' + firstName + ' — Gethro is thrilled.'
+            : 'Welcome to Premium — Gethro is thrilled.';
+          toast(msg);
+        } else {
+          // Webhook may not have fired yet or failed — log and warn
+          var failDetail = 'user=' + (currentUser ? currentUser.email : '?') + ' still_free_after=' + attempts + '_attempts';
+          dbgWarn('SUB', '_handleUpgradeSuccess: ' + failDetail);
+          toast('Almost there — your subscription is being confirmed. Refresh in a moment.');
         }
       } else {
         setTimeout(tryLoad, delayMs);
@@ -22481,7 +22510,25 @@
     if (settingsBtn) {
       settingsBtn.textContent = isPremium() ? '✨ Settings' : '⚙️ Settings';
     }
-    // 3. Dashboard tiles (some may show premium state / unlock callouts)
+    // 3. Header premium treatment — gold border glow + email pill
+    var hdr = document.querySelector('header');
+    if (hdr) {
+      if (isPremium()) {
+        hdr.classList.add('premium-active');
+      } else {
+        hdr.classList.remove('premium-active');
+      }
+    }
+    // 4. userStatus pill — show email with premium badge when premium
+    var statusEl = document.getElementById('userStatus');
+    if (statusEl && currentUser) {
+      if (isPremium()) {
+        statusEl.innerHTML = '<span class="premium-pill">✨ ' + (currentUser.email || 'premium') + '</span>';
+      } else {
+        statusEl.textContent = '✓ ' + (currentUser.email || '');
+      }
+    }
+    // 5. Dashboard tiles (some may show premium state / unlock callouts)
     if (document.getElementById('panel-dashboard')?.classList.contains('active')) {
       try { renderDashboard(); } catch(e) {}
     }
@@ -22522,10 +22569,7 @@
         '<p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;text-align:center">' +
           'Cancel anytime. No lock-in.' +
         '</p>' +
-        '<button onclick="_subManualRefresh()" ' +
-          'style="width:100%;margin-top:12px;padding:8px;border-radius:8px;border:1px dashed var(--border);background:transparent;font-family:Lato,sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer">' +
-          'Already a member? Tap to refresh ↻' +
-        '</button>';
+        '';
     }
   }
 
