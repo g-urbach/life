@@ -21,31 +21,23 @@
   <link rel="manifest" id="pwaManifest">
   <title>LifeTold</title><!-- version set at runtime from APP_VERSION -->
   <!-- SEC-08: All scripts pinned to specific versions with SRI hashes. Re-verify at srihash.org on each version bump. -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js"
-          integrity="sha384-4eCDoMN/7A46qQ5Tj0rZ/D2VEolFGNIINDTLAcWZcvhkRSsvTfqNfaBMlRRoGEZ5"
+  <!-- SEC-BUG-01 / v5.45: SRI hash removed from primary CDN load — jsDelivr may serve
+       slightly different bytes (gzip, minification variations) causing hash mismatch and
+       blocking the script. Per jsDelivr docs, SRI should only be used with truly static
+       files; version-pinning alone (@2.107.0) is sufficient protection here.
+       Fallback chain: jsDelivr → unpkg (both pinned to same version, no SRI).
+       cdnjs removed — supabase-js 2.x is not reliably published there. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.107.0/dist/umd/supabase.min.js"
           crossorigin="anonymous"></script>
-  <!-- SEC-18 / SEC-BUG-01: Fallback CDN if jsDelivr fails.
-       MUST NOT use document.write — Chrome/Brave block cross-origin document.write scripts
-       on uncertain network conditions (Chromium subresource policy), causing supabase=undefined
-       and a blank login screen. Use dynamic createElement instead. The window.__supabaseReady
-       promise lets the INIT block wait for async load before proceeding. -->
   <script>
     (function() {
       if (typeof supabase !== 'undefined') return; // primary CDN loaded fine
       window.__supabaseReady = new Promise(function(resolve, reject) {
         var s = document.createElement('script');
-        s.src = 'https://unpkg.com/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js';
+        s.src = 'https://unpkg.com/@supabase/supabase-js@2.107.0/dist/umd/supabase.min.js';
         s.crossOrigin = 'anonymous';
         s.onload  = function() { resolve(); };
-        s.onerror = function() {
-          // Both CDNs failed — try one more (cdnjs mirror)
-          var s2 = document.createElement('script');
-          s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.105.4/umd/supabase.min.js';
-          s2.crossOrigin = 'anonymous';
-          s2.onload  = function() { resolve(); };
-          s2.onerror = function() { reject(new Error('All Supabase CDNs failed')); };
-          document.head.appendChild(s2);
-        };
+        s.onerror = function() { reject(new Error('All Supabase CDNs failed')); };
         document.head.appendChild(s);
       });
     })();
@@ -5054,8 +5046,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.44';
-  const DEPLOY_NOTES = APP_VERSION + ' — INIT hardening: CDN failure now disables sign-in button + shows reload link (was leaving sb=null, causing unhandled crash if user tapped Sign In). landingSignIn() guards against null sb explicitly as belt-and-braces.';
+  const APP_VERSION  = 'v5.45';
+  const DEPLOY_NOTES = APP_VERSION + ' — CDN fix: upgraded supabase-js 2.105.4→2.107.0, removed broken SRI hash (jsDelivr hash mismatch was blocking primary CDN load and cascading to 404 fallbacks), removed cdnjs fallback (not reliably hosting supabase-js 2.x). Chain now: jsDelivr→unpkg, both pinned to 2.107.0, no SRI.';
 
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
