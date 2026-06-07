@@ -5138,9 +5138,7 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.54';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-KNOWLEDGE-01 Phase 2: GETHRO_APP_KNOWLEDGE now fully server-side. Client no longer fetches life_config or holds stub. GETHRO_PROXY reads knowledge from life_config (service role) and injects into chat prompt. Removed: _loadAppKnowledge(), _gethroAppKnowledge var, GETHRO_APP_KNOWLEDGE_STUB, login call, APP_KNOWLEDGE prompt line.';
-
+  const APP_VERSION  = 'v5.55';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5171,8 +5169,6 @@
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
   const PEECHO_PROXY_URL = SUPABASE_URL + '/functions/v1/PEECHO_PROXY';
-  // ⚠️  PEECHO_MERCHANT_KEY and PEECHO_SECRET moved to PEECHO_PROXY edge function
-  // — they should never live in client-side HTML. The proxy injects them server-side.
   // Production product IDs (www.peecho.com) — updated from Peecho dashboard
   // PEECHO_PRODUCTS removed in v1.52 — was dead code since v1.31.
   // The Peecho Button approach lets Peecho handle product selection at checkout.
@@ -7650,7 +7646,6 @@
 
     // ── AI ────────────────────────────────────────────────────────────
   // ── callGethro — JWT-authenticated AI proxy (Phase 1–5, all actions) ────
-  // Sends structured payload to GETHRO_PROXY edge function.
   // Prompts are built server-side — client sends data, not prompt strings.
   // callAI() retired in Phase 5 (life_model — mineEssentials).
   async function callGethro(action, payload = {}) {
@@ -8661,7 +8656,6 @@
       const hasLocation = !!tags.location;
       const hasRef      = !!tags.reference;
 
-      // ── Call 1: Structured hygiene check — prompt built server-side in GETHRO_PROXY ──
       const hygieneRes = await callGethro('hygiene', {
         text,
         tags,
@@ -8692,13 +8686,11 @@
       r.suggestLocation  = cleanSuggest(r.suggest_location);
       r.suggestReference = cleanSuggest(r.suggest_reference);
 
-      // ── Spelling fix — already computed server-side by GETHRO_PROXY hygiene action ──
       if (!r.spelling.ok) {
         if (_aiReviewAborted) return;
         if (hygieneRes.spellingFixed) r.spelling.fixed = hygieneRes.spellingFixed;
       }
 
-      // ── Call 2: Reconstruction — prompt built server-side in GETHRO_PROXY ──
       if (_aiReviewAborted) return;
       try {
         const reconRes = await callGethro('reconstruct', { text, feedbackContext });
@@ -9550,7 +9542,6 @@
   }
 
   async function suggestBlurb(btn) {
-    // ── Prompt built server-side in GETHRO_PROXY (blurb action, Phase 3) ──
     var real = entries.filter(function(e){ return !e.category.startsWith('_profile'); });
     if (real.length < 3) return toast('Add more memories first — AI needs at least 3 entries to suggest a blurb');
     if (btn) { btn.textContent = '⏳ Thinking…'; btn.disabled = true; }
@@ -12825,7 +12816,6 @@
         src = piece.bg_music_url;
         dbg('MUSIC', '✓ Using persisted bg_music_url for piece ' + piece.id + ' url=' + src.substring(0,60));
       } else {
-        // First play — fetch track list via GETHRO_PROXY → Freesound
         dbg('MUSIC', '→ music_proxy fetch genre=' + genre);
         var proxyResp = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
@@ -15170,7 +15160,6 @@
     const allText = real.map(e => e.answer).join('\n');
     const alreadyConfirmed = Object.keys(_essentials).filter(k => _essentials[k]?.confirmed);
 
-    // ── Prompt built server-side in GETHRO_PROXY (life_model action, Phase 5) ──
     try {
       const { essentials: result } = await callGethro('life_model', {
         entriesText: allText.substring(0, 4000),
@@ -16388,7 +16377,6 @@
 
     setMemStatus('speaking', 'Gethro is thinking about ' + chapter + '...');
     try {
-      // ── Prompt built server-side in GETHRO_PROXY (seed_question chapter mode, Phase 4) ──
       const data = await callGethro('seed_question', { mode: 'chapter', chapter });
       const question = data.question || '';
       recCurQuestion = question;
@@ -16867,7 +16855,6 @@
   // ── UX-M09: Tokenised one-click unsubscribe ───────────────────────
   // Called on page load when ?unsubscribe=<token> is in the URL.
   // Calls UNSUB_PROXY edge function which verifies the HMAC token
-  // and writes weekly_email_enabled=false to life_settings via service role.
   // No user auth required.
   async function handleUnsubscribeToken(token) {
     var loadingEl = document.getElementById('unsubLoading');
@@ -17150,7 +17137,6 @@
       return { id: idx + 1, textA: snipA, textB: snipB };
     }).filter(Boolean);
 
-    // ── Prompt built server-side in GETHRO_PROXY (duplicate_check action, Phase 4) ──
     var data = await callGethro('duplicate_check', { pairs });
     var results = data.results || [];
 
@@ -17433,7 +17419,6 @@
     var regen=document.getElementById('dupRegenBtn');
     try {
       var wc=Math.min(500,((eA.answer||'').split(/\s+/).filter(Boolean).length+(eB.answer||'').split(/\s+/).filter(Boolean).length)+60);
-      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, Phase 4) ──
       var data = await callGethro('consolidate', {
         mode: 'draft',
         sourceType: 'entries',
@@ -17772,7 +17757,6 @@
     const regenBtn  = document.getElementById('consolidateRegenerateBtn');
     try {
       const targetWc = Math.min(600, groupEntries.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0) + 80);
-      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, Phase 4) ──
       const data = await callGethro('consolidate', {
         mode: 'draft',
         sourceType: 'entries',
@@ -18083,7 +18067,6 @@
 
   // ── Account deletion ─────────────────────────────────────────────
   // Multi-step: two confirms + email typed, then calls DELETE_ACCOUNT edge function.
-  // Edge function uses service_role to delete auth.users row, which cascades
   // to life_entries, life_settings, life_print_tokens, life_activity_log.
   async function deleteAccount() {
     if (!currentUser) return;
@@ -18171,7 +18154,6 @@
     const aDiv = document.createElement('div'); aDiv.className = 'help-msg-ai'; aDiv.textContent = '...'; log.appendChild(aDiv);
     log.scrollTop = log.scrollHeight;
     try {
-      // ── System prompt built server-side in GETHRO_PROXY (help_chat action, Phase 4) ──
       const data = await callGethro('help_chat', { question: q });
       aDiv.textContent = data.answer || 'I had trouble with that one — try asking me again?';
     } catch(err) { aDiv.textContent = 'I had trouble with that one — try asking me again?'; }
@@ -19431,35 +19413,6 @@
     setTimeout(() => t.classList.remove('show'), duration);
   }
 
-  // ── GETHRO_APP_KNOWLEDGE ───────────────────────────────────────────────────
-  // Single source of truth for Gethro's knowledge of the LifeTold app.
-  // Written to help-centre quality — specific enough to answer any user question
-  // including "where is X", "how do I do Y", "why isn't Z working".
-  //
-  // MAINTENANCE RULES (non-negotiable):
-  // 1. Every new feature MUST be documented here before the build ships.
-  // 2. Every 10 builds Claude does a full diff: read all FEATURES IMPLEMENTED,
-  //    compare against every section here, fill any gaps. This is mandatory
-  //    and listed in the 10-build review rule in PROJECT MEMORY.
-  // 3. The deployer regression test checks coverage of key feature keywords.
-  //    A deployer WARN means this constant needs updating.
-  //
-  // CHECKLIST — every item below must have a corresponding section:
-  // [x] Navigation / tabs          [x] Add Memory tab (full)
-  // [x] My Memories tab (full)     [x] My Story tab (full)
-  // [x] Dashboard (full)           [x] Help tab
-  // [x] Organise My Book overlay   [x] My People / Family Tree (full)
-  // [x] Print Preview overlay      [x] Ask Gethro panel
-  // [x] Onboarding                 [x] Settings overlay
-  // [x] Sharing & responses        [x] AI Review
-  // [x] Chapters                   [x] Goals (My Goals tile)
-  // [x] Duplicate Detector         [x] Story Consolidator
-  // [x] Photos & Audio             [x] Voice / mic
-  // [x] Dark mode                  [x] Account / auth
-  // [x] Weekly email prompts       [x] Offline behaviour
-  // [x] FAQ — common confused-user questions
-  // ─────────────────────────────────────────────────────────────────────────────
-
   // ── Ask Gethro ────────────────────────────────────────────────────
   // Floating conversational UI. User types or speaks; Gethro replies in character
   // and optionally triggers an app action (navigate, filter, pre-fill, capture).
@@ -19769,7 +19722,6 @@
   async function _agpSeedMemoryQuestion(firstName, entryContext, entryTitle) {
     var typingEl = _agpAppendTyping();
     try {
-      // Prompts built server-side in GETHRO_PROXY — send structured data only
       var res = await callGethro('seed_question', {
         mode: 'agp_seed',
         firstName: firstName,
@@ -19865,7 +19817,6 @@
     setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
 
     try {
-      // ── Prompt built server-side in GETHRO_PROXY (consolidate action, transcript mode, Phase 4) ──
       var data = await callGethro('consolidate', {
         mode: 'draft',
         sourceType: 'transcript',
@@ -20125,7 +20076,6 @@
       'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard (e.g. "Chris Auntie" may be a mishearing). If a name or reference seems odd or the user says they do not know it, treat it as a speech-to-text error, acknowledge it lightly, and move on — never dwell on it or keep asking about it.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
-    // Pass full assembled context to GETHRO_PROXY — prompts are built server-side.
     // systemPrompt is passed as-is; server wraps it with Gethro persona and returns parsed JSON.
     try {
       var parsed = await callGethro('chat', {
