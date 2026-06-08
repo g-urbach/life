@@ -5175,8 +5175,8 @@
 </div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-  const APP_VERSION  = 'v5.66';
-  const DEPLOY_NOTES = APP_VERSION + ' — Mobile landing UX fix: removed order:-1 CSS that was forcing the auth form above the hero content on Android/mobile. Hero (Gethro + headline + description + moments) now renders first, auth form flows naturally below. Enlarged input/button tap targets for mobile. No JS changes.';
+  const APP_VERSION  = 'v5.70';
+  const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 backlog updated to PARTIAL: accurately reflects Phase 1 (bindAllEvents), Phase 2 (entry card delegation), Phase 3 (v5.69 AI review panel delegation) as done. Documents 2 remaining JS-generated onclick= strings (entriesToggleCard, _entriesStoryToggle) and ~24 remaining static onclick= handlers as deferred pending entries tab rewrite. CSP header still outstanding. No functional changes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8836,8 +8836,8 @@
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">';
         Object.entries(sugTags).forEach(([k,v]) => {
           const single = JSON.stringify({[k]:v}).replace(/"/g,'&quot;');
-          const eid    = entryId ? "'" + entryId + "'" : 'null';
-          html += `<button style="display:inline-flex;align-items:center;gap:5px;font-size:0.75rem;padding:4px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer;font-family:'Lato',sans-serif">＋ ${k}: ${v}</button>`;
+          const eid    = entryId || '';
+          html += `<button data-action="accept-ai-tag" data-tags="${single}" data-id="${eid}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.75rem;padding:4px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer;font-family:'Lato',sans-serif">＋ ${k}: ${v}</button>`;
         });
         html += '</div>';
       }
@@ -8848,7 +8848,7 @@
         html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:8px">SPELLING FIX</p>';
         html += '<p style="color:var(--rose);text-decoration:line-through;margin-bottom:6px;font-size:0.88rem">' + text + '</p>';
         html += '<p style="color:#4caf72;margin-bottom:10px;font-size:0.88rem">' + r.spelling.fixed + '</p>';
-        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px">✓ Accept spelling fix</button>';
+        html += '<button class="btn btn-primary" data-action="accept-spell-fix" data-id="' + (entryId || '') + '" style="font-size:0.78rem;padding:7px 14px">✓ Accept spelling fix</button>';
         html += '</div>';
         panel.dataset.fixed = r.spelling.fixed;
       }
@@ -8860,7 +8860,7 @@
         html += '<p style="font-size:0.75rem;color:var(--text-light);margin-bottom:8px">Your entry, cleaned up — all your facts, just tidier</p>';
         html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + r.reconstruction + '</div>';
         html += '<div style="display:flex;gap:8px">';
-        html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px">✓ Use this version</button>';
+        html += '<button class="btn btn-primary" data-action="accept-reconstruction" data-id="' + (entryId || '') + '" style="font-size:0.78rem;padding:7px 14px">✓ Use this version</button>';
 
         html += '</div></div>';
         panel.dataset.reconstruction = r.reconstruction;
@@ -19870,7 +19870,7 @@
       html += '<div style="margin-bottom:16px">';
       html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--gold-dark);margin-bottom:6px">🤖 Gethro\u2019s version \u2014 cleaned up</p>';
       html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + consolidated.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
-      html += '<button class="btn btn-primary" style="font-size:0.78rem;padding:7px 14px">\u2713 Use this version</button>';
+      html += '<button class="btn btn-primary" data-action="agp-accept-ai" style="font-size:0.78rem;padding:7px 14px">\u2713 Use this version</button>';
       html += '</div>';
 
       // Choice B: user's own words only — filter to answered exchanges only.
@@ -19890,7 +19890,7 @@
       html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:6px">In my own words \u2014 word for word</p>';
       var transcriptHtml = userOnlyTranscript.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
       html += '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.82rem;line-height:1.6;color:var(--text-light);margin-bottom:10px;max-height:120px;overflow-y:auto">' + transcriptHtml + '</div>';
-      html += '<button class="btn btn-ghost" style="font-size:0.78rem;padding:7px 14px">\u2713 Use my words</button>';
+      html += '<button class="btn btn-ghost" data-action="agp-accept-raw" style="font-size:0.78rem;padding:7px 14px">\u2713 Use my words</button>';
       html += '</div>';
 
       panel.innerHTML = html;
@@ -22978,6 +22978,7 @@
     on('reviewSearch',       'input',  renderReviewEntries);
     on('reviewSearchClear',  'click',  clearReviewSearch);
     on('organiseBookBtn',    'click',  openBulkBookEditor);
+    on('bboSaveBtn',         'click',  saveBulkBookEdits);
     on('entriesChapterBackBtn','click',closeChapterDetail);
     // UX-M10: select mode for manual merge
     on('entriesSelectBtn',    'click', function() { entriesToggleSelectMode(); });
@@ -23131,14 +23132,30 @@
         case 'share-entry':          if (id) showShareConsent(id);                         break;
         case 'accept-feedback':      if (fbId && entryId) importResponse(fbId, entryId, name); break;
         case 'delete-feedback':      if (fbId) deleteResponse(fbId);                       break;
-      }
+        // ── AI Review panel actions (PRV-09 extension) ──
+        // data flows only through data-* attributes — no user content in executable position
+        case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
+        case 'accept-reconstruction': acceptReconstruction(id || null);                    break;
+        case 'accept-ai-tag': {
+          var rawTags = btn.dataset.tags || '{}';
+          try { applyAIReviewTags(JSON.parse(rawTags.replace(/&quot;/g, '"')), id || null, btn); } catch(e) { /* malformed tag JSON — ignore */ }
+          break;
+        }
+        case 'agp-accept-ai':        agpAcceptConsolidated(false);                         break;
+        case 'agp-accept-raw':       agpAcceptConsolidated(true);                          break;      }
     }
 
-    // Attach to all three stable containers
+    // Attach to all three stable entry-list containers
     ['reviewEntryList', 'dashChapterDetailList', 'chapterDetailList'].forEach(function(cid) {
       var el = document.getElementById(cid);
       if (el) el.addEventListener('click', _entryCardDelegate);
     });
+    // Also attach to appShell to cover AI review panel actions (accept-spell-fix,
+    // accept-reconstruction, accept-ai-tag, agp-accept-ai, agp-accept-raw) which
+    // are injected into memSpellPanel and improve-* panels outside the entry lists.
+    // _entryCardDelegate checks btn.closest('[data-action]') so non-matching clicks are no-ops.
+    var _appShell = document.getElementById('appShell');
+    if (_appShell) _appShell.addEventListener('click', _entryCardDelegate);
   }
 
 </script>
