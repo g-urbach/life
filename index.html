@@ -2539,14 +2539,14 @@
       <!-- Entry card — no question shown here, it appears in the form below -->
       <!-- APP-STORY-SHARE-01: Story piece card shown instead of entry card for component shares -->
       <div id="shareStoryPieceCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
-        <div id="shareStoryTypeBadge" style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div id="shareStoryTypeBadge" style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light)"></div>
+          <button id="shareListenBtn" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer"><span style="font-size:0.9rem">🎧</span> Listen</button>
+        </div>
         <div id="shareStoryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:18px;line-height:1.3"></div>
         <div id="shareStoryContent" style="font-size:0.93rem;color:var(--text);line-height:1.85;white-space:pre-wrap;font-family:'Lato',sans-serif"></div>
         <div id="shareStoryMeta" style="margin-top:16px;font-size:0.78rem;color:var(--text-light);border-top:1px solid var(--border);padding-top:12px"></div>
-        <div style="margin-top:16px">
-          <button id="shareListenBtn" style="padding:7px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text-light);cursor:pointer">🎧 Listen</button>
-          <span id="shareListenStatus" style="margin-left:10px;font-size:0.78rem;color:var(--text-light);display:none"></span>
-        </div>
+        <div id="shareListenStatus" style="margin-top:8px;font-size:0.78rem;color:var(--text-light);display:none"></div>
       </div>
       <div id="shareEntryCard" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
@@ -5186,7 +5186,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.78';
+  const APP_VERSION  = 'v5.79';
   const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 7 complete: removed self-referential hash comment from app constants (caused infinite hash drift); CSP hash test now hashes stripped html (what browser serves); removed all remaining static-HTML inline event handlers (onmouseover/onmouseout/oninput) replaced with CSS :hover classes and bindAllEvents wiring; deployer Build A test expanded to catch all on[event]= not just onclick=; new Build D test scans JS template literals for inline event attributes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5616,10 +5616,12 @@
             shareListenBtn.textContent = '⏳ Loading…';
             if (shareListenStatus) { shareListenStatus.textContent = 'Preparing audio…'; shareListenStatus.style.display = 'inline'; }
             try {
-              var res = await fetch(TTS_PROXY_URL, {
+              // Route TTS through SHARE_PROXY using the share token for auth —
+              // avoids JWT requirement that blocks direct TTS_PROXY calls from unauthenticated visitors
+              var res = await fetch(SHARE_PROXY_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ text: textToSpeak, voice: GETHRO_VOICE })
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+                body: JSON.stringify({ action: 'get_tts', token: token, voice: GETHRO_VOICE, text: textToSpeak })
               });
               if (!res.ok) throw new Error('TTS error ' + res.status);
               var buf = await res.arrayBuffer();
@@ -5643,7 +5645,7 @@
               shareListenBtn.disabled = false;
               shareListenBtn.textContent = '🎧 Listen';
               if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
-              logActivity('share_listen_error', err.message, 'warn', 'SHARE');
+              logActivity('share_listen_error', err.message, 'error', 'SHARE');
             }
           });
         }
