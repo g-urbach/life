@@ -2537,11 +2537,15 @@
       </div>
 
       <!-- Entry card — no question shown here, it appears in the form below -->
-      <!-- APP-STORY-SHARE-01: Story piece card shown instead of entry card for component shares -->
+      <!-- APP-STORY-SHARE-02: Song piece card — music plays when Listen is used -->
       <div id="shareStoryPieceCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div id="shareStoryTypeBadge" style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light)"></div>
-          <button id="shareListenBtn" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer"><span style="font-size:0.9rem">🎧</span> Listen</button>
+          <div style="display:flex;align-items:center;gap:8px">
+            <!-- Music mute toggle — shown only for songs with bg_music_url -->
+            <button id="shareMusicMuteBtn" style="display:none;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer" title="Toggle background music"><span style="font-size:0.9rem">🎵</span> Music</button>
+            <button id="shareListenBtn" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer"><span style="font-size:0.9rem">🎧</span> Listen</button>
+          </div>
         </div>
         <div id="shareStoryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:18px;line-height:1.3"></div>
         <div id="shareStoryContent" style="font-size:0.93rem;color:var(--text);line-height:1.85;white-space:pre-wrap;font-family:'Lato',sans-serif"></div>
@@ -2560,7 +2564,7 @@
       <!-- Feedback form (hidden for story piece shares — read-only) -->
       <div id="shareFeedbackSection">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
-        <h3 id="shareFormHeading" style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave feedback</h3>
+        <h3 id="shareFormHeading" style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:18px">Leave a comment</h3>
 
         <div id="shareFeedbackSuccess" style="display:none;text-align:center;padding:20px 0">
           <div style="font-size:2rem;margin-bottom:10px">💛</div>
@@ -5186,8 +5190,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.80';
-  const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 7 complete: removed self-referential hash comment from app constants (caused infinite hash drift); CSP hash test now hashes stripped html (what browser serves); removed all remaining static-HTML inline event handlers (onmouseover/onmouseout/oninput) replaced with CSS :hover classes and bindAllEvents wiring; deployer Build A test expanded to catch all on[event]= not just onclick=; new Build D test scans JS template literals for inline event attributes.';
+  const APP_VERSION  = 'v5.81';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-SHARE-02: Story/song share page now supports comments. Feedback form shown below piece shares (was hidden). SHARE_PROXY v3.70: removed component_id block in submit_feedback; component_id passed to life_share_feedback insert. Song shares play bg_music_url background music with volume ducking while Gethro TTS speaks, swell on finish — mirrors audiobook player. Music mute toggle shown for songs. SQL required: ALTER TABLE life_share_feedback ADD COLUMN IF NOT EXISTS component_id uuid REFERENCES life_story_components(id).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5554,13 +5558,17 @@
           logActivity('share_load_exception', 'isPiece true but piece absent — token: ' + token, 'warn', 'SHARE');
           return;
         }
+
+        // Store title for feedback Telegram notification (same slot used by entry shares)
+        _shareEntryTitle = data.piece.title || 'a story piece';
+
         var ownerP = data.ownerName || data.ownerFirstName || 'Someone';
         var subElP = document.getElementById('shareSubheading');
-        var pieceTypeLabel = (data.piece && data.piece.type === 'song') ? 'a song' : 'a story piece';
-        if (subElP) subElP.textContent = ownerP + ' has shared ' + pieceTypeLabel + ' from LifeTold.';
-
         var typeMeta = data.piece.type || '';
         var isSong = typeMeta === 'song';
+        var pieceTypeLabel = isSong ? 'a song' : 'a story piece';
+        if (subElP) subElP.textContent = ownerP + ' has shared ' + pieceTypeLabel + ' from LifeTold.';
+
         var badgeLabel = typeMeta
           ? typeMeta.charAt(0).toUpperCase() + typeMeta.slice(1) + (isSong ? '' : ' · Story piece')
           : 'Story piece';
@@ -5574,9 +5582,27 @@
           : '';
         document.getElementById('shareStoryMeta').textContent = [wc ? wc + ' words' : '', pDate].filter(Boolean).join(' · ');
 
+        // APP-STORY-SHARE-02: feedback section now shown for piece shares too
         document.getElementById('shareEntryCard').style.display      = 'none';
-        document.getElementById('shareFeedbackSection').style.display = 'none';
+        document.getElementById('shareFeedbackSection').style.display = '';    // show — was 'none'
         document.getElementById('shareStoryPieceCard').style.display  = 'block';
+
+        // Customise feedback form for piece type
+        var shareFormHeading = document.getElementById('shareFormHeading');
+        var shareMessageLbl  = document.getElementById('shareMessageLabel');
+        var shareMsgArea     = document.getElementById('shareMessage');
+        if (isSong) {
+          if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
+          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          if (shareMsgArea)     shareMsgArea.placeholder     = 'What does this song mean to you, or what memories does it bring up?';
+        } else {
+          if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
+          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          if (shareMsgArea)     shareMsgArea.placeholder     = 'Share a thought, a memory, or a reaction\u2026';
+        }
+        // Hide the Q/A question wrap — piece shares don't have owner questions
+        var shareQWrap = document.getElementById('shareFormQuestionWrap');
+        if (shareQWrap) shareQWrap.style.display = 'none';
 
         document.getElementById('shareLoading').style.display = 'none';
         document.getElementById('shareContent').style.display = 'block';
@@ -5595,7 +5621,86 @@
             expiryElP.style.display = 'block';
           }
         }
-        // Wire up Listen button — self-contained TTS for share page (no auth required)
+
+        // ── APP-STORY-SHARE-02: Background music for song shares ──────────────
+        // Mirrors the audiobook player music system: bg music plays at low volume,
+        // ducks while Gethro TTS is speaking, swells back up after.
+        var _shareBgCtx      = null;   // AudioContext for bg music
+        var _shareBgSource   = null;   // BufferSourceNode (looping)
+        var _shareBgGain     = null;   // GainNode for duck/swell
+        var _shareBgMuted    = false;  // user muted?
+        var _shareBgRampIv   = null;   // setInterval handle for volume ramp
+        var _shareBgLoaded   = false;  // has music been fetched+decoded?
+        var _SP_VOL_FULL     = 0.15;   // full volume (matches audiobook)
+        var _SP_VOL_DUCK     = 0.05;   // ducked volume while TTS plays
+        var _SP_RAMP_MS      = 30;     // ramp tick interval ms
+
+        var bgMusicUrl = data.piece && data.piece.bg_music_url ? data.piece.bg_music_url : null;
+        var shareMusicMuteBtn = document.getElementById('shareMusicMuteBtn');
+
+        function _spRampVol(target, durationMs) {
+          if (_shareBgRampIv) { clearInterval(_shareBgRampIv); _shareBgRampIv = null; }
+          if (!_shareBgGain || _shareBgMuted) return;
+          var steps    = Math.max(1, Math.round(durationMs / _SP_RAMP_MS));
+          var startVol = _shareBgGain.gain.value;
+          var delta    = (target - startVol) / steps;
+          var step     = 0;
+          _shareBgRampIv = setInterval(function() {
+            if (!_shareBgGain) { clearInterval(_shareBgRampIv); _shareBgRampIv = null; return; }
+            step++;
+            var next = startVol + delta * step;
+            if (step >= steps) {
+              _shareBgGain.gain.value = Math.max(0, Math.min(1, target));
+              clearInterval(_shareBgRampIv); _shareBgRampIv = null;
+            } else {
+              _shareBgGain.gain.value = Math.max(0, Math.min(1, next));
+            }
+          }, _SP_RAMP_MS);
+        }
+
+        function _spDuck()  { _spRampVol(_SP_VOL_DUCK, 400); }
+        function _spSwell() { if (!_shareBgMuted) _spRampVol(_SP_VOL_FULL, 600); }
+
+        // Start bg music — called once AudioContext is primed in a gesture handler
+        function _spStartBgMusic(bgCtx) {
+          if (_shareBgLoaded || !bgMusicUrl) return;
+          _shareBgLoaded = true; // prevent double-fetch
+          fetch(bgMusicUrl).then(function(r) {
+            if (!r.ok) { _shareBgLoaded = false; return null; }
+            return r.arrayBuffer();
+          }).then(function(buf) {
+            if (!buf || _shareBgMuted) return;
+            bgCtx.decodeAudioData(buf, function(decoded) {
+              var gainNode = bgCtx.createGain();
+              gainNode.gain.value = _SP_VOL_FULL;
+              var src = bgCtx.createBufferSource();
+              src.buffer = decoded;
+              src.loop   = true;
+              src.connect(gainNode);
+              gainNode.connect(bgCtx.destination);
+              src.start(0);
+              _shareBgSource = src;
+              _shareBgGain   = gainNode;
+            }, function() { _shareBgLoaded = false; });
+          }).catch(function() { _shareBgLoaded = false; });
+        }
+
+        // Show music mute button for songs with bg_music_url
+        if (isSong && bgMusicUrl && shareMusicMuteBtn) {
+          shareMusicMuteBtn.style.display = 'flex';
+          shareMusicMuteBtn.addEventListener('click', function() {
+            _shareBgMuted = !_shareBgMuted;
+            if (_shareBgRampIv) { clearInterval(_shareBgRampIv); _shareBgRampIv = null; }
+            if (_shareBgGain) {
+              _shareBgGain.gain.value = _shareBgMuted ? 0 : _SP_VOL_FULL;
+            }
+            shareMusicMuteBtn.innerHTML = _shareBgMuted
+              ? '<span style="font-size:0.9rem">🔇</span> Music'
+              : '<span style="font-size:0.9rem">🎵</span> Music';
+          });
+        }
+
+        // ── Wire up Listen button — TTS with music ducking ────────────────────
         var shareListenBtn    = document.getElementById('shareListenBtn');
         var shareListenStatus = document.getElementById('shareListenStatus');
         var _shareAudio = null;
@@ -5609,6 +5714,7 @@
               _sharePlaying = false;
               shareListenBtn.textContent = '🎧 Listen';
               if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
+              _spSwell(); // Swell music back up when stopped
               return;
             }
             var textToSpeak = (data.piece.content || '').trim();
@@ -5625,6 +5731,20 @@
             if (_shareAudioCtx && _shareAudioCtx.state === 'suspended') {
               try { await _shareAudioCtx.resume(); } catch(e) {}
             }
+
+            // APP-STORY-SHARE-02: prime bg music context at same gesture; start music on first Listen
+            if (isSong && bgMusicUrl && !_shareBgCtx) {
+              try { _shareBgCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+              if (_shareBgCtx && _shareBgCtx.state === 'suspended') {
+                try { await _shareBgCtx.resume(); } catch(e) {}
+              }
+              if (_shareBgCtx && !_shareBgMuted) _spStartBgMusic(_shareBgCtx);
+            } else if (_shareBgCtx && _shareBgCtx.state === 'suspended') {
+              try { await _shareBgCtx.resume(); } catch(e) {}
+            }
+
+            // Duck music before TTS starts
+            _spDuck();
 
             try {
               // Route TTS through SHARE_PROXY using the share token for auth —
@@ -5655,12 +5775,15 @@
                   _shareAudio = null;
                   shareListenBtn.textContent = '🎧 Listen';
                   if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
+                  _spSwell(); // Swell music back up after TTS ends
                 };
               }, function(decodeErr) {
+                _spSwell();
                 throw new Error('Audio decode failed: ' + (decodeErr && decodeErr.message || decodeErr));
               });
 
             } catch(err) {
+              _spSwell(); // Ensure music swells back even on error
               _sharePlaying = false;
               _shareAudio = null;
               shareListenBtn.disabled = false;
