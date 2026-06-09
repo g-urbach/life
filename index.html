@@ -2538,6 +2538,9 @@
       </div>
 
       <!-- Entry card — no question shown here, it appears in the form below -->
+      <!-- Owner note — shown when sharer added a personal message (storyShareNote) -->
+      <div id="shareOwnerNote" style="display:none;margin-bottom:20px;padding:14px 16px;background:rgba(201,169,110,0.07);border-left:3px solid var(--gold);border-radius:0 10px 10px 0;font-size:0.9rem;color:var(--text);line-height:1.6;font-style:italic"></div>
+
       <!-- APP-STORY-SHARE-02: Song piece card — music plays when Listen is used -->
       <div id="shareStoryPieceCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -2575,7 +2578,7 @@
           <!-- Name -->
           <div style="margin-bottom:14px">
             <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your name <span style="color:var(--rose)">*</span></label>
-            <input id="shareName" type="text" placeholder="e.g. Aunt Mary"
+            <input id="shareName" type="text" placeholder=""
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box">
           </div>
 
@@ -2588,7 +2591,7 @@
             </div>
             <!-- A label — changes between "Answer" and "Your message" -->
             <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
-            <textarea id="shareMessage" rows="4" placeholder="Share a memory, a thought, or a reaction…"
+            <textarea id="shareMessage" rows="4" placeholder=""
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
 
@@ -5189,7 +5192,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.87';
+  const APP_VERSION  = 'v5.89';
   const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 9 COMPLETE. All remaining .onclick= assignments migrated to data-action event delegation: (1) story configurator format cards → data-action="sc-format-card" on scCards delegate; (2) story library cards (read/delete/share/listen/title) → data-action on storyLibraryList delegate with _libPieceMap lookup; (3) book builder add/remove → data-action on bookPickerList/bookSectionList delegates; (4) audiobook add/remove/toggle → data-action on abPickerList/abQueueList delegates; (5) dashboard chapter cards → data-action="dash-chapter-detail" on dashCoverageGrid delegate; (6) goal session cards + Other → data-action on goalCards delegate; (7) Gethro save-prompt yes/no → data-action on agpLog delegate; (8) Gethro nav-intercept yes/no → data-action with _agpPendingNavActions map; (9) Gethro action-route button → data-action="agp-route" with JSON.stringify(action) in data-route attr; (10) My People directory rows → data-action="mp-open-profile" on mpDirList delegate; (11) My People profile entry cards → data-action="mp-open-entry" on mpProfileMentions delegate. PRV-09 is now fully closed.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5568,6 +5571,17 @@
         var pieceTypeLabel = isSong ? 'a song' : 'a story piece';
         if (subElP) subElP.textContent = ownerP + ' has shared ' + pieceTypeLabel + ' from LifeTold.';
 
+        // Show owner's personal note (if set) between subheading and piece card
+        var ownerNoteEl = document.getElementById('shareOwnerNote');
+        if (ownerNoteEl) {
+          if (data.note) {
+            ownerNoteEl.textContent = data.note;
+            ownerNoteEl.style.display = 'block';
+          } else {
+            ownerNoteEl.style.display = 'none';
+          }
+        }
+
         var badgeLabel = typeMeta
           ? typeMeta.charAt(0).toUpperCase() + typeMeta.slice(1) + (isSong ? '' : ' · Story piece')
           : 'Story piece';
@@ -5836,6 +5850,17 @@
         subheading = ownerDisplay + ' is writing about \u201c' + entryTitleShort + '\u201d and would really value your feedback.';
       }
       document.getElementById('shareSubheading').textContent = subheading;
+
+      // Owner note — shown above the content card when sharer added a personal message
+      var ownerNoteElE = document.getElementById('shareOwnerNote');
+      if (ownerNoteElE) {
+        if (data.note) {
+          ownerNoteElE.textContent = data.note;
+          ownerNoteElE.style.display = 'block';
+        } else {
+          ownerNoteElE.style.display = 'none';
+        }
+      }
 
       // Note/question — shown only in the form as a proper Question/Answer layout
       var formQWrap  = document.getElementById('shareFormQuestionWrap');
@@ -23802,8 +23827,10 @@
           _storyLibListen(id);
         }
       } else if (action === 'lib-edit-title') {
+        // data-id is not set on the title span — read id from data-lib-title instead
         var titleEl = btn.closest('[data-lib-title]') || btn;
-        if (id) _storyLibEditTitle(id, titleEl);
+        var titleId = titleEl.dataset.libTitle || id;
+        if (titleId) _storyLibEditTitle(titleId, titleEl);
       }
     });
 
