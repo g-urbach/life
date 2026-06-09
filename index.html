@@ -2544,6 +2544,7 @@
           <div id="shareStoryTypeBadge" style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light)"></div>
           <div style="display:flex;align-items:center;gap:8px">
             <button id="shareListenBtn" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer"><span style="font-size:0.9rem">🎧</span> Listen</button>
+            <button id="shareMusicMuteBtn" style="display:none;align-items:center;gap:4px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer" title="Mute/unmute background music"><span style="font-size:0.9rem">🎵</span></button>
           </div>
         </div>
         <div id="shareStoryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:18px;line-height:1.3"></div>
@@ -5621,18 +5622,25 @@
           }
         }
 
-        // ── APP-STORY-SHARE-02: Background music for song shares ──────────────
-        // Mirrors the audiobook player music system: bg music plays at low volume,
-        // ducks while Gethro TTS is speaking, swells back up after.
-        var _shareBgCtx      = null;   // AudioContext for bg music
-        var _shareBgSource   = null;   // BufferSourceNode (looping)
-        var _shareBgGain     = null;   // GainNode for duck/swell
-        var _shareBgMuted    = false;  // user muted?
-        var _shareBgRampIv   = null;   // setInterval handle for volume ramp
-        var _shareBgLoaded   = false;  // has music been fetched+decoded?
-        var _SP_VOL_FULL     = 0.15;   // full volume (matches audiobook)
-        var _SP_VOL_DUCK     = 0.05;   // ducked volume while TTS plays
-        var _SP_RAMP_MS      = 30;     // ramp tick interval ms
+        // ── APP-STORY-SHARE-02 (v5.88 fix): Background music + TTS for song shares ──
+        // FIX: Use ONE shared AudioContext for both TTS and bg music.
+        //      Two separate AudioContexts caused Safari/Chrome to suspend one silently,
+        //      resulting in either music-only or voice-only playback inconsistently.
+        // FIX: TTS now routes through a dedicated gain node (_spTtsGain) so ducking
+        //      actually works — previously TTS connected direct to destination (no duck).
+        // FIX: Music loading is deferred until first TTS segment is decoded+ready,
+        //      then both start together — guarantees consistent voice+music every time.
+        // FIX: Mute button wired up and shown for songs that have bg_music_url.
+        var _spCtx          = null;   // single AudioContext for BOTH TTS and music
+        var _shareBgSource  = null;   // BufferSourceNode (looping music)
+        var _shareBgGain    = null;   // GainNode for music duck/swell
+        var _spTtsGain      = null;   // GainNode for TTS output (fixed at 1.0, separate path)
+        var _shareBgMuted   = false;  // user muted?
+        var _shareBgRampIv  = null;   // setInterval handle for volume ramp
+        var _shareBgLoaded  = false;  // has music been fetched+decoded?
+        var _SP_VOL_FULL    = 0.15;   // music full volume (matches audiobook)
+        var _SP_VOL_DUCK    = 0.05;   // music ducked volume while TTS plays
+        var _SP_RAMP_MS     = 30;     // ramp tick interval ms
 
         var bgMusicUrl = data.piece && data.piece.bg_music_url ? data.piece.bg_music_url : null;
 
@@ -5659,27 +5667,31 @@
         function _spDuck()  { _spRampVol(_SP_VOL_DUCK, 400); }
         function _spSwell() { if (!_shareBgMuted) _spRampVol(_SP_VOL_FULL, 600); }
 
-        // Start bg music — called once AudioContext is primed in a gesture handler
-        function _spStartBgMusic(bgCtx) {
-          if (_shareBgLoaded || !bgMusicUrl) return;
-          _shareBgLoaded = true; // prevent double-fetch
-          fetch(bgMusicUrl).then(function(r) {
+        // Start bg music — called with the shared ctx once it is primed AND first TTS is ready.
+        // Returns a Promise that resolves when decoding is done (or immediately on failure).
+        function _spStartBgMusic() {
+          if (_shareBgLoaded || !bgMusicUrl || !_spCtx) return Promise.resolve();
+          _shareBgLoaded = true;
+          return fetch(bgMusicUrl).then(function(r) {
             if (!r.ok) { _shareBgLoaded = false; return null; }
             return r.arrayBuffer();
           }).then(function(buf) {
-            if (!buf || _shareBgMuted) return;
-            bgCtx.decodeAudioData(buf, function(decoded) {
-              var gainNode = bgCtx.createGain();
-              gainNode.gain.value = _SP_VOL_FULL;
-              var src = bgCtx.createBufferSource();
-              src.buffer = decoded;
-              src.loop   = true;
-              src.connect(gainNode);
-              gainNode.connect(bgCtx.destination);
-              src.start(0);
-              _shareBgSource = src;
-              _shareBgGain   = gainNode;
-            }, function() { _shareBgLoaded = false; });
+            if (!buf || _shareBgMuted || !_spCtx) return;
+            return new Promise(function(resolve) {
+              _spCtx.decodeAudioData(buf, function(decoded) {
+                var gainNode = _spCtx.createGain();
+                gainNode.gain.value = _SP_VOL_DUCK; // start ducked — TTS is about to play
+                var src = _spCtx.createBufferSource();
+                src.buffer = decoded;
+                src.loop   = true;
+                src.connect(gainNode);
+                gainNode.connect(_spCtx.destination);
+                src.start(0);
+                _shareBgSource = src;
+                _shareBgGain   = gainNode;
+                resolve();
+              }, function() { _shareBgLoaded = false; resolve(); });
+            });
           }).catch(function() { _shareBgLoaded = false; });
         }
 
@@ -5688,18 +5700,33 @@
         // used by both this share page and the in-app audiobook player.
         // To change cleaning or timing rules, edit only those functions.
 
+        // ── Wire up mute button (songs with bg music only) ────────────────────
+        var shareMusicMuteBtn = document.getElementById('shareMusicMuteBtn');
+        if (shareMusicMuteBtn && isSong && bgMusicUrl) {
+          shareMusicMuteBtn.style.display = 'flex';
+          shareMusicMuteBtn.addEventListener('click', function() {
+            _shareBgMuted = !_shareBgMuted;
+            shareMusicMuteBtn.innerHTML = _shareBgMuted
+              ? '<span style="font-size:0.9rem">🔇</span>'
+              : '<span style="font-size:0.9rem">🎵</span>';
+            shareMusicMuteBtn.title = _shareBgMuted ? 'Unmute background music' : 'Mute background music';
+            if (_shareBgGain) {
+              _shareBgGain.gain.value = _shareBgMuted ? 0 : _SP_VOL_FULL;
+            }
+          });
+        }
+
         // ── Wire up Listen button — single button, same UX as in-app ─────────
-        // Music auto-starts on first Listen click (no separate Music button).
-        // If music is present it plays once Gethro is ready; if no music, just reads.
+        // Music and voice both use _spCtx. Music starts after first TTS is decoded
+        // so both begin together — guarantees consistent voice+music every time.
         var shareListenBtn    = document.getElementById('shareListenBtn');
         var shareListenStatus = document.getElementById('shareListenStatus');
-        var _shareAudio    = null;  // current playing BufferSourceNode
+        var _shareAudio    = null;  // current playing BufferSourceNode (TTS)
         var _sharePlaying  = false;
-        var _shareStopFlag = false; // set true when user clicks Stop mid-segment
-        var _shareAudioCtx = null;
+        var _shareStopFlag = false;
         if (shareListenBtn) {
           shareListenBtn.addEventListener('click', async function() {
-            // Stop handler — mirrors in-app _abStop()
+            // Stop handler
             if (_sharePlaying) {
               _shareStopFlag = true;
               if (_shareAudio) { try { _shareAudio.stop(); } catch(e) {} _shareAudio = null; }
@@ -5713,23 +5740,18 @@
             var segments = _getSegments(data.piece);
             if (!segments.length) return;
 
-            // Prime AudioContext synchronously in gesture — required for Chrome/Safari autoplay
-            if (!_shareAudioCtx) {
-              try { _shareAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+            // Prime ONE AudioContext synchronously in gesture — required for Chrome/Safari autoplay
+            if (!_spCtx) {
+              try { _spCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
             }
-            if (_shareAudioCtx && _shareAudioCtx.state === 'suspended') {
-              try { await _shareAudioCtx.resume(); } catch(e) {}
+            if (_spCtx && _spCtx.state === 'suspended') {
+              try { await _spCtx.resume(); } catch(e) {}
             }
-
-            // Prime bg music context in same gesture; start music before first TTS fetch
-            if (isSong && bgMusicUrl && !_shareBgCtx) {
-              try { _shareBgCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
-              if (_shareBgCtx && _shareBgCtx.state === 'suspended') {
-                try { await _shareBgCtx.resume(); } catch(e) {}
-              }
-              if (_shareBgCtx && !_shareBgMuted) _spStartBgMusic(_shareBgCtx);
-            } else if (_shareBgCtx && _shareBgCtx.state === 'suspended') {
-              try { await _shareBgCtx.resume(); } catch(e) {}
+            // Create a persistent TTS gain node routed through the shared ctx
+            if (_spCtx && !_spTtsGain) {
+              _spTtsGain = _spCtx.createGain();
+              _spTtsGain.gain.value = 1.0;
+              _spTtsGain.connect(_spCtx.destination);
             }
 
             shareListenBtn.disabled = true;
@@ -5738,7 +5760,6 @@
 
             _sharePlaying  = true;
             _shareStopFlag = false;
-            _spDuck();
 
             // Helper: fetch one segment's TTS audio and decode it
             function _spFetchSegment(text) {
@@ -5752,38 +5773,40 @@
               }).then(function(buf) {
                 if (!buf || !buf.byteLength) throw new Error('Empty audio response');
                 return new Promise(function(resolve, reject) {
-                  _shareAudioCtx.decodeAudioData(buf, resolve, reject);
+                  _spCtx.decodeAudioData(buf, resolve, reject);
                 });
               });
             }
 
-            // Helper: play one decoded AudioBuffer; resolves when playback ends
+            // Helper: play one decoded AudioBuffer through the TTS gain node; resolves when done
             function _spPlayBuffer(decoded) {
               return new Promise(function(resolve) {
-                var source = _shareAudioCtx.createBufferSource();
+                var source = _spCtx.createBufferSource();
                 source.buffer = decoded;
-                source.connect(_shareAudioCtx.destination);
+                source.connect(_spTtsGain); // through gain node, NOT direct to destination
                 _shareAudio = source;
                 source.onended = function() { _shareAudio = null; resolve(); };
                 source.start(0);
               });
             }
 
-            // Helper: pause between segments (like in-app pause_after_ms)
             function _spPause(ms) {
               return new Promise(function(resolve) { setTimeout(resolve, ms); });
             }
 
             try {
-              // Pre-fetch first segment before showing "Playing…" — minimises delay
+              // Pre-fetch first TTS segment; then start music simultaneously so both begin together
               var firstDecoded = await _spFetchSegment(segments[0].text);
               if (_shareStopFlag) { _sharePlaying = false; _spSwell(); return; }
+
+              // Start music now (after first TTS ready) — music starts ducked, voice plays on top
+              if (isSong && bgMusicUrl) await _spStartBgMusic();
+              _spDuck(); // duck music while TTS plays (no-op if no music)
 
               shareListenBtn.disabled = false;
               shareListenBtn.innerHTML = '<span style="font-size:0.9rem">⏹</span> Stop';
               if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
 
-              // Play segments sequentially, with inter-segment pauses — mirrors _abPlayFrom loop
               var decodedFirst = firstDecoded;
               for (var si = 0; si < segments.length; si++) {
                 if (_shareStopFlag) break;
@@ -5809,7 +5832,7 @@
             if (shareListenStatus && shareListenStatus.textContent === 'Playing…') {
               shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none';
             }
-            _spSwell(); // swell music back up after playback ends or is stopped
+            _spSwell(); // swell music back up after playback ends or stops
           });
         }
 
