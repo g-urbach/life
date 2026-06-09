@@ -2322,9 +2322,10 @@
       #mpTreeControls + button {
         width: 44px !important; height: 44px !important;
       }
-      /* Inline overlay close buttons (✕) rendered via style= */
-      button[onclick*="closeMyPeople"],
-      button[onclick*="style.display='none'"] {
+      /* Inline overlay close buttons (✕) — target by ID for touch size */
+      #mpCloseBtn,
+      button[aria-label="Close"],
+      button[aria-label="Close My People"] {
         min-width: 44px; min-height: 44px;
         padding: 8px;
       }
@@ -2542,8 +2543,6 @@
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div id="shareStoryTypeBadge" style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light)"></div>
           <div style="display:flex;align-items:center;gap:8px">
-            <!-- Music mute toggle — shown only for songs with bg_music_url -->
-            <button id="shareMusicMuteBtn" style="display:none;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer" title="Toggle background music"><span style="font-size:0.9rem">🎵</span> Music</button>
             <button id="shareListenBtn" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:'Lato',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer"><span style="font-size:0.9rem">🎧</span> Listen</button>
           </div>
         </div>
@@ -5190,8 +5189,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.82';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-SHARE-03: Comments from piece shares now visible in My Library. Each library card async-loads its pending comments and shows them below the action buttons with Dismiss/Delete. Dashboard responses tile: fixed pre-existing bug where Accept/Delete buttons were missing data-action attributes (buttons were rendered but did nothing). Piece feedback in dashboard shows "story" badge and Dismiss instead of Accept (no memory to import into). deleteResponse now handles both contexts (library card panel and dashboard tile).';
+  const APP_VERSION  = 'v5.87';
+  const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 9 COMPLETE. All remaining .onclick= assignments migrated to data-action event delegation: (1) story configurator format cards → data-action="sc-format-card" on scCards delegate; (2) story library cards (read/delete/share/listen/title) → data-action on storyLibraryList delegate with _libPieceMap lookup; (3) book builder add/remove → data-action on bookPickerList/bookSectionList delegates; (4) audiobook add/remove/toggle → data-action on abPickerList/abQueueList delegates; (5) dashboard chapter cards → data-action="dash-chapter-detail" on dashCoverageGrid delegate; (6) goal session cards + Other → data-action on goalCards delegate; (7) Gethro save-prompt yes/no → data-action on agpLog delegate; (8) Gethro nav-intercept yes/no → data-action with _agpPendingNavActions map; (9) Gethro action-route button → data-action="agp-route" with JSON.stringify(action) in data-route attr; (10) My People directory rows → data-action="mp-open-profile" on mpDirList delegate; (11) My People profile entry cards → data-action="mp-open-entry" on mpProfileMentions delegate. PRV-09 is now fully closed.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5636,7 +5635,6 @@
         var _SP_RAMP_MS      = 30;     // ramp tick interval ms
 
         var bgMusicUrl = data.piece && data.piece.bg_music_url ? data.piece.bg_music_url : null;
-        var shareMusicMuteBtn = document.getElementById('shareMusicMuteBtn');
 
         function _spRampVol(target, durationMs) {
           if (_shareBgRampIv) { clearInterval(_shareBgRampIv); _shareBgRampIv = null; }
@@ -5685,46 +5683,37 @@
           }).catch(function() { _shareBgLoaded = false; });
         }
 
-        // Show music mute button for songs with bg_music_url
-        if (isSong && bgMusicUrl && shareMusicMuteBtn) {
-          shareMusicMuteBtn.style.display = 'flex';
-          shareMusicMuteBtn.addEventListener('click', function() {
-            _shareBgMuted = !_shareBgMuted;
-            if (_shareBgRampIv) { clearInterval(_shareBgRampIv); _shareBgRampIv = null; }
-            if (_shareBgGain) {
-              _shareBgGain.gain.value = _shareBgMuted ? 0 : _SP_VOL_FULL;
-            }
-            shareMusicMuteBtn.innerHTML = _shareBgMuted
-              ? '<span style="font-size:0.9rem">🔇</span> Music'
-              : '<span style="font-size:0.9rem">🎵</span> Music';
-          });
-        }
+        // ── Text cleaning and segmentation — shared module-level functions ───
+        // _cleanForTts() and _getSegments() are defined once at module level and
+        // used by both this share page and the in-app audiobook player.
+        // To change cleaning or timing rules, edit only those functions.
 
-        // ── Wire up Listen button — TTS with music ducking ────────────────────
+        // ── Wire up Listen button — single button, same UX as in-app ─────────
+        // Music auto-starts on first Listen click (no separate Music button).
+        // If music is present it plays once Gethro is ready; if no music, just reads.
         var shareListenBtn    = document.getElementById('shareListenBtn');
         var shareListenStatus = document.getElementById('shareListenStatus');
-        var _shareAudio = null;
-        var _sharePlaying = false;
+        var _shareAudio    = null;  // current playing BufferSourceNode
+        var _sharePlaying  = false;
+        var _shareStopFlag = false; // set true when user clicks Stop mid-segment
         var _shareAudioCtx = null;
         if (shareListenBtn) {
           shareListenBtn.addEventListener('click', async function() {
-            if (_sharePlaying && _shareAudio) {
-              try { _shareAudio.stop(); } catch(e) {}
-              _shareAudio = null;
+            // Stop handler — mirrors in-app _abStop()
+            if (_sharePlaying) {
+              _shareStopFlag = true;
+              if (_shareAudio) { try { _shareAudio.stop(); } catch(e) {} _shareAudio = null; }
               _sharePlaying = false;
-              shareListenBtn.textContent = '🎧 Listen';
+              shareListenBtn.innerHTML = '<span style="font-size:0.9rem">🎧</span> Listen';
               if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
-              _spSwell(); // Swell music back up when stopped
+              _spSwell();
               return;
             }
-            var textToSpeak = (data.piece.content || '').trim();
-            if (!textToSpeak) return;
-            shareListenBtn.disabled = true;
-            shareListenBtn.textContent = '⏳ Loading…';
-            if (shareListenStatus) { shareListenStatus.textContent = 'Preparing audio…'; shareListenStatus.style.display = 'inline'; }
 
-            // Prime AudioContext immediately inside the gesture handler — must happen
-            // synchronously before any await, otherwise Chrome/Safari block autoplay.
+            var segments = _getSegments(data.piece);
+            if (!segments.length) return;
+
+            // Prime AudioContext synchronously in gesture — required for Chrome/Safari autoplay
             if (!_shareAudioCtx) {
               try { _shareAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
             }
@@ -5732,7 +5721,7 @@
               try { await _shareAudioCtx.resume(); } catch(e) {}
             }
 
-            // APP-STORY-SHARE-02: prime bg music context at same gesture; start music on first Listen
+            // Prime bg music context in same gesture; start music before first TTS fetch
             if (isSong && bgMusicUrl && !_shareBgCtx) {
               try { _shareBgCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
               if (_shareBgCtx && _shareBgCtx.state === 'suspended') {
@@ -5743,54 +5732,84 @@
               try { await _shareBgCtx.resume(); } catch(e) {}
             }
 
-            // Duck music before TTS starts
+            shareListenBtn.disabled = true;
+            shareListenBtn.textContent = '⏳ Loading…';
+            if (shareListenStatus) { shareListenStatus.textContent = 'Preparing audio…'; shareListenStatus.style.display = 'inline'; }
+
+            _sharePlaying  = true;
+            _shareStopFlag = false;
             _spDuck();
 
-            try {
-              // Route TTS through SHARE_PROXY using the share token for auth —
-              // avoids JWT requirement that blocks direct TTS_PROXY calls from unauthenticated visitors
-              var res = await fetch(SHARE_PROXY_URL, {
+            // Helper: fetch one segment's TTS audio and decode it
+            function _spFetchSegment(text) {
+              return fetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ action: 'get_tts', token: token, voice: GETHRO_VOICE, text: textToSpeak })
+                body: JSON.stringify({ action: 'get_tts', token: token, voice: GETHRO_VOICE, text: text })
+              }).then(function(res) {
+                if (!res.ok) throw new Error('TTS error ' + res.status);
+                return res.arrayBuffer();
+              }).then(function(buf) {
+                if (!buf || !buf.byteLength) throw new Error('Empty audio response');
+                return new Promise(function(resolve, reject) {
+                  _shareAudioCtx.decodeAudioData(buf, resolve, reject);
+                });
               });
-              if (!res.ok) throw new Error('TTS error ' + res.status);
-              var buf = await res.arrayBuffer();
-              if (!buf || !buf.byteLength) throw new Error('Empty audio response');
+            }
 
-              // Decode and play via AudioContext — bypasses autoplay policy since
-              // the context was primed synchronously in the gesture handler above.
-              _shareAudioCtx.decodeAudioData(buf, function(decoded) {
+            // Helper: play one decoded AudioBuffer; resolves when playback ends
+            function _spPlayBuffer(decoded) {
+              return new Promise(function(resolve) {
                 var source = _shareAudioCtx.createBufferSource();
                 source.buffer = decoded;
                 source.connect(_shareAudioCtx.destination);
                 _shareAudio = source;
-                _sharePlaying = true;
-                shareListenBtn.disabled = false;
-                shareListenBtn.textContent = '⏹ Stop';
-                if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+                source.onended = function() { _shareAudio = null; resolve(); };
                 source.start(0);
-                source.onended = function() {
-                  _sharePlaying = false;
-                  _shareAudio = null;
-                  shareListenBtn.textContent = '🎧 Listen';
-                  if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
-                  _spSwell(); // Swell music back up after TTS ends
-                };
-              }, function(decodeErr) {
-                _spSwell();
-                throw new Error('Audio decode failed: ' + (decodeErr && decodeErr.message || decodeErr));
               });
-
-            } catch(err) {
-              _spSwell(); // Ensure music swells back even on error
-              _sharePlaying = false;
-              _shareAudio = null;
-              shareListenBtn.disabled = false;
-              shareListenBtn.textContent = '🎧 Listen';
-              if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
-              logActivity('share_listen_error', err.message, 'error', 'SHARE');
             }
+
+            // Helper: pause between segments (like in-app pause_after_ms)
+            function _spPause(ms) {
+              return new Promise(function(resolve) { setTimeout(resolve, ms); });
+            }
+
+            try {
+              // Pre-fetch first segment before showing "Playing…" — minimises delay
+              var firstDecoded = await _spFetchSegment(segments[0].text);
+              if (_shareStopFlag) { _sharePlaying = false; _spSwell(); return; }
+
+              shareListenBtn.disabled = false;
+              shareListenBtn.innerHTML = '<span style="font-size:0.9rem">⏹</span> Stop';
+              if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+
+              // Play segments sequentially, with inter-segment pauses — mirrors _abPlayFrom loop
+              var decodedFirst = firstDecoded;
+              for (var si = 0; si < segments.length; si++) {
+                if (_shareStopFlag) break;
+                var decoded = si === 0 ? decodedFirst : await _spFetchSegment(segments[si].text);
+                if (_shareStopFlag) break;
+                await _spPlayBuffer(decoded);
+                if (_shareStopFlag) break;
+                if (segments[si].pause_after_ms > 0) await _spPause(segments[si].pause_after_ms);
+              }
+            } catch(err) {
+              logActivity('share_listen_error', err.message, 'error', 'SHARE');
+              if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
+            }
+
+            // Finished or stopped — reset to idle
+            _sharePlaying  = false;
+            _shareStopFlag = false;
+            _shareAudio    = null;
+            if (shareListenBtn) {
+              shareListenBtn.disabled = false;
+              shareListenBtn.innerHTML = '<span style="font-size:0.9rem">🎧</span> Listen';
+            }
+            if (shareListenStatus && shareListenStatus.textContent === 'Playing…') {
+              shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none';
+            }
+            _spSwell(); // swell music back up after playback ends or is stopped
           });
         }
 
@@ -7789,6 +7808,74 @@
   let _gethroAudio    = null; // current Audio element (if playing)
   let _gethroAudioCtx = null; // AudioContext for TTS — created once on first gesture,
                                // reused so resume() reliably unlocks desktop Chrome autoplay.
+  // ── Shared TTS text-cleaning and segmentation ───────────────────────────────
+  // Single source of truth used by BOTH the in-app audiobook player (_abCleanForTts /
+  // _abGetSegments are thin aliases below) AND the share page (loadSharePage calls
+  // these directly). Edit here — both paths update automatically.
+
+  // Strips markdown, HTML tags, and song section labels so TTS reads clean prose.
+  function _cleanForTts(text) {
+    return text
+      .replace(/<[^>]+>/g, ' ')           // strip HTML tags
+      .replace(/^##\s*(VERSE\s*\d*|PRE.?CHORUS|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
+      .replace(/^\[(VERSE\s*\d*|PRE.?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\]]*\]\s*$/gim, '') // also strip [Verse 1] bracket format
+      .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings (removes ## prefix, leaves text)
+      // Catch-all: bare section keyword left on its own line after ## was stripped above
+      // e.g. "VERSE 1" or "CHORUS" or "PRE-CHORUS" sitting alone — TTS must not read these
+      .replace(/^(VERSE\s*\d*|PRE-?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)\s*\d*\s*$/gim, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')    // **bold** -> bold
+      .replace(/\*(.*?)\*/g, '$1')        // *italic* -> italic
+      .replace(/__(.*?)__/g, '$1')        // __bold__ -> bold
+      .replace(/_(.*?)_/g, '$1')          // _italic_ -> italic
+      .replace(/\*/g, '')                 // stray asterisks
+      .replace(/_/g, '')                  // stray underscores
+      .replace(/`{1,3}[^`]*`{1,3}/g, '') // inline code / code blocks
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [link text](url) -> link text
+      .replace(/&amp;/g, 'and').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Splits a piece into narration segments with inter-segment pause timings.
+  // Songs: split by ## section markers, 2s pauses. Poems: split by stanza, 1.5s pauses.
+  // Prose/other: chunked at ~400 chars on sentence boundaries.
+  // Returns [{text, pause_after_ms}].
+  function _getSegments(piece) {
+    var content = (piece.content || '').trim();
+    var type    = piece.type || 'prose';
+
+    if (type === 'song') {
+      // Split on section markers (## VERSE 1, ## CHORUS, ## BRIDGE etc)
+      var sections = content.split(/\n(?=##\s*(VERSE|CHORUS|BRIDGE|OUTRO|INTRO))/i);
+      return sections.map(function(sec) {
+        return { text: _cleanForTts(sec), pause_after_ms: 2000 };
+      }).filter(function(s) { return s.text.length > 0; });
+    } else if (type === 'poem' || type === 'poetry') {
+      // Split on double newlines (stanzas)
+      var stanzas = content.split(/\n\s*\n/);
+      return stanzas.map(function(st) {
+        return { text: _cleanForTts(st), pause_after_ms: 1500 };
+      }).filter(function(s) { return s.text.length > 0; });
+    } else {
+      // Prose, letter, interview etc — chunked at ~400 chars on sentence boundaries
+      var chunks = [];
+      var remaining = _cleanForTts(content);
+      while (remaining.length > 0) {
+        if (remaining.length <= 400) {
+          chunks.push({ text: remaining, pause_after_ms: 0 });
+          break;
+        }
+        // Find last sentence end before 400 chars
+        var sub = remaining.substring(0, 400);
+        var lastEnd = Math.max(sub.lastIndexOf('. '), sub.lastIndexOf('! '), sub.lastIndexOf('? '));
+        var cutAt = lastEnd > 50 ? lastEnd + 1 : 400;
+        chunks.push({ text: remaining.substring(0, cutAt).trim(), pause_after_ms: 0 });
+        remaining = remaining.substring(cutAt).trim();
+      }
+      return chunks;
+    }
+  }
+
   let _bgMusicCtx     = null; // Dedicated AudioContext for background music (separate from TTS).
   // Call this synchronously inside every user-gesture handler that might lead to audio.
   // Creates the AudioContext on first call (requires gesture on Chrome desktop),
@@ -10379,7 +10466,7 @@
                 _scThemeMode = 'freetext';
                 this.style.borderColor = 'var(--rose)';
                 // Clear chip highlights
-                var chips = cardsEl.querySelectorAll('button[onclick*="_scSelectThemeChip"]');
+                var chips = cardsEl.querySelectorAll('button[data-action="sc-theme-chip"]');
                 for (var ci = 0; ci < chips.length; ci++) {
                   chips[ci].style.borderColor = 'var(--border)';
                   chips[ci].style.background  = 'var(--surface)';
@@ -10405,6 +10492,7 @@
         cards.forEach(function(card) {
           var btn = document.createElement('button');
           btn.setAttribute('data-value', card.value);
+          btn.setAttribute('data-action', 'sc-format-card');
           // Determine if this card was previously selected on this step
           var alreadySelected =
             (_scPoetrySubStep  && _scPoetryType === card.value) ||
@@ -10417,7 +10505,6 @@
           btn.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:12px 14px;border:2px solid ' + borderCol + ';border-radius:12px;background:' + bgCol + ';cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:left';
           var descHtml = card.desc ? '<span style="font-size:0.75rem;color:var(--text-light);line-height:1.35;display:block;margin-top:2px">' + card.desc + '</span>' : '';
           btn.innerHTML = '<span style="font-size:1.3rem;line-height:1">' + card.emoji + '</span><span style="font-size:0.82rem;font-weight:700;color:var(--text);line-height:1.2;margin-top:2px">' + card.label + '</span>' + descHtml;
-          btn.onclick = function() { _scSelectCard(card.value, btn, cardsEl); };
           cardsEl.appendChild(btn);
           // If already selected, re-enable Next button
           if (alreadySelected) {
@@ -11351,6 +11438,9 @@
     }
   }
 
+  // PRV-09 Phase 9: piece lookup map for storyLibraryList delegate
+  var _libPieceMap = {};   // id → full piece object for _storyLibOpenOverlay
+
   // Phase 2: render library list
   async function renderLibrary() {
     var listEl = document.getElementById('storyLibraryList');
@@ -11465,6 +11555,9 @@
     card.setAttribute('data-lib-id', piece.id);
     card.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;transition:border-color 0.15s';
 
+    // PRV-09 Phase 9: store piece for delegate lookup
+    _libPieceMap[piece.id] = piece;
+
     // Title row
     var titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:flex-start;gap:10px;margin-bottom:6px';
@@ -11479,10 +11572,10 @@
     // Editable title
     var titleSpan = document.createElement('span');
     titleSpan.setAttribute('data-lib-title', piece.id);
+    titleSpan.setAttribute('data-action', 'lib-edit-title');
     titleSpan.style.cssText = 'font-size:0.88rem;font-weight:700;color:var(--text);cursor:pointer;display:block;word-break:break-word';
     titleSpan.title = 'Tap to edit title';
     titleSpan.textContent = piece.title || _autoStoryTitle(meta, dateStr);
-    titleSpan.onclick = function() { _storyLibEditTitle(piece.id, titleSpan); };
 
     var meta2 = document.createElement('span');
     meta2.style.cssText = 'font-size:0.72rem;color:var(--text-light);display:block;margin-top:2px';
@@ -11515,18 +11608,22 @@
     var readBtn = document.createElement('button');
     readBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text);cursor:pointer';
     readBtn.textContent = '👁 Read';
-    readBtn.onclick = function() { _storyLibOpenOverlay(piece); };
+    readBtn.setAttribute('data-action', 'lib-read');
+    readBtn.setAttribute('data-id', piece.id);
 
     var delBtn = document.createElement('button');
     delBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer';
     delBtn.textContent = '🗑 Delete';
-    delBtn.onclick = function() { _storyLibDelete(piece.id, card); };
+    delBtn.setAttribute('data-action', 'lib-delete');
+    delBtn.setAttribute('data-id', piece.id);
 
     // APP-STORY-SHARE-01: Share button
     var shareBtn = document.createElement('button');
     shareBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer';
     shareBtn.textContent = '🔗 Share';
-    (function(pid, ptitle) { shareBtn.onclick = function() { _storyLibSharePiece(pid, ptitle); }; })(piece.id, piece.title || _autoStoryTitle(meta, dateStr));
+    shareBtn.setAttribute('data-action', 'lib-share');
+    shareBtn.setAttribute('data-id', piece.id);
+    shareBtn.setAttribute('data-title', piece.title || _autoStoryTitle(meta, dateStr));
 
     actions.appendChild(readBtn);
     actions.appendChild(shareBtn);
@@ -11535,13 +11632,8 @@
     listenBtn.id = 'listenBtn_' + piece.id;
     listenBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer';
     listenBtn.textContent = '🎧 Listen';
-    (function(pid) { listenBtn.onclick = function() {
-      if (_abPlayer.playing && _abQueue.length === 1 && _abQueue[0].component_id === pid) {
-        _abStop(); // already playing this piece — stop it
-      } else {
-        _storyLibListen(pid);
-      }
-    }; })(piece.id);
+    listenBtn.setAttribute('data-action', 'lib-listen');
+    listenBtn.setAttribute('data-id', piece.id);
     actions.appendChild(listenBtn);
     actions.appendChild(delBtn);
     card.appendChild(actions);
@@ -11564,10 +11656,10 @@
       var newTitle = input.value.trim() || current;
       var newSpan = document.createElement('span');
       newSpan.setAttribute('data-lib-title', id);
+      newSpan.setAttribute('data-action', 'lib-edit-title');
       newSpan.style.cssText = titleSpan.style.cssText;
       newSpan.title = 'Tap to edit title';
       newSpan.textContent = newTitle;
-      newSpan.onclick = function() { _storyLibEditTitle(id, newSpan); };
       input.replaceWith(newSpan);
       if (newTitle !== current) {
         try {
@@ -11955,7 +12047,8 @@
         btn.textContent = already ? '✓ Added' : '+ Add';
         btn.disabled = already;
         if (!already) {
-          btn.onclick = function() { _bookAddPiece(piece.id); };
+          btn.setAttribute('data-action', 'book-add-piece');
+          btn.setAttribute('data-id', piece.id);
         }
         card.appendChild(btn);
         pickerEl.appendChild(card);
@@ -12033,7 +12126,8 @@
         removeBtn.style.cssText = 'flex-shrink:0;background:none;border:none;color:var(--text-light);font-size:1rem;cursor:pointer;padding:0 1px;line-height:1';
         removeBtn.title = 'Remove from book';
         removeBtn.textContent = '×';
-        removeBtn.onclick = (function(sid) { return function() { _bookRemovePiece(sid); }; })(section.id);
+        removeBtn.setAttribute('data-action', 'book-remove-piece');
+        removeBtn.setAttribute('data-id', section.id);
 
         row.appendChild(handle);
         row.appendChild(num);
@@ -12667,7 +12761,8 @@
           btn.textContent = '+ Add';
           btn.style.background = 'var(--rose)';
           btn.style.color = '#fff';
-          btn.onclick = (function(pid) { return function() { _abAddPiece(pid); }; })(piece.id);
+          btn.setAttribute('data-action', 'ab-add-piece');
+          btn.setAttribute('data-id', piece.id);
         }
         row.appendChild(btn);
         pickerEl.appendChild(row);
@@ -12722,7 +12817,10 @@
         tog.checked = isEnabled;
         tog.title = 'Include in playback';
         tog.style.cssText = 'flex-shrink:0;cursor:pointer;accent-color:var(--rose)';
-        tog.onchange = (function(qid, cb) { return function() { _abToggleEnabled(qid, cb.checked); }; })(item.id, tog);
+        tog.onchange = null;
+        tog.setAttribute('data-action', 'ab-toggle-enabled');
+        tog.setAttribute('data-id', item.id);
+        tog.addEventListener('change', function() { _abToggleEnabled(item.id, tog.checked); });
         row.appendChild(tog);
 
         // Remove button
@@ -12730,7 +12828,8 @@
         removeBtn.textContent = '×';
         removeBtn.title = 'Remove';
         removeBtn.style.cssText = 'flex-shrink:0;background:none;border:none;font-size:1rem;color:var(--text-light);cursor:pointer;padding:0 2px;line-height:1';
-        removeBtn.onclick = (function(qid) { return function() { _abRemovePiece(qid); }; })(item.id);
+        removeBtn.setAttribute('data-action', 'ab-remove-piece');
+        removeBtn.setAttribute('data-id', item.id);
         row.appendChild(removeBtn);
 
         // Drag events
@@ -12929,68 +13028,11 @@
     }
   }
 
-  // Clean raw story content for TTS narration.
-  // Strips markdown symbols that TTS reads literally (underscore, asterisk, hash, etc.)
-  // and HTML tags, then normalises whitespace.
-  function _abCleanForTts(text) {
-    return text
-      .replace(/<[^>]+>/g, ' ')           // strip HTML tags
-      .replace(/^##\s*(VERSE\s*\d*|PRE.?CHORUS|CHORUS(\s*\(repeat\))?|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\n]*/gim, '') // strip song section labels — Gethro sings, not announces
-      .replace(/^\[(VERSE\s*\d*|PRE.?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)[^\]]*\]\s*$/gim, '') // also strip [Verse 1] bracket format
-      .replace(/^#{1,6}\s*/gm, '')        // strip remaining ## headings (removes ## prefix, leaves text)
-      // Catch-all: bare section keyword left on its own line after ## was stripped above
-      // e.g. "VERSE 1" or "CHORUS" or "PRE-CHORUS" sitting alone — TTS must not read these
-      .replace(/^(VERSE\s*\d*|PRE-?CHORUS|CHORUS|BRIDGE|OUTRO|INTRO|HOOK|REFRAIN)\s*\d*\s*$/gim, '')
-      .replace(/\*\*(.*?)\*\*/g, '$1')    // **bold** -> bold
-      .replace(/\*(.*?)\*/g, '$1')        // *italic* -> italic
-      .replace(/__(.*?)__/g, '$1')        // __bold__ -> bold
-      .replace(/_(.*?)_/g, '$1')          // _italic_ -> italic
-      .replace(/\*/g, '')                 // stray asterisks
-      .replace(/_/g, '')                  // stray underscores
-      .replace(/`{1,3}[^`]*`{1,3}/g, '') // inline code / code blocks
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [link text](url) -> link text
-      .replace(/&amp;/g, 'and').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  // Extract narration segments from a piece based on its type.
-  // Returns an array of {text, pause_after_ms} objects.
-  function _abGetSegments(piece) {
-    var content = (piece.content || '').trim();
-    var type    = piece.type || 'prose';
-
-    if (type === 'song') {
-      // Split on section markers (## VERSE 1, ## CHORUS, ## BRIDGE etc)
-      var sections = content.split(/\n(?=##\s*(VERSE|CHORUS|BRIDGE|OUTRO|INTRO))/i);
-      return sections.map(function(sec) {
-        return { text: _abCleanForTts(sec), pause_after_ms: 2000 };
-      }).filter(function(s) { return s.text.length > 0; });
-    } else if (type === 'poem' || type === 'poetry') {
-      // Split on double newlines (stanzas)
-      var stanzas = content.split(/\n\s*\n/);
-      return stanzas.map(function(st) {
-        return { text: _abCleanForTts(st), pause_after_ms: 1500 };
-      }).filter(function(s) { return s.text.length > 0; });
-    } else {
-      // Prose, letter, interview etc — one chunk, split at ~400 chars on sentence boundaries to stay under TTS limit
-      var chunks = [];
-      var remaining = _abCleanForTts(content);
-      while (remaining.length > 0) {
-        if (remaining.length <= 400) {
-          chunks.push({ text: remaining, pause_after_ms: 0 });
-          break;
-        }
-        // Find last sentence end before 400 chars
-        var sub = remaining.substring(0, 400);
-        var lastEnd = Math.max(sub.lastIndexOf('. '), sub.lastIndexOf('! '), sub.lastIndexOf('? '));
-        var cutAt = lastEnd > 50 ? lastEnd + 1 : 400;
-        chunks.push({ text: remaining.substring(0, cutAt).trim(), pause_after_ms: 0 });
-        remaining = remaining.substring(cutAt).trim();
-      }
-      return chunks;
-    }
-  }
+  // _abCleanForTts / _abGetSegments are now thin aliases for the shared module-level
+  // functions _cleanForTts / _getSegments (defined once, used by both in-app audiobook
+  // and the share page). Edit only _cleanForTts / _getSegments — both paths update together.
+  function _abCleanForTts(text)  { return _cleanForTts(text); }
+  function _abGetSegments(piece) { return _getSegments(piece); }
 
   // The main sequential play loop
   async function _abPlayFrom(startIdx) {
@@ -13773,10 +13815,10 @@
   function renderTagChipManager(containerId, items, type, prefix, entryId) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    const btnOnclick = entryId
-      ? `openTagManager('people','${prefix}','${entryId}')`
-      : `openTagManager('people','${prefix}')`;
-    const addBtn = `<button type="button" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Tag person</button>`;
+    const addBtn = '<button type="button" data-action="open-tag-people"' +
+      (entryId ? ' data-id="' + entryId + '"' : '') +
+      ' data-prefix="' + prefix + '"' +
+      ' style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">\uFF0B Tag person</button>';
     if (!items || !items.length) { el.innerHTML = addBtn; return; }
     el.innerHTML = items.map(item =>
       '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">' +
@@ -13789,11 +13831,10 @@
   function renderRefChipManager(containerId, items, prefix, entryId) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    // Determine the openTagManager call for the button
-    const btnOnclick = entryId
-      ? `openTagManager('ref','${prefix}','${entryId}')`
-      : `openTagManager('ref','${prefix}')`;
-    const addBtn = `<button type="button" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add reference</button>`;
+    const addBtn = '<button type="button" data-action="open-tag-ref"' +
+      (entryId ? ' data-id="' + entryId + '"' : '') +
+      ' data-prefix="' + prefix + '"' +
+      ' style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">\uFF0B Add reference</button>';
     if (!items || !items.length) { el.innerHTML = addBtn; return; }
     el.innerHTML = items.map(item => {
       const href = item.url && !/^https?:\/\//i.test(item.url) ? 'https://' + item.url : item.url;
@@ -14018,8 +14059,9 @@
   }
 
   function toggleEditTags(entryId, inReview) {
-    const panelId = inReview ? 'redit-' + entryId : 'edit-' + entryId;
-    const prefix  = inReview ? 'redit_' + entryId : 'edit_' + entryId;
+    const panelId  = inReview ? 'redit-' + entryId : 'edit-' + entryId;
+    const shortPfx = inReview ? 'redit' : 'edit';
+    const prefix   = shortPfx + '_' + entryId;
     const panel = document.getElementById(panelId);
     if (!panel) return;
     if (panel.style.display === 'none' || !panel.style.display) {
@@ -14029,6 +14071,12 @@
       panel.style.display = 'grid';
       panel.style.gridTemplateColumns = '1fr 1fr 1fr';
       loadEditPanelPhotoThumbs(entryId);
+      // Wire photo file input change (dynamic element, wired on open)
+      var photoInput = document.getElementById(shortPfx + 'PhotoInput' + entryId);
+      if (photoInput && !photoInput._wired) {
+        photoInput.addEventListener('change', function() { handleEditPanelPhotos(this, entryId, shortPfx); });
+        photoInput._wired = true;
+      }
     } else {
       panel.style.display = 'none';
     }
@@ -14099,7 +14147,7 @@
           `<div style="display:flex;flex-direction:column;gap:4px;align-items:center" id="ephoto-${entryId}-${i}">
             <div style="position:relative;display:inline-block">
               <div id="ephoto-thumb-${entryId}-${i}" style="width:56px;height:56px;border-radius:6px;border:2px solid var(--gold);background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:1.2rem">📷</div>
-              <button style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:9px;cursor:pointer;line-height:18px;text-align:center" title="Delete photo">✕</button>
+              <button data-action="delete-child-entry" data-child-id="${p.id}" data-parent-id="${entryId}" data-prefix="${prefix}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:9px;cursor:pointer;line-height:18px;text-align:center" title="Delete photo">✕</button>
             </div>
             <span style="font-size:0.68rem;color:var(--text-light);width:56px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.answer?.substring(0,12)||'Photo'}</span>
           </div>`
@@ -14110,7 +14158,7 @@
           `<div id="eaudio-${entryId}-${i}" style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:6px 10px;border-left:3px solid var(--gold);position:relative">
             <span style="font-size:1rem;flex-shrink:0">🎵</span>
             <span style="font-size:0.78rem;color:var(--text-light);flex:1">${a.answer && a.answer !== 'Audio' ? a.answer : 'Audio clip'}</span>
-            <button style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:0.8rem;padding:2px 6px;flex-shrink:0" title="Delete audio">✕ Delete</button>
+            <button data-action="delete-child-entry" data-child-id="${a.id}" data-parent-id="${entryId}" data-prefix="${prefix}" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:0.8rem;padding:2px 6px;flex-shrink:0" title="Delete audio">✕ Delete</button>
           </div>`
         ).join('')
       : '';
@@ -14153,7 +14201,7 @@
         <div class="tag-field">
           <label>👥 People</label>
           <div id="${prefix}PeopleChips${entryId}" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
-            <button type="button"
+            <button type="button" data-action="open-tag-people" data-id="${entryId}" data-prefix="${prefix}"
               style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Tag person</button>
           </div>
           <input type="hidden" id="${prefix}_${entryId}TagPeople">
@@ -14161,8 +14209,8 @@
         <div class="tag-field">
           <label>🔗 References</label>
           <div id="${prefix}RefChips${entryId}" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
-            <button type="button"
-              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato\',sans-serif;white-space:nowrap">＋ Add reference</button>
+            <button type="button" data-action="open-tag-ref" data-id="${entryId}" data-prefix="${prefix}"
+              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add reference</button>
           </div>
           <input type="hidden" id="${prefix}_${entryId}TagRef">
           <input type="hidden" id="${prefix}_${entryId}TagRefUrl">
@@ -14173,18 +14221,17 @@
           <label>📷 Photos</label>
           <div id="${prefix}PhotoStrip${entryId}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
             ${photosHtml}
-            <button type="button"
+            <button type="button" data-action="open-tag-photo" data-id="${entryId}" data-prefix="${prefix}"
               style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add photo</button>
           </div>
-          <input type="file" id="${prefix}PhotoInput${entryId}" accept="image/*" multiple style="display:none"
->
+          <input type="file" id="${prefix}PhotoInput${entryId}" accept="image/*" multiple style="display:none">
           ${audiosHtml ? '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">' + audiosHtml + '</div>' : ''}
         </div>
 
         <!-- Save / Cancel -->
         <div style="grid-column:1/-1;display:flex;gap:8px;margin-top:4px">
-          <button class="btn btn-primary" style="font-size:0.78rem;padding:8px 16px">Save</button>
-          <button class="btn btn-ghost" style="font-size:0.78rem;padding:8px 12px">Cancel</button>
+          <button class="btn btn-primary" data-action="save-edit-tags" data-id="${entryId}" data-prefix="${prefix}" style="font-size:0.78rem;padding:8px 16px">Save</button>
+          <button class="btn btn-ghost" data-action="cancel-edit-tags" data-id="${entryId}" data-prefix="${prefix}" style="font-size:0.78rem;padding:8px 12px">Cancel</button>
         </div>
       </div>`;
   }
@@ -14219,8 +14266,8 @@
           style="font-size:0.68rem;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:56px">
       </div>`
     ).join('');
-    const addBtn = `<button type="button"
-      style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add photo</button>`;
+    const addBtn = '<button type="button" data-action="open-tag-photo" data-id="' + entryId + '" data-prefix="' + prefix + '"' +
+      ' style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">\uFF0B Add photo</button>';
     strip.innerHTML = existingThumbs + newThumbs + addBtn;
   }
 
@@ -15306,9 +15353,10 @@
     var toShow = milestones.filter(function(m) { return m.met && !_milestoneCache.has(m.key); });
     if (!toShow.length) return;
 
-    // Show only the highest unshown milestone this save (avoid stacking messages)
+    // Show only the highest unshown milestone this save (avoid stacking messages),
+    // but mark ALL met-but-unshown milestones as seen so they never re-trigger.
     var pick = toShow[toShow.length - 1];
-    _milestoneCache.add(pick.key);
+    toShow.forEach(function(m) { _milestoneCache.add(m.key); });
 
     // Persist updated set (fire-and-forget)
     var now = new Date().toISOString();
@@ -15363,11 +15411,12 @@
       const div   = document.createElement('div');
       div.className = 'chapter-card';
       div.style.borderLeftColor = colour;
+      div.setAttribute('data-action', 'dash-chapter-detail');
+      div.setAttribute('data-chapter', ch);
       div.innerHTML =
         '<div class="chapter-card-name">' + ch + '</div>' +
         '<div class="chapter-card-stats">' + ces.length + ' entr' + (ces.length===1?'y':'ies') + ' · ' + words.toLocaleString() + ' words</div>' +
         '<div class="chapter-score-bar"><div class="chapter-score-fill" style="width:' + score + '%;background:' + colour + '"></div></div>';
-      div.onclick = () => openDashChapterDetail(ch);
       target.appendChild(div);
     });
   }
@@ -16734,6 +16783,12 @@
       panel.style.display = 'grid';
       panel.style.gridTemplateColumns = '1fr 1fr 1fr';
       loadEditPanelPhotoThumbs(entryId);
+      // Wire photo file input change (dynamic element, wired on open)
+      var photoInput = document.getElementById('cdeditPhotoInput' + entryId);
+      if (photoInput && !photoInput._wired) {
+        photoInput.addEventListener('change', function() { handleEditPanelPhotos(this, entryId, 'cdedit'); });
+        photoInput._wired = true;
+      }
     } else {
       panel.style.display = 'none';
     }
@@ -16953,7 +17008,7 @@
         btn.setAttribute('data-value', card.value);
         btn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:center';
         btn.innerHTML = '<span style="font-size:1.4rem">' + card.emoji + '</span><span style="font-size:0.78rem;color:var(--text);line-height:1.3">' + card.label + '</span>';
-        btn.onclick = function() { _goalSelectCard(card.value, btn, cardsEl); };
+        btn.setAttribute('data-action', 'goal-select-card');
         cardsEl.appendChild(btn);
       });
       // "Other" card
@@ -16961,17 +17016,7 @@
       otherBtn.setAttribute('data-value', '_other');
       otherBtn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:center';
       otherBtn.innerHTML = '<span style="font-size:1.4rem">✏️</span><span style="font-size:0.78rem;color:var(--text);line-height:1.3">Other…</span>';
-      otherBtn.onclick = function() {
-        _goalSelectCard('_other', otherBtn, cardsEl);
-        var cw = document.getElementById('goalCustomWrap');
-        if (cw) cw.style.display = 'block';
-        var ci = document.getElementById('goalCustomInput');
-        if (ci) { ci.focus(); ci.oninput = function() {
-          var nxt = document.getElementById('goalNextBtn');
-          if (nxt) nxt.disabled = !ci.value.trim();
-          _goalSelectedCard = ci.value.trim() || '_other';
-        }; }
-      };
+      otherBtn.setAttribute('data-action', 'goal-select-other');
       cardsEl.appendChild(otherBtn);
     }
   }
@@ -19817,6 +19862,7 @@
   // Session conversation history kept in _gethroHistory (resets on page load).
 
   var _gethroHistory  = [];   // [{role:'user'|'assistant', content:'...'}]
+  var _agpPendingNavActions = {}; // PRV-09 Phase 9: keyed by div uid → {action, delay} for nav-intercept delegate
   var _agpMicActive   = false;
   var _agpRecognition = null;
   var _agpSending     = false;
@@ -20060,10 +20106,7 @@
     yesBtn.style.marginTop = '10px';
     yesBtn.style.marginRight = '8px';
     yesBtn.textContent = 'Yes, add it';
-    yesBtn.onclick = function() {
-      div.remove();
-      agpSaveToEntry();
-    };
+    yesBtn.setAttribute('data-action', 'agp-save-yes');
     div.appendChild(yesBtn);
 
     // No button — dismisses cleanly, clears history
@@ -20074,19 +20117,7 @@
     noBtn.style.color = 'var(--text-light)';
     noBtn.style.borderColor = 'var(--border)';
     noBtn.textContent = 'No thanks';
-    noBtn.onclick = function() {
-      div.remove();
-      _gethroHistory = [];
-      _agpMemoryMode = false;
-      _agpUpdateSaveBar();
-      // Show normal greeting so panel doesn't feel empty
-      var firstName2 = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
-      var opener = firstName2
-        ? 'No worries. What can I help you with, ' + firstName2 + '?'
-        : 'No worries. What else can I help you with?';
-      _agpAppendGethro(opener, null);
-      gethroSpeak(opener).catch(function(){});
-    };
+    noBtn.setAttribute('data-action', 'agp-save-no');
     div.appendChild(noBtn);
 
     log.appendChild(div);
@@ -20547,27 +20578,20 @@
           var textDiv = document.createElement('div');
           textDiv.textContent = 'Before I take you there — would you like to save our conversation to your memory first?';
           div.appendChild(textDiv);
-          var savedAction = action; // capture for closure
+          // PRV-09 Phase 9: store pending action in map keyed by uid; delegate reads it
+          var _navUid = 'agp-nav-' + Date.now();
+          div.setAttribute('data-nav-uid', _navUid);
+          _agpPendingNavActions[_navUid] = { action: action, delay: delay };
           var yesBtn = document.createElement('button');
           yesBtn.className = 'agp-action-btn'; yesBtn.style.marginTop = '10px'; yesBtn.style.marginRight = '8px';
           yesBtn.textContent = 'Yes, save first';
-          yesBtn.onclick = function() {
-            div.remove();
-            agpSaveToEntry().then(function() {
-              setTimeout(function() { closeAskGethro(); }, delay - 200);
-              _agpRoute(savedAction);
-            });
-          };
+          yesBtn.setAttribute('data-action', 'agp-nav-yes');
           div.appendChild(yesBtn);
           var noBtn = document.createElement('button');
           noBtn.className = 'agp-action-btn'; noBtn.style.marginTop = '10px';
           noBtn.style.background = 'none'; noBtn.style.color = 'var(--text-light)'; noBtn.style.borderColor = 'var(--border)';
           noBtn.textContent = 'No, just go';
-          noBtn.onclick = function() {
-            div.remove();
-            setTimeout(function() { closeAskGethro(); }, delay - 200);
-            _agpRoute(savedAction);
-          };
+          noBtn.setAttribute('data-action', 'agp-nav-no');
           div.appendChild(noBtn);
           log.appendChild(div);
           log.scrollTop = log.scrollHeight;
@@ -20695,7 +20719,8 @@
         generate_story:    '📖 Generate story',
       };
       btn.textContent = labels[action.type] || 'Go';
-      btn.onclick = function() { _agpRoute(action); closeAskGethro(); };
+      btn.setAttribute('data-action', 'agp-route');
+      btn.setAttribute('data-route', JSON.stringify(action));
       div.appendChild(btn);
     }
     log.appendChild(div);
@@ -21649,9 +21674,10 @@
 
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:background 0.12s';
+      row.setAttribute('data-action', 'mp-open-profile');
+      row.setAttribute('data-id', person.id);
       row.onmouseenter = function() { row.style.background = 'var(--surface2,var(--bg))'; };
       row.onmouseleave = function() { row.style.background = 'var(--surface)'; };
-      row.onclick = function() { mpOpenProfile(person.id); };
 
       // Avatar
       var avatarEl = document.createElement('div');
@@ -22361,12 +22387,8 @@
       aEl.textContent = ans.length > 160 ? ans.substring(0,160) + '…' : ans;
       card.appendChild(aEl);
 
-      card.onclick = function() {
-        mpCloseProfile();
-        setTimeout(function() {
-          if (typeof openEntryDetail === 'function') openEntryDetail(entry);
-        }, 300);
-      };
+      card.setAttribute('data-action', 'mp-open-entry');
+      card.setAttribute('data-entry-id', entry.id);
       container.appendChild(card);
     });
 
@@ -23517,6 +23539,7 @@
       if (!btn) return;
       var action = btn.dataset.action;
       var value  = btn.dataset.value || '';
+      if (action === 'sc-format-card')   _scSelectCard(value, btn, _scCardsEl);
       if (action === 'sc-comedy-style')  _scSelectComedyStyle(value, btn);
       if (action === 'sc-song-mood')     _scSelectSongMood(value, btn);
       if (action === 'sc-song-length')   _scSelectSongLength(value, btn);
@@ -23576,6 +23599,43 @@
         case 'cancel-edit-text':     if (id) editEntryText(id);                            break;
         case 'edit-with-gethro':     if (id) openEntryInMemories(id);                     break;
         case 'share-entry':          if (id) showShareConsent(id);                         break;
+        // ── Tag panel buttons (people / ref / photo / save / cancel) ──
+        // Data flows only through data-* attributes — no user content in executable position
+        case 'open-tag-people': {
+          var _tagPrefix = btn.dataset.prefix || 'edit';
+          openTagManager('people', _tagPrefix, id || null);
+          break;
+        }
+        case 'open-tag-ref': {
+          var _tagPrefixR = btn.dataset.prefix || 'edit';
+          openTagManager('ref', _tagPrefixR, id || null);
+          break;
+        }
+        case 'open-tag-photo': {
+          var _tagPrefixP = btn.dataset.prefix || 'edit';
+          var _photoInput = id ? document.getElementById(_tagPrefixP + 'PhotoInput' + id) : null;
+          if (_photoInput) _photoInput.click();
+          break;
+        }
+        case 'save-edit-tags': {
+          var _savePfx = btn.dataset.prefix || 'edit';
+          if (id) saveEntryTags(id, _savePfx);
+          break;
+        }
+        case 'cancel-edit-tags': {
+          var _cancelPfx = btn.dataset.prefix || 'edit';
+          var _panel = id ? (document.getElementById(_cancelPfx + '-' + id) || document.getElementById(_cancelPfx + '_' + id + '-panel')) : null;
+          if (_panel) _panel.style.display = 'none';
+          break;
+        }
+        // ── Delete existing photo/audio child entry from edit panel ──
+        case 'delete-child-entry': {
+          var _childId  = btn.dataset.childId  || null;
+          var _parentId = btn.dataset.parentId || null;
+          var _delPfx   = btn.dataset.prefix   || 'edit';
+          if (_childId && _parentId) deleteChildEntry(_childId, _parentId, _delPfx);
+          break;
+        }
         case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
@@ -23611,6 +23671,167 @@
     // _entryCardDelegate checks btn.closest('[data-action]') so non-matching clicks are no-ops.
     var _appShell = document.getElementById('appShell');
     if (_appShell) _appShell.addEventListener('click', _entryCardDelegate);
+
+    // PRV-09 Phase 9: Audiobook builder delegation
+    var _abPickerListEl = document.getElementById('abPickerList');
+    if (_abPickerListEl) _abPickerListEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="ab-add-piece"]');
+      if (btn && btn.dataset.id) _abAddPiece(btn.dataset.id);
+    });
+    var _abQueueListEl = document.getElementById('abQueueList');
+    if (_abQueueListEl) _abQueueListEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="ab-remove-piece"]');
+      if (btn && btn.dataset.id) _abRemovePiece(btn.dataset.id);
+    });
+
+    // PRV-09 Phase 9: Dashboard coverage grid delegation
+    var _dashCoverageGridEl = document.getElementById('dashCoverageGrid');
+    if (_dashCoverageGridEl) _dashCoverageGridEl.addEventListener('click', function(e) {
+      var card = e.target.closest('[data-action="dash-chapter-detail"]');
+      if (card && card.dataset.chapter !== undefined) openDashChapterDetail(card.dataset.chapter);
+    });
+
+    // PRV-09 Phase 9: agpLog delegate — Gethro inline action buttons
+    var _agpLogEl = document.getElementById('agpLog');
+    if (_agpLogEl) _agpLogEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.dataset.action;
+      // Save-prompt (yes/no)
+      if (action === 'agp-save-yes') {
+        var msgDiv = btn.closest('.agp-msg-gethro');
+        if (msgDiv) msgDiv.remove();
+        agpSaveToEntry();
+      } else if (action === 'agp-save-no') {
+        var msgDiv2 = btn.closest('.agp-msg-gethro');
+        if (msgDiv2) msgDiv2.remove();
+        _gethroHistory = [];
+        _agpMemoryMode = false;
+        _agpUpdateSaveBar();
+        var firstName3 = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+        var opener3 = firstName3
+          ? 'No worries. What can I help you with, ' + firstName3 + '?'
+          : 'No worries. What else can I help you with?';
+        _agpAppendGethro(opener3, null);
+        gethroSpeak(opener3).catch(function(){});
+      // Nav-intercept prompt (yes/no)
+      } else if (action === 'agp-nav-yes') {
+        var navDiv = btn.closest('[data-nav-uid]');
+        var uid = navDiv ? navDiv.dataset.navUid : null;
+        var pending = uid ? _agpPendingNavActions[uid] : null;
+        if (navDiv) navDiv.remove();
+        if (uid) delete _agpPendingNavActions[uid];
+        if (pending) {
+          agpSaveToEntry().then(function() {
+            setTimeout(function() { closeAskGethro(); }, pending.delay - 200);
+            _agpRoute(pending.action);
+          });
+        }
+      } else if (action === 'agp-nav-no') {
+        var navDiv2 = btn.closest('[data-nav-uid]');
+        var uid2 = navDiv2 ? navDiv2.dataset.navUid : null;
+        var pending2 = uid2 ? _agpPendingNavActions[uid2] : null;
+        if (navDiv2) navDiv2.remove();
+        if (uid2) delete _agpPendingNavActions[uid2];
+        if (pending2) {
+          setTimeout(function() { closeAskGethro(); }, pending2.delay - 200);
+          _agpRoute(pending2.action);
+        }
+      // Action-route button
+      } else if (action === 'agp-route') {
+        try {
+          var routeAction = JSON.parse(btn.dataset.route || '{}');
+          _agpRoute(routeAction);
+          closeAskGethro();
+        } catch(e) { dbgErr('AGP', 'agp-route parse error: ' + e.message); }
+      }
+    });
+
+    // PRV-09 Phase 9: Goal session cards delegation
+    var _goalCardsEl = document.getElementById('goalCards');
+    if (_goalCardsEl) _goalCardsEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.dataset.action;
+      var cardsEl = _goalCardsEl;
+      if (action === 'goal-select-card') {
+        _goalSelectCard(btn.dataset.value || '', btn, cardsEl);
+      } else if (action === 'goal-select-other') {
+        _goalSelectCard('_other', btn, cardsEl);
+        var cw = document.getElementById('goalCustomWrap');
+        if (cw) cw.style.display = 'block';
+        var ci = document.getElementById('goalCustomInput');
+        if (ci) {
+          ci.focus();
+          ci.oninput = function() {
+            var nxt = document.getElementById('goalNextBtn');
+            if (nxt) nxt.disabled = !ci.value.trim();
+            _goalSelectedCard = ci.value.trim() || '_other';
+          };
+        }
+      }
+    });
+
+    // PRV-09 Phase 9: Book builder delegation
+    var _bookPickerListEl = document.getElementById('bookPickerList');
+    if (_bookPickerListEl) _bookPickerListEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="book-add-piece"]');
+      if (btn && btn.dataset.id) _bookAddPiece(btn.dataset.id);
+    });
+    var _bookSectionListEl = document.getElementById('bookSectionList');
+    if (_bookSectionListEl) _bookSectionListEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="book-remove-piece"]');
+      if (btn && btn.dataset.id) _bookRemovePiece(btn.dataset.id);
+    });
+
+    // PRV-09 Phase 9: Story library card delegation
+    var _storyLibListEl = document.getElementById('storyLibraryList');
+    if (_storyLibListEl) _storyLibListEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.dataset.action;
+      var id     = btn.dataset.id || '';
+      if (action === 'lib-read') {
+        var piece = _libPieceMap[id];
+        if (piece) _storyLibOpenOverlay(piece);
+      } else if (action === 'lib-delete') {
+        var card = btn.closest('[data-lib-id]');
+        if (id && card) _storyLibDelete(id, card);
+      } else if (action === 'lib-share') {
+        if (id) _storyLibSharePiece(id, btn.dataset.title || '');
+      } else if (action === 'lib-listen') {
+        if (_abPlayer && _abPlayer.playing && _abQueue.length === 1 && _abQueue[0].component_id === id) {
+          _abStop();
+        } else if (id) {
+          _storyLibListen(id);
+        }
+      } else if (action === 'lib-edit-title') {
+        var titleEl = btn.closest('[data-lib-title]') || btn;
+        if (id) _storyLibEditTitle(id, titleEl);
+      }
+    });
+
+    // PRV-09 Phase 9: My People directory list delegation
+    var _mpDirListEl = document.getElementById('mpDirList');
+    if (_mpDirListEl) _mpDirListEl.addEventListener('click', function(e) {
+      var row = e.target.closest('[data-action="mp-open-profile"]');
+      if (row && row.dataset.id) mpOpenProfile(row.dataset.id);
+    });
+
+    // PRV-09 Phase 9: My People profile entries delegation
+    var _mpProfileEntriesEl = document.getElementById('mpProfileMentions');
+    if (_mpProfileEntriesEl) _mpProfileEntriesEl.addEventListener('click', function(e) {
+      var card = e.target.closest('[data-action="mp-open-entry"]');
+      if (card && card.dataset.entryId) {
+        var entryId = card.dataset.entryId;
+        var entry = entries.find(function(en) { return en.id === entryId; });
+        if (!entry) return;
+        mpCloseProfile();
+        setTimeout(function() {
+          if (typeof openEntryDetail === 'function') openEntryDetail(entry);
+        }, 300);
+      }
+    });
 
     // ── PRV-09 Phase 7: oninput= removed from static HTML ──────────────
     on('newPasswordInput',   'input', pwStrengthCheck);
