@@ -5190,8 +5190,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.81';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-SHARE-02: Story/song share page now supports comments. Feedback form shown below piece shares (was hidden). SHARE_PROXY v3.70: removed component_id block in submit_feedback; component_id passed to life_share_feedback insert. Song shares play bg_music_url background music with volume ducking while Gethro TTS speaks, swell on finish — mirrors audiobook player. Music mute toggle shown for songs. SQL required: ALTER TABLE life_share_feedback ADD COLUMN IF NOT EXISTS component_id uuid REFERENCES life_story_components(id).';
+  const APP_VERSION  = 'v5.82';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-STORY-SHARE-03: Comments from piece shares now visible in My Library. Each library card async-loads its pending comments and shows them below the action buttons with Dismiss/Delete. Dashboard responses tile: fixed pre-existing bug where Accept/Delete buttons were missing data-action attributes (buttons were rendered but did nothing). Piece feedback in dashboard shows "story" badge and Dismiss instead of Accept (no memory to import into). deleteResponse now handles both contexts (library card panel and dashboard tile).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -6503,47 +6503,74 @@
       setTabBadge('dashResponsesBadge', true);
       countEl.textContent = feedback.length + (feedback.length === 1 ? ' new response' : ' new responses');
 
-      // Look up entry titles for context
-      var entryIds = [...new Set(feedback.map(function(f) { return f.entry_id; }).filter(Boolean))];
+      // Look up entry titles for context. Also look up piece titles for component_id rows.
+      var entryIds     = [...new Set(feedback.map(function(f) { return f.entry_id; }).filter(Boolean))];
+      var componentIds = [...new Set(feedback.map(function(f) { return f.component_id; }).filter(Boolean))];
       var entryMap = {};
       entries.forEach(function(e) { if (entryIds.includes(e.id)) entryMap[e.id] = e; });
 
+      // Fetch piece titles for component_id rows (batch select)
+      var pieceMap = {};
+      if (componentIds.length) {
+        try {
+          var pRes = await fetch(
+            SUPABASE_URL + '/rest/v1/life_story_components?id=in.(' + componentIds.map(function(id) { return id; }).join(',') + ')&select=id,title,type,metadata',
+            { headers: getAuthHeaders() }
+          );
+          if (pRes.ok) {
+            var pieces = await pRes.json();
+            pieces.forEach(function(p) { pieceMap[p.id] = p; });
+          }
+        } catch(pe) { dbgWarn('DASH', 'piece title fetch error:', pe.message); }
+      }
+
       list.innerHTML = feedback.map(function(f) {
-        var entry = entryMap[f.entry_id];
-        var entryTitle = entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory';
+        var isPiece = !!f.component_id;
+        var entry = !isPiece ? entryMap[f.entry_id] : null;
+        var piece = isPiece ? pieceMap[f.component_id] : null;
+        var contextTitle = isPiece
+          ? (piece ? (piece.title || 'a story piece') : 'a story piece')
+          : (entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory');
         var timeAgo = formatTimeAgo(f.created_at);
-        var hasMedia = f.photo_url || f.audio_url || f.video_url;
         var mediaNote = '';
-        if (f.photo_url && f.photo_url !== '(pending)') mediaNote += ' \uD83D\uDDBC\uFE0F';
-        else if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
+        if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
         if (f.audio_url) mediaNote += ' \uD83C\uDFB5';
         if (f.video_url) mediaNote += ' \uD83C\uDF9E\uFE0F';
-        // Show the question being answered — prefer share note (what owner set for respondents)
-        // over Gethro entry question
         var shareNote = (f.life_share_tokens && f.life_share_tokens.note) ? f.life_share_tokens.note : null;
-        var entryQuestion = (entry && entry.question) ? cleanQuestion(entry.question) : '';
+        var entryQuestion = (!isPiece && entry && entry.question) ? cleanQuestion(entry.question) : '';
         var questionDisplay = shareNote || entryQuestion;
         var questionHtml = questionDisplay
           ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 6px">\u201c' + escHtml(questionDisplay) + '\u201d</p>'
           : '';
+        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+
+        // Piece comments get a "Dismiss" action (no memory to attach to).
+        // Memory feedback gets "Accept feedback" which imports to entries.
+        var acceptBtn = isPiece
+          ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
+              '\u2713 Dismiss' +
+            '</button>'
+          : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+              '\u2714 Accept feedback' +
+            '</button>';
 
         return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
             '<div>' +
               '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name) + '</span>' +
               '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
+              (isPiece ? '<span style="font-size:0.7rem;color:var(--gold-dark);background:rgba(201,169,110,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">story</span>' : '') +
             '</div>' +
-            '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(entryTitle) + '\u201d</span>' +
+            '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>' +
           '</div>' +
           questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
           (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + ' <em>(media upload coming soon)</em></p>' : '') +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-            '<button ' +
-              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-              '\u2714 Accept feedback' +
-            '</button>' +
-            '<button ' +
+            acceptBtn +
+            '<button data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
               'Delete' +
             '</button>' +
@@ -6695,6 +6722,8 @@
   async function deleteResponse(feedbackId) {
     if (!confirm('Delete this response? It cannot be undone.')) return;
     var row = document.getElementById('response-row-' + feedbackId);
+    // Determine if this is inside a library card panel (piece feedback) or dashboard tile (memory feedback)
+    var isPiecePanel = row && !!row.closest('[id^="piece-fb-panel-"]');
     try {
       var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
         method: 'DELETE',
@@ -6703,18 +6732,35 @@
       if (!res.ok) throw new Error('delete failed');
       toast('Response deleted');
       if (row) row.remove();
-      // Check if tile should hide
-      var remaining = document.getElementById('dashResponsesList');
-      if (remaining && !remaining.children.length) {
-        document.getElementById('dashResponsesTile').style.display = 'none';
-        _agpPendingResponseCount = 0;
-        setTabBadge('dashResponsesBadge', false);
+
+      if (isPiecePanel) {
+        // Update the library card panel heading count, or remove panel if empty
+        var panel = document.querySelector('[id^="piece-fb-panel-"]');
+        // Find the specific panel this row was in
+        var allPanels = document.querySelectorAll('[id^="piece-fb-panel-"]');
+        allPanels.forEach(function(p) {
+          var remaining = p.querySelectorAll('[id^="response-row-"]').length;
+          var headingEl = p.querySelector('div[style*="gold-dark"]');
+          if (remaining === 0) {
+            p.remove();
+          } else if (headingEl) {
+            headingEl.textContent = '\uD83D\uDCAC ' + remaining + (remaining === 1 ? ' comment' : ' comments');
+          }
+        });
       } else {
-        var countEl = document.getElementById('dashResponsesCount');
-        if (countEl && remaining) {
-          var n = remaining.children.length;
-          _agpPendingResponseCount = n;
-          countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
+        // Dashboard tile cleanup
+        var remaining = document.getElementById('dashResponsesList');
+        if (remaining && !remaining.children.length) {
+          document.getElementById('dashResponsesTile').style.display = 'none';
+          _agpPendingResponseCount = 0;
+          setTabBadge('dashResponsesBadge', false);
+        } else {
+          var countEl = document.getElementById('dashResponsesCount');
+          if (countEl && remaining) {
+            var n = remaining.children.length;
+            _agpPendingResponseCount = n;
+            countEl.textContent = n + (n === 1 ? ' new response' : ' new responses');
+          }
         }
       }
     } catch(e) {
@@ -11332,11 +11378,75 @@
 
       listEl.innerHTML = '';
       pieces.forEach(function(piece) {
-        listEl.appendChild(_buildLibraryCard(piece));
+        var card = _buildLibraryCard(piece);
+        listEl.appendChild(card);
+        // APP-STORY-SHARE-03: async load comments for this piece and append below card
+        _loadLibraryCardFeedback(piece.id, card);
       });
     } catch (err) {
       dbgErr('LIB', 'renderLibrary error: ' + err.message);
       listEl.innerHTML = '<div style="padding:20px;color:var(--text-light);font-size:0.85rem;text-align:center">Could not load library — please try again.</div>';
+    }
+  }
+
+  // APP-STORY-SHARE-03: Load and render pending comments on a library card.
+  // Called after the card is appended to the DOM. If there are no comments,
+  // does nothing visible. Comments are shown with a Dismiss and Delete action.
+  async function _loadLibraryCardFeedback(pieceId, card) {
+    if (!currentUser || !pieceId || !card) return;
+    try {
+      var res = await fetch(
+        DB_SHARE_FEEDBACK_URL + '?component_id=eq.' + pieceId +
+        '&owner_id=eq.' + currentUser.id +
+        '&order=created_at.asc',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return;
+      var comments = await res.json();
+      if (!comments || !comments.length) return;
+
+      var panel = document.createElement('div');
+      panel.id = 'piece-fb-panel-' + pieceId;
+      panel.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:10px';
+
+      var heading = document.createElement('div');
+      heading.style.cssText = 'font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:8px';
+      heading.textContent = '\uD83D\uDCAC ' + comments.length + (comments.length === 1 ? ' comment' : ' comments');
+      panel.appendChild(heading);
+
+      comments.forEach(function(f) {
+        var row = document.createElement('div');
+        row.id = 'response-row-' + f.id;
+        row.style.cssText = 'background:var(--surface2);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)';
+
+        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+        var fbDate = new Date(f.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+        var mediaNote = (f.photo_url ? ' \uD83D\uDDBC\uFE0F' : '') + (f.audio_url ? ' \uD83C\uDFB5' : '') + (f.video_url ? ' \uD83C\uDF9E\uFE0F' : '');
+
+        row.innerHTML =
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+            '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
+            '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
+          '</div>' +
+          (f.text ? '<p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0 0 6px">' + escHtml(f.text) + '</p>' : '') +
+          (mediaNote ? '<p style="font-size:0.75rem;color:var(--text-light);margin:0 0 6px">Attachments:' + mediaNote + '</p>' : '') +
+          '<div style="display:flex;gap:6px">' +
+            '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+              'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif">' +
+              '\u2713 Dismiss' +
+            '</button>' +
+            '<button data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+              'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
+              'Delete' +
+            '</button>' +
+          '</div>';
+
+        panel.appendChild(row);
+      });
+
+      card.appendChild(panel);
+    } catch(e) {
+      dbgWarn('LIB', '_loadLibraryCardFeedback error for ' + pieceId + ': ' + e.message);
     }
   }
 
@@ -23466,8 +23576,9 @@
         case 'cancel-edit-text':     if (id) editEntryText(id);                            break;
         case 'edit-with-gethro':     if (id) openEntryInMemories(id);                     break;
         case 'share-entry':          if (id) showShareConsent(id);                         break;
-        case 'accept-feedback':      if (fbId && entryId) importResponse(fbId, entryId, name); break;
-        case 'delete-feedback':      if (fbId) deleteResponse(fbId);                       break;
+        case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
+        case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
+        case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
         // ── AI Review panel actions (PRV-09 extension) ──
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
