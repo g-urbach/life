@@ -5182,7 +5182,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.77';
+  const APP_VERSION  = 'v5.78';
   const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 7 complete: removed self-referential hash comment from app constants (caused infinite hash drift); CSP hash test now hashes stripped html (what browser serves); removed all remaining static-HTML inline event handlers (onmouseover/onmouseout/oninput) replaced with CSS :hover classes and bindAllEvents wiring; deployer Build A test expanded to catch all on[event]= not just onclick=; new Build D test scans JS template literals for inline event attributes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5539,7 +5539,17 @@
       }
 
       // APP-STORY-SHARE-01: piece shares — handle before touching data.entry (which is absent for pieces)
-      if (data.isPiece && data.piece) {
+      // Guard on isPiece alone first — if isPiece is true but piece is missing (deleted component etc),
+      // we must still NOT fall through to the entry path (which would crash on undefined data.entry).
+      if (data.isPiece) {
+        if (!data.piece) {
+          // Edge case: isPiece flag set but piece data missing — show generic error, don't crash
+          document.getElementById('shareLoading').style.display = 'none';
+          document.getElementById('shareError').style.display   = 'block';
+          notifyDev('warn', 'SHARE', 'loadSharePage: isPiece=true but piece missing — token: ' + token);
+          logActivity('share_load_exception', 'isPiece true but piece absent — token: ' + token, 'warn', 'SHARE');
+          return;
+        }
         var ownerP = data.ownerName || data.ownerFirstName || 'Someone';
         var subElP = document.getElementById('shareSubheading');
         if (subElP) subElP.textContent = ownerP + ' has shared a story piece from LifeTold.';
@@ -5579,9 +5589,17 @@
           }
         }
         return; // done — skip all entry-rendering code below
-      }
+      } // end data.isPiece
 
       // Entry share path — data.entry is present
+      if (!data.entry) {
+        // Safety net: not a piece share but entry is missing — avoid crash on undefined.title
+        document.getElementById('shareLoading').style.display = 'none';
+        document.getElementById('shareError').style.display   = 'block';
+        notifyDev('warn', 'SHARE', 'loadSharePage: entry missing for non-piece share — token: ' + token);
+        logActivity('share_load_exception', 'entry absent for non-piece share — token: ' + token, 'warn', 'SHARE');
+        return;
+      }
       var entry = data.entry;
       _shareEntryTitle = entry.title || 'a memory';
 
