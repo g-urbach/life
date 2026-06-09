@@ -5186,7 +5186,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.79';
+  const APP_VERSION  = 'v5.80';
   const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 7 complete: removed self-referential hash comment from app constants (caused infinite hash drift); CSP hash test now hashes stripped html (what browser serves); removed all remaining static-HTML inline event handlers (onmouseover/onmouseout/oninput) replaced with CSS :hover classes and bindAllEvents wiring; deployer Build A test expanded to catch all on[event]= not just onclick=; new Build D test scans JS template literals for inline event attributes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5600,10 +5600,11 @@
         var shareListenStatus = document.getElementById('shareListenStatus');
         var _shareAudio = null;
         var _sharePlaying = false;
+        var _shareAudioCtx = null;
         if (shareListenBtn) {
           shareListenBtn.addEventListener('click', async function() {
             if (_sharePlaying && _shareAudio) {
-              _shareAudio.pause();
+              try { _shareAudio.stop(); } catch(e) {}
               _shareAudio = null;
               _sharePlaying = false;
               shareListenBtn.textContent = '🎧 Listen';
@@ -5615,6 +5616,16 @@
             shareListenBtn.disabled = true;
             shareListenBtn.textContent = '⏳ Loading…';
             if (shareListenStatus) { shareListenStatus.textContent = 'Preparing audio…'; shareListenStatus.style.display = 'inline'; }
+
+            // Prime AudioContext immediately inside the gesture handler — must happen
+            // synchronously before any await, otherwise Chrome/Safari block autoplay.
+            if (!_shareAudioCtx) {
+              try { _shareAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+            }
+            if (_shareAudioCtx && _shareAudioCtx.state === 'suspended') {
+              try { await _shareAudioCtx.resume(); } catch(e) {}
+            }
+
             try {
               // Route TTS through SHARE_PROXY using the share token for auth —
               // avoids JWT requirement that blocks direct TTS_PROXY calls from unauthenticated visitors
@@ -5626,22 +5637,32 @@
               if (!res.ok) throw new Error('TTS error ' + res.status);
               var buf = await res.arrayBuffer();
               if (!buf || !buf.byteLength) throw new Error('Empty audio response');
-              var blob = new Blob([buf], { type: 'audio/mpeg' });
-              var url  = URL.createObjectURL(blob);
-              _shareAudio  = new Audio(url);
-              _sharePlaying = true;
-              shareListenBtn.disabled = false;
-              shareListenBtn.textContent = '⏹ Stop';
-              if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
-              _shareAudio.play();
-              _shareAudio.onended = function() {
-                _sharePlaying = false;
-                shareListenBtn.textContent = '🎧 Listen';
-                if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
-                URL.revokeObjectURL(url);
-              };
+
+              // Decode and play via AudioContext — bypasses autoplay policy since
+              // the context was primed synchronously in the gesture handler above.
+              _shareAudioCtx.decodeAudioData(buf, function(decoded) {
+                var source = _shareAudioCtx.createBufferSource();
+                source.buffer = decoded;
+                source.connect(_shareAudioCtx.destination);
+                _shareAudio = source;
+                _sharePlaying = true;
+                shareListenBtn.disabled = false;
+                shareListenBtn.textContent = '⏹ Stop';
+                if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+                source.start(0);
+                source.onended = function() {
+                  _sharePlaying = false;
+                  _shareAudio = null;
+                  shareListenBtn.textContent = '🎧 Listen';
+                  if (shareListenStatus) { shareListenStatus.textContent = ''; shareListenStatus.style.display = 'none'; }
+                };
+              }, function(decodeErr) {
+                throw new Error('Audio decode failed: ' + (decodeErr && decodeErr.message || decodeErr));
+              });
+
             } catch(err) {
               _sharePlaying = false;
+              _shareAudio = null;
               shareListenBtn.disabled = false;
               shareListenBtn.textContent = '🎧 Listen';
               if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
