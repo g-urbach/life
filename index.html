@@ -5182,7 +5182,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.76';
+  const APP_VERSION  = 'v5.77';
   const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 7 complete: removed self-referential hash comment from app constants (caused infinite hash drift); CSP hash test now hashes stripped html (what browser serves); removed all remaining static-HTML inline event handlers (onmouseover/onmouseout/oninput) replaced with CSS :hover classes and bindAllEvents wiring; deployer Build A test expanded to catch all on[event]= not just onclick=; new Build D test scans JS template literals for inline event attributes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5538,6 +5538,50 @@
         return;
       }
 
+      // APP-STORY-SHARE-01: piece shares — handle before touching data.entry (which is absent for pieces)
+      if (data.isPiece && data.piece) {
+        var ownerP = data.ownerName || data.ownerFirstName || 'Someone';
+        var subElP = document.getElementById('shareSubheading');
+        if (subElP) subElP.textContent = ownerP + ' has shared a story piece from LifeTold.';
+
+        var typeMeta = data.piece.type || '';
+        document.getElementById('shareStoryTypeBadge').textContent = typeMeta
+          ? typeMeta.charAt(0).toUpperCase() + typeMeta.slice(1) + ' · Story piece'
+          : 'Story piece';
+        document.getElementById('shareStoryTitle').textContent   = escHtml(data.piece.title || '');
+        document.getElementById('shareStoryContent').textContent = data.piece.content || '';
+        var pMeta = data.piece.metadata || {};
+        var wc    = pMeta.wordCount || (data.piece.content ? data.piece.content.split(/\s+/).filter(Boolean).length : 0);
+        var pDate = data.piece.created_at
+          ? new Date(data.piece.created_at).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })
+          : '';
+        document.getElementById('shareStoryMeta').textContent = [wc ? wc + ' words' : '', pDate].filter(Boolean).join(' · ');
+
+        document.getElementById('shareEntryCard').style.display      = 'none';
+        document.getElementById('shareFeedbackSection').style.display = 'none';
+        document.getElementById('shareStoryPieceCard').style.display  = 'block';
+
+        document.getElementById('shareLoading').style.display = 'none';
+        document.getElementById('shareContent').style.display = 'block';
+
+        // UX-M11: expiry warning (reused for pieces too)
+        var expiryElP  = document.getElementById('shareExpiryWarning');
+        var expiryMsgP = document.getElementById('shareExpiryMsg');
+        if (expiryElP && expiryMsgP && data.expiresAt) {
+          var expiryDateP = new Date(data.expiresAt);
+          var daysLeftP   = Math.ceil((expiryDateP - Date.now()) / 86400000);
+          if (daysLeftP >= 0 && daysLeftP <= 7) {
+            var expiryFmtP = expiryDateP.toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' });
+            expiryMsgP.textContent = daysLeftP === 0
+              ? 'This link expires today.'
+              : 'This link expires on ' + expiryFmtP + ' (' + daysLeftP + ' day' + (daysLeftP === 1 ? '' : 's') + ' left).';
+            expiryElP.style.display = 'block';
+          }
+        }
+        return; // done — skip all entry-rendering code below
+      }
+
+      // Entry share path — data.entry is present
       var entry = data.entry;
       _shareEntryTitle = entry.title || 'a memory';
 
@@ -5644,27 +5688,6 @@
       // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
-
-      // APP-STORY-SHARE-01: If isPiece, swap to story piece card and hide feedback
-      if (data.isPiece && data.piece) {
-        document.getElementById('shareEntryCard').style.display      = 'none';
-        document.getElementById('shareFeedbackSection').style.display = 'none';
-        var pieceCard   = document.getElementById('shareStoryPieceCard');
-        var typeMeta    = data.piece.type || '';
-        var typeEmoji   = { poem:'poem', song:'song', letter:'letter', prose:'prose', interview:'interview', list:'list' };
-        document.getElementById('shareStoryTypeBadge').textContent = typeMeta ? typeMeta.charAt(0).toUpperCase() + typeMeta.slice(1) + ' · Story piece' : 'Story piece';
-        document.getElementById('shareStoryTitle').textContent   = escHtml(data.piece.title || '');
-        document.getElementById('shareStoryContent').textContent = data.piece.content || '';
-        var pMeta = data.piece.metadata || {};
-        var wc = pMeta.wordCount || (data.piece.content ? data.piece.content.split(/\s+/).filter(Boolean).length : 0);
-        var pDate = data.piece.created_at ? new Date(data.piece.created_at).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' }) : '';
-        document.getElementById('shareStoryMeta').textContent = [wc ? wc + ' words' : '', pDate].filter(Boolean).join(' · ');
-        pieceCard.style.display = 'block';
-        // Update subheading for story piece context
-        var ownerD2 = data.ownerName || data.ownerFirstName || 'Someone';
-        var subEl   = document.getElementById('shareSubheading');
-        if (subEl) subEl.textContent = ownerD2 + ' has shared a story piece from LifeTold.';
-      }
 
       // UX-M11: show expiry warning if link expires within 7 days
       // Requires SHARE_PROXY get_entry to return expiresAt (ISO string) — gracefully skipped if absent.
