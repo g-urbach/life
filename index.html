@@ -3376,13 +3376,22 @@
         </div>
         <div id="storyShareModalTitle" style="font-size:0.88rem;color:var(--text-light);margin-bottom:12px;font-style:italic"></div>
         <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
-          Anyone with the link can read this story piece and leave a comment. Expires in <strong style="color:var(--text)">90 days</strong>.
+          Anyone with the link can read this story piece and leave a comment.
         </p>
         <!-- Comment field -->
-        <div style="margin-bottom:20px">
+        <div style="margin-bottom:14px">
           <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a message (optional)</label>
-          <textarea id="storyShareNote" rows="2" placeholder="e.g. I wrote this poem about our trip to Italy!"
+          <textarea id="storyShareNote" rows="2" placeholder=""
             style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
+        </div>
+        <div style="margin-bottom:20px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Link expires after</label>
+          <select id="storyShareExpiry" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="90">90 days</option>
+          </select>
         </div>
         <!-- Share buttons — same layout as entry share -->
         <div id="storyShareBtns">
@@ -4450,8 +4459,17 @@
       <button id="shareConsentCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
     </div>
     <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
-      Anyone with the link can view this memory and leave a response. Expires in <strong style="color:var(--text)">30 days</strong>.
+      Anyone with the link can view this memory and leave a response.
     </p>
+    <div style="margin-bottom:14px">
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Link expires after</label>
+      <select id="shareConsentExpiry" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+        <option value="7">7 days</option>
+        <option value="14">14 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">90 days</option>
+      </select>
+    </div>
     <div style="margin-bottom:14px">
       <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Ask a question (optional)</label>
       <textarea id="shareConsentNote" rows="2" placeholder="e.g. Do you remember the name of that cafe?"
@@ -5192,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.89';
-  const DEPLOY_NOTES = APP_VERSION + ' — PRV-09 Phase 9 COMPLETE. All remaining .onclick= assignments migrated to data-action event delegation: (1) story configurator format cards → data-action="sc-format-card" on scCards delegate; (2) story library cards (read/delete/share/listen/title) → data-action on storyLibraryList delegate with _libPieceMap lookup; (3) book builder add/remove → data-action on bookPickerList/bookSectionList delegates; (4) audiobook add/remove/toggle → data-action on abPickerList/abQueueList delegates; (5) dashboard chapter cards → data-action="dash-chapter-detail" on dashCoverageGrid delegate; (6) goal session cards + Other → data-action on goalCards delegate; (7) Gethro save-prompt yes/no → data-action on agpLog delegate; (8) Gethro nav-intercept yes/no → data-action with _agpPendingNavActions map; (9) Gethro action-route button → data-action="agp-route" with JSON.stringify(action) in data-route attr; (10) My People directory rows → data-action="mp-open-profile" on mpDirList delegate; (11) My People profile entry cards → data-action="mp-open-entry" on mpProfileMentions delegate. PRV-09 is now fully closed.';
+  const APP_VERSION  = 'v5.90';
+  const DEPLOY_NOTES = APP_VERSION + ' — Share tidy-up + expiry choice + dashboard feedback navigation. (1) BUG FIX: owner note (personal message) now correctly shown on song/piece share pages — was missing from isPiece get_entry response in proxy. (2) BUG FIX: shareMessage textarea placeholder is now blank for all share types — no more example text. (3) Owner can now choose share link expiry: 7, 14, 30, or 90 days (default 30) — expiry picker added to both memory share modal and story share modal; memory share passes expires_at to Supabase, story share passes expires_days to proxy. (4) Proxy create_story_share now accepts note (saved to token) and expires_days. (5) Dashboard feedback: piece feedback title is now a clickable underlined link — tapping it navigates to My Story → Library and opens that piece overlay so owner can read what the comment is about. PROXY: deploy SHARE_PROXY_v3_71.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5607,11 +5625,11 @@
         if (isSong) {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
           if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
-          if (shareMsgArea)     shareMsgArea.placeholder     = 'What does this song mean to you, or what memories does it bring up?';
+          if (shareMsgArea)     shareMsgArea.placeholder     = '';
         } else {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
           if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
-          if (shareMsgArea)     shareMsgArea.placeholder     = 'Share a thought, a memory, or a reaction\u2026';
+          if (shareMsgArea)     shareMsgArea.placeholder     = '';
         }
         // Hide the Q/A question wrap — piece shares don't have owner questions
         var shareQWrap = document.getElementById('shareFormQuestionWrap');
@@ -5873,13 +5891,13 @@
         if (formQWrap)   formQWrap.style.display = 'block';
         if (formQEl)     formQEl.textContent     = data.note;
         if (msgLabel)    msgLabel.textContent    = 'Answer';
-        if (msgArea)     msgArea.placeholder     = 'Type your answer here\u2026';
+        if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave your answer';
       } else {
         // Feedback mode — no question set
         if (formQWrap)   formQWrap.style.display = 'none';
         if (msgLabel)    msgLabel.textContent    = 'Your feedback';
-        if (msgArea)     msgArea.placeholder     = 'Share a memory, a thought, or anything that comes to mind\u2026';
+        if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave feedback';
       }
 
@@ -6232,6 +6250,8 @@
     _shareConsentEntryId = entryId;
     document.getElementById('shareConsentLabel').value = '';
     document.getElementById('shareConsentNote').value  = '';
+    var expiryEl = document.getElementById('shareConsentExpiry');
+    if (expiryEl) expiryEl.value = '30';
     document.getElementById('shareConsentBtns').style.display    = '';
     document.getElementById('shareConsentSpinner').style.display = 'none';
     document.getElementById('shareConsentOverlay').style.display = 'flex';
@@ -6301,6 +6321,9 @@
 
   // ── Internal: insert token row, return share URL ──────────────────
   async function _createShareLink(entryId, label, note) {
+    var expiryDays = parseInt((document.getElementById('shareConsentExpiry') || {}).value || '30', 10);
+    if (![7,14,30,90].includes(expiryDays)) expiryDays = 30;
+    var expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
     var res = await fetch(DB_SHARE_TOKENS_URL, {
       method: 'POST',
       headers: Object.assign({}, getAuthHeaders(), {
@@ -6308,10 +6331,11 @@
         'Prefer': 'return=representation'
       }),
       body: JSON.stringify({
-        user_id:  currentUser.id,
-        entry_id: entryId,
-        label:    label,
-        note:     note
+        user_id:    currentUser.id,
+        entry_id:   entryId,
+        label:      label,
+        note:       note,
+        expires_at: expiresAt
       })
     });
     if (!res.ok) throw new Error(await res.text());
@@ -6603,7 +6627,9 @@
               '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
               (isPiece ? '<span style="font-size:0.7rem;color:var(--gold-dark);background:rgba(201,169,110,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">story</span>' : '') +
             '</div>' +
-            '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>' +
+            (isPiece
+              ? '<button data-action="open-piece-from-feedback" data-component-id="' + escHtml(f.component_id) + '" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">\u201c' + escHtml(contextTitle) + '\u201d</button>'
+              : '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>') +
           '</div>' +
           questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
@@ -11739,6 +11765,25 @@
     document.body.style.overflow = '';
   }
 
+  // Navigate to Story tab → Library sub-tab, then open the piece overlay.
+  // Used from dashboard feedback rows so owner can read the piece the comment is about.
+  async function _openLibraryToPiece(componentId) {
+    if (!componentId) return;
+    showPanel('story', null, 3);
+    _storyTabSwitch('library');
+    // renderLibrary is async — wait for _libPieceMap to be populated then open overlay
+    var attempts = 0;
+    var interval = setInterval(function() {
+      attempts++;
+      if (_libPieceMap[componentId]) {
+        clearInterval(interval);
+        _storyLibOpenOverlay(_libPieceMap[componentId]);
+      } else if (attempts > 20) {
+        clearInterval(interval); // give up after ~2s
+      }
+    }, 100);
+  }
+
   // ── APP-STORY-SHARE-01: Story piece share — standard share sheet ────────────────────────────
   // SHARE_STANDARD_V1: mirrors entry shareVia() pattern. To change look/feel, update
   // both this block and the entry shareConsentOverlay / shareVia() together.
@@ -11746,14 +11791,16 @@
 
   function _storyLibSharePiece(pieceId, pieceTitle) {
     _storyShareCurrentPieceId = pieceId;
-    var modal   = document.getElementById('storyShareModal');
-    var titleEl = document.getElementById('storyShareModalTitle');
-    var noteEl  = document.getElementById('storyShareNote');
-    var btns    = document.getElementById('storyShareBtns');
-    var spinner = document.getElementById('storyShareSpinner');
+    var modal    = document.getElementById('storyShareModal');
+    var titleEl  = document.getElementById('storyShareModalTitle');
+    var noteEl   = document.getElementById('storyShareNote');
+    var expiryEl = document.getElementById('storyShareExpiry');
+    var btns     = document.getElementById('storyShareBtns');
+    var spinner  = document.getElementById('storyShareSpinner');
     if (!modal) return;
-    if (titleEl) titleEl.textContent = pieceTitle ? '“' + pieceTitle + '”' : '';
-    if (noteEl)  noteEl.value = '';
+    if (titleEl)  titleEl.textContent = pieceTitle ? '“' + pieceTitle + '”' : '';
+    if (noteEl)   noteEl.value = '';
+    if (expiryEl) expiryEl.value = '30';
     if (btns)    btns.style.display = '';
     if (spinner) spinner.style.display = 'none';
     modal.style.display = 'flex';
@@ -11885,8 +11932,10 @@
   // Called by each share button in the story share modal
   async function _storyShareVia(method) {
     if (!_storyShareCurrentPieceId) return;
-    var pieceId = _storyShareCurrentPieceId;
-    var note    = (document.getElementById('storyShareNote').value || '').trim() || null;
+    var pieceId    = _storyShareCurrentPieceId;
+    var note       = (document.getElementById('storyShareNote').value || '').trim() || null;
+    var expiryDays = parseInt((document.getElementById('storyShareExpiry') || {}).value || '30', 10);
+    if (![7,14,30,90].includes(expiryDays)) expiryDays = 30;
     var btns    = document.getElementById('storyShareBtns');
     var spinner = document.getElementById('storyShareSpinner');
 
@@ -11898,7 +11947,7 @@
       var res  = await fetch(SHARE_PROXY_URL, {
         method:  'POST',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
-        body:    JSON.stringify({ action: 'create_story_share', component_id: pieceId })
+        body:    JSON.stringify({ action: 'create_story_share', component_id: pieceId, note: note, expires_days: expiryDays })
       });
       var data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
@@ -11907,7 +11956,7 @@
     } catch(err) {
       if (btns)    btns.style.display    = '';
       if (spinner) spinner.style.display = 'none';
-      toast('Could not create link — try again');
+      toast('Could not create link \u2014 try again');
       dbgErr('SHARE', '_storyShareVia error: ' + (err.message || err));
       return;
     }
@@ -23660,6 +23709,7 @@
         case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
+        case 'open-piece-from-feedback': { var _cid = btn.dataset.componentId || null; if (_cid) _openLibraryToPiece(_cid); break; }
         // ── AI Review panel actions (PRV-09 extension) ──
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
