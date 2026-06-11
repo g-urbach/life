@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.02';
-  const DEPLOY_NOTES = APP_VERSION + ' — Add final blob size log and raise onstop guard from 500 to MIC_MIN_CHUNK_BYTES (8000). onstop was sending tiny blobs to Whisper and getting "Thank you." hallucination. Also adds toast when final blob too small so user knows no speech was detected.';
+  const APP_VERSION  = 'v6.03';
+  const DEPLOY_NOTES = APP_VERSION + ' — Restore AnalyserNode silence detection (mute button, not AudioContext, was causing vol=0). Add chunk data-rate heuristic as fallback if AudioContext unavailable (_micRecentChunkBytes rolling average — speech chunks are 200+ bytes, silence ~30). Add 30s safety-net timer in case silence detection misses a long pause. All previous fixes retained: cooldown, accumulator, MIC_MIN_CHUNK_BYTES gate.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8498,20 +8498,27 @@
   let _micWarnTimer = null;
   let _micMaxTimer  = null;
 
-  // ── APP-52 Phase 3 (revised v6.01): Timer-based chunk flushing ──────────────────────────
-  // AnalyserNode silence detection abandoned — Chrome zeroes out AudioContext.createMediaStreamSource
-  // when MediaRecorder holds the same stream, so vol=0 always, causing constant spurious flushes.
-  // Replaced with a simple setInterval: flush every MIC_CHUNK_INTERVAL_MS while recording.
-  // User still taps stop for final transcription. Rolling text appears every ~15s of speech.
-  let _micChunkTimer    = null;  // setInterval handle for periodic flush
-  let _micRecordStart   = null;  // timestamp when current segment recording began
-  let _micTranscribing  = false; // true while a background chunk POST is in flight
-  let _micFlushCooldown = false; // true for MIC_COOLDOWN_MS after a failed chunk POST — prevents hammering on 429
+  // ── APP-52 Phase 3 (restored v6.03): AnalyserNode silence detection ─────────────────────
+  // Original approach restored — mute button (not AudioContext) was causing vol=0 readings.
+  // Fallback: if AudioContext fails or vol stays 0, chunk data-rate heuristic kicks in
+  // (_micRecentChunkBytes rolling average — small = silence, large = speech).
+  let _micAnalyserCtx       = null;  // AudioContext for volume analysis (isolated from TTS/music)
+  let _micAnalyser          = null;  // AnalyserNode
+  let _micSilenceStart      = null;  // timestamp when silence began (null = not silent)
+  let _micRecordStart       = null;  // timestamp when current segment recording began
+  let _micSilenceRAF        = null;  // requestAnimationFrame handle for silence loop
+  let _micTranscribing      = false; // true while a background chunk POST is in flight
+  let _micFlushCooldown     = false; // true for MIC_COOLDOWN_MS after a failed chunk POST
+  let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
+  let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
-  const MIC_CHUNK_INTERVAL_MS = 15000; // flush a chunk every 15s of continuous recording
-  const MIC_MIN_CHUNK_MS      = 3000;  // don't flush chunks shorter than this
-  const MIC_MIN_CHUNK_BYTES   = 8000;  // below this = silence/noise — Whisper hallucinates on near-empty audio
-  const MIC_COOLDOWN_MS       = 10000; // backoff after a failed chunk POST (e.g. 429)
+  const MIC_SILENCE_THRESHOLD  = 8;     // 0-127 AnalyserNode scale; below = silence
+  const MIC_SILENCE_MS         = 1500;  // ms of sustained silence → flush
+  const MIC_MIN_CHUNK_MS       = 3000;  // minimum segment age before flushing
+  const MIC_MIN_CHUNK_BYTES    = 8000;  // blob below this = silence/noise, skip Whisper
+  const MIC_COOLDOWN_MS        = 10000; // backoff after failed POST (e.g. 429)
+  const MIC_CHUNK_RATE_WINDOW  = 20;    // rolling window size for chunk-rate heuristic (20 × 100ms = 2s)
+  const MIC_CHUNK_RATE_SILENCE = 60;    // avg bytes/chunk below this = silence (speech is typically 200+)
 
   function _setMicState(state) {
     _micState = state;
@@ -8550,11 +8557,16 @@
 
   function _micRelease() {
     if (_micStream) { _micStream.getTracks().forEach(function(t){ t.stop(); }); _micStream = null; }
-    if (_micWarnTimer)  { clearTimeout(_micWarnTimer);  _micWarnTimer  = null; }
-    if (_micMaxTimer)   { clearTimeout(_micMaxTimer);   _micMaxTimer   = null; }
+    if (_micWarnTimer)  { clearTimeout(_micWarnTimer);   _micWarnTimer  = null; }
+    if (_micMaxTimer)   { clearTimeout(_micMaxTimer);    _micMaxTimer   = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
-    _micRecordStart  = null;
-    _micTranscribing = false;
+    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
+    if (_micAnalyserCtx) { try { _micAnalyserCtx.close(); } catch(e) {} _micAnalyserCtx = null; }
+    _micAnalyser         = null;
+    _micSilenceStart     = null;
+    _micRecordStart      = null;
+    _micTranscribing     = false;
+    _micRecentChunkBytes = [];
     _micRecorder = null;
     _micChunks   = [];
     memMicActive = false;
@@ -8619,9 +8631,55 @@
     }
   }
 
-  // ── APP-52 Phase 3 (revised): timer-based flush — see startMemMic setInterval ──────────
-  // AnalyserNode silence detection removed (v6.01) — Chrome zeroes AudioContext reads
-  // on a stream already held by MediaRecorder. Replaced with MIC_CHUNK_INTERVAL_MS timer.
+  // ── APP-52 Phase 3: Silence detection loop ───────────────────────────────────
+  // Primary: AnalyserNode volume reading (0-127 scale).
+  // Fallback: if analyser unavailable, uses rolling average of ondataavailable
+  // chunk sizes — small chunks = silence, large = speech.
+  // Flushes on MIC_SILENCE_MS of sustained silence, provided chunk is old/large enough.
+  function _micSilenceLoop() {
+    if (_micState !== 'recording') { _micSilenceRAF = null; return; }
+    var now = Date.now();
+    var chunkAge = now - (_micRecordStart || now);
+    var isSilent;
+
+    if (_micAnalyser) {
+      // Primary path: AnalyserNode
+      var buffer = new Uint8Array(_micAnalyser.fftSize);
+      _micAnalyser.getByteTimeDomainData(buffer);
+      var volume = 0;
+      for (var i = 0; i < buffer.length; i++) {
+        var v = Math.abs(buffer[i] - 128);
+        if (v > volume) volume = v;
+      }
+      isSilent = (volume < MIC_SILENCE_THRESHOLD);
+    } else {
+      // Fallback path: chunk data-rate heuristic
+      var avg = _micRecentChunkBytes.length
+        ? _micRecentChunkBytes.reduce(function(a,b){return a+b;}, 0) / _micRecentChunkBytes.length
+        : 0;
+      isSilent = (avg < MIC_CHUNK_RATE_SILENCE);
+    }
+
+    if (isSilent) {
+      if (_micSilenceStart === null) _micSilenceStart = now;
+      var silenceDuration = now - _micSilenceStart;
+      if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing && !_micFlushCooldown) {
+        _micSilenceStart = null;
+        if (_micRecorder && _micRecorder.state === 'recording') {
+          try { _micRecorder.pause(); } catch(e) {}
+          setTimeout(function() {
+            if (_micRecorder && _micRecorder.state === 'paused') {
+              try { _micRecorder.resume(); } catch(e) {}
+            }
+          }, 80);
+        }
+        _micFlushChunk(false);
+      }
+    } else {
+      _micSilenceStart = null;
+    }
+    _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
+  }
 
   async function startMemMic() {
     if (_micState !== 'idle') return; // guard double-tap
@@ -8651,9 +8709,11 @@
     }
     _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
 
-    _micChunks       = [];
-    _micRecordStart  = Date.now();
-    _micFlushCooldown = false; // clear any leftover cooldown from previous session
+    _micChunks            = [];
+    _micRecordStart       = Date.now();
+    _micRecentChunkBytes  = [];
+    _micFlushCooldown     = false;
+    _micSilenceStart      = null;
     memMicActive = true;
     _setMicState('recording');
     setMemStatus('listening', '🎙️ Recording… tap to transcribe');
@@ -8667,7 +8727,12 @@
     }
 
     _micRecorder.ondataavailable = function(e) {
-      if (e.data && e.data.size > 0) _micChunks.push(e.data);
+      if (e.data && e.data.size > 0) {
+        _micChunks.push(e.data);
+        // Track rolling chunk sizes for fallback silence detection
+        _micRecentChunkBytes.push(e.data.size);
+        if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
+      }
     };
 
     _micRecorder.onstop = async function() {
@@ -8729,26 +8794,37 @@
     // continuously — required for the pause/resume chunk-flush pattern in Phase 3.
     _micRecorder.start(100);
 
-    // Phase 3 (revised v6.01): periodic timer flush instead of AnalyserNode silence detection.
-    // AudioContext.createMediaStreamSource returns vol=0 on Chrome when MediaRecorder holds
-    // the same stream — silence detection was always firing, causing hallucinations.
+    // Phase 3: AudioContext + AnalyserNode for silence detection.
+    // Isolated context — do NOT share with _gethroAudioCtx or _bgMusicCtx (v2.36 lesson).
+    // If AudioContext fails (e.g. browser restriction), silence loop falls back to
+    // chunk data-rate heuristic via _micRecentChunkBytes.
+    try {
+      _micAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var source = _micAnalyserCtx.createMediaStreamSource(_micStream);
+      _micAnalyser = _micAnalyserCtx.createAnalyser();
+      _micAnalyser.fftSize = 512;
+      source.connect(_micAnalyser);
+      dbg('MIC', 'Silence detector started (AnalyserNode)');
+    } catch (acErr) {
+      dbgWarn('MIC', 'AudioContext failed — falling back to chunk-rate heuristic:', acErr.message);
+      _micAnalyserCtx = null; _micAnalyser = null;
+    }
+    _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
+
+    // Safety net: if silence detection misses a long pause, flush every 30s anyway
     _micChunkTimer = setInterval(function() {
       if (_micState !== 'recording' || _micTranscribing || _micFlushCooldown) return;
       var chunkAge = Date.now() - (_micRecordStart || Date.now());
       if (chunkAge < MIC_MIN_CHUNK_MS) return;
-      dbg('MIC', 'Timer flush — ' + Math.round(chunkAge/1000) + 's elapsed');
-      // Pause recorder briefly to get a clean chunk boundary
+      dbg('MIC', 'Safety timer flush — ' + Math.round(chunkAge/1000) + 's elapsed');
       if (_micRecorder && _micRecorder.state === 'recording') {
         try { _micRecorder.pause(); } catch(e) {}
         setTimeout(function() {
-          if (_micRecorder && _micRecorder.state === 'paused') {
-            try { _micRecorder.resume(); } catch(e) {}
-          }
+          if (_micRecorder && _micRecorder.state === 'paused') { try { _micRecorder.resume(); } catch(e) {} }
         }, 80);
       }
       _micFlushChunk(false);
-    }, MIC_CHUNK_INTERVAL_MS);
-    dbg('MIC', 'Chunk timer started — flush every ' + (MIC_CHUNK_INTERVAL_MS/1000) + 's');
+    }, 30000);
 
     // Soft warn at 10 min
     _micWarnTimer = setTimeout(function() {
@@ -8763,6 +8839,7 @@
 
   function stopMemMic() {
     if (_micState !== 'recording') return;
+    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
     _setMicState('transcribing'); // show spinner immediately while onstop fires
     if (_micRecorder && _micRecorder.state !== 'inactive') {
