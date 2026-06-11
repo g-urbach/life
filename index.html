@@ -8507,11 +8507,13 @@
   let _micRecordStart   = null;  // timestamp when current segment recording began
   let _micSilenceRAF    = null;  // requestAnimationFrame handle for silence loop
   let _micTranscribing  = false; // true while a background chunk POST is in flight
+  let _micFlushCooldown = false; // true for MIC_COOLDOWN_MS after a failed chunk POST — prevents hammering on 429
 
   // Tuning constants — calibrated for memoir dictation (paragraph-length speech)
-  const MIC_SILENCE_THRESHOLD = 8;    // 0-127 scale; below = silence
+  const MIC_SILENCE_THRESHOLD = 12;   // 0-127 scale; below = silence (raised from 8 — 8 was triggering on ambient noise)
   const MIC_SILENCE_MS        = 1500; // ms of continuous silence → auto-flush
   const MIC_MIN_CHUNK_MS      = 3000; // don't flush chunks shorter than this
+  const MIC_COOLDOWN_MS       = 10000; // backoff after a failed chunk POST (e.g. 429)
 
   function _setMicState(state) {
     _micState = state;
@@ -8572,6 +8574,8 @@
   // then POSTs to Whisper non-blocking. Transcript appended when it arrives.
   async function _micFlushChunk(isFinal) {
     if (!_micRecorder || _micChunks.length === 0) return;
+    // Don't auto-flush during cooldown (e.g. after a 429) — isFinal (manual stop) always proceeds
+    if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
     // Collect chunks accumulated so far
     var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
     _micChunks = []; // reset for next segment
@@ -8606,8 +8610,11 @@
       }
     } catch (err) {
       dbgErr('MIC', 'Chunk transcription failed:', err.message);
-      // Non-fatal: user can manually stop and still get a full transcription
+      // Non-fatal: user can manually stop and still get a full transcription.
+      // Back off for MIC_COOLDOWN_MS to avoid hammering the endpoint on 429s.
       toast('Chunk transcription failed — keep speaking, or tap stop to retry', 4000);
+      _micFlushCooldown = true;
+      setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
     }
     _micTranscribing = false;
     // Restore recording indicator if still recording
@@ -8635,7 +8642,7 @@
       // Silence detected
       if (_micSilenceStart === null) _micSilenceStart = now;
       var silenceDuration = now - _micSilenceStart;
-      if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing) {
+      if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing && !_micFlushCooldown) {
         _micSilenceStart = null; // reset so we don't double-flush
         // Pause recorder to collect clean chunk boundary
         if (_micRecorder && _micRecorder.state === 'recording') {
@@ -8687,6 +8694,7 @@
     _micChunks       = [];
     _micRecordStart  = Date.now(); // Phase 3: track segment age for MIN_CHUNK_MS
     _micSilenceStart = null;
+    _micFlushCooldown = false; // clear any leftover cooldown from previous session
     memMicActive = true;
     _setMicState('recording');
     setMemStatus('listening', '🎙️ Recording… tap to transcribe');
