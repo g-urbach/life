@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.04';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session flush 502 errors: prepend WebM header chunk to every non-final flush blob so Whisper gets a valid container (root cause of "could not process file" errors). Add 5s periodic flush ticker for reassurance (text appears while still speaking, not just on silence/stop). Tune constants: MIC_SILENCE_THRESHOLD 8→15, MIC_SILENCE_MS 1500→800ms, MIC_MIN_CHUNK_MS 3000→1500ms, MIC_MIN_CHUNK_BYTES 8000→4000.';
+  const APP_VERSION  = 'v6.05';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix missing action field: all three audio FormData POSTs (mem mic chunk, mem mic final, agp mic) were missing form.append("action","transcribe"), causing the proxy to receive a multipart request with no action and return 502 on every call. This was the root cause of all "could not process file" errors. The header-chunk prepend from v6.04 is retained (still correct for mid-session WebM validity).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8604,6 +8604,7 @@
       var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
       var form = new FormData();
+      form.append('action', 'transcribe');
       var ext = (_micChunkMimeType && _micChunkMimeType.includes('mp4')) ? 'm4a' : 'webm';
       form.append('audio', blob, 'chunk.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
@@ -8766,6 +8767,7 @@
         var session = (await sb.auth.getSession()).data.session;
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
+        form.append('action', 'transcribe');
         form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'webm'));
         var res = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
@@ -21075,6 +21077,7 @@
         var session = (await sb.auth.getSession()).data.session;
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
+        form.append('action', 'transcribe');
         var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
         form.append('audio', blob, 'agp_chat.' + ext);
         var res = await fetch(GETHRO_PROXY_URL, {
