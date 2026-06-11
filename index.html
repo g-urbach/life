@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.97';
-  const DEPLOY_NOTES = APP_VERSION + ' — Mic hallucination fix: MIC_MIN_CHUNK_BYTES constant added (2000). _micFlushChunk now skips chunks below this threshold — silent/near-silent webm/opus chunks are ~1100 bytes and were causing Whisper to hallucinate "Thank you." repeatedly. Real speech produces significantly larger blobs. Old gate was 500 bytes (too low to catch silence).';
+  const APP_VERSION  = 'v5.98';
+  const DEPLOY_NOTES = APP_VERSION + ' — Mic accumulator fix: _micFlushChunk no longer resets _micChunks/_micRecordStart when blob is below MIC_MIN_CHUNK_BYTES. Previously the accumulator was cleared before the size check, so speech never built up — every 3s flush discarded the blob and reset to zero, meaning real speech chunks stayed at ~1100 bytes forever. Now the accumulator keeps growing until a large enough blob is ready to send.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8577,12 +8577,17 @@
     if (!_micRecorder || _micChunks.length === 0) return;
     // Don't auto-flush during cooldown (e.g. after a 429) — isFinal (manual stop) always proceeds
     if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
-    // Collect chunks accumulated so far
+    // Collect chunks accumulated so far — but don't reset yet (wait until size check passes)
     var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
-    _micChunks = []; // reset for next segment
-    _micRecordStart = Date.now(); // new segment starts now
     dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal);
-    if (blob.size < MIC_MIN_CHUNK_BYTES) { dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — likely silence, skipping'); return; }
+    if (blob.size < MIC_MIN_CHUNK_BYTES) {
+      // Too small = silence/noise. Keep accumulating — do NOT reset _micChunks or _micRecordStart.
+      dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — keeping accumulator, waiting for speech');
+      return;
+    }
+    // Size check passed — now reset accumulator for next segment
+    _micChunks = [];
+    _micRecordStart = Date.now();
     // Show unobtrusive micro-indicator in status bar (don't change button state)
     setMemStatus('listening', '✍️ Transcribing…');
     _micTranscribing = true;
