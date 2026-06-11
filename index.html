@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.08';
+  const APP_VERSION  = 'v6.09';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8598,6 +8598,13 @@
         try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(); } catch(e) { resolve(); }
       });
       // All ondataavailable events for oldRecorder have now fired. _micChunks is fully drained.
+
+      // FIX (v6.09): after the await, the user may have tapped stop — _micStream is released.
+      // Guard here so we don't try to construct a new MediaRecorder on a null stream.
+      if (_micState !== 'recording' || !_micStream) {
+        dbg('MIC', 'Flush aborted after await — recording stopped mid-flush (state=' + _micState + ')');
+        return;
+      }
     }
 
     // NOW snapshot the fully-drained chunks and build the blob
@@ -8608,6 +8615,7 @@
       dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — waiting for more speech');
       if (!isFinal) {
         // Still start the new recorder even when skipping transcription
+        if (!_micStream) { dbg('MIC', 'Flush small-chunk: stream gone, aborting restart'); return; }
         _micChunks = [];
         _micFlushedUpTo = 0;
         _micRecordStart = Date.now();
