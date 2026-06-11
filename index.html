@@ -20360,12 +20360,21 @@
       } else {
         opener = _buildGethroOpener(firstName);
       }
-      _convoStart('general', null);
+      _convoStart(onMemTab ? 'memory_entry' : 'general', null);
       _agpAppendGethro(opener, _agpPendingResponseCount > 0 ? { type: 'navigate_dashboard', params: {} } : null);
       _gethroHistory.push({ role: 'assistant', content: opener }); // keep history in sync so re-open doesn't re-trigger greeting
-      gethroSpeak(opener).catch(function(){}).finally(function() {
-        if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
-      });
+
+      if (onMemTab) {
+        // On Add Memory tab with blank entry — speak greeting then seed a memory question.
+        // User is here to write a memory; give them a question to spark one.
+        gethroSpeak(opener).catch(function(){}).finally(function() {
+          setTimeout(function() { _agpSeedMemoryQuestion(firstName, '', ''); }, 200);
+        });
+      } else {
+        gethroSpeak(opener).catch(function(){}).finally(function() {
+          if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
+        });
+      }
     } else if (_agpPendingMemoryConvo) {
       // Returning after closing mid-memory-conversation — prompt to save
       _agpPendingMemoryConvo = false; // consume the flag
@@ -20853,7 +20862,8 @@
       'ALWAYS end your reply with one specific fact-seeking question — who, what, where, when, or what happened next. Not "how did that feel?"\n' +
       'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, events, sequence). Do not drift to adjacent topics.\n' +
       'CRITICAL — never repeat yourself: read the full conversation history before asking a question. Never ask about something the user has already answered or that is already established in the conversation.\n' +
-      'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard (e.g. "Chris Auntie" may be a mishearing). If a name or reference seems odd or the user says they do not know it, treat it as a speech-to-text error, acknowledge it lightly, and move on — never dwell on it or keep asking about it.\n' +
+      'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard. If a name or reference seems odd, treat it as a speech-to-text error and move on — never dwell on it or ask about it.\n' +
+      'SINGLE-WORD OR PUNCTUATION-ONLY INPUTS (e.g. "you", ".", ",", a single letter): These are speech-to-text artefacts from a natural pause or mic noise — NOT a real reply. Do NOT acknowledge the word, do NOT say there was an error or a pause, do NOT apologise. Simply ask your PREVIOUS question again in a slightly different way, as if continuing the same conversation naturally.\n' +
       'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
 
     // systemPrompt is passed as-is; server wraps it with Gethro persona and returns parsed JSON.
@@ -21100,16 +21110,25 @@
 
   var _agpMicStream    = null;  // getUserMedia stream
   var _agpMicRecorder  = null;  // MediaRecorder instance
-  var _agpMicChunks    = [];    // audio chunk accumulator
+  var _agpMicChunks    = [];    // audio chunk accumulator for CURRENT segment
   var _agpMicMime      = '';    // MIME type chosen at start
   var _agpAnalyserCtx  = null;  // AudioContext for silence detection (isolated from TTS + mem mic)
   var _agpAnalyser     = null;  // AnalyserNode
   var _agpSilenceRAF   = null;  // rAF handle
   var _agpSilenceStart = null;  // timestamp silence began
   var _agpRecordStart  = null;  // timestamp recording began (for min-chunk guard)
+  var _agpTranscribing = false; // true while a chunk transcription is in-flight
+  var _agpLiveText     = '';    // accumulated live transcript shown in input (cleared on send)
+  var _agpRecentChunkBytes = []; // rolling window for fallback silence detection
 
-  const AGP_SILENCE_MS = 1200; // shorter than dictation — chat turns are short utterances
-  const AGP_MIN_REC_MS = 800;  // don't auto-send if recording < 800ms (avoids accidental triggers)
+  // Hallucinations Whisper emits on near-silence — discard these silently
+  var AGP_HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+|,+)$/i;
+
+  const AGP_SILENCE_MS        = 1200; // ms of sustained silence before flush/send
+  const AGP_MIN_REC_MS        = 800;  // don't auto-send if recording < 800ms (avoids accidental triggers)
+  const AGP_MIN_CHUNK_BYTES   = 3000; // blobs below this are near-silence — skip Whisper
+  const AGP_CHUNK_RATE_WINDOW  = 20;   // rolling window size for fallback silence detection
+  const AGP_CHUNK_RATE_SILENCE = 60;   // avg bytes/chunk below this = silence
 
   function _agpSetBtn(state) {
     var btn = document.getElementById('agpMicBtn');
@@ -21126,28 +21145,41 @@
   function _agpMicRelease() {
     if (_agpSilenceRAF) { cancelAnimationFrame(_agpSilenceRAF); _agpSilenceRAF = null; }
     if (_agpAnalyserCtx) { try { _agpAnalyserCtx.close(); } catch(e) {} _agpAnalyserCtx = null; }
-    _agpAnalyser     = null;
-    _agpSilenceStart = null;
+    _agpAnalyser         = null;
+    _agpSilenceStart     = null;
     if (_agpMicStream) { _agpMicStream.getTracks().forEach(function(t){ t.stop(); }); _agpMicStream = null; }
-    _agpMicRecorder  = null;
-    _agpMicChunks    = [];
-    _agpMicActive    = false;
+    _agpMicRecorder      = null;
+    _agpMicChunks        = [];
+    _agpTranscribing     = false;
+    _agpRecentChunkBytes = [];
+    _agpMicActive        = false;
   }
 
   function _agpSilenceLoop() {
-    if (!_agpMicActive || !_agpAnalyser) { _agpSilenceRAF = null; return; }
-    var buffer = new Uint8Array(_agpAnalyser.fftSize);
-    _agpAnalyser.getByteTimeDomainData(buffer);
-    var volume = 0;
-    for (var i = 0; i < buffer.length; i++) {
-      var v = Math.abs(buffer[i] - 128);
-      if (v > volume) volume = v;
-    }
+    if (!_agpMicActive) { _agpSilenceRAF = null; return; }
     var now = Date.now();
     var recAge = now - (_agpRecordStart || now);
-    if (volume < MIC_SILENCE_THRESHOLD) {
+    var isSilent;
+    if (_agpAnalyser) {
+      // Primary: AnalyserNode volume
+      var buffer = new Uint8Array(_agpAnalyser.fftSize);
+      _agpAnalyser.getByteTimeDomainData(buffer);
+      var volume = 0;
+      for (var i = 0; i < buffer.length; i++) {
+        var v = Math.abs(buffer[i] - 128);
+        if (v > volume) volume = v;
+      }
+      isSilent = (volume < MIC_SILENCE_THRESHOLD);
+    } else {
+      // Fallback: chunk data-rate heuristic (matches mem mic pattern)
+      var avg = _agpRecentChunkBytes.length
+        ? _agpRecentChunkBytes.reduce(function(a,b){return a+b;},0) / _agpRecentChunkBytes.length
+        : 0;
+      isSilent = (avg < AGP_CHUNK_RATE_SILENCE);
+    }
+    if (isSilent) {
       if (_agpSilenceStart === null) _agpSilenceStart = now;
-      if ((now - _agpSilenceStart) >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS) {
+      if ((now - _agpSilenceStart) >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpTranscribing) {
         _agpSilenceRAF = null;
         _agpStopMic(true); // auto-send after transcription
         return;
@@ -21161,6 +21193,84 @@
   // Separate mic from the Memories mic — different state, MediaRecorder-based (Phase 4).
   function toggleAgpMic() {
     if (_agpMicActive) { _agpStopMic(false); } else { _agpStartMic(); }
+  }
+
+  // ── _agpFlushChunk: transcribe accumulated chunks mid-session ────
+  // Like _micFlushChunk in the mem mic — sends the current blob to Whisper,
+  // appends any real text to the input field live, then restarts the recorder.
+  // Hallucinations and near-silence blobs are discarded silently (no toast).
+  async function _agpFlushChunk() {
+    if (_agpTranscribing || !_agpMicActive) return;
+    _agpTranscribing = true;
+    var chunksToSend = _agpMicChunks.slice();
+    _agpMicChunks = [];
+    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/webm' });
+    if (blob.size < AGP_MIN_CHUNK_BYTES) {
+      _agpTranscribing = false;
+      dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
+      _agpRestartRecorder();
+      return;
+    }
+    dbg('AGP_MIC', 'Flushing chunk — ' + blob.size + ' bytes');
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      var form = new FormData();
+      form.append('action', 'transcribe');
+      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
+      form.append('audio', blob, 'agp_chunk.' + ext);
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form,
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+      var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+        _agpLiveText = (_agpLiveText ? _agpLiveText + ' ' : '') + transcript;
+        var inp = document.getElementById('agpInput');
+        if (inp) inp.value = _agpLiveText;
+        dbg('AGP_MIC', 'Chunk appended: "' + transcript + '"');
+      } else if (transcript) {
+        dbg('AGP_MIC', 'Chunk hallucination filtered: "' + transcript + '"');
+      }
+    } catch(err) {
+      dbgErr('AGP_MIC', 'Chunk transcription failed:', err.message);
+      // Silent failure — keep recording; user can still send via silence detection.
+    }
+    _agpTranscribing = false;
+    if (_agpMicActive) _agpRestartRecorder();
+  }
+
+  // Restart the MediaRecorder after a chunk flush — gives a fresh WebM header each segment.
+  function _agpRestartRecorder() {
+    if (!_agpMicActive || !_agpMicStream) return;
+    try {
+      _agpMicRecorder = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
+      _agpMicChunks = [];
+      _agpRecordStart = Date.now();
+      _agpMicRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) {
+          _agpMicChunks.push(e.data);
+          _agpRecentChunkBytes.push(e.data.size);
+          if (_agpRecentChunkBytes.length > AGP_CHUNK_RATE_WINDOW) _agpRecentChunkBytes.shift();
+        }
+      };
+      _agpMicRecorder.onerror = function(e) {
+        dbgErr('AGP_MIC', 'Recorder error (restarted):', e.error);
+        _agpMicRelease(); _agpSetBtn('idle');
+        toast('Recording error — tap mic to try again');
+      };
+      _agpMicRecorder.start(100);
+      if (_agpAnalyser && !_agpSilenceRAF) {
+        _agpSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
+      }
+      dbg('AGP_MIC', 'Recorder restarted');
+    } catch(e) {
+      dbgWarn('AGP_MIC', 'Recorder restart failed:', e.message);
+      _agpMicRelease(); _agpSetBtn('idle');
+    }
   }
 
   async function _agpStartMic() {
@@ -21191,10 +21301,13 @@
       }
     }
 
-    _agpMicChunks    = [];
-    _agpMicActive    = true;
-    _agpRecordStart  = Date.now();
-    _agpSilenceStart = null;
+    _agpMicChunks        = [];
+    _agpRecentChunkBytes = [];
+    _agpMicActive        = true;
+    _agpTranscribing     = false;
+    _agpLiveText         = '';  // clear accumulated live text for this turn
+    _agpRecordStart      = Date.now();
+    _agpSilenceStart     = null;
     _agpSetBtn('recording');
     dbg('AGP_MIC', 'MediaRecorder start — mimeType: ' + (_agpMicMime || 'default'));
 
@@ -21206,44 +21319,85 @@
     }
 
     _agpMicRecorder.ondataavailable = function(e) {
-      if (e.data && e.data.size > 0) _agpMicChunks.push(e.data);
+      if (e.data && e.data.size > 0) {
+        _agpMicChunks.push(e.data);
+        _agpRecentChunkBytes.push(e.data.size);
+        if (_agpRecentChunkBytes.length > AGP_CHUNK_RATE_WINDOW) _agpRecentChunkBytes.shift();
+      }
     };
 
-    _agpMicRecorder.onstop = async function() {
-      var blob = new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/webm' });
-      var autoSend = !!(_agpMicRecorder && _agpMicRecorder._autoSend);
-      _agpMicRelease();
-      if (blob.size < 500) { _agpSetBtn('idle'); return; }
-      _agpSetBtn('transcribing');
-      try {
-        var session = (await sb.auth.getSession()).data.session;
-        if (!session) throw new Error('Not authenticated');
-        var form = new FormData();
-        form.append('action', 'transcribe');
-        var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
-        form.append('audio', blob, 'agp_chat.' + ext);
-        var res = await fetch(GETHRO_PROXY_URL, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-          body: form,
-        });
-        var data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
-        var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-        if (transcript) {
-          var inp = document.getElementById('agpInput');
-          if (inp) inp.value = transcript;
-          dbg('AGP_MIC', 'Transcription complete — ' + transcript.length + ' chars');
-          if (autoSend) sendToGethro();
-        } else {
-          toast('No speech detected — tap mic to try again');
+    // onstop fires on final stop (_agpStopMic). Mid-session chunks use _agpFlushChunk/_agpRestartRecorder.
+    (function(thisRecorder, captureMime) {
+      thisRecorder.onstop = async function() {
+        if (_agpMicRecorder !== null && _agpMicRecorder !== thisRecorder) {
+          dbg('AGP_MIC', 'Old recorder onstop — ignoring (replaced)');
+          return;
         }
-      } catch(err) {
-        dbgErr('AGP_MIC', 'Transcription failed:', err.message);
-        toast('Transcription unavailable — ' + err.message, 5000);
-      }
-      _agpSetBtn('idle');
-    };
+        var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/webm' });
+        var autoSend = !!(thisRecorder._autoSend);
+        _agpMicRelease();
+
+        if (blob.size < AGP_MIN_CHUNK_BYTES) {
+          if (_agpLiveText) {
+            // Near-silence final segment but we have live text — use it.
+            var inp = document.getElementById('agpInput');
+            if (inp && !inp.value) inp.value = _agpLiveText;
+            dbg('AGP_MIC', 'Final blob tiny but live text available — using live text');
+            if (autoSend) { var lt = _agpLiveText; _agpLiveText = ''; if (lt) sendToGethro(); }
+          } else {
+            // Nothing at all — restart silently, no toast.
+            dbg('AGP_MIC', 'Final blob too small, no live text — silent restart');
+            _agpSetBtn('idle');
+            setTimeout(function() { _agpStartMic(); }, 300);
+          }
+          return;
+        }
+
+        _agpSetBtn('transcribing');
+        try {
+          var session = (await sb.auth.getSession()).data.session;
+          if (!session) throw new Error('Not authenticated');
+          var form = new FormData();
+          form.append('action', 'transcribe');
+          var ext = (captureMime && captureMime.includes('mp4')) ? 'm4a' : 'webm';
+          form.append('audio', blob, 'agp_chat.' + ext);
+          var res = await fetch(GETHRO_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+            body: form,
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+          var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+
+          if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+            var fullText = _agpLiveText ? _agpLiveText + ' ' + transcript : transcript;
+            _agpLiveText = '';
+            var inp = document.getElementById('agpInput');
+            if (inp) inp.value = fullText;
+            dbg('AGP_MIC', 'Final transcription complete — ' + fullText.length + ' chars');
+            if (autoSend) sendToGethro();
+          } else if (_agpLiveText) {
+            // Hallucinated final segment — use accumulated live text
+            dbg('AGP_MIC', 'Final segment hallucination — using accumulated live text');
+            var inp = document.getElementById('agpInput');
+            if (inp && !inp.value) inp.value = _agpLiveText;
+            _agpLiveText = '';
+            if (autoSend) sendToGethro();
+          } else {
+            // Nothing at all — restart silently
+            dbg('AGP_MIC', 'No transcript and no live text — silent restart');
+            _agpSetBtn('idle');
+            setTimeout(function() { _agpStartMic(); }, 300);
+            return;
+          }
+        } catch(err) {
+          dbgErr('AGP_MIC', 'Transcription failed:', err.message);
+          toast('Transcription unavailable — ' + err.message, 5000);
+        }
+        _agpSetBtn('idle');
+      };
+    })(_agpMicRecorder, _agpMicMime);
 
     _agpMicRecorder.onerror = function(e) {
       dbgErr('AGP_MIC', 'MediaRecorder error:', e.error);
