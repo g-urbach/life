@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.07';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix repeating transcription: restart MediaRecorder on each silence flush so every segment is a fresh standalone WebM (valid header from byte 0). Old recorder onstop is ignored via closure identity check. stopMemMic guards against null recorder during mid-restart race. Hallucination filter added (Thank you / bye / brackets). No more cumulative blob / startsWith dedup complexity.';
+  const APP_VERSION  = 'v6.08';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8489,13 +8489,12 @@
   let _micState    = 'idle';    // 'idle' | 'recording' | 'transcribing' | 'error'
   let _micStream   = null;      // getUserMedia stream — released on stop
   let _micRecorder = null;      // MediaRecorder instance
-  let _micChunks   = [];        // ALL audio chunks since recording started — never reset mid-session
-  // WebM mid-session flush strategy: _micChunks is never cleared during recording.
-  // Each flush sends ALL chunks (header always included = valid WebM file for Whisper).
-  // _micFlushedUpTo tracks how many chunks were in the array at the last successful flush,
-  // so we can tell if new audio has arrived since then (don't re-send duplicate audio).
-  let _micFlushedUpTo = 0;      // _micChunks.length at time of last successful flush
-  let _micTranscriptSoFar = ''; // full transcript returned by last successful mid-session flush
+  let _micChunks   = [];        // chunks for CURRENT segment — reset after each flush (v6.07+ restart strategy)
+  // WebM mid-session flush strategy: restart MediaRecorder on each flush so every segment
+  // is a fresh standalone WebM with its own header. _micChunks is reset ONLY after the old
+  // recorder has fully drained (await stop event) so no tail chunks pollute the new segment.
+  let _micFlushedUpTo = 0;      // unused in v6.08 (kept for safety, always reset to 0 on flush)
+  let _micTranscriptSoFar = ''; // unused in v6.08 (leftover from v6.06 startsWith strategy)
   let _micChunkMimeType = '';   // MIME type decided at startMemMic — shared by chunk sender
 
   // Max recording: soft warn at 10 min, hard stop at 14 min (~25MB webm/opus limit)
@@ -8586,28 +8585,57 @@
   async function _micFlushChunk(isFinal) {
     if (!_micRecorder || _micChunks.length === 0) return;
     if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
-    if (!isFinal && _micChunks.length <= _micFlushedUpTo) { dbg('MIC', 'Flush skipped — no new chunks'); return; }
 
-    // Snapshot current chunks as a standalone segment blob
-    var segmentChunks = _micChunks.slice();
-    var blob = new Blob(segmentChunks, { type: _micChunkMimeType || 'audio/webm' });
-    dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal);
+    if (!isFinal) {
+      // KEY FIX (v6.08): await the old recorder stop event so ondataavailable fully drains
+      // BEFORE we snapshot _micChunks. Without this, oldRecorder.stop() is async and its
+      // final tail chunks land in _micChunks AFTER we've already reset it — those headerless
+      // tail chunks corrupt the new segment's first blob.
+      var oldRecorder = _micRecorder;
+      _micRecorder = null; // swap to null so stopMemMic knows a restart is in progress
+      await new Promise(function(resolve) {
+        oldRecorder.addEventListener('stop', resolve, { once: true });
+        try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(); } catch(e) { resolve(); }
+      });
+      // All ondataavailable events for oldRecorder have now fired. _micChunks is fully drained.
+    }
+
+    // NOW snapshot the fully-drained chunks and build the blob
+    var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
+    dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal + ', chunks=' + _micChunks.length);
 
     if (blob.size < MIC_MIN_CHUNK_BYTES) {
       dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — waiting for more speech');
+      if (!isFinal) {
+        // Still start the new recorder even when skipping transcription
+        _micChunks = [];
+        _micFlushedUpTo = 0;
+        _micRecordStart = Date.now();
+        try {
+          var skipRec = new MediaRecorder(_micStream, _micChunkMimeType ? { mimeType: _micChunkMimeType } : {});
+          skipRec.ondataavailable = function(e) {
+            if (e.data && e.data.size > 0) {
+              _micChunks.push(e.data);
+              _micRecentChunkBytes.push(e.data.size);
+              if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
+            }
+          };
+          skipRec.onstop = _makeMicOnstop(_micChunkMimeType);
+          skipRec.onerror = function(e) { dbgErr('MIC', 'MediaRecorder error:', e.error); };
+          skipRec.start(100);
+          _micRecorder = skipRec;
+          dbg('MIC', 'Recorder restarted (chunk too small, skipping transcription)');
+        } catch(e) { dbgErr('MIC', 'Failed to restart recorder after small chunk:', e.message); stopMemMic(); }
+      }
       return;
     }
 
+    // Reset chunk buffer and start new recorder BEFORE the async fetch,
+    // so speech captured during transcription goes into the next clean segment.
     if (!isFinal) {
-      // Restart the recorder so the next segment starts with a fresh WebM header.
-      // Stop current recorder → onstop will NOT transcribe (we handle it here).
-      // Start a new MediaRecorder on the same stream immediately.
       _micChunks = [];
       _micFlushedUpTo = 0;
       _micRecordStart = Date.now();
-      var oldRecorder = _micRecorder;
-      // Swap in a placeholder so onstop guard sees we're mid-flush
-      _micRecorder = null;
       try {
         var newRec = new MediaRecorder(_micStream, _micChunkMimeType ? { mimeType: _micChunkMimeType } : {});
         newRec.ondataavailable = function(e) {
@@ -8617,19 +8645,16 @@
             if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
           }
         };
-        newRec.onstop = _micRecorder_onstop; // shared final-stop handler (set below)
+        newRec.onstop = _makeMicOnstop(_micChunkMimeType); // factory — avoids undefined _micRecorder_onstop
         newRec.onerror = function(e) { dbgErr('MIC', 'MediaRecorder error:', e.error); };
         newRec.start(100);
         _micRecorder = newRec;
         dbg('MIC', 'Recorder restarted for next segment');
       } catch(e) {
         dbgErr('MIC', 'Failed to restart recorder:', e.message);
-        // If restart fails, stop everything cleanly
         stopMemMic();
         return;
       }
-      // Stop old recorder (onstop will fire but _micRecorder is now the new one, so it won't re-transcribe)
-      try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); } catch(e) {}
     }
 
     // POST segment to Whisper
@@ -8674,7 +8699,6 @@
       setMemStatus('listening', '🎙️ Recording… tap to transcribe');
     }
   }
-
   // ── APP-52 Phase 3: Silence detection loop ───────────────────────────────────
   // Primary: AnalyserNode volume reading (0-127 scale).
   // Fallback: if analyser unavailable, uses rolling average of ondataavailable
@@ -8723,6 +8747,67 @@
       _micSilenceStart = null;
     }
     _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
+  }
+
+  // Factory for onstop handlers on restarted recorders.
+  // Avoids the undefined _micRecorder_onstop reference from v6.07.
+  // Called at recorder-creation time so mimeType is captured in closure.
+  function _makeMicOnstop(mimeType) {
+    return async function() {
+      // If _micRecorder is null we're mid-restart — this is the old recorder draining,
+      // not a final user stop. The flush already handled transcription; nothing to do.
+      if (_micRecorder !== null) {
+        dbg('MIC', 'New recorder onstop — _micRecorder still active, not a final stop');
+        return;
+      }
+      // _micRecorder is null: either stopMemMic fired during a mid-restart, or
+      // something went wrong. Assemble remaining chunks and transcribe if any.
+      if (!memMicActive && _micState !== 'transcribing') { _micRelease(); return; }
+      var blob = new Blob(_micChunks, { type: mimeType || 'audio/webm' });
+      _micRelease();
+      dbg('MIC', '_makeMicOnstop final blob — ' + blob.size + ' bytes');
+      if (blob.size < MIC_MIN_CHUNK_BYTES) {
+        _setMicState('idle'); setMemStatus('idle', '');
+        if (!document.getElementById('memAnswer') || !document.getElementById('memAnswer').value.trim()) {
+          toast('No speech detected — tap mic and speak, then tap stop');
+        }
+        return;
+      }
+      _setMicState('transcribing');
+      setMemStatus('listening', '⏳ Transcribing…');
+      try {
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        form.append('action', 'transcribe');
+        form.append('audio', blob, 'dictation.' + ((mimeType && mimeType.includes('mp4')) ? 'm4a' : 'webm'));
+        var res = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+          body: form,
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+        var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+        var HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+)$/i;
+        if (transcript && !HALLUCINATIONS.test(transcript)) {
+          var el = document.getElementById('memAnswer');
+          var current = el.value;
+          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+          el.value = current + sep + transcript;
+          _userHasTyped = true;
+          memCheckButtons();
+          dbg('MIC', '_makeMicOnstop appended — ' + transcript.length + ' chars');
+        } else if (transcript) {
+          dbg('MIC', '_makeMicOnstop hallucination filtered: "' + transcript + '"');
+        }
+      } catch (err) {
+        dbgErr('MIC', '_makeMicOnstop transcription failed:', err.message);
+        toast('Transcription unavailable — ' + err.message, 6000);
+      }
+      _setMicState('idle');
+      setMemStatus('idle', '');
+    };
   }
 
   async function startMemMic() {
