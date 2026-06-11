@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.99';
-  const DEPLOY_NOTES = APP_VERSION + ' — Raise MIC_MIN_CHUNK_BYTES 2000→8000. 2000 bytes was still in the silence/noise range — blobs were creeping just over threshold (2198 bytes) and Whisper still hallucinated "Thank you." Real webm/opus speech is typically 10KB+.';
+  const APP_VERSION  = 'v5.100';
+  const DEPLOY_NOTES = APP_VERSION + ' — Mic volume debug logging added. _micSilenceLoop now logs vol=N threshold=12 [SILENCE|SPEECH] once per second so MIC_SILENCE_THRESHOLD can be calibrated against real device readings. No logic changes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8629,6 +8629,8 @@
     }
   }
 
+  let _micDbgVolLastLog = 0; // throttle volume debug logging to 1/sec
+
   // ── APP-52 Phase 3: Silence detection loop ────────────────────────────────────
   // Runs on rAF during recording. Checks volume via AnalyserNode.
   // On sustained silence + minimum chunk age: flushes chunk non-blocking.
@@ -8642,7 +8644,12 @@
       var v = Math.abs(buffer[i] - 128);
       if (v > volume) volume = v;
     }
+    // Debug: log volume once per second so we can calibrate MIC_SILENCE_THRESHOLD
     var now = Date.now();
+    if (now - _micDbgVolLastLog > 1000) {
+      dbg('MIC', 'vol=' + volume + ' threshold=' + MIC_SILENCE_THRESHOLD + (volume < MIC_SILENCE_THRESHOLD ? ' [SILENCE]' : ' [SPEECH]'));
+      _micDbgVolLastLog = now;
+    }
     var chunkAge = now - (_micRecordStart || now);
     if (volume < MIC_SILENCE_THRESHOLD) {
       // Silence detected
@@ -8776,6 +8783,10 @@
 
     // Phase 3: attach AudioContext + AnalyserNode for silence detection
     // Uses the existing _micStream — no second getUserMedia call needed.
+    // Skip on iOS: AudioContext + MediaStreamSource conflicts with MediaRecorder capture
+    // on Safari/iOS PWA, causing the stream to be throttled/muted (blobs stay at ~1KB
+    // container-only size, Whisper hallucinates). Falls back to Phase 2 manual-stop behaviour.
+    if (!isIOS) {
     try {
       _micAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
       var source = _micAnalyserCtx.createMediaStreamSource(_micStream);
@@ -8788,6 +8799,9 @@
       // Non-fatal — fall back to Phase 2 behaviour (manual stop only)
       dbgWarn('MIC', 'AudioContext for silence detection failed:', acErr.message);
       _micAnalyserCtx = null; _micAnalyser = null;
+    }
+    } else {
+      dbg('MIC', 'iOS detected — silence detector skipped (manual stop mode)');
     }
 
     // Soft warn at 10 min
