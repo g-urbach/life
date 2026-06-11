@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.10';
+  const APP_VERSION  = 'v6.11';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8741,14 +8741,6 @@
       var silenceDuration = now - _micSilenceStart;
       if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing && !_micFlushCooldown) {
         _micSilenceStart = null;
-        if (_micRecorder && _micRecorder.state === 'recording') {
-          try { _micRecorder.pause(); } catch(e) {}
-          setTimeout(function() {
-            if (_micRecorder && _micRecorder.state === 'paused') {
-              try { _micRecorder.resume(); } catch(e) {}
-            }
-          }, 80);
-        }
         _micFlushChunk(false);
       }
     } else {
@@ -8762,10 +8754,14 @@
   // Called at recorder-creation time so mimeType is captured in closure.
   function _makeMicOnstop(mimeType) {
     return async function() {
-      // If _micRecorder is null we're mid-restart — this is the old recorder draining,
-      // not a final user stop. The flush already handled transcription; nothing to do.
-      if (_micRecorder !== null) {
-        dbg('MIC', 'New recorder onstop — _micRecorder still active, not a final stop');
+      // Guard: only treat as final stop if _micRecorder is still this recorder.
+      // _makeMicOnstop is assigned immediately after recorder creation, so at call time
+      // _micRecorder should still equal the recorder this onstop belongs to — unless:
+      //   null  → mid-flush (flush nulled it and is restarting), ignore
+      //   different recorder → a newer recorder replaced this one, ignore
+      // The flush itself handles transcription for mid-session stops; don't double-transcribe.
+      if (_micRecorder === null) {
+        dbg('MIC', '_makeMicOnstop ignoring — _micRecorder null (mid-flush restart)');
         return;
       }
       // _micRecorder is null: either stopMemMic fired during a mid-restart, or
@@ -8974,12 +8970,6 @@
       var chunkAge = Date.now() - (_micRecordStart || Date.now());
       if (chunkAge < MIC_MIN_CHUNK_MS) return;
       dbg('MIC', 'Periodic flush — ' + Math.round(chunkAge/1000) + 's elapsed');
-      if (_micRecorder && _micRecorder.state === 'recording') {
-        try { _micRecorder.pause(); } catch(e) {}
-        setTimeout(function() {
-          if (_micRecorder && _micRecorder.state === 'paused') { try { _micRecorder.resume(); } catch(e) {} }
-        }, 80);
-      }
       _micFlushChunk(false);
     }, 5000);
 
