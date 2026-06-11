@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.90';
-  const DEPLOY_NOTES = APP_VERSION + ' — Share tidy-up + expiry choice + dashboard feedback navigation. (1) BUG FIX: owner note (personal message) now correctly shown on song/piece share pages — was missing from isPiece get_entry response in proxy. (2) BUG FIX: shareMessage textarea placeholder is now blank for all share types — no more example text. (3) Owner can now choose share link expiry: 7, 14, 30, or 90 days (default 30) — expiry picker added to both memory share modal and story share modal; memory share passes expires_at to Supabase, story share passes expires_days to proxy. (4) Proxy create_story_share now accepts note (saved to token) and expires_days. (5) Dashboard feedback: piece feedback title is now a clickable underlined link — tapping it navigates to My Story → Library and opens that piece overlay so owner can read what the comment is about. PROXY: deploy SHARE_PROXY_v3_71.';
+  const APP_VERSION  = 'v5.94';
+  const DEPLOY_NOTES = APP_VERSION + ' — APP-52 Phase 4: Ask Gethro panel mic migrated from SpeechRecognition to MediaRecorder + Whisper. _agpStartMic/_agpStopMic replaced with MediaRecorder+AnalyserNode implementation. Silence detection (1200ms, 800ms min-record) auto-populates agpInput and calls sendToGethro(). _agpRecognition, _agpAccumulated, _agpSilenceTimer, iOS SR primer all removed. Firefox now fully supported in Gethro mic (was blocked). SpeechRecognition / webkitSpeechRecognition fully removed from all active code paths. _agpAnalyserCtx isolated from _gethroAudioCtx and _bgMusicCtx.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8050,67 +8050,7 @@
   // Legacy alias — speakAndWait now routes through Gethro
   function speakAndWait(text) { return gethroSpeak(text); }
 
-  // ── Persistent mic ────────────────────────────────────────────────
-  // Restarts automatically on silence/no-speech; use stopListening() to kill cleanly.
-  function startPersistentListening(el) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      toast('Speech not supported in this browser');
-      return;
-    }
-
-    listeningActive = true;
-
-    function createAndStart() {
-      if (!recActive || !listeningActive) return;
-      const rec = new SR();
-      rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = true;
-      recognition = rec;
-
-      rec.onresult = (e) => {
-        let t = '';
-        for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-        recTranscript = t;
-        const target = el || document.getElementById('memAnswer');
-        if (target) {
-          if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-            target.value = t;
-          } else {
-            target.textContent = t || 'I\'m listening… speak freely.';
-            target.style.color = t ? 'var(--text)' : 'var(--text-light)';
-          }
-        }
-        memCheckButtons();
-      };
-
-      rec.onerror = (e) => {
-        if (e.error === 'aborted' || e.error === 'no-speech') return;
-        dbgWarn('SPEECH', 'Error:', e.error);
-        if (e.error === 'network') {
-          // Edge/Chromium: speech service hiccup — stop cleanly, do NOT retry (causes browser crash)
-          dbgErr('MIC', 'ERROR onerror: network');
-          listeningActive = false; recActive = false; recognition = null;
-          toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
-          return;
-        }
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          toast('Microphone permission denied');
-        }
-      };
-
-      rec.onend = () => {
-        if (recActive && listeningActive) {
-          setTimeout(() => { if (recActive && listeningActive) createAndStart(); }, 300);
-        }
-      };
-
-      try { rec.start(); dbg('SPEECH', 'Mic started'); }
-      catch(e) { setTimeout(() => { if (recActive && listeningActive) createAndStart(); }, 600); }
-    }
-
-    createAndStart();
-  }
-
+  // ── stopListening (legacy — kept for safety; no longer called after APP-52 Phase 4) ──
   function stopListening() {
     listeningActive = false;
     if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
@@ -8408,8 +8348,7 @@
   let recLastTags    = {};   // carries forward between entries
   let recCurQuestion = '';   // current AI question (used by memAINewTopicForChapter and recSave)
   let recActive      = false;// AI conversation running
-  let memMicActive   = false;// mic dictation active
-  let _micPrimedStream = null; // getUserMedia stream kept alive on iOS during recognition session
+  let memMicActive   = false;// mic dictation active (kept for external call sites; _micState is the source of truth)
   var MIC_PREF_KEY  = 'mls_mic_pref';
   // Load persisted preference; default TRUE (voice on by default)
   var userMicPref;
@@ -8540,203 +8479,340 @@
     }
   }
 
-  async function startMemMic() {
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
-      if (isFirefox) {
-        toast('\uD83E\uDD8A Voice isn\u2019t supported in Firefox \u2014 try Chrome or Safari for the full experience', 5000);
-      } else {
-        toast('Speech recognition isn\u2019t supported in this browser \u2014 try Chrome or Safari');
-      }
-      return;
-    }
+  // ── APP-52 Phase 2: MediaRecorder + Whisper mic dictation ────────────────────
+  // Replaces SpeechRecognition entirely for the Add Memory mic button.
+  // State enum: 'idle' | 'recording' | 'transcribing' | 'error'
+  // Dead code removed: startPersistentListening(), _micPrimedStream, iosRecording,
+  //   iosTranscript, iOS getUserMedia priming, all SR restart-loop logic.
+  // _agpStartMic (Ask Gethro panel) left on SpeechRecognition for now — Phase 4.
 
-    // ── Detect iOS Safari ────────────────────────────────────────────
-    // iOS requires different session management to Android/desktop Chrome.
-    // On iOS: continuous=true holds the session open (no restart loop needed).
-    // On Android/desktop: continuous=false with manual restart works correctly.
-    // The iPad crash-loop bug (v2.36 debug) showed iOS closes sessions instantly
-    // with continuous=false — causing ~3 restarts/second and zero onresult events.
-    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    dbg('MIC', 'Platform: ' + (isIOS ? 'iOS (continuous=true, getUserMedia primed)' : 'Android/desktop (continuous=true, no getUserMedia)'));
+  let _micState    = 'idle';    // 'idle' | 'recording' | 'transcribing' | 'error'
+  let _micStream   = null;      // getUserMedia stream — released on stop
+  let _micRecorder = null;      // MediaRecorder instance
+  let _micChunks   = [];        // accumulated audio chunks (current segment)
+  let _micChunkMimeType = '';   // MIME type decided at startMemMic — shared by chunk sender
 
-    // ── Prime the iOS audio session via getUserMedia (iOS only) ────────
-    // webkitSpeechRecognition silently fails on iOS if getUserMedia hasn't
-    // been called first in the same gesture context.
-    // CRITICAL: keep the stream alive until stopMemMic() — stopping tracks
-    // early deactivates the audio session before recognition can claim it.
-    // On Android, getUserMedia is NOT called — it is unnecessary and keeping
-    // a raw MediaStream alive alongside SpeechRecognition can compete for the
-    // audio hardware on some Android devices, causing onresult to never fire.
-    var primedStream = null;
-    if (isIOS) {
-      try {
-        primedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        dbg('MIC', 'getUserMedia succeeded — audio session primed, stream kept alive');
-      } catch (permErr) {
-        if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
-          return toast('Microphone access denied — please allow mic in your browser settings');
-        }
-        dbgWarn('MIC', 'getUserMedia failed (' + permErr.name + ') — trying SpeechRecognition anyway');
-      }
-    }
+  // Max recording: soft warn at 10 min, hard stop at 14 min (~25MB webm/opus limit)
+  const MIC_WARN_MS = 10 * 60 * 1000;
+  const MIC_MAX_MS  = 14 * 60 * 1000;
+  let _micWarnTimer = null;
+  let _micMaxTimer  = null;
 
-    // Abort any existing session cleanly
-    if (recognition) { try { recognition.abort(); } catch(e){} recognition = null; }
+  // ── APP-52 Phase 3: Silence detection state ────────────────────────────────────────────
+  // AudioContext is isolated from _gethroAudioCtx (TTS) and _bgMusicCtx (music).
+  // Do NOT share — see v2.36 AudioContext conflict lesson.
+  let _micAnalyserCtx   = null;  // AudioContext for volume analysis only
+  let _micAnalyser      = null;  // AnalyserNode
+  let _micSilenceStart  = null;  // timestamp when silence began (null = not silent)
+  let _micRecordStart   = null;  // timestamp when current segment recording began
+  let _micSilenceRAF    = null;  // requestAnimationFrame handle for silence loop
+  let _micTranscribing  = false; // true while a background chunk POST is in flight
 
-    memMicActive = true;
-    listeningActive = true;
-    // Store primed stream on the mic state so stopMemMic() can release it
-    _micPrimedStream = primedStream;
-    setMicUI(true);
-    setMemStatus('listening', 'Listening...');
-    var el = document.getElementById('memAnswer');
-    var prefix = '';
-    var accumulated = '';
-    var currentVal = el.value;
-    var lastLabelIdx = currentVal.lastIndexOf(':\n');
-    if (lastLabelIdx !== -1) {
-      prefix = currentVal.slice(0, lastLabelIdx + 2);
-      var alreadyTyped = currentVal.slice(lastLabelIdx + 2).trim();
-      if (alreadyTyped) accumulated = alreadyTyped;
+  // Tuning constants — calibrated for memoir dictation (paragraph-length speech)
+  const MIC_SILENCE_THRESHOLD = 8;    // 0-127 scale; below = silence
+  const MIC_SILENCE_MS        = 1500; // ms of continuous silence → auto-flush
+  const MIC_MIN_CHUNK_MS      = 3000; // don't flush chunks shorter than this
+
+  function _setMicState(state) {
+    _micState = state;
+    var btn      = document.getElementById('memMicBtn');
+    var icon     = document.getElementById('memMicIcon');
+    var label    = document.getElementById('memMicLabel');
+    var textarea = document.getElementById('memAnswer');
+    if (!btn) return;
+    if (state === 'recording') {
+      btn.style.background  = 'var(--rose)';
+      btn.style.borderColor = 'var(--rose)';
+      btn.style.color       = 'white';
+      if (icon)  icon.textContent  = '⏹';
+      if (label) label.textContent = 'Tap to stop recording';
+      if (textarea) textarea.style.borderColor = 'var(--rose)';
+    } else if (state === 'transcribing') {
+      btn.style.background  = 'var(--amber, #f59e0b)';
+      btn.style.borderColor = 'var(--amber, #f59e0b)';
+      btn.style.color       = 'white';
+      if (icon)  icon.textContent  = '⏳';
+      if (label) label.textContent = 'Transcribing…';
+      if (textarea) textarea.style.borderColor = 'var(--amber, #f59e0b)';
     } else {
-      prefix = currentVal ? currentVal + (currentVal.endsWith('\n') ? '' : '\n') : '';
+      // idle or error
+      btn.style.background  = 'var(--surface)';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color       = 'var(--text)';
+      if (icon)  icon.textContent  = '🎙️';
+      if (label) label.textContent = 'Tap to speak your memory';
+      if (textarea) textarea.style.borderColor = 'var(--border)';
+    }
+  }
+
+  // Keep legacy setMicUI alias so any external call sites don't break
+  function setMicUI(active) { _setMicState(active ? 'recording' : 'idle'); }
+
+  function _micRelease() {
+    if (_micStream) { _micStream.getTracks().forEach(function(t){ t.stop(); }); _micStream = null; }
+    if (_micWarnTimer) { clearTimeout(_micWarnTimer); _micWarnTimer = null; }
+    if (_micMaxTimer)  { clearTimeout(_micMaxTimer);  _micMaxTimer  = null; }
+    // Phase 3: stop silence detection loop and close analyser context
+    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
+    if (_micAnalyserCtx) {
+      try { _micAnalyserCtx.close(); } catch(e) {}
+      _micAnalyserCtx = null;
+    }
+    _micAnalyser     = null;
+    _micSilenceStart = null;
+    _micRecordStart  = null;
+    _micTranscribing = false;
+    _micRecorder = null;
+    _micChunks   = [];
+    memMicActive = false;
+  }
+
+  // ── APP-52 Phase 3: Background chunk transcription ────────────────────────────
+  // Called by silence detector. Pauses recorder, flushes chunk blob, resumes,
+  // then POSTs to Whisper non-blocking. Transcript appended when it arrives.
+  async function _micFlushChunk(isFinal) {
+    if (!_micRecorder || _micChunks.length === 0) return;
+    // Collect chunks accumulated so far
+    var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
+    _micChunks = []; // reset for next segment
+    _micRecordStart = Date.now(); // new segment starts now
+    dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal);
+    if (blob.size < 500) { dbg('MIC', 'Chunk too small, skipping'); return; }
+    // Show unobtrusive micro-indicator in status bar (don't change button state)
+    setMemStatus('listening', '✍️ Transcribing…');
+    _micTranscribing = true;
+    try {
+      var session = (await window._supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      var form = new FormData();
+      var ext = (_micChunkMimeType && _micChunkMimeType.includes('mp4')) ? 'm4a' : 'webm';
+      form.append('audio', blob, 'chunk.' + ext);
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form,
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+      var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      if (transcript) {
+        var el = document.getElementById('memAnswer');
+        var current = el.value;
+        var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+        el.value = current + sep + transcript;
+        _userHasTyped = true;
+        memCheckButtons();
+        dbg('MIC', 'Chunk appended — ' + transcript.length + ' chars');
+      }
+    } catch (err) {
+      dbgErr('MIC', 'Chunk transcription failed:', err.message);
+      // Non-fatal: user can manually stop and still get a full transcription
+      toast('Chunk transcription failed — keep speaking, or tap stop to retry', 4000);
+    }
+    _micTranscribing = false;
+    // Restore recording indicator if still recording
+    if (_micState === 'recording') {
+      setMemStatus('listening', '🎙️ Recording… tap to transcribe');
+    }
+  }
+
+  // ── APP-52 Phase 3: Silence detection loop ────────────────────────────────────
+  // Runs on rAF during recording. Checks volume via AnalyserNode.
+  // On sustained silence + minimum chunk age: flushes chunk non-blocking.
+  function _micSilenceLoop() {
+    if (_micState !== 'recording' || !_micAnalyser) { _micSilenceRAF = null; return; }
+    var buffer = new Uint8Array(_micAnalyser.fftSize);
+    _micAnalyser.getByteTimeDomainData(buffer);
+    // Volume: max deviation from 128 (silence = 128, loudest = 0 or 255)
+    var volume = 0;
+    for (var i = 0; i < buffer.length; i++) {
+      var v = Math.abs(buffer[i] - 128);
+      if (v > volume) volume = v;
+    }
+    var now = Date.now();
+    var chunkAge = now - (_micRecordStart || now);
+    if (volume < MIC_SILENCE_THRESHOLD) {
+      // Silence detected
+      if (_micSilenceStart === null) _micSilenceStart = now;
+      var silenceDuration = now - _micSilenceStart;
+      if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing) {
+        _micSilenceStart = null; // reset so we don't double-flush
+        // Pause recorder to collect clean chunk boundary
+        if (_micRecorder && _micRecorder.state === 'recording') {
+          try { _micRecorder.pause(); } catch(e) {}
+          setTimeout(function() {
+            if (_micRecorder && _micRecorder.state === 'paused') {
+              try { _micRecorder.resume(); } catch(e) {}
+            }
+          }, 80); // 80ms pause lets ondataavailable fire for the chunk
+        }
+        // Flush async — don't await, keep loop running
+        _micFlushChunk(false);
+      }
+    } else {
+      // Sound detected — reset silence timer
+      _micSilenceStart = null;
+    }
+    _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
+  }
+
+  async function startMemMic() {
+    if (_micState !== 'idle') return; // guard double-tap
+
+    // Check MediaRecorder support (all modern browsers; replaces SR browser check)
+    if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return toast('Voice recording isn\'t supported in this browser — try Chrome, Firefox or Safari');
     }
 
-    function createAndStart() {
-      if (!memMicActive || !listeningActive) return;
-      var rec = new SR();
-      recognition = rec;
-      rec.lang = 'en-AU';
-      rec.continuous = true;
+    // Acquire mic
+    try {
+      _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (permErr) {
+      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+        return toast('Microphone access denied — please allow mic in your browser settings');
+      }
+      return toast('Could not access microphone — ' + permErr.message);
+    }
 
-      // iOS: interimResults=true gives live streaming preview as the user speaks.
-      //      iOS commits isFinal in natural phrase-sized chunks so interim and
-      //      final results don't overlap — safe to display both.
-      // Android: interimResults=false (finals only).
-      //      Android Chrome commits isFinal after EVERY FEW WORDS, not per phrase.
-      //      With interimResults=true, interim results re-send the current in-progress
-      //      phrase from its start — words already committed as finals appear again in
-      //      the interim, producing "hello this is this is this is a sentence" repeats.
-      //      Disabling interim results on Android means words appear in small committed
-      //      chunks (~2-3 words at a time) which is clean and correct.
-      rec.interimResults = isIOS ? true : false;
-
-      rec.onresult = function(e) {
-        // Start at e.resultIndex — with continuous=true, e.results is cumulative.
-        // Iterating from 0 would re-process already-committed finals.
-        var interim = '';
-        var newFinals = '';
-        for (var i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            newFinals += (newFinals ? ' ' : '') + e.results[i][0].transcript.trim();
-          } else {
-            interim += e.results[i][0].transcript;
-          }
-        }
-        if (newFinals) {
-          accumulated += (accumulated ? ' ' : '') + newFinals;
-        }
-        // On iOS: show accumulated + live interim preview.
-        // On Android: interimResults=false so interim is always '' — only finals shown.
-        el.value = prefix + accumulated + (interim ? ' ' + interim : '');
-        if (accumulated || interim) _userHasTyped = true;
-        memCheckButtons();
-      };
-
-      rec.onend = function() {
-        dbg('MIC', 'onend — memMicActive:' + memMicActive + ' listeningActive:' + listeningActive);
-        // With continuous=true on both platforms, onend should only fire on abort()
-        // or an unexpected browser drop. Restart as a safety net with a generous
-        // delay to avoid hammering the audio subsystem.
-        if (memMicActive && listeningActive) {
-          el.value = prefix + accumulated;
-          memCheckButtons();
-          setTimeout(createAndStart, 800);
-        }
-      };
-
-      rec.onerror = function(e) {
-        // 'aborted' fires on programmatic stop — not an error; 'no-speech' is routine silence
-        if (e.error === 'aborted' || e.error === 'no-speech') return;
-        dbgErr('MIC', 'onerror:', e.error);
-        if (e.error === 'network') {
-          // Edge/Chromium: speech service hiccup — MUST stop and not retry or it crashes the browser
-          stopMemMic();
-          toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
-          return;
-        }
-        if (e.error === 'not-allowed') {
-          if (navigator.permissions) {
-            navigator.permissions.query({ name: 'microphone' }).then(function(result) {
-              if (result.state === 'denied') {
-                stopMemMic(); toast('Microphone permission denied — please allow mic access in Settings');
-              } else {
-                if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
-              }
-            }).catch(function() {
-              if (memMicActive && listeningActive) setTimeout(createAndStart, 500);
-            });
-          } else {
-            stopMemMic(); toast('Microphone permission denied');
-          }
-        }
-        else if (memMicActive && listeningActive) setTimeout(createAndStart, 400);
-      };
-
-      try {
-        rec.start();
-        dbg('MIC', 'rec.start() succeeded — continuous:' + rec.continuous);
-      } catch(startErr) {
-        dbgErr('MIC', 'rec.start() threw:', startErr.name, startErr.message);
-        if (startErr.name === 'InvalidStateError') {
-          try { rec.abort(); } catch(e) {}
-          setTimeout(createAndStart, 500);
-        } else {
-          stopMemMic();
-          toast('Could not start microphone — ' + startErr.message);
-        }
+    // Pick best MIME type — same detection already used in audio clip recorder
+    var mimeType = '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', ''];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!candidates[i] || MediaRecorder.isTypeSupported(candidates[i])) {
+        mimeType = candidates[i]; break;
       }
     }
-    createAndStart();
+    _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
+
+    _micChunks       = [];
+    _micRecordStart  = Date.now(); // Phase 3: track segment age for MIN_CHUNK_MS
+    _micSilenceStart = null;
+    memMicActive = true;
+    _setMicState('recording');
+    setMemStatus('listening', '🎙️ Recording… tap to transcribe');
+    dbg('MIC', 'MediaRecorder start — mimeType: ' + (mimeType || 'default'));
+
+    try {
+      _micRecorder = new MediaRecorder(_micStream, mimeType ? { mimeType: mimeType } : {});
+    } catch (e) {
+      _micRelease(); _setMicState('idle');
+      return toast('Could not start recorder — ' + e.message);
+    }
+
+    _micRecorder.ondataavailable = function(e) {
+      if (e.data && e.data.size > 0) _micChunks.push(e.data);
+    };
+
+    _micRecorder.onstop = async function() {
+      // Phase 3: silence loop already stopped by stopMemMic() / _micRelease()
+      if (!memMicActive && _micState !== 'transcribing') { _micRelease(); return; }
+      // Assemble final blob from any remaining chunks
+      var blob = new Blob(_micChunks, { type: mimeType || 'audio/webm' });
+      _micRelease();
+      if (blob.size < 500) {
+        _setMicState('idle'); setMemStatus('idle', '');
+        // If we got here via manual stop but chunks were already flushed, that's fine
+        return;
+      }
+      // Transcribe final buffer
+      _setMicState('transcribing');
+      setMemStatus('listening', '⏳ Transcribing…');
+      try {
+        var session = (await window._supabase.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'webm'));
+        var res = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+          body: form,
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+        var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+        if (transcript) {
+          var el = document.getElementById('memAnswer');
+          var current = el.value;
+          // Phase 3: append with a space separator (chunks already used newline-free join)
+          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+          el.value = current + sep + transcript;
+          _userHasTyped = true;
+          memCheckButtons();
+          dbg('MIC', 'Final transcription appended — ' + transcript.length + ' chars');
+        } else if (!el || !el.value.trim()) {
+          toast('No speech detected — try again');
+        }
+      } catch (err) {
+        dbgErr('MIC', 'Transcription failed:', err.message);
+        toast('Transcription unavailable — ' + err.message, 6000);
+      }
+      _setMicState('idle');
+      setMemStatus('idle', '');
+    };
+
+    _micRecorder.onerror = function(e) {
+      dbgErr('MIC', 'MediaRecorder error:', e.error);
+      _micRelease(); _setMicState('error'); setMemStatus('idle', '');
+      toast('Recording error — tap mic to try again');
+    };
+
+    // Start recorder requesting timesliced chunks (100ms) so ondataavailable fires
+    // continuously — required for the pause/resume chunk-flush pattern in Phase 3.
+    _micRecorder.start(100);
+
+    // Phase 3: attach AudioContext + AnalyserNode for silence detection
+    // Uses the existing _micStream — no second getUserMedia call needed.
+    try {
+      _micAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var source = _micAnalyserCtx.createMediaStreamSource(_micStream);
+      _micAnalyser = _micAnalyserCtx.createAnalyser();
+      _micAnalyser.fftSize = 512; // small FFT — we only need time-domain RMS
+      source.connect(_micAnalyser);
+      _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
+      dbg('MIC', 'Silence detector started');
+    } catch (acErr) {
+      // Non-fatal — fall back to Phase 2 behaviour (manual stop only)
+      dbgWarn('MIC', 'AudioContext for silence detection failed:', acErr.message);
+      _micAnalyserCtx = null; _micAnalyser = null;
+    }
+
+    // Soft warn at 10 min
+    _micWarnTimer = setTimeout(function() {
+      if (_micState === 'recording') toast('You\'ve been recording for 10 minutes — tap stop to save your words', 6000);
+    }, MIC_WARN_MS);
+
+    // Hard stop at 14 min
+    _micMaxTimer = setTimeout(function() {
+      if (_micState === 'recording') { stopMemMic(); toast('Recording stopped — maximum length reached. Your words are being transcribed.', 5000); }
+    }, MIC_MAX_MS);
   }
 
   function stopMemMic() {
-    stopListening();
-    memMicActive = false;
-    // Release the iOS priming stream now that the session is fully stopped
-    if (_micPrimedStream) {
-      _micPrimedStream.getTracks().forEach(function(t) { t.stop(); });
-      _micPrimedStream = null;
-      dbg('MIC', 'Priming stream released on stop');
+    if (_micState !== 'recording') return;
+    // Phase 3: halt silence loop before stopping recorder to avoid race
+    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
+    _setMicState('transcribing'); // show spinner immediately while onstop fires
+    if (_micRecorder && _micRecorder.state !== 'inactive') {
+      // If paused mid-chunk-flush, resume first so onstop fires cleanly
+      if (_micRecorder.state === 'paused') {
+        try { _micRecorder.resume(); } catch(e) {}
+      }
+      try { _micRecorder.stop(); } catch(e) { dbgWarn('MIC', 'recorder.stop() threw:', e.message); }
     }
-    setMicUI(false);
-    setMemStatus('idle', '');
+    // _micRelease() called in onstop after blob is assembled
   }
 
   function toggleMemMic() {
-    // iOS PWA (home screen) blocks webkitSpeechRecognition with 'service-not-allowed'.
-    // Detect standalone mode and show the "Open in Safari" overlay instead.
-    var isStandalone = window.navigator.standalone === true;
-    var isIosPwa = isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent);
-    if (isIosPwa && !memMicActive) {
-      var overlay = document.getElementById('pwaMicBlockedOverlay');
-      var safariBtn = document.getElementById('pwaMicSafariBtn');
-      if (safariBtn) safariBtn.href = window.location.href;
-      if (overlay) overlay.style.display = 'flex';
-      return;
-    }
-    if (memMicActive) {
+    if (_micState === 'recording') {
       userMicPref = false;
       try { localStorage.setItem(MIC_PREF_KEY, '0'); } catch(e) {}
       stopMemMic();
-    } else {
+    } else if (_micState === 'idle') {
       userMicPref = true;
       try { localStorage.setItem(MIC_PREF_KEY, '1'); } catch(e) {}
       startMemMic();
     }
+    // If 'transcribing' — ignore tap, transcription in progress
   }
 
   function setMemStatus(state, text) {
@@ -19933,8 +20009,7 @@
 
   var _gethroHistory  = [];   // [{role:'user'|'assistant', content:'...'}]
   var _agpPendingNavActions = {}; // PRV-09 Phase 9: keyed by div uid → {action, delay} for nav-intercept delegate
-  var _agpMicActive   = false;
-  var _agpRecognition = null;
+  var _agpMicActive   = false; // Phase 4: set by _agpStartMic/_agpMicRelease (no _agpRecognition — MediaRecorder now)
   var _agpSending     = false;
   var _agpMemoryMode         = false; // true while panel open + memory-related
   var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
@@ -20023,8 +20098,7 @@
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
     featTrackGethroOpen();
-    // Stop memory mic if running — two simultaneous SpeechRecognition instances
-    // fight each other and cause a rapid onend restart loop in the Gethro mic.
+    // Stop memory mic if running — avoid two simultaneous mic streams competing.
     if (typeof memMicActive !== 'undefined' && memMicActive) {
       if (typeof stopMemMic === 'function') stopMemMic();
     }
@@ -20810,111 +20884,191 @@
   }
 
   // ── Mic for Ask Gethro panel ─────────────────────────────────────
-  // Separate mic from the Memories mic — different state, same SpeechRecognition API.
-  function toggleAgpMic() {
-    if (_agpMicActive) { _agpStopMic(); } else { _agpStartMic(); }
+  // ── APP-52 Phase 4: AGP mic migrated to MediaRecorder + Whisper ─────────────
+  // Replaces SpeechRecognition for the Ask Gethro panel mic button.
+  // Flow: record → silence detected (1200ms) or manual stop → transcribe → populate input → auto-send.
+  // Shares MIC_SILENCE_THRESHOLD and MIME detection with the Phase 2/3 mem mic implementation.
+  // SpeechRecognition / webkitSpeechRecognition is now fully removed from the app.
+  // _agpRecognition, _agpAccumulated, _agpSilenceTimer replaced by MediaRecorder + AnalyserNode.
+
+  var _agpMicStream    = null;  // getUserMedia stream
+  var _agpMicRecorder  = null;  // MediaRecorder instance
+  var _agpMicChunks    = [];    // audio chunk accumulator
+  var _agpMicMime      = '';    // MIME type chosen at start
+  var _agpAnalyserCtx  = null;  // AudioContext for silence detection (isolated from TTS + mem mic)
+  var _agpAnalyser     = null;  // AnalyserNode
+  var _agpSilenceRAF   = null;  // rAF handle
+  var _agpSilenceStart = null;  // timestamp silence began
+  var _agpRecordStart  = null;  // timestamp recording began (for min-chunk guard)
+
+  const AGP_SILENCE_MS = 1200; // shorter than dictation — chat turns are short utterances
+  const AGP_MIN_REC_MS = 800;  // don't auto-send if recording < 800ms (avoids accidental triggers)
+
+  function _agpSetBtn(state) {
+    var btn = document.getElementById('agpMicBtn');
+    if (!btn) return;
+    if (state === 'recording') {
+      btn.classList.add('listening'); btn.textContent = '⏹';
+    } else if (state === 'transcribing') {
+      btn.classList.add('listening'); btn.textContent = '⏳';
+    } else {
+      btn.classList.remove('listening'); btn.textContent = '🎙️';
+    }
   }
 
-  // AGP mic state for continuous mode
-  var _agpAccumulated = '';  // finals accumulated across continuous results
-  var _agpSilenceTimer = null; // fires sendToGethro after silence
-  var _agpSilenceMs = 2200;  // ms of silence before auto-send (tune here)
+  function _agpMicRelease() {
+    if (_agpSilenceRAF) { cancelAnimationFrame(_agpSilenceRAF); _agpSilenceRAF = null; }
+    if (_agpAnalyserCtx) { try { _agpAnalyserCtx.close(); } catch(e) {} _agpAnalyserCtx = null; }
+    _agpAnalyser     = null;
+    _agpSilenceStart = null;
+    if (_agpMicStream) { _agpMicStream.getTracks().forEach(function(t){ t.stop(); }); _agpMicStream = null; }
+    _agpMicRecorder  = null;
+    _agpMicChunks    = [];
+    _agpMicActive    = false;
+  }
 
-  function _agpStartMic() {
-    // Guard: don't start mic if the panel is not open — this prevents in-flight
-    // gethroSpeak().finally() callbacks from reactivating the mic after close.
-    var panel = document.getElementById('askGethroPanel');
-    if (!panel || !panel.classList.contains('open')) return;
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
-      if (isFirefox) {
-        toast('\uD83E\uDD8A Voice isn\u2019t supported in Firefox \u2014 try Chrome or Safari for the full experience', 5000);
-      } else {
-        toast('Speech not supported in this browser');
-      }
-      return;
+  function _agpSilenceLoop() {
+    if (!_agpMicActive || !_agpAnalyser) { _agpSilenceRAF = null; return; }
+    var buffer = new Uint8Array(_agpAnalyser.fftSize);
+    _agpAnalyser.getByteTimeDomainData(buffer);
+    var volume = 0;
+    for (var i = 0; i < buffer.length; i++) {
+      var v = Math.abs(buffer[i] - 128);
+      if (v > volume) volume = v;
     }
-    // Prime iOS
-    if (window.speechSynthesis) {
-      var primer = new SpeechSynthesisUtterance('');
-      speechSynthesis.speak(primer); speechSynthesis.cancel();
-    }
-    var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
-    var rec = new SR();
-    rec.lang = 'en-AU';
-    rec.continuous = true;      // keep listening — don't cut off mid-sentence
-    rec.interimResults = isIOS; // iOS: live preview; Android: finals only (avoids repeats)
-    _agpRecognition = rec;
-    _agpMicActive = true;
-    _agpAccumulated = '';
-    var btn = document.getElementById('agpMicBtn');
-    if (btn) { btn.classList.add('listening'); btn.textContent = '⏹'; }
-    var inp = document.getElementById('agpInput');
-
-    rec.onresult = function(e) {
-      // With continuous=true, results are cumulative — start from resultIndex
-      var interim = '';
-      for (var i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          _agpAccumulated += (_agpAccumulated ? ' ' : '') + e.results[i][0].transcript.trim();
-        } else {
-          interim += e.results[i][0].transcript;
-        }
-      }
-      if (inp) inp.value = _agpAccumulated + (interim ? ' ' + interim : '');
-      // Reset silence timer on every result — send after silence_ms of no new speech
-      if (_agpSilenceTimer) clearTimeout(_agpSilenceTimer);
-      if (_agpAccumulated) {
-        _agpSilenceTimer = setTimeout(function() {
-          _agpSilenceTimer = null;
-          if (_agpMicActive && _agpAccumulated) {
-            _agpStopMic();
-            sendToGethro();
-          }
-        }, _agpSilenceMs);
-      }
-    };
-    rec.onend = function() {
-      // continuous=true: onend only fires on abort or unexpected drop
-      if (_agpMicActive) {
-        // Unexpected drop — restart as safety net
-        dbgWarn('GETHRO_MIC', 'Unexpected onend — restarting');
-        setTimeout(function() {
-          if (_agpMicActive) {
-            try { rec.start(); } catch(e) { dbgWarn('GETHRO_MIC', 'restart failed:', e.message); }
-          }
-        }, 400);
-      } else {
-        // Normal stop (from _agpStopMic or silence timer)
-        var btn2 = document.getElementById('agpMicBtn');
-        if (btn2) { btn2.classList.remove('listening'); btn2.textContent = '🎙️'; }
-      }
-    };
-    rec.onerror = function(e) {
-      if (e.error === 'aborted' || e.error === 'no-speech') return;
-      dbgWarn('GETHRO_MIC', 'onerror:', e.error);
-      if (e.error === 'network') {
-        // Edge/Chromium: stop cleanly — retrying on network error crashes the browser
-        dbgErr('GETHRO_MIC', 'ERROR onerror: network — stopping mic');
-        _agpStopMic();
-        toast('Microphone lost connection \u2014 tap the mic to try again', 5000);
+    var now = Date.now();
+    var recAge = now - (_agpRecordStart || now);
+    if (volume < MIC_SILENCE_THRESHOLD) {
+      if (_agpSilenceStart === null) _agpSilenceStart = now;
+      if ((now - _agpSilenceStart) >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS) {
+        _agpSilenceRAF = null;
+        _agpStopMic(true); // auto-send after transcription
         return;
       }
-      if (_agpMicActive) setTimeout(function() {
-        try { rec.start(); } catch(err) { dbgWarn('GETHRO_MIC', 'restart after error failed'); }
-      }, 400);
-    };
-    try { rec.start(); } catch(e) { dbgWarn('GETHRO_MIC', e.message); }
+    } else {
+      _agpSilenceStart = null;
+    }
+    _agpSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
   }
 
-  function _agpStopMic() {
-    if (_agpSilenceTimer) { clearTimeout(_agpSilenceTimer); _agpSilenceTimer = null; }
-    if (_agpRecognition) { try { _agpRecognition.abort(); } catch(e){} _agpRecognition = null; }
-    _agpMicActive = false;
-    _agpAccumulated = '';
-    var btn = document.getElementById('agpMicBtn');
-    if (btn) { btn.classList.remove('listening'); btn.textContent = '🎙️'; }
+  // Separate mic from the Memories mic — different state, MediaRecorder-based (Phase 4).
+  function toggleAgpMic() {
+    if (_agpMicActive) { _agpStopMic(false); } else { _agpStartMic(); }
+  }
+
+  async function _agpStartMic() {
+    // Guard: don't start if panel is closed — prevents in-flight gethroSpeak().finally()
+    // callbacks from reactivating the mic after the panel is closed.
+    var panel = document.getElementById('askGethroPanel');
+    if (!panel || !panel.classList.contains('open')) return;
+    if (_agpMicActive) return;
+
+    if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return toast('Voice recording isn’t supported in this browser — try Chrome, Firefox or Safari');
+    }
+
+    try {
+      _agpMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (permErr) {
+      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+        return toast('Microphone access denied — please allow mic in your browser settings');
+      }
+      return toast('Could not access microphone — ' + permErr.message);
+    }
+
+    _agpMicMime = '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', ''];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!candidates[i] || MediaRecorder.isTypeSupported(candidates[i])) {
+        _agpMicMime = candidates[i]; break;
+      }
+    }
+
+    _agpMicChunks    = [];
+    _agpMicActive    = true;
+    _agpRecordStart  = Date.now();
+    _agpSilenceStart = null;
+    _agpSetBtn('recording');
+    dbg('AGP_MIC', 'MediaRecorder start — mimeType: ' + (_agpMicMime || 'default'));
+
+    try {
+      _agpMicRecorder = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
+    } catch(e) {
+      _agpMicRelease(); _agpSetBtn('idle');
+      return toast('Could not start recorder — ' + e.message);
+    }
+
+    _agpMicRecorder.ondataavailable = function(e) {
+      if (e.data && e.data.size > 0) _agpMicChunks.push(e.data);
+    };
+
+    _agpMicRecorder.onstop = async function() {
+      var blob = new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/webm' });
+      var autoSend = !!(_agpMicRecorder && _agpMicRecorder._autoSend);
+      _agpMicRelease();
+      if (blob.size < 500) { _agpSetBtn('idle'); return; }
+      _agpSetBtn('transcribing');
+      try {
+        var session = (await window._supabase.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
+        form.append('audio', blob, 'agp_chat.' + ext);
+        var res = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+          body: form,
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+        var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+        if (transcript) {
+          var inp = document.getElementById('agpInput');
+          if (inp) inp.value = transcript;
+          dbg('AGP_MIC', 'Transcription complete — ' + transcript.length + ' chars');
+          if (autoSend) sendToGethro();
+        } else {
+          toast('No speech detected — tap mic to try again');
+        }
+      } catch(err) {
+        dbgErr('AGP_MIC', 'Transcription failed:', err.message);
+        toast('Transcription unavailable — ' + err.message, 5000);
+      }
+      _agpSetBtn('idle');
+    };
+
+    _agpMicRecorder.onerror = function(e) {
+      dbgErr('AGP_MIC', 'MediaRecorder error:', e.error);
+      _agpMicRelease(); _agpSetBtn('idle');
+      toast('Recording error — tap mic to try again');
+    };
+
+    _agpMicRecorder.start(100);
+
+    // Attach AnalyserNode for silence detection (isolated AudioContext)
+    try {
+      _agpAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var src = _agpAnalyserCtx.createMediaStreamSource(_agpMicStream);
+      _agpAnalyser = _agpAnalyserCtx.createAnalyser();
+      _agpAnalyser.fftSize = 512;
+      src.connect(_agpAnalyser);
+      _agpSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
+      dbg('AGP_MIC', 'Silence detector started');
+    } catch(acErr) {
+      dbgWarn('AGP_MIC', 'AudioContext failed — manual stop only:', acErr.message);
+      _agpAnalyserCtx = null; _agpAnalyser = null;
+    }
+  }
+
+  function _agpStopMic(autoSend) {
+    if (!_agpMicActive) return;
+    if (_agpSilenceRAF) { cancelAnimationFrame(_agpSilenceRAF); _agpSilenceRAF = null; }
+    _agpSetBtn('transcribing');
+    if (_agpMicRecorder && _agpMicRecorder.state !== 'inactive') {
+      _agpMicRecorder._autoSend = !!autoSend;
+      try { _agpMicRecorder.stop(); } catch(e) { dbgWarn('AGP_MIC', 'stop() threw:', e.message); }
+    }
+    // _agpMicRelease() called inside onstop after blob assembled
   }
 
   init();
