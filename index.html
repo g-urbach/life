@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.05';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix missing action field: all three audio FormData POSTs (mem mic chunk, mem mic final, agp mic) were missing form.append("action","transcribe"), causing the proxy to receive a multipart request with no action and return 502 on every call. This was the root cause of all "could not process file" errors. The header-chunk prepend from v6.04 is retained (still correct for mid-session WebM validity).';
+  const APP_VERSION  = 'v6.06';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix WebM header bug properly: never reset _micChunks mid-session. Each flush sends the FULL accumulator (always a valid WebM with header intact). Track _micFlushedUpTo to skip flushes when no new chunks arrived. Track _micTranscriptSoFar to strip already-appended text from subsequent flush transcripts, preventing duplication. onstop also strips _micTranscriptSoFar prefix. action:transcribe fix from v6.05 retained.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8489,8 +8489,13 @@
   let _micState    = 'idle';    // 'idle' | 'recording' | 'transcribing' | 'error'
   let _micStream   = null;      // getUserMedia stream — released on stop
   let _micRecorder = null;      // MediaRecorder instance
-  let _micChunks   = [];        // accumulated audio chunks (current segment)
-  let _micHeaderChunk = null;   // first chunk from MediaRecorder — contains WebM container header; prepended to every mid-session flush so Whisper gets a valid file
+  let _micChunks   = [];        // ALL audio chunks since recording started — never reset mid-session
+  // WebM mid-session flush strategy: _micChunks is never cleared during recording.
+  // Each flush sends ALL chunks (header always included = valid WebM file for Whisper).
+  // _micFlushedUpTo tracks how many chunks were in the array at the last successful flush,
+  // so we can tell if new audio has arrived since then (don't re-send duplicate audio).
+  let _micFlushedUpTo = 0;      // _micChunks.length at time of last successful flush
+  let _micTranscriptSoFar = ''; // full transcript returned by last successful mid-session flush
   let _micChunkMimeType = '';   // MIME type decided at startMemMic — shared by chunk sender
 
   // Max recording: soft warn at 10 min, hard stop at 14 min (~25MB webm/opus limit)
@@ -8580,22 +8585,22 @@
     if (!_micRecorder || _micChunks.length === 0) return;
     // Don't auto-flush during cooldown (e.g. after a 429) — isFinal (manual stop) always proceeds
     if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
-    // Collect chunks accumulated so far — but don't reset yet (wait until size check passes)
-    // For mid-session (non-final) flushes, prepend the header chunk so Whisper gets a valid
-    // WebM file. Without this, chunks after the first flush lack the container header and
-    // Whisper returns "could not process file — is it a valid media file?".
-    var chunksToSend = (!isFinal && _micHeaderChunk && _micChunks[0] !== _micHeaderChunk)
-      ? [_micHeaderChunk].concat(_micChunks)
-      : _micChunks;
-    var blob = new Blob(chunksToSend, { type: _micChunkMimeType || 'audio/webm' });
+    // For mid-session flushes: only proceed if new chunks have arrived since last flush.
+    // This avoids re-transcribing the same audio (we send the full accumulator each time).
+    if (!isFinal && _micChunks.length <= _micFlushedUpTo) { dbg('MIC', 'Flush skipped — no new chunks since last flush'); return; }
+    // Always send ALL chunks from the start — this guarantees Whisper gets a complete, valid
+    // WebM file with the container header intact. Sending only new chunks produces headerless
+    // blobs that Whisper rejects with "could not process file".
+    var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
     dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal);
     if (blob.size < MIC_MIN_CHUNK_BYTES) {
-      // Too small = silence/noise. Keep accumulating — do NOT reset _micChunks or _micRecordStart.
+      // Too small = silence/noise. Keep accumulating.
       dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — keeping accumulator, waiting for speech');
       return;
     }
-    // Size check passed — now reset accumulator for next segment
-    _micChunks = [];
+    // Mark how many chunks are included in this flush — used to detect new audio next time
+    var flushedCount = _micChunks.length;
+    // Reset segment timer so next silence gate measures from now
     _micRecordStart = Date.now();
     // Show unobtrusive micro-indicator in status bar (don't change button state)
     setMemStatus('listening', '✍️ Transcribing…');
@@ -8615,14 +8620,47 @@
       var data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-      if (transcript) {
-        var el = document.getElementById('memAnswer');
-        var current = el.value;
-        var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
-        el.value = current + sep + transcript;
-        _userHasTyped = true;
-        memCheckButtons();
-        dbg('MIC', 'Chunk appended — ' + transcript.length + ' chars');
+      if (transcript && !isFinal) {
+        // We sent the full audio accumulator, so Whisper returns the full transcript so far.
+        // Only append the NEW text beyond what _micTranscriptSoFar already contains.
+        var newText = transcript;
+        if (_micTranscriptSoFar && transcript.startsWith(_micTranscriptSoFar)) {
+          newText = transcript.slice(_micTranscriptSoFar.length).trim();
+        } else if (_micTranscriptSoFar) {
+          // Whisper re-worded earlier text — just take the whole thing and clear prior
+          // (this is rare; Whisper is usually stable across re-transcriptions of the same audio)
+          newText = transcript;
+          dbg('MIC', 'Transcript diverged from prior — replacing (prior=' + _micTranscriptSoFar.length + ' chars)');
+        }
+        _micTranscriptSoFar = transcript;
+        _micFlushedUpTo = flushedCount;
+        if (newText) {
+          var el = document.getElementById('memAnswer');
+          var current = el.value;
+          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+          el.value = current + sep + newText;
+          _userHasTyped = true;
+          memCheckButtons();
+          dbg('MIC', 'Chunk appended — ' + newText.length + ' new chars (full transcript=' + transcript.length + ')');
+        } else {
+          dbg('MIC', 'Chunk flush — no new text beyond prior transcript');
+        }
+      } else if (transcript && isFinal) {
+        // Final stop: Whisper transcribed the full remaining audio.
+        // Strip _micTranscriptSoFar prefix to avoid duplicating mid-session chunks.
+        var finalText = transcript;
+        if (_micTranscriptSoFar && transcript.startsWith(_micTranscriptSoFar)) {
+          finalText = transcript.slice(_micTranscriptSoFar.length).trim();
+        }
+        if (finalText) {
+          var el = document.getElementById('memAnswer');
+          var current = el.value;
+          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+          el.value = current + sep + finalText;
+          _userHasTyped = true;
+          memCheckButtons();
+          dbg('MIC', 'Final chunk appended — ' + finalText.length + ' new chars');
+        }
       }
     } catch (err) {
       dbgErr('MIC', 'Chunk transcription failed:', err.message);
@@ -8718,7 +8756,8 @@
     _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
 
     _micChunks            = [];
-    _micHeaderChunk       = null;   // reset — will be set by first ondataavailable
+    _micFlushedUpTo       = 0;
+    _micTranscriptSoFar   = '';
     _micRecordStart       = Date.now();
     _micRecentChunkBytes  = [];
     _micFlushCooldown     = false;
@@ -8737,9 +8776,6 @@
 
     _micRecorder.ondataavailable = function(e) {
       if (e.data && e.data.size > 0) {
-        // The very first chunk contains the WebM container header — save it so we can
-        // prepend it to every subsequent mid-session flush, giving Whisper a valid file.
-        if (_micHeaderChunk === null) _micHeaderChunk = e.data;
         _micChunks.push(e.data);
         // Track rolling chunk sizes for fallback silence detection
         _micRecentChunkBytes.push(e.data.size);
@@ -8778,15 +8814,23 @@
         if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
         var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
         if (transcript) {
-          var el = document.getElementById('memAnswer');
-          var current = el.value;
-          // Phase 3: append with a space separator (chunks already used newline-free join)
-          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
-          el.value = current + sep + transcript;
-          _userHasTyped = true;
-          memCheckButtons();
-          dbg('MIC', 'Final transcription appended — ' + transcript.length + ' chars');
-        } else if (!el || !el.value.trim()) {
+          // Strip any text already appended by mid-session flushes to avoid duplication
+          var finalText = transcript;
+          if (_micTranscriptSoFar && transcript.startsWith(_micTranscriptSoFar)) {
+            finalText = transcript.slice(_micTranscriptSoFar.length).trim();
+          }
+          if (finalText) {
+            var el = document.getElementById('memAnswer');
+            var current = el.value;
+            var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
+            el.value = current + sep + finalText;
+            _userHasTyped = true;
+            memCheckButtons();
+            dbg('MIC', 'Final transcription appended — ' + finalText.length + ' new chars (full=' + transcript.length + ')');
+          } else {
+            dbg('MIC', 'Final transcription — no new text beyond mid-session flushes');
+          }
+        } else if (!document.getElementById('memAnswer') || !document.getElementById('memAnswer').value.trim()) {
           toast('No speech detected — try again');
         }
       } catch (err) {
