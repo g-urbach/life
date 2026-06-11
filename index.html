@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v5.94';
-  const DEPLOY_NOTES = APP_VERSION + ' — APP-52 Phase 4: Ask Gethro panel mic migrated from SpeechRecognition to MediaRecorder + Whisper. _agpStartMic/_agpStopMic replaced with MediaRecorder+AnalyserNode implementation. Silence detection (1200ms, 800ms min-record) auto-populates agpInput and calls sendToGethro(). _agpRecognition, _agpAccumulated, _agpSilenceTimer, iOS SR primer all removed. Firefox now fully supported in Gethro mic (was blocked). SpeechRecognition / webkitSpeechRecognition fully removed from all active code paths. _agpAnalyserCtx isolated from _gethroAudioCtx and _bgMusicCtx.';
+  const APP_VERSION  = 'v5.95';
+  const DEPLOY_NOTES = APP_VERSION + ' — Hotfix: window._supabase → sb in _micFlushChunk, _micRecorder.onstop, and _agpMicRecorder.onstop. window._supabase is never assigned — sb is the correct Supabase client. Bug caused every chunk transcription to throw immediately (Cannot read properties of undefined (reading auth)), blocking dictation. All 3 call sites fixed. No logic changes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8582,7 +8582,7 @@
     setMemStatus('listening', '✍️ Transcribing…');
     _micTranscribing = true;
     try {
-      var session = (await window._supabase.auth.getSession()).data.session;
+      var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
       var form = new FormData();
       var ext = (_micChunkMimeType && _micChunkMimeType.includes('mp4')) ? 'm4a' : 'webm';
@@ -8718,7 +8718,7 @@
       _setMicState('transcribing');
       setMemStatus('listening', '⏳ Transcribing…');
       try {
-        var session = (await window._supabase.auth.getSession()).data.session;
+        var session = (await sb.auth.getSession()).data.session;
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
         form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'webm'));
@@ -21009,7 +21009,7 @@
       if (blob.size < 500) { _agpSetBtn('idle'); return; }
       _agpSetBtn('transcribing');
       try {
-        var session = (await window._supabase.auth.getSession()).data.session;
+        var session = (await sb.auth.getSession()).data.session;
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
         var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
