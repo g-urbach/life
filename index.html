@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.01';
-  const DEPLOY_NOTES = APP_VERSION + ' — Rip out AnalyserNode silence detection, replace with setInterval timer flush. Chrome zeroes out AudioContext.createMediaStreamSource reads when MediaRecorder holds the same stream — vol=0 always, silence loop fired constantly, Whisper hallucinated on empty blobs. New behaviour: flush chunk every MIC_CHUNK_INTERVAL_MS (15s) while recording. User taps stop for final transcription. Rolling text still appears during long recordings.';
+  const APP_VERSION  = 'v6.02';
+  const DEPLOY_NOTES = APP_VERSION + ' — Add final blob size log and raise onstop guard from 500 to MIC_MIN_CHUNK_BYTES (8000). onstop was sending tiny blobs to Whisper and getting "Thank you." hallucination. Also adds toast when final blob too small so user knows no speech was detected.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8676,9 +8676,11 @@
       // Assemble final blob from any remaining chunks
       var blob = new Blob(_micChunks, { type: mimeType || 'audio/webm' });
       _micRelease();
-      if (blob.size < 500) {
+      dbg('MIC', 'Final blob — ' + blob.size + ' bytes');
+      if (blob.size < MIC_MIN_CHUNK_BYTES) {
+        dbg('MIC', 'Final blob too small (' + blob.size + ' bytes) — no speech detected');
         _setMicState('idle'); setMemStatus('idle', '');
-        // If we got here via manual stop but chunks were already flushed, that's fine
+        toast('No speech detected — tap mic and speak, then tap stop');
         return;
       }
       // Transcribe final buffer
