@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.03';
-  const DEPLOY_NOTES = APP_VERSION + ' — Restore AnalyserNode silence detection (mute button, not AudioContext, was causing vol=0). Add chunk data-rate heuristic as fallback if AudioContext unavailable (_micRecentChunkBytes rolling average — speech chunks are 200+ bytes, silence ~30). Add 30s safety-net timer in case silence detection misses a long pause. All previous fixes retained: cooldown, accumulator, MIC_MIN_CHUNK_BYTES gate.';
+  const APP_VERSION  = 'v6.04';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session flush 502 errors: prepend WebM header chunk to every non-final flush blob so Whisper gets a valid container (root cause of "could not process file" errors). Add 5s periodic flush ticker for reassurance (text appears while still speaking, not just on silence/stop). Tune constants: MIC_SILENCE_THRESHOLD 8→15, MIC_SILENCE_MS 1500→800ms, MIC_MIN_CHUNK_MS 3000→1500ms, MIC_MIN_CHUNK_BYTES 8000→4000.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8490,6 +8490,7 @@
   let _micStream   = null;      // getUserMedia stream — released on stop
   let _micRecorder = null;      // MediaRecorder instance
   let _micChunks   = [];        // accumulated audio chunks (current segment)
+  let _micHeaderChunk = null;   // first chunk from MediaRecorder — contains WebM container header; prepended to every mid-session flush so Whisper gets a valid file
   let _micChunkMimeType = '';   // MIME type decided at startMemMic — shared by chunk sender
 
   // Max recording: soft warn at 10 min, hard stop at 14 min (~25MB webm/opus limit)
@@ -8512,10 +8513,10 @@
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
-  const MIC_SILENCE_THRESHOLD  = 8;     // 0-127 AnalyserNode scale; below = silence
-  const MIC_SILENCE_MS         = 1500;  // ms of sustained silence → flush
-  const MIC_MIN_CHUNK_MS       = 3000;  // minimum segment age before flushing
-  const MIC_MIN_CHUNK_BYTES    = 8000;  // blob below this = silence/noise, skip Whisper
+  const MIC_SILENCE_THRESHOLD  = 15;    // 0-127 AnalyserNode scale; below = silence. 8 was too low (treated quiet speech as silence). Typical: ambient 2-5, speech 20-60.
+  const MIC_SILENCE_MS         = 800;   // ms of sustained silence → flush. 1500ms was too long — natural sentence pauses are 500-800ms.
+  const MIC_MIN_CHUNK_MS       = 1500;  // minimum segment age before flushing. 3000ms blocked short utterances entirely.
+  const MIC_MIN_CHUNK_BYTES    = 4000;  // blob below this = silence/noise, skip Whisper. 8000 required ~10s of speech; 4000 allows ~2-3s utterances.
   const MIC_COOLDOWN_MS        = 10000; // backoff after failed POST (e.g. 429)
   const MIC_CHUNK_RATE_WINDOW  = 20;    // rolling window size for chunk-rate heuristic (20 × 100ms = 2s)
   const MIC_CHUNK_RATE_SILENCE = 60;    // avg bytes/chunk below this = silence (speech is typically 200+)
@@ -8580,7 +8581,13 @@
     // Don't auto-flush during cooldown (e.g. after a 429) — isFinal (manual stop) always proceeds
     if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
     // Collect chunks accumulated so far — but don't reset yet (wait until size check passes)
-    var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
+    // For mid-session (non-final) flushes, prepend the header chunk so Whisper gets a valid
+    // WebM file. Without this, chunks after the first flush lack the container header and
+    // Whisper returns "could not process file — is it a valid media file?".
+    var chunksToSend = (!isFinal && _micHeaderChunk && _micChunks[0] !== _micHeaderChunk)
+      ? [_micHeaderChunk].concat(_micChunks)
+      : _micChunks;
+    var blob = new Blob(chunksToSend, { type: _micChunkMimeType || 'audio/webm' });
     dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal);
     if (blob.size < MIC_MIN_CHUNK_BYTES) {
       // Too small = silence/noise. Keep accumulating — do NOT reset _micChunks or _micRecordStart.
@@ -8710,6 +8717,7 @@
     _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
 
     _micChunks            = [];
+    _micHeaderChunk       = null;   // reset — will be set by first ondataavailable
     _micRecordStart       = Date.now();
     _micRecentChunkBytes  = [];
     _micFlushCooldown     = false;
@@ -8728,6 +8736,9 @@
 
     _micRecorder.ondataavailable = function(e) {
       if (e.data && e.data.size > 0) {
+        // The very first chunk contains the WebM container header — save it so we can
+        // prepend it to every subsequent mid-session flush, giving Whisper a valid file.
+        if (_micHeaderChunk === null) _micHeaderChunk = e.data;
         _micChunks.push(e.data);
         // Track rolling chunk sizes for fallback silence detection
         _micRecentChunkBytes.push(e.data.size);
@@ -8811,12 +8822,14 @@
     }
     _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
 
-    // Safety net: if silence detection misses a long pause, flush every 30s anyway
+    // Periodic ticker: flush every 5s while speaking (reassurance — text appears before silence).
+    // Also serves as the safety net if silence detection misses a long pause.
+    // Only fires if chunk is old enough and not mid-transcribe/cooldown.
     _micChunkTimer = setInterval(function() {
       if (_micState !== 'recording' || _micTranscribing || _micFlushCooldown) return;
       var chunkAge = Date.now() - (_micRecordStart || Date.now());
       if (chunkAge < MIC_MIN_CHUNK_MS) return;
-      dbg('MIC', 'Safety timer flush — ' + Math.round(chunkAge/1000) + 's elapsed');
+      dbg('MIC', 'Periodic flush — ' + Math.round(chunkAge/1000) + 's elapsed');
       if (_micRecorder && _micRecorder.state === 'recording') {
         try { _micRecorder.pause(); } catch(e) {}
         setTimeout(function() {
@@ -8824,7 +8837,7 @@
         }, 80);
       }
       _micFlushChunk(false);
-    }, 30000);
+    }, 5000);
 
     // Soft warn at 10 min
     _micWarnTimer = setTimeout(function() {
