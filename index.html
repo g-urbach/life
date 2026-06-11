@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.09';
+  const APP_VERSION  = 'v6.10';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -8879,9 +8879,11 @@
     // We distinguish by checking if this recorder is still the active _micRecorder.
     (function(thisRecorder) {
       thisRecorder.onstop = async function() {
-        // If this recorder has been replaced by a new one (mid-session restart), ignore.
-        if (_micRecorder !== null && _micRecorder !== thisRecorder) {
-          dbg('MIC', 'Old recorder onstop — ignoring (new recorder already active)');
+        // If this recorder has been replaced (or nulled out mid-flush restart), ignore.
+        // _micRecorder === null means _micFlushChunk is mid-restart — do NOT treat as final stop.
+        // _micRecorder !== thisRecorder means a new recorder is already live — also ignore.
+        if (_micRecorder === null || _micRecorder !== thisRecorder) {
+          dbg('MIC', 'Old recorder onstop — ignoring (mid-flush or replaced, _micRecorder=' + (_micRecorder ? 'new' : 'null') + ')');
           return;
         }
         // This is the final stop (user tapped stop or max time).
