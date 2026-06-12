@@ -547,11 +547,11 @@
     }
     .landing-title em {
       color: var(--gold); font-style: italic;
-      position: relative; display: inline-block;
-      overflow: hidden;
+      position: relative;
     }
     .landing-title em::after {
-      content: ''; position: absolute; inset: 0;
+      content: ''; position: absolute;
+      top: 0; left: -5%; right: -5%; bottom: 0;
       background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.18) 50%, transparent 70%);
       background-size: 200% 100%;
       animation: gold-shimmer 3.5s ease-in-out 1.2s infinite;
@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.16';
+  const APP_VERSION  = 'v6.18';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5226,8 +5226,8 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/tts-proxy';    // Gethro voice
-  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — change here to swap voice globally
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/deepgram-tts-proxy';    // Gethro voice
+  const GETHRO_VOICE     = 'aura-2-theron-en'; // Deepgram TTS voice — change here to swap voice globally
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
@@ -21593,6 +21593,12 @@
   function _agpHandleFocusLoss() {
     if (_agpMicActive) {
       dbg('AGP_MIC', 'Focus lost — stopping mic');
+      // Stop tracks *synchronously* first so the browser drops the red
+      // recording dot immediately — _agpStopMic's onstop fires async and
+      // the OS-level indicator stays on until the track is released.
+      if (_agpMicStream) {
+        _agpMicStream.getTracks().forEach(function(t) { t.stop(); });
+      }
       _agpStopMic(false); // stop without auto-send; user can restart when they return
     }
   }
