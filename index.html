@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.11';
+  const APP_VERSION  = 'v6.13';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -20532,7 +20532,9 @@
         : 'I can see you\'re working on a memory. What stands out most when you think back to that time?';
       _agpAppendGethro(fallback, null);
       _gethroHistory.push({ role: 'assistant', content: fallback });
-      gethroSpeak(fallback).catch(function(){});
+      gethroSpeak(fallback).catch(function(){}).finally(function() {
+        if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
+      });
     }
   }
 
@@ -21224,7 +21226,9 @@
         headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
         body: form,
       });
-      var data = await res.json();
+      var rawText = await res.text();
+      var data;
+      try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
       if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
@@ -21366,7 +21370,9 @@
             headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
             body: form,
           });
-          var data = await res.json();
+          var rawText = await res.text();
+          var data;
+          try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
           if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
           var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
 
