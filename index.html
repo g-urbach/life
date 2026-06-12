@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.13';
+  const APP_VERSION  = 'v6.15';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -20221,6 +20221,8 @@
   var _agpMemoryMode         = false; // true while panel open + memory-related
   var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
   var _agpPendingResponseCount = 0;   // set by loadResponsesTile when unread responses exist; Gethro mentions them on open
+  var _agpBlankSeedCount = 0;          // sparker questions asked during a BLANK-entry session
+  var _agpIsBlankSession  = false;      // true only when panel opened with completely empty Add Memory tab
 
   // skipGreeting: pass true when opening programmatically (e.g. nudge messages) to
   // suppress the generic "Hi [name]" opener — the caller appends its own message instead.
@@ -20339,6 +20341,8 @@
       // Always re-seed from Memories content — even if there is existing history.
       // Content on the page takes priority so user always gets a contextual opener.
       _gethroHistory = [];
+      _agpIsBlankSession  = false; // has content — never gap-finding mode
+      _agpBlankSeedCount  = 0;
       var log = document.getElementById('agpLog');
       if (log) log.innerHTML = '';
       // Don't show gold bar yet — wait until user has actually said something
@@ -20367,6 +20371,8 @@
       if (onMemTab) {
         // On Add Memory tab with blank entry — speak greeting then seed a memory question.
         // User is here to write a memory; give them a question to spark one.
+        _agpIsBlankSession  = true;   // blank entry — enable gap-finding after 10 sparker questions
+        _agpBlankSeedCount  = 0;
         gethroSpeak(opener).catch(function(){}).finally(function() {
           setTimeout(function() { _agpSeedMemoryQuestion(firstName, '', ''); }, 200);
         });
@@ -20521,6 +20527,7 @@
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
+      if (_agpIsBlankSession) _agpBlankSeedCount++; // only count sparker questions (blank sessions)
       featTrackInterview();
       gethroSpeak(question).catch(function(){}).finally(function() {
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
@@ -20755,11 +20762,11 @@
     _agpSending = true;
     var typingEl = _agpAppendTyping();
 
-    // Build entries summary for context (last 40 entries, key fields only)
+    // Build entries summary for context (last 30 entries, key fields only — capped to prevent token overflow)
     var real = (entries || []).filter(function(e) { return !e.category || !e.category.startsWith('_profile'); });
-    var entrySummary = real.slice(-40).map(function(e) {
-      return [e.title || '', e.chapter || '', e.people || '', (e.answer || '').slice(0, 80)].filter(Boolean).join(' | ');
-    }).join('\n');
+    var entrySummary = real.slice(-30).map(function(e) {
+      return [e.title || '', e.chapter || '', e.people || '', (e.answer || '').slice(0, 60)].filter(Boolean).join(' | ');
+    }).join('\n').slice(0, 3000); // hard cap — prevents token overflow on large libraries
     var totalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
     var userName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || 'the user';
 
@@ -20820,6 +20827,20 @@
       ? 'CURRENT MEMORY TOPIC: Stay focused on the current conversation — do not reference other entries or topics.'
       : ('RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' + matchedSnippets);
 
+    // After 10 seed questions, switch Gethro into gap-finding mode
+    var _agpGapMode = (_agpIsBlankSession && _agpBlankSeedCount >= 10);
+    var _agpGapChapters = (entries || [])
+      .filter(function(e) { return e.chapter && !e.category; })
+      .map(function(e) { return e.chapter; });
+    var _agpCoveredChapters = _agpGapChapters.length
+      ? Array.from(new Set(_agpGapChapters)).join(', ')
+      : 'none yet';
+    var _agpCommonChapters = ['Childhood', 'Family', 'School', 'Career', 'Love & Relationships',
+      'Travel', 'Challenges', 'Achievements', 'Later Life', 'Reflections'];
+    var _agpMissingChapters = _agpCommonChapters
+      .filter(function(c) { return _agpGapChapters.indexOf(c) === -1; })
+      .join(', ');
+
     var systemPrompt =
       'You are Gethro, a sharp and curious personal story guide inside LifeTold, a memoir app.\n' +
       'You speak in first person: direct, curious, focused on uncovering the facts of a story.\n' +
@@ -20835,6 +20856,14 @@
           ' Use these to steer your questions toward the right era and to match the desired voice.\n'
         : '') +
       currentScreenNote + '\n' +
+      (_agpGapMode
+        ? 'GAP-FINDING MODE: You have now asked ' + _agpBlankSeedCount + ' opening questions. ' +
+          'Shift your focus to finding GAPS in the memoir. ' +
+          'Chapters already covered: ' + _agpCoveredChapters + '. ' +
+          'Life areas with NO memories yet: ' + (_agpMissingChapters || 'none — great coverage!') + '. ' +
+          'Your next question should gently steer the user toward one of the uncovered life areas above. ' +
+          'Do NOT keep digging into the same memory — open a new chapter.\n'
+        : '') +
       entriesContext + '\n\n' +
       'APP ACTIONS YOU CAN TRIGGER (include in your JSON response when appropriate):\n' +
       '  navigate_memories   — open the Memories (write) tab\n' +
@@ -21126,7 +21155,8 @@
   // Hallucinations Whisper emits on near-silence — discard these silently
   var AGP_HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+|,+)$/i;
 
-  const AGP_SILENCE_MS        = 1200; // ms of sustained silence before flush/send
+  const AGP_SILENCE_MS        = 2500; // ms of sustained silence before auto-send (was 1200 — too aggressive)
+  const AGP_FLUSH_MS          = 1800; // ms of silence before flushing chunk live (shorter than send threshold)
   const AGP_MIN_REC_MS        = 800;  // don't auto-send if recording < 800ms (avoids accidental triggers)
   const AGP_MIN_CHUNK_BYTES   = 3000; // blobs below this are near-silence — skip Whisper
   const AGP_CHUNK_RATE_WINDOW  = 20;   // rolling window size for fallback silence detection
@@ -21181,10 +21211,16 @@
     }
     if (isSilent) {
       if (_agpSilenceStart === null) _agpSilenceStart = now;
-      if ((now - _agpSilenceStart) >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpTranscribing) {
+      var silenceAge = now - _agpSilenceStart;
+      if (silenceAge >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpTranscribing) {
+        // Long silence — stop and send
         _agpSilenceRAF = null;
         _agpStopMic(true); // auto-send after transcription
         return;
+      }
+      if (silenceAge >= AGP_FLUSH_MS && recAge >= AGP_MIN_REC_MS && !_agpTranscribing && _agpMicChunks.length > 0) {
+        // Mid-speech pause — flush chunk live so text appears as user speaks
+        _agpFlushChunk();
       }
     } else {
       _agpSilenceStart = null;
