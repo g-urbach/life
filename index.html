@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.19';
-  const DEPLOY_NOTES = APP_VERSION + ' — STT fix: MediaRecorder MIME candidates now only include Inworld-compatible formats (audio/mp4, audio/ogg;codecs=opus). WebM excluded — Inworld STT rejects it regardless of model. If neither format is supported, user sees a clear error toast instead of silent failure. Requires GETHRO_PROXY v6.04.';
+  const APP_VERSION  = 'v6.20';
+  const DEPLOY_NOTES = APP_VERSION + ' — STT fix: OGG/Opus now preferred over MP4 in MIME candidate order. Chrome+Firefox pick audio/ogg;codecs=opus (OGG_OPUS on Inworld) instead of audio/mp4 (AUTO_DETECT, which Inworld rejects with code:13). Safari still falls back to mp4. Blob filenames updated to .ogg/.m4a correctly. Requires GETHRO_PROXY v6.06.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8784,7 +8784,7 @@
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
         form.append('action', 'transcribe');
-        form.append('audio', blob, 'dictation.' + ((mimeType && mimeType.includes('mp4')) ? 'm4a' : 'webm'));
+        form.append('audio', blob, 'dictation.' + ((mimeType && mimeType.includes('mp4')) ? 'm4a' : 'ogg'));
         var res = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
@@ -8832,14 +8832,13 @@
       return toast('Could not access microphone — ' + permErr.message);
     }
 
-    // Pick best MIME type — Inworld STT only accepts MP3, OGG, FLAC, M4A, WAV.
-    // WebM is NOT supported. We try formats in order; if none match we show an
-    // error rather than record in an unsupported format and fail silently.
-    // audio/mp4 (M4A): Chrome, Firefox 98+, Safari, Edge — broad support.
-    // audio/ogg;codecs=opus: Firefox, Chrome — Safari does NOT support.
-    // Deliberately excluded: audio/webm — Inworld STT rejects it.
+    // Pick best MIME type for Inworld STT.
+    // Inworld supports OGG_OPUS reliably; audio/mp4 (M4A) fails with code:13.
+    // Prefer audio/ogg;codecs=opus — Chrome (v74+) and Firefox both support it.
+    // Fall back to audio/mp4 for Safari (which lacks OGG support in MediaRecorder).
+    // Deliberately excluded: audio/webm — Inworld STT rejects it regardless of model.
     var mimeType = null;
-    var candidates = ['audio/mp4', 'audio/ogg;codecs=opus'];
+    var candidates = ['audio/ogg;codecs=opus', 'audio/mp4'];
     for (var i = 0; i < candidates.length; i++) {
       if (MediaRecorder.isTypeSupported(candidates[i])) {
         mimeType = candidates[i]; break;
@@ -8912,7 +8911,7 @@
           if (!session) throw new Error('Not authenticated');
           var form = new FormData();
           form.append('action', 'transcribe');
-          form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'webm'));
+          form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'ogg'));
           var res = await fetch(GETHRO_PROXY_URL, {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
