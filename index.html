@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.22';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
+  const APP_VERSION  = 'v6.18';
+  const DEPLOY_NOTES = APP_VERSION + ' — Migrated TTS from OpenAI (tts-proxy) to Inworld (inworld-tts-proxy). TTS_PROXY_URL updated. GETHRO_VOICE constant removed — voice now configured server-side via INWORLD_VOICE env var on the edge function (default: Marcus). Removed voice param from gethroSpeak() and _abSpeak() request bodies. STT already migrated to Inworld in GETHRO_PROXY v6.02 — no client STT changes needed.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5226,8 +5226,9 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy';    // Gethro voice
-  // Voice is defined server-side in deepgram-tts-proxy edge function
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld TTS)
+  // GETHRO_VOICE is now configured server-side via the INWORLD_VOICE env var on inworld-tts-proxy.
+  // Default: 'Marcus' (warm male). Change in Supabase secrets — no client deploy needed.
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
@@ -5774,7 +5775,7 @@
               return fetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ action: 'get_tts', token: token, text: text })
+                body: JSON.stringify({ action: 'get_tts', token: token, voice: 'onyx', text: text })
               }).then(function(res) {
                 if (!res.ok) throw new Error('TTS error ' + res.status);
                 return res.arrayBuffer();
@@ -21186,7 +21187,6 @@
     if (_agpMicStream) { _agpMicStream.getTracks().forEach(function(t){ t.stop(); }); _agpMicStream = null; }
     _agpMicRecorder      = null;
     _agpMicChunks        = [];
-    _agpMicHeader        = null;
     _agpTranscribing     = false;
     _agpRecentChunkBytes = [];
     _agpMicActive        = false;
@@ -21252,12 +21252,7 @@
     _agpTranscribing = true;
     var chunksToSend = _agpMicChunks.slice();
     _agpMicChunks = [];
-    // Prepend the webm init segment (first chunk = header) so Deepgram receives
-    // a complete, valid webm blob even for mid-session chunk flushes.
-    var blobParts = (_agpMicHeader && chunksToSend[0] !== _agpMicHeader)
-      ? [_agpMicHeader].concat(chunksToSend)
-      : chunksToSend;
-    var blob = new Blob(blobParts, { type: _agpMicMime || 'audio/webm' });
+    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/webm' });
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       _agpTranscribing = false;
       dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
@@ -21309,11 +21304,6 @@
       _agpRecordStart = Date.now();
       _agpMicRecorder.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) {
-          // First chunk = webm init segment (has header) — store separately so
-          // every flush can prepend it, giving Deepgram a complete valid webm blob.
-          if (_agpMicChunks.length === 0 && _agpMicHeader === null) {
-            _agpMicHeader = e.data;
-          }
           _agpMicChunks.push(e.data);
           _agpRecentChunkBytes.push(e.data.size);
           if (_agpRecentChunkBytes.length > AGP_CHUNK_RATE_WINDOW) _agpRecentChunkBytes.shift();
@@ -21427,7 +21417,6 @@
     }
 
     _agpMicChunks        = [];
-    _agpMicHeader        = null;
     _agpRecentChunkBytes = [];
     _agpMicActive        = true;
     _agpTranscribing     = false;
