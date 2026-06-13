@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.23';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic: restarted recorder onstop now requires 60KB before attempting transcription. MP4/OGG blobs from freshly restarted recorders are invalid container files at small sizes, causing Groq 502. Small blobs fall back to liveText or idle cleanly.';
+  const APP_VERSION  = 'v6.24';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic: _agpFlushChunk now awaits recorder stop before snapshotting chunks (mirrors _micFlushChunk fix). Without this, _agpRestartRecorder created a new MediaRecorder whose first chunk lacked a container header, causing Groq to reject every chunk after the first with 502 invalid media file.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21257,9 +21257,23 @@
   async function _agpFlushChunk() {
     if (_agpTranscribing || !_agpMicActive) return;
     _agpTranscribing = true;
-    var chunksToSend = _agpMicChunks.slice();
+
+    // v6.24: Stop the current recorder and await full drain before snapshotting chunks.
+    // Mirrors _micFlushChunk fix — without awaiting stop, _agpRestartRecorder() creates
+    // a new MediaRecorder whose first chunk lacks a container header, causing Groq to
+    // reject every subsequent chunk as an invalid media file (502 Bad Gateway).
+    var oldRecorder = _agpMicRecorder;
+    _agpMicRecorder = null;
+    await new Promise(function(resolve) {
+      oldRecorder.addEventListener('stop', resolve, { once: true });
+      try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(); } catch(e) { resolve(); }
+    });
+
+    // Guard: user may have closed the panel during the await
+    if (!_agpMicActive) { _agpTranscribing = false; return; }
+
+    var blob = new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' });
     _agpMicChunks = [];
-    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/ogg' });
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       _agpTranscribing = false;
       dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
