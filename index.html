@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.22';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic fix: WebM excluded from MIME candidates in _agpStartMic (same fix applied to memMic in v6.20). Chrome now picks audio/ogg;codecs=opus, which Groq Whisper accepts. Was causing 502 on every AGP transcription chunk.';
+  const APP_VERSION  = 'v6.23';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic: restarted recorder onstop now requires 60KB before attempting transcription. MP4/OGG blobs from freshly restarted recorders are invalid container files at small sizes, causing Groq 502. Small blobs fall back to liveText or idle cleanly.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21324,10 +21324,16 @@
             dbg('AGP_MIC', 'Restarted recorder onstop — ignoring (replaced)');
             return;
           }
-          var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/webm' });
+          var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/ogg' });
           var autoSend = !!(thisRecorder._autoSend);
           _agpMicRelease();
-          if (blob.size < AGP_MIN_CHUNK_BYTES) {
+          // MP4/OGG blobs from a freshly-restarted recorder are often invalid files
+          // (incomplete container header) even when > AGP_MIN_CHUNK_BYTES. Skip
+          // transcription for small blobs from restarted recorders — use liveText
+          // if available, otherwise go idle cleanly rather than sending a bad file.
+          var RESTART_SAFE_BYTES = 60000; // require more data before trusting a restarted recorder blob
+          if (blob.size < RESTART_SAFE_BYTES) {
+            dbg('AGP_MIC', 'Restarted recorder blob too small for safe transcription (' + blob.size + ' bytes) — using liveText or going idle');
             if (_agpLiveText) {
               var inp = document.getElementById('agpInput');
               if (inp && !inp.value) inp.value = _agpLiveText;
@@ -21344,7 +21350,7 @@
             if (!session) throw new Error('Not authenticated');
             var form = new FormData();
             form.append('action', 'transcribe');
-            var ext = (captureMime && captureMime.includes('mp4')) ? 'm4a' : 'webm';
+            var ext = (captureMime && captureMime.includes('mp4')) ? 'm4a' : 'ogg';
             form.append('audio', blob, 'agp_final.' + ext);
             var res = await fetch(GETHRO_PROXY_URL, {
               method: 'POST',
@@ -21474,7 +21480,7 @@
           dbg('AGP_MIC', 'Old recorder onstop — ignoring (replaced)');
           return;
         }
-        var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/webm' });
+        var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/ogg' });
         var autoSend = !!(thisRecorder._autoSend);
         _agpMicRelease();
 
@@ -21500,7 +21506,7 @@
           if (!session) throw new Error('Not authenticated');
           var form = new FormData();
           form.append('action', 'transcribe');
-          var ext = (captureMime && captureMime.includes('mp4')) ? 'm4a' : 'webm';
+          var ext = (captureMime && captureMime.includes('mp4')) ? 'm4a' : 'ogg';
           form.append('audio', blob, 'agp_chat.' + ext);
           var res = await fetch(GETHRO_PROXY_URL, {
             method: 'POST',
