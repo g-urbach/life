@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.20';
+  const APP_VERSION  = 'v6.22';
   const DEPLOY_NOTES = APP_VERSION + ' — Fix mid-session transcription repetition: await old recorder stop event before resetting _micChunks, ensuring tail chunks drain before new segment starts. Fix _micRecorder_onstop undefined: replaced with _makeMicOnstop(mimeType) factory on new recorders. Cleaned up stale v6.06 comments on state variables.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -5226,7 +5226,7 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/deepgram-tts-proxy';    // Gethro voice
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy';    // Gethro voice
   // Voice is defined server-side in deepgram-tts-proxy edge function
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
@@ -21186,6 +21186,7 @@
     if (_agpMicStream) { _agpMicStream.getTracks().forEach(function(t){ t.stop(); }); _agpMicStream = null; }
     _agpMicRecorder      = null;
     _agpMicChunks        = [];
+    _agpMicHeader        = null;
     _agpTranscribing     = false;
     _agpRecentChunkBytes = [];
     _agpMicActive        = false;
@@ -21251,7 +21252,12 @@
     _agpTranscribing = true;
     var chunksToSend = _agpMicChunks.slice();
     _agpMicChunks = [];
-    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/webm' });
+    // Prepend the webm init segment (first chunk = header) so Deepgram receives
+    // a complete, valid webm blob even for mid-session chunk flushes.
+    var blobParts = (_agpMicHeader && chunksToSend[0] !== _agpMicHeader)
+      ? [_agpMicHeader].concat(chunksToSend)
+      : chunksToSend;
+    var blob = new Blob(blobParts, { type: _agpMicMime || 'audio/webm' });
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       _agpTranscribing = false;
       dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
@@ -21303,6 +21309,11 @@
       _agpRecordStart = Date.now();
       _agpMicRecorder.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) {
+          // First chunk = webm init segment (has header) — store separately so
+          // every flush can prepend it, giving Deepgram a complete valid webm blob.
+          if (_agpMicChunks.length === 0 && _agpMicHeader === null) {
+            _agpMicHeader = e.data;
+          }
           _agpMicChunks.push(e.data);
           _agpRecentChunkBytes.push(e.data.size);
           if (_agpRecentChunkBytes.length > AGP_CHUNK_RATE_WINDOW) _agpRecentChunkBytes.shift();
@@ -21416,6 +21427,7 @@
     }
 
     _agpMicChunks        = [];
+    _agpMicHeader        = null;
     _agpRecentChunkBytes = [];
     _agpMicActive        = true;
     _agpTranscribing     = false;
