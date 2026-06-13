@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.20';
-  const DEPLOY_NOTES = APP_VERSION + ' — STT fix: OGG/Opus now preferred over MP4 in MIME candidate order. Chrome+Firefox pick audio/ogg;codecs=opus (OGG_OPUS on Inworld) instead of audio/mp4 (AUTO_DETECT, which Inworld rejects with code:13). Safari still falls back to mp4. Blob filenames updated to .ogg/.m4a correctly. Requires GETHRO_PROXY v6.06.';
+  const APP_VERSION  = 'v6.21';
+  const DEPLOY_NOTES = APP_VERSION + ' — TTS: gethroSpeak now calls inworld-tts-proxy (Inworld TTS, Marcus voice, zero data retention) instead of OpenAI tts-proxy. Voice field dropped from request body — voice configured server-side. Requires inworld-tts-proxy deployed with INWORLD_API_KEY + INWORLD_VOICE secrets.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5226,8 +5226,8 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/tts-proxy';    // Gethro voice
-  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — change here to swap voice globally
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld)
+  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — used only for audiobook export; Gethro voice set server-side via INWORLD_VOICE env var
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
@@ -7973,7 +7973,7 @@
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken })
+          body: JSON.stringify({ text: text, token: freshToken })
         });
         dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
         if (!res.ok) {
@@ -13258,7 +13258,7 @@
         return fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken }),
+          body: JSON.stringify({ text: text, token: freshToken }),
           signal: controller ? controller.signal : undefined
         });
       }).then(function(res) {
