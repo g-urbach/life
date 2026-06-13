@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.21';
-  const DEPLOY_NOTES = APP_VERSION + ' — TTS: gethroSpeak now calls inworld-tts-proxy (Inworld TTS, Marcus voice, zero data retention) instead of OpenAI tts-proxy. Voice field dropped from request body — voice configured server-side. Requires inworld-tts-proxy deployed with INWORLD_API_KEY + INWORLD_VOICE secrets.';
+  const APP_VERSION  = 'v6.22';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic fix: WebM excluded from MIME candidates in _agpStartMic (same fix applied to memMic in v6.20). Chrome now picks audio/ogg;codecs=opus, which Groq Whisper accepts. Was causing 502 on every AGP transcription chunk.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21259,7 +21259,7 @@
     _agpTranscribing = true;
     var chunksToSend = _agpMicChunks.slice();
     _agpMicChunks = [];
-    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/webm' });
+    var blob = new Blob(chunksToSend, { type: _agpMicMime || 'audio/ogg' });
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       _agpTranscribing = false;
       dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
@@ -21272,7 +21272,7 @@
       if (!session) throw new Error('Not authenticated');
       var form = new FormData();
       form.append('action', 'transcribe');
-      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'webm';
+      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'ogg';
       form.append('audio', blob, 'agp_chunk.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
         method: 'POST',
@@ -21416,7 +21416,7 @@
     }
 
     _agpMicMime = '';
-    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', ''];
+    var candidates = ['audio/ogg;codecs=opus', 'audio/mp4', ''];  // WebM excluded — Groq Whisper rejects headerless WebM continuation chunks
     for (var i = 0; i < candidates.length; i++) {
       if (!candidates[i] || MediaRecorder.isTypeSupported(candidates[i])) {
         _agpMicMime = candidates[i]; break;
