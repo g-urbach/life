@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.18';
-  const DEPLOY_NOTES = APP_VERSION + ' — Migrated TTS from OpenAI (tts-proxy) to Inworld (inworld-tts-proxy). TTS_PROXY_URL updated. GETHRO_VOICE constant removed — voice now configured server-side via INWORLD_VOICE env var on the edge function (default: Marcus). Removed voice param from gethroSpeak() and _abSpeak() request bodies. STT already migrated to Inworld in GETHRO_PROXY v6.02 — no client STT changes needed.';
+  const APP_VERSION  = 'v6.19';
+  const DEPLOY_NOTES = APP_VERSION + ' — STT fix: MediaRecorder MIME candidates now only include Inworld-compatible formats (audio/mp4, audio/ogg;codecs=opus). WebM excluded — Inworld STT rejects it regardless of model. If neither format is supported, user sees a clear error toast instead of silent failure. Requires GETHRO_PROXY v6.04.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5226,9 +5226,8 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld TTS)
-  // GETHRO_VOICE is now configured server-side via the INWORLD_VOICE env var on inworld-tts-proxy.
-  // Default: 'Marcus' (warm male). Change in Supabase secrets — no client deploy needed.
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/tts-proxy';    // Gethro voice
+  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — change here to swap voice globally
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
@@ -5775,7 +5774,7 @@
               return fetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ action: 'get_tts', token: token, voice: 'onyx', text: text })
+                body: JSON.stringify({ action: 'get_tts', token: token, voice: GETHRO_VOICE, text: text })
               }).then(function(res) {
                 if (!res.ok) throw new Error('TTS error ' + res.status);
                 return res.arrayBuffer();
@@ -7974,7 +7973,7 @@
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, token: freshToken })
+          body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken })
         });
         dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
         if (!res.ok) {
@@ -8833,13 +8832,22 @@
       return toast('Could not access microphone — ' + permErr.message);
     }
 
-    // Pick best MIME type — same detection already used in audio clip recorder
-    var mimeType = '';
-    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', ''];
+    // Pick best MIME type — Inworld STT only accepts MP3, OGG, FLAC, M4A, WAV.
+    // WebM is NOT supported. We try formats in order; if none match we show an
+    // error rather than record in an unsupported format and fail silently.
+    // audio/mp4 (M4A): Chrome, Firefox 98+, Safari, Edge — broad support.
+    // audio/ogg;codecs=opus: Firefox, Chrome — Safari does NOT support.
+    // Deliberately excluded: audio/webm — Inworld STT rejects it.
+    var mimeType = null;
+    var candidates = ['audio/mp4', 'audio/ogg;codecs=opus'];
     for (var i = 0; i < candidates.length; i++) {
-      if (!candidates[i] || MediaRecorder.isTypeSupported(candidates[i])) {
+      if (MediaRecorder.isTypeSupported(candidates[i])) {
         mimeType = candidates[i]; break;
       }
+    }
+    if (mimeType === null) {
+      _micRelease(); _setMicState('idle');
+      return toast('Voice recording not supported in this browser — please try Chrome, Firefox, or Safari.', 5000);
     }
     _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
 
@@ -13251,7 +13259,7 @@
         return fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, token: freshToken }),
+          body: JSON.stringify({ text: text, voice: GETHRO_VOICE, token: freshToken }),
           signal: controller ? controller.signal : undefined
         });
       }).then(function(res) {
