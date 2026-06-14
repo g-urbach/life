@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.28';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic v6.28: inactivity timer now sends answer (not follow-up) when chunks/voice detected; chunk-rate used as secondary voice signal; silence loop time-flush restored; autoSend stamped before state check; RESTART_SAFE_BYTES 4000; early recorder restart before Whisper fetch.';
+  const APP_VERSION  = 'v6.29';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic v6.29: two-part fix for persistent autoSend=false bug. (1) Inactivity timer now uses chunk COUNT (>5 chunks) not byte total to detect speech — iOS audio/mp4 produces small compressed chunks that failed the old 12KB threshold even after 9s of talking. (2) toggleAgpMic now calls _agpStopMic(true) so manual button-stop also sends.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21252,15 +21252,24 @@
       // Mid-flight (transcribing a chunk, or Gethro already composing a reply) — let
       // that resolve naturally rather than interrupting with another question.
       if (!_agpMicActive || _agpTranscribing || _agpSending || _agpLiveText) return;
-      // v6.28: If the user has been speaking during this segment (detected by analyser
-      // OR by accumulated chunk data), stop and SEND their answer instead of firing a
-      // follow-up question. This fixes the inactivity timer stealing the send when the
-      // analyser threshold is too high for this device's mic gain.
+      // v6.29: Use chunk COUNT as the primary signal for "did the user say anything?"
+      // The old check (chunkTotal > AGP_MIN_CHUNK_BYTES * 4 = 12000) was too high for
+      // iOS audio/mp4 which produces small compressed chunks (~100-200 bytes each).
+      // After 9s of speaking you'd have ~90 chunks but only ~9-13KB — below 12KB the
+      // check would falsely conclude silence and fire a follow-up instead of sending.
+      // The AnalyserNode is also unreliable on iOS (AudioContext starts suspended when
+      // not created inside a user gesture), so _agpHadVoice can stay false even while
+      // the user is actively talking.
+      // Fix: if ANY chunks accumulated since mic-start (_agpMicChunks.length > 5,
+      // allowing a small cushion for startup noise), the mic was actively recording
+      // something — stop and send. Whisper will decide if it's real speech.
+      // "Truly empty mic" = near-zero chunks, which means the user really was silent.
+      var chunkCount = _agpMicChunks.length;
       var chunkTotal = _agpMicChunks.reduce(function(s, c) { return s + c.size; }, 0);
-      var chunksSuggestSpeech = chunkTotal > AGP_MIN_CHUNK_BYTES * 4;
+      var chunksSuggestSpeech = chunkCount > 5; // ~500ms of chunks = mic was running and captured something
       if (_agpHadVoice || chunksSuggestSpeech) {
-        dbg('AGP_MIC', 'Inactivity timeout but voice/chunks detected — stopping to send (hadVoice=' + _agpHadVoice + ' chunkBytes=' + chunkTotal + ')');
-        _agpStopMic(true); // user was speaking — send their answer
+        dbg('AGP_MIC', 'Inactivity timeout but audio captured — stopping to send (hadVoice=' + _agpHadVoice + ' chunks=' + chunkCount + ' bytes=' + chunkTotal + ')');
+        _agpStopMic(true); // user was speaking (or at least recording) — let Whisper decide
         return;
       }
       var inp = document.getElementById('agpInput');
@@ -21345,7 +21354,12 @@
 
   // Separate mic from the Memories mic — different state, MediaRecorder-based (Phase 4).
   function toggleAgpMic() {
-    if (_agpMicActive) { _agpStopMic(false); } else { _agpStartMic(); }
+    // v6.29: manual button tap while recording should send the answer, not discard it.
+    // Previously _agpStopMic(false) meant the user's transcribed reply was dropped.
+    // The only callers that genuinely want autoSend=false are closeAskGethro() and
+    // gethroNewChat() — they call _agpStopMic() directly. The mic toggle button in
+    // an active conversation is "I'm done speaking — send it", same as silence-detect.
+    if (_agpMicActive) { _agpStopMic(true); } else { _agpStartMic(); }
   }
 
   // ── _agpFlushChunk: transcribe accumulated chunks mid-session ────
