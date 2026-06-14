@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.31';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.31: Fixed "In my own words" showing empty (user history was cleared before being read). Fixed hallucination bug: expanded AGP_HALLUCINATIONS from single-word regex to a function that also catches short multi-word filler strings like "Okay. Amen. uh Amen. Okay. Yeah." (≤8 words, all filler tokens).';
+  const APP_VERSION  = 'v6.32';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.32: (1) "In my own words" now shows full Q&A interview dialogue (Gethro questions + user answers) instead of user-only lines. (2) AGP mic now flushes mid-conversation: 2s silence → chunk to Whisper, restart recorder, accumulate _agpLiveText in input; 5s silence → final flush + send to Gethro.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -20654,19 +20654,26 @@
       html += '<button class="btn btn-primary" data-action="agp-accept-ai" style="font-size:0.78rem;padding:7px 14px">\u2713 Use this version</button>';
       html += '</div>';
 
-      // Choice B: user's own words — captured above before history was cleared.
-      var userOnlyTranscript = userOnlyTranscriptPre;
+      // Choice B: full Q&A dialogue — interview style (Gethro question + user answer).
+      // `transcript` was built at the top of agpSaveToEntry() before history was cleared,
+      // formatted as "Gethro: ... / You: ..." — exactly the interview view the user expects.
+      // `userOnlyTranscriptPre` (user-only lines) is kept in dataset.transcript so that
+      // agpAcceptConsolidated(useRaw=true) saves just the user's answers to the entry.
+      var dialogueHtml = transcript
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/^(Gethro:)/gm, '<span style="font-weight:700;color:var(--gold-dark)">$1</span>')
+        .replace(/^(You:)/gm, '<span style="font-weight:700;color:var(--text)">$1</span>')
+        .replace(/\n/g,'<br>');
 
       html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
       html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:6px">In my own words \u2014 word for word</p>';
-      var transcriptHtml = userOnlyTranscript.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-      html += '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.82rem;line-height:1.6;color:var(--text-light);margin-bottom:10px;max-height:120px;overflow-y:auto">' + transcriptHtml + '</div>';
+      html += '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:0.82rem;line-height:1.8;color:var(--text-light);margin-bottom:10px;max-height:160px;overflow-y:auto">' + dialogueHtml + '</div>';
       html += '<button class="btn btn-ghost" data-action="agp-accept-raw" style="font-size:0.78rem;padding:7px 14px">\u2713 Use my words</button>';
       html += '</div>';
 
       panel.innerHTML = html;
       panel.dataset.consolidated    = consolidated;
-      panel.dataset.transcript      = userOnlyTranscript; // "In my own words" uses filtered user-only text
+      panel.dataset.transcript      = userOnlyTranscriptPre; // save-to-entry uses user-only text
       panel.dataset.hasEntry        = hasEntry ? '1' : '0';
 
     } catch(err) {
@@ -21179,8 +21186,12 @@
   var _agpHadVoice        = false; // true once analyser detected real speech this segment
 
   // Silence / timing constants
-  const AGP_SILENCE_MS       = 5000;  // 5s sustained silence → transcribe & send
-  const AGP_MIN_REC_MS       = 1000;  // don't flush if recording < 1s old
+  // Two-tier silence system:
+  //   AGP_FLUSH_MS  (2s): short pause → flush chunk to Whisper, restart recorder, accumulate _agpLiveText
+  //   AGP_SILENCE_MS (5s): long pause → final flush + send accumulated text to Gethro
+  const AGP_FLUSH_MS         = 2000;  // 2s pause → transcribe chunk, keep recording
+  const AGP_SILENCE_MS       = 5000;  // 5s pause → send final text to Gethro
+  const AGP_MIN_REC_MS       = 800;   // don't flush if recording < 0.8s old
   const AGP_MIN_CHUNK_BYTES  = 3000;  // blobs below this = near-silence, skip Whisper
   const AGP_SPEECH_THRESHOLD = 10;    // AnalyserNode 0-127; below = silence
   const AGP_CHUNK_RATE_WINDOW  = 20;
@@ -21232,7 +21243,9 @@
     _agpHadVoice        = false;
   }
 
-  // Silence detection loop — identical pattern to _micSilenceLoop in mem mic.
+  // Silence detection loop — two-tier:
+  //   AGP_FLUSH_MS: short pause → flush chunk to Whisper + restart recorder (mid-sentence transcription)
+  //   AGP_SILENCE_MS: long pause → final flush + send to Gethro
   function _agpSilenceLoop() {
     if (!_agpMicActive) { _agpMicSilenceRAF = null; return; }
     var now      = Date.now();
@@ -21256,17 +21269,118 @@
     if (isSilent) {
       if (_agpMicSilenceStart === null) _agpMicSilenceStart = now;
       var silenceAge = now - _agpMicSilenceStart;
-      if (silenceAge >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpMicTranscribing) {
-        dbg('AGP_MIC', 'Silence detected (' + AGP_SILENCE_MS + 'ms) — flushing and sending');
-        _agpMicSilenceRAF = null;
-        _agpFlushAndSend();
-        return;
+      if (!_agpMicTranscribing && recAge >= AGP_MIN_REC_MS) {
+        if (silenceAge >= AGP_SILENCE_MS) {
+          // Tier 2: long pause — final flush and send to Gethro
+          dbg('AGP_MIC', 'Long silence (' + AGP_SILENCE_MS + 'ms) — final flush + send');
+          _agpMicSilenceRAF = null;
+          _agpFlushAndSend(true);
+          return;
+        } else if (silenceAge >= AGP_FLUSH_MS) {
+          // Tier 1: short pause — flush chunk, restart recorder, keep listening
+          dbg('AGP_MIC', 'Short silence (' + AGP_FLUSH_MS + 'ms) — flushing chunk');
+          _agpFlushChunk();
+          // loop continues after _agpFlushChunk (it's async but doesn't stop the RAF)
+        }
       }
     } else {
       _agpMicSilenceStart = null;
       _agpHadVoice = true; // real speech volume confirmed by AnalyserNode
     }
     _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
+  }
+
+  // Flush current chunk to Whisper, restart recorder, accumulate into _agpLiveText.
+  // Mid-conversation version of _agpFlushAndSend — does NOT send to Gethro.
+  var _agpFlushCooldown = false;
+  async function _agpFlushChunk() {
+    if (_agpMicTranscribing || _agpFlushCooldown) return;
+    if (!_agpMicRecorder || !_agpMicChunks.length) return;
+    var hadVoice      = _agpHadVoice;
+    var analyserWasOn = !!_agpAnalyserCtx;
+    if (analyserWasOn && !hadVoice) {
+      dbg('AGP_MIC', 'Chunk flush: no speech detected — skipping');
+      return;
+    }
+    _agpMicTranscribing = true;
+    _agpFlushCooldown   = false;
+
+    // Stop current recorder and await full drain
+    var oldRecorder = _agpMicRecorder;
+    _agpMicRecorder = null;
+    var blob = await new Promise(function(resolve) {
+      var snap = _agpMicChunks.slice();
+      oldRecorder.addEventListener('stop', function() {
+        var tail = _agpMicChunks.slice(snap.length);
+        resolve(new Blob(snap.concat(tail), { type: _agpMicMime || 'audio/ogg' }));
+      }, { once: true });
+      try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' })); }
+      catch(e) { resolve(new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' })); }
+    });
+
+    if (!_agpMicActive) { _agpMicTranscribing = false; return; } // stopped mid-flush
+
+    // Reset chunks and restart recorder immediately so user speech is captured during transcription
+    _agpMicChunks      = [];
+    _agpMicRecentBytes = [];
+    _agpMicRecordStart = Date.now();
+    _agpHadVoice       = false;
+    _agpMicSilenceStart = null; // reset silence timer for new segment
+    try {
+      var newRec = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
+      newRec.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) {
+          _agpMicChunks.push(e.data);
+          _agpMicRecentBytes.push(e.data.size);
+          if (_agpMicRecentBytes.length > AGP_CHUNK_RATE_WINDOW) _agpMicRecentBytes.shift();
+        }
+      };
+      newRec.onerror = function(e) { dbgErr('AGP_MIC', 'Restarted recorder error:', e.error); };
+      newRec.start(100);
+      _agpMicRecorder = newRec;
+      dbg('AGP_MIC', 'Recorder restarted for next chunk');
+    } catch(e) {
+      dbgErr('AGP_MIC', 'Failed to restart recorder:', e.message);
+      _agpMicRelease(); _agpSetBtn('idle'); _agpMicTranscribing = false; return;
+    }
+
+    if (blob.size < AGP_MIN_CHUNK_BYTES) {
+      dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
+      _agpMicTranscribing = false; return;
+    }
+
+    // POST chunk to Whisper
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      var form = new FormData();
+      form.append('action', 'transcribe');
+      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'ogg';
+      form.append('audio', blob, 'agp_chunk.' + ext);
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form
+      });
+      var rawText = await res.text();
+      var data;
+      try { data = JSON.parse(rawText); } catch(e2) { throw new Error('Invalid JSON ' + res.status); }
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
+      var chunk = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      if (chunk && !AGP_HALLUCINATIONS.test(chunk)) {
+        _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + chunk : chunk;
+        var inp = document.getElementById('agpInput');
+        if (inp) inp.value = _agpLiveText; // show accumulating text live in input field
+        dbg('AGP_MIC', 'Chunk appended — "' + chunk + '" total=' + _agpLiveText.length + ' chars');
+      } else if (chunk) {
+        dbg('AGP_MIC', 'Chunk hallucination filtered: "' + chunk + '"');
+      }
+    } catch(err) {
+      dbgErr('AGP_MIC', 'Chunk transcription failed:', err.message);
+      _agpFlushCooldown = true;
+      setTimeout(function() { _agpFlushCooldown = false; }, 4000);
+    }
+    _agpMicTranscribing = false;
   }
 
   // Transcribe everything accumulated and call sendToGethro.
