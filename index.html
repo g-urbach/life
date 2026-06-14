@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.32';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.32: (1) "In my own words" now shows full Q&A interview dialogue (Gethro questions + user answers) instead of user-only lines. (2) AGP mic now flushes mid-conversation: 2s silence → chunk to Whisper, restart recorder, accumulate _agpLiveText in input; 5s silence → final flush + send to Gethro.';
+  const APP_VERSION  = 'v6.33';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.33: Fixed AGP mic chunk-flush bugs: (1) silence loop was spinning (re-fired every RAF frame after flush instead of waiting another 2s); (2) after chunks accumulated in _agpLiveText, the final 5s flush bailed on small blob without sending — now correctly sends accumulated text to Gethro.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21279,8 +21279,9 @@
         } else if (silenceAge >= AGP_FLUSH_MS) {
           // Tier 1: short pause — flush chunk, restart recorder, keep listening
           dbg('AGP_MIC', 'Short silence (' + AGP_FLUSH_MS + 'ms) — flushing chunk');
+          _agpMicSilenceStart = now; // reset so we wait another AGP_FLUSH_MS before re-firing
           _agpFlushChunk();
-          // loop continues after _agpFlushChunk (it's async but doesn't stop the RAF)
+          // loop continues — _agpFlushChunk is async and non-blocking
         }
       }
     } else {
@@ -21420,12 +21421,15 @@
     if (!doSend) { _agpMicTranscribing = false; return; } // focus-loss stop — discard
 
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
-      dbg('AGP_MIC', 'Blob too small (' + blob.size + ' bytes) — nothing to send');
+      dbg('AGP_MIC', 'Blob too small (' + blob.size + ' bytes) — checking for accumulated live text');
+      // Blob is small (silence), but _agpLiveText may have been built up by prior _agpFlushChunk calls
       if (_agpLiveText) {
         var inp = document.getElementById('agpInput');
-        if (inp && !inp.value) inp.value = _agpLiveText;
+        if (inp) inp.value = _agpLiveText;
         _agpLiveText = '';
+        _agpMicTranscribing = false;
         sendToGethro();
+        return;
       }
       _agpSetBtn('idle');
       _agpMicTranscribing = false;
@@ -21433,9 +21437,17 @@
     }
 
     // If AnalyserNode was running but never flagged real speech, this is ambient
-    // noise — Whisper will hallucinate. Discard without hitting the API.
+    // noise — Whisper will hallucinate. Skip Whisper but still send any accumulated text.
     if (analyserWasOn && !hadVoice) {
-      dbg('AGP_MIC', 'Analyser active but no speech detected — discarding (ambient noise)');
+      dbg('AGP_MIC', 'Analyser active but no speech detected — skipping Whisper');
+      if (_agpLiveText) {
+        var inp2 = document.getElementById('agpInput');
+        if (inp2) inp2.value = _agpLiveText;
+        _agpLiveText = '';
+        _agpMicTranscribing = false;
+        sendToGethro();
+        return;
+      }
       _agpSetBtn('idle');
       _agpMicTranscribing = false;
       return;
