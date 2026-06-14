@@ -5210,7 +5210,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.26';
+  const APP_VERSION  = 'v6.27';
   const DEPLOY_NOTES = APP_VERSION + ' — AGP conversation-mode mic fixes: (1) inactivity follow-up nudge now resets whenever real speech is detected (via volume analyser), instead of a fixed window from mic-start — fixes Gethro cutting users off mid-answer and firing a new follow-up on top of it (root cause of stacked questions like the "Something About Mary" repro); (2) nudge capped to 1 per turn, reset once the user actually replies, so Gethro can\u2019t ask a 2nd/3rd question before the 1st is answered; (3) bumped inactivity window 5s\u21929s to give realistic thinking time; (4) transcripts from segments where no voice was ever detected are now discarded as hallucinations regardless of content — fixes "What?" / random phrase fragments appearing with no speech; (5) AGP_HALLUCINATIONS regex broadened to catch more Whisper silence artefacts ("What?", "Okay.", "Hmm.", etc).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -21151,7 +21151,12 @@
   // ── APP-52 Phase 4: AGP mic migrated to MediaRecorder + Whisper ─────────────
   // Replaces SpeechRecognition for the Ask Gethro panel mic button.
   // Flow: record → silence detected (1200ms) or manual stop → transcribe → populate input → auto-send.
-  // Shares MIC_SILENCE_THRESHOLD and MIME detection with the Phase 2/3 mem mic implementation.
+  // v6.27: AGP uses its own lower speech threshold. MIC_SILENCE_THRESHOLD=15 was calibrated
+  // for the mem mic but is too high for Gethro's mic on many iOS devices — quiet mics
+  // (or those with lower gain in this context) never exceed 15, so _agpHadVoice stays false
+  // permanently and every Whisper transcript gets filtered as a hallucination.
+  // 6 is above ambient noise (typically 1-3) but catches quiet speech (typically 8-40+).
+  const AGP_SPEECH_THRESHOLD = 6;
   // SpeechRecognition / webkitSpeechRecognition is now fully removed from the app.
   // _agpRecognition, _agpAccumulated, _agpSilenceTimer replaced by MediaRecorder + AnalyserNode.
 
@@ -21281,7 +21286,7 @@
         var v = Math.abs(buffer[i] - 128);
         if (v > volume) volume = v;
       }
-      isSilent = (volume < MIC_SILENCE_THRESHOLD);
+      isSilent = (volume < AGP_SPEECH_THRESHOLD); // v6.27: AGP-specific lower threshold
     } else {
       // Fallback: chunk data-rate heuristic (matches mem mic pattern)
       var avg = _agpRecentChunkBytes.length
@@ -21382,11 +21387,16 @@
       try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-      if (transcript && !segmentHadVoice) {
+      // v6.27: Trust Whisper if transcript passes hallucination filter AND blob is large
+      // enough to contain real speech — even if _agpHadVoice=false (mic gain too low
+      // to trigger the analyser threshold on this device).
+      var transcriptIsReal = transcript && !AGP_HALLUCINATIONS.test(transcript);
+      var blobHadSpeech = segmentHadVoice || (blob.size > AGP_MIN_CHUNK_BYTES * 3);
+      if (transcript && !segmentHadVoice && !blobHadSpeech) {
         // v6.25: no speech volume detected this segment — Whisper hallucinated from
         // background noise/silence (e.g. "What?", random phrases). Discard silently.
         dbg('AGP_MIC', 'Chunk hallucination filtered (no voice detected): "' + transcript + '"');
-      } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+      } else if (transcriptIsReal) {
         // User said something real — cancel inactivity nudge
         if (_agpInactivityTimer) { clearTimeout(_agpInactivityTimer); _agpInactivityTimer = null; }
         _agpLiveText = (_agpLiveText ? _agpLiveText + ' ' : '') + transcript;
@@ -21448,7 +21458,7 @@
             }
             return;
           }
-          _agpSetBtn('transcribing');
+          // v6.27: no hourglass between segments
           try {
             var session = (await sb.auth.getSession()).data.session;
             if (!session) throw new Error('Not authenticated');
@@ -21466,8 +21476,11 @@
             try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
             if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
             var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-            if (transcript && !segmentHadVoice) {
-              // v6.25: no speech volume detected this segment — discard hallucinated transcript.
+            // v6.27: trust Whisper if transcript passes hallucination check AND blob is substantial
+            var transcriptIsReal = transcript && !AGP_HALLUCINATIONS.test(transcript);
+            var blobHadSpeech = segmentHadVoice || (blob.size > AGP_MIN_CHUNK_BYTES * 3);
+            if (transcript && !segmentHadVoice && !blobHadSpeech) {
+              // no speech volume detected this segment — discard hallucinated transcript.
               dbg('AGP_MIC', 'Restarted recorder hallucination filtered (no voice detected): "' + transcript + '"');
               if (_agpLiveText) {
                 var inp = document.getElementById('agpInput');
@@ -21479,7 +21492,7 @@
                 setTimeout(function() { _agpStartMic(); }, 300);
                 return;
               }
-            } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+            } else if (transcriptIsReal) {
               var fullText = _agpLiveText ? _agpLiveText + ' ' + transcript : transcript;
               _agpLiveText = '';
               var inp = document.getElementById('agpInput');
@@ -21606,7 +21619,7 @@
           return;
         }
 
-        _agpSetBtn('transcribing');
+        // v6.27: no hourglass between segments
         try {
           var session = (await sb.auth.getSession()).data.session;
           if (!session) throw new Error('Not authenticated');
@@ -21625,9 +21638,11 @@
           if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
           var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
 
-          if (transcript && !segmentHadVoice) {
-            // v6.25: no speech volume detected this segment — Whisper hallucinated from
-            // background noise/silence. Discard, falling back to live text if any.
+          // v6.27: trust Whisper if transcript passes hallucination check AND blob is substantial
+          var transcriptIsReal = transcript && !AGP_HALLUCINATIONS.test(transcript);
+          var blobHadSpeech = segmentHadVoice || (blob.size > AGP_MIN_CHUNK_BYTES * 3);
+          if (transcript && !segmentHadVoice && !blobHadSpeech) {
+            // no speech volume detected and blob too small — Whisper hallucinated.
             dbg('AGP_MIC', 'Final segment hallucination filtered (no voice detected): "' + transcript + '"');
             if (_agpLiveText) {
               var inp = document.getElementById('agpInput');
@@ -21639,7 +21654,7 @@
               setTimeout(function() { _agpStartMic(); }, 300);
               return;
             }
-          } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+          } else if (transcriptIsReal) {
             var fullText = _agpLiveText ? _agpLiveText + ' ' + transcript : transcript;
             _agpLiveText = '';
             var inp = document.getElementById('agpInput');
@@ -21700,7 +21715,7 @@
     // inactivity timer fire moments later while transcription is in flight, racing
     // a second "follow-up" question against the one already being sent.
     if (_agpInactivityTimer) { clearTimeout(_agpInactivityTimer); _agpInactivityTimer = null; }
-    _agpSetBtn('transcribing');
+    // v6.27: no hourglass in _agpStopMic — button stays 23f9 in conversation mode
     // v6.26: stamp _autoSend BEFORE the state check. If the recorder already reached
     // 'inactive' on its own, onstop fires async and reads thisRecorder._autoSend —
     // must set it NOW regardless of state, otherwise it stays undefined → false.
