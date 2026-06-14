@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.25';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP conversation-mode mic fixes: (1) inactivity follow-up nudge now resets whenever real speech is detected (via volume analyser), instead of a fixed window from mic-start — fixes Gethro cutting users off mid-answer and firing a new follow-up on top of it (root cause of stacked questions like the "Something About Mary" repro); (2) nudge capped to 1 per turn, reset once the user actually replies, so Gethro can\u2019t ask a 2nd/3rd question before the 1st is answered; (3) bumped inactivity window 5s\u21929s to give realistic thinking time; (4) transcripts from segments where no voice was ever detected are now discarded as hallucinations regardless of content — fixes "What?" / random phrase fragments appearing with no speech; (5) AGP_HALLUCINATIONS regex broadened to catch more Whisper silence artefacts ("What?", "Okay.", "Hmm.", etc).';
+  const APP_VERSION  = 'v6.26';
+  const DEPLOY_NOTES = APP_VERSION + ' 2014 AGP mic v6.26 fixes: (1) recorder restarted BEFORE Whisper fetch in _agpFlushChunk 2014 eliminates 2-3s gap where user talked into nothing; (2) RESTART_SAFE_BYTES 6000021924000 2014 old threshold blocked all short silence-window blobs from transcription causing silent mic restart with no send; (3) sendToGethro() now logs all early-exit paths; (4) final transcription log includes autoSend flag.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -20715,10 +20715,11 @@
 
   // ── Send message ─────────────────────────────────────────────────
   async function sendToGethro() {
-    if (_agpSending) return;
+    if (_agpSending) { dbg('AGP_SEND', 'sendToGethro: skipped — already sending'); return; }
     var inp  = document.getElementById('agpInput');
     var text = (inp ? inp.value.trim() : '');
-    if (!text) return;
+    if (!text) { dbg('AGP_SEND', 'sendToGethro: skipped — empty input'); return; }
+    dbg('AGP_SEND', 'sendToGethro: firing with text (' + text.length + ' chars): "' + text.slice(0,80) + '"');
 
     // v6.25: the user has actually replied — clear the "already nudged this turn"
     // counter so a future genuine silence can prompt one follow-up again.
@@ -21340,10 +21341,10 @@
     // discard it outright, regardless of what words it contains.
     var segmentHadVoice = _agpHadVoice;
 
-    // v6.24: Stop the current recorder and await full drain before snapshotting chunks.
-    // Mirrors _micFlushChunk fix — without awaiting stop, _agpRestartRecorder() creates
-    // a new MediaRecorder whose first chunk lacks a container header, causing Groq to
-    // reject every subsequent chunk as an invalid media file (502 Bad Gateway).
+    // v6.26: Stop the current recorder and await full drain before snapshotting chunks.
+    // Then restart the recorder IMMEDIATELY (before the Whisper fetch) so the user's
+    // voice is captured continuously — previously there was a ~2-3s gap during the
+    // Whisper API call where the user was talking into nothing.
     var oldRecorder = _agpMicRecorder;
     _agpMicRecorder = null;
     await new Promise(function(resolve) {
@@ -21354,12 +21355,18 @@
     // Guard: user may have closed the panel during the await
     if (!_agpMicActive) { _agpTranscribing = false; return; }
 
+    // Snapshot chunks BEFORE restarting so restart gets a clean buffer
     var blob = new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' });
     _agpMicChunks = [];
+
+    // v6.26: Restart recorder NOW — before Whisper fetch — so user is never talking
+    // into silence during the API round-trip. _agpRestartRecorder() is safe to call
+    // here because _agpMicChunks has already been snapshotted and cleared above.
+    _agpRestartRecorder();
+
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       _agpTranscribing = false;
       dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
-      _agpRestartRecorder();
       return;
     }
     dbg('AGP_MIC', 'Flushing chunk — ' + blob.size + ' bytes');
@@ -21399,7 +21406,7 @@
       // Silent failure — keep recording; user can still send via silence detection.
     }
     _agpTranscribing = false;
-    if (_agpMicActive) _agpRestartRecorder();
+    // v6.26: recorder already restarted before the Whisper fetch — no restart needed here.
   }
 
   // Restart the MediaRecorder after a chunk flush — gives a fresh WebM header each segment.
@@ -21431,11 +21438,13 @@
           var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/ogg' });
           var autoSend = !!(thisRecorder._autoSend);
           _agpMicRelease();
-          // MP4/OGG blobs from a freshly-restarted recorder are often invalid files
-          // (incomplete container header) even when > AGP_MIN_CHUNK_BYTES. Skip
-          // transcription for small blobs from restarted recorders — use liveText
-          // if available, otherwise go idle cleanly rather than sending a bad file.
-          var RESTART_SAFE_BYTES = 60000; // require more data before trusting a restarted recorder blob
+          // v6.26: RESTART_SAFE_BYTES lowered from 60000→4000. The old 60KB threshold
+          // excluded all short segments (e.g. a 2.5s silence-triggered stop gives only
+          // ~40KB on mp4), causing the fallback to _agpLiveText to be taken even when
+          // a perfectly valid blob existed — and since autoSend is always false on restarted
+          // recorders, that path would just restart the mic silently without sending.
+          // 4KB is a safe minimum for a real audio container header + some data.
+          var RESTART_SAFE_BYTES = 4000;
           if (blob.size < RESTART_SAFE_BYTES) {
             dbg('AGP_MIC', 'Restarted recorder blob too small for safe transcription (' + blob.size + ' bytes) — using liveText or going idle');
             if (_agpLiveText) {
@@ -21644,8 +21653,8 @@
             _agpLiveText = '';
             var inp = document.getElementById('agpInput');
             if (inp) inp.value = fullText;
-            dbg('AGP_MIC', 'Final transcription complete — ' + fullText.length + ' chars');
-            if (autoSend) sendToGethro();
+            dbg('AGP_MIC', 'Final transcription complete — ' + fullText.length + ' chars, autoSend=' + autoSend);
+            if (autoSend) sendToGethro(); else dbg('AGP_MIC', 'autoSend=false — not sending (user must tap Send)');
           } else if (_agpLiveText) {
             // Hallucinated final segment — use accumulated live text
             dbg('AGP_MIC', 'Final segment hallucination — using accumulated live text');
