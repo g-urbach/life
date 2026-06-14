@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.39';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.39: [APP-53] Phase 1 client side — gethroSpeak() and _abSpeak() switched from body-token auth to Authorization header (JWT verification ON on inworld-tts-proxy). Stale body token pattern and PRV-20 comment updated. Matches GETHRO_PROXY auth pattern.';
+  const APP_VERSION  = 'v6.41';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.41: [APP-53] Phase 3 — TTS wiring: gethroSpeak() + _abSpeak() now pass voice_id in POST body when set; _spFetchSegment (share page) passes story_reader_voice_id. Record flow: Record a voice button wired — MediaRecorder 5-15s sample, label + consent, POST to inworld-voice-clone-proxy. Delete per custom voice (reverts slot to default). Cap UI: button disabled at 3 voices. APP-53 fully complete.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5771,10 +5771,14 @@
             _shareStopFlag = false;
 
             function _spFetchSegment(text) {
+              var spBody = { action: 'get_tts', token: token, text: text };
+              if (typeof _cachedStoryReaderVoiceId !== 'undefined' && _cachedStoryReaderVoiceId) {
+                spBody.voice_id = _cachedStoryReaderVoiceId; // APP-53 Phase 3
+              }
               return fetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ action: 'get_tts', token: token, text: text }) // voice_id: APP-53 Phase 3 will wire story_reader_voice_id here
+                body: JSON.stringify(spBody)
               }).then(function(res) {
                 if (!res.ok) throw new Error('TTS error ' + res.status);
                 return res.arrayBuffer();
@@ -7071,6 +7075,7 @@
         await loadMilestones();   // UX-NEW-05: milestone celebration state
         await loadEmailPrefs();   // weekly email nudge opt-in
         await loadSubscriptionTier(); // SUB-05: cache subscription tier for isPremium()
+        await loadVoicePrefs();       // APP-53: cache gethro_voice_id + story_reader_voice_id
         refreshPremiumGates();         // SUB-05: apply premium header/UI immediately on login
         if (window._pendingUpgradeSuccess) { _handleUpgradeSuccess(); } // SUB-05: post-auth Stripe return
         // showReminder() removed v3.06 — rolling heading on Memories tab replaces it
@@ -7969,10 +7974,12 @@
         } catch(e) { dbg('TTS', 'getSession err:', e.message); }
         dbg('TTS', 'fetching TTS_PROXY, freshToken=' + (freshToken ? 'ok' : 'NULL'));
         // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
+        var ttsBody = { text: text };
+        if (_cachedGethroVoiceId) ttsBody.voice_id = _cachedGethroVoiceId; // APP-53 Phase 3
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
-          body: JSON.stringify({ text: text })
+          body: JSON.stringify(ttsBody)
         });
         dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
         if (!res.ok) {
@@ -13255,10 +13262,12 @@
       sb.auth.getSession().then(function(sess) {
         if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
         // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
+        var abBody = { text: text };
+        if (_cachedStoryReaderVoiceId) abBody.voice_id = _cachedStoryReaderVoiceId; // APP-53 Phase 3
         return fetch(TTS_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
-          body: JSON.stringify({ text: text }),
+          body: JSON.stringify(abBody),
           signal: controller ? controller.signal : undefined
         });
       }).then(function(res) {
@@ -23347,6 +23356,7 @@
     renderEmailPrefsUI();
     loadSubscriptionTier().then(refreshPremiumGates); // SUB-05
     renderPrivacySettingsSection(); // SUB-31
+    renderVoicesSettingsSection();  // APP-53
   }
 
   async function saveSettingsName() {
@@ -23559,6 +23569,471 @@
   }
 
   // SUB-31: Render the "Your Privacy" section in Settings (shown to ALL users)
+  // ── APP-53 Phase 2: Voices settings ─────────────────────────────────────────
+  // Stock voices available to all users. voice_id matches Inworld voice identifiers.
+  // Preview each via the ▶ button — plays a fixed sample sentence through TTS proxy.
+  // Selections saved to life_settings (gethro_voice_id / story_reader_voice_id).
+  // Phase 3 will wire gethroSpeak() and _abSpeak() to read these at login.
+  // Recording flow (+ Record a voice) added in Phase 3.
+
+  var _STOCK_VOICES = [
+    { id: 'default',  label: 'Default',  desc: 'Current server default'  },
+    { id: 'Dennis',   label: 'Dennis',   desc: 'Warm, measured male'     },
+    { id: 'Sarah',    label: 'Sarah',    desc: 'Clear, warm female'      },
+    { id: 'Clive',    label: 'Clive',    desc: 'Deep, authoritative male'},
+    { id: 'Hana',     label: 'Hana',     desc: 'Gentle, thoughtful female'},
+    { id: 'Olivia',   label: 'Olivia',   desc: 'Bright, expressive female'},
+    { id: 'Hank',     label: 'Hank',     desc: 'Gruff, character-rich male'},
+  ];
+
+  var _VOICE_PREVIEW_TEXT = "Hello. I'm here to help you tell your story — one memory at a time.";
+
+  // In-memory cache of current voice preferences (null = default)
+  var _cachedGethroVoiceId      = null;
+  var _cachedStoryReaderVoiceId = null;
+
+  // In-memory list of user's custom voices (from life_custom_voices)
+  var _customVoices = [];
+
+  // Load voice preferences from life_settings and custom voices from DB
+  async function loadVoicePrefs() {
+    if (!currentUser) return;
+    try {
+      var url = DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=in.(gethro_voice_id,story_reader_voice_id)';
+      var res = await fetch(url, { headers: getAuthHeaders() });
+      if (!res.ok) return;
+      var rows = await res.json();
+      rows.forEach(function(row) {
+        if (row.key === 'gethro_voice_id')       _cachedGethroVoiceId      = row.value || null;
+        if (row.key === 'story_reader_voice_id')  _cachedStoryReaderVoiceId = row.value || null;
+      });
+    } catch(e) { dbgWarn('VOICES', 'loadVoicePrefs error:', e.message); }
+
+    try {
+      var cvUrl = SUPABASE_URL + '/rest/v1/life_custom_voices?user_id=eq.' + currentUser.id + '&order=created_at.asc';
+      var cvRes = await fetch(cvUrl, { headers: getAuthHeaders() });
+      if (cvRes.ok) _customVoices = await cvRes.json();
+    } catch(e) { dbgWarn('VOICES', 'loadCustomVoices error:', e.message); }
+  }
+
+  async function saveVoicePref(key, value) {
+    if (!currentUser) return;
+    try {
+      // value null or 'default' → store empty string (= use server default)
+      var stored = (!value || value === 'default') ? '' : value;
+      await fetch(DB_SETTINGS_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, key: key, value: stored, updated_at: new Date().toISOString() })
+      });
+    } catch(e) { dbgWarn('VOICES', 'saveVoicePref error:', e.message); }
+  }
+
+  // Build one voice row card for the settings list
+  function _buildVoiceRow(voice, slot, currentVoiceId, isCustom) {
+    var isSelected = (voice.id === 'default')
+      ? (!currentVoiceId || currentVoiceId === '' || currentVoiceId === 'default')
+      : (currentVoiceId === voice.id);
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid ' +
+      (isSelected ? 'var(--sage)' : 'var(--border)') + ';background:' +
+      (isSelected ? 'rgba(120,160,100,0.07)' : 'var(--surface)') + ';cursor:pointer;transition:border-color 0.15s';
+
+    // Selection dot
+    var dot = document.createElement('div');
+    dot.style.cssText = 'width:16px;height:16px;border-radius:50%;flex-shrink:0;border:2px solid ' +
+      (isSelected ? 'var(--sage)' : 'var(--border)') + ';background:' +
+      (isSelected ? 'var(--sage)' : 'transparent') + ';transition:all 0.15s';
+
+    // Label block
+    var labelWrap = document.createElement('div');
+    labelWrap.style.cssText = 'flex:1;min-width:0';
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:0.9rem;font-weight:' + (isSelected ? '700' : '600') + ';color:var(--text)';
+    nameEl.textContent = voice.label + (isSelected ? ' ✓' : '');
+    var descEl = document.createElement('div');
+    descEl.style.cssText = 'font-size:0.75rem;color:var(--text-light);margin-top:1px';
+    descEl.textContent = voice.desc || '';
+    labelWrap.appendChild(nameEl);
+    labelWrap.appendChild(descEl);
+
+    // Preview button
+    var prevBtn = document.createElement('button');
+    prevBtn.className = 'btn btn-ghost';
+    prevBtn.style.cssText = 'font-size:0.75rem;padding:5px 9px;flex-shrink:0';
+    prevBtn.textContent = '▶';
+    prevBtn.title = 'Preview ' + voice.label;
+    prevBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      _previewVoice(voice.id === 'default' ? null : voice.id, prevBtn);
+    });
+
+    row.appendChild(dot);
+    row.appendChild(labelWrap);
+    row.appendChild(prevBtn);
+
+    // Delete button — custom voices only
+    if (isCustom) {
+      var delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-ghost';
+      delBtn.style.cssText = 'font-size:0.75rem;padding:5px 9px;flex-shrink:0;color:var(--rose)';
+      delBtn.textContent = 'Delete';
+      delBtn.title = 'Remove this custom voice';
+      delBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (confirm('Delete voice "' + voice.label + '"? Any slot using it will revert to Default.')) {
+          deleteCustomVoice(voice.id);
+        }
+      });
+      row.appendChild(delBtn);
+    }
+
+    // Click row = select
+    row.addEventListener('click', function() {
+      _selectVoice(slot, voice.id === 'default' ? null : voice.id);
+    });
+
+    return row;
+  }
+
+  async function _previewVoice(voiceId, btnEl) {
+    if (!sessionToken) return;
+    var origText = btnEl.textContent;
+    btnEl.textContent = '⏳';
+    btnEl.disabled = true;
+    try {
+      var freshToken = sessionToken;
+      try {
+        var sess = await sb.auth.getSession();
+        if (sess?.data?.session) freshToken = sess.data.session.access_token;
+      } catch(e) {}
+      var body = { text: _VOICE_PREVIEW_TEXT };
+      if (voiceId) body.voice_id = voiceId;
+      var res = await fetch(TTS_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error('TTS ' + res.status);
+      var buf = await res.arrayBuffer();
+      if (!buf.byteLength) throw new Error('empty');
+      var ctx = _gethroAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (!_gethroAudioCtx) _gethroAudioCtx = ctx;
+      if (ctx.state === 'suspended') await ctx.resume();
+      ctx.decodeAudioData(buf, function(decoded) {
+        var src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(ctx.destination);
+        src.start(0);
+        src.onended = function() { btnEl.textContent = origText; btnEl.disabled = false; };
+      }, function() { btnEl.textContent = origText; btnEl.disabled = false; });
+    } catch(e) {
+      dbgWarn('VOICES', 'preview error:', e.message);
+      btnEl.textContent = origText;
+      btnEl.disabled = false;
+      var statusEl = document.getElementById('voicesStatus');
+      if (statusEl) { statusEl.textContent = 'Preview failed — try again.'; statusEl.style.color = 'var(--rose)'; }
+    }
+  }
+
+  function _selectVoice(slot, voiceId) {
+    // slot: 'gethro' | 'story_reader'
+    var key = slot === 'gethro' ? 'gethro_voice_id' : 'story_reader_voice_id';
+    if (slot === 'gethro') _cachedGethroVoiceId = voiceId;
+    else _cachedStoryReaderVoiceId = voiceId;
+    saveVoicePref(key, voiceId);
+    var statusEl = document.getElementById('voicesStatus');
+    if (statusEl) {
+      var slotLabel = slot === 'gethro' ? "Gethro's voice" : 'Story Reader voice';
+      var voiceLabel = voiceId || 'Default';
+      statusEl.textContent = slotLabel + ' set to ' + voiceLabel + ' ✓';
+      statusEl.style.color = 'var(--sage)';
+      setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
+    }
+    // Re-render to update selection state
+    renderVoicesSettingsSection();
+  }
+
+  function renderVoicesSettingsSection() {
+    var section = document.getElementById('settingsVoicesSection');
+    if (!section) return;
+
+    var stockList = document.getElementById('voicesStockList');
+    if (!stockList) return;
+    stockList.innerHTML = '';
+
+    // ── Gethro voice slot ────────────────────────────────────────────────────
+    var gethroHeader = document.createElement('p');
+    gethroHeader.style.cssText = 'font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px';
+    gethroHeader.textContent = "Gethro's voice";
+    stockList.appendChild(gethroHeader);
+
+    _STOCK_VOICES.forEach(function(v) {
+      stockList.appendChild(_buildVoiceRow(v, 'gethro', _cachedGethroVoiceId, false));
+    });
+
+    // Custom voices for Gethro slot
+    if (_customVoices.length > 0) {
+      _customVoices.forEach(function(cv) {
+        stockList.appendChild(_buildVoiceRow(
+          { id: cv.voice_id, label: cv.label, desc: 'Your recorded voice' },
+          'gethro', _cachedGethroVoiceId, true
+        ));
+      });
+    }
+
+    // ── Story Reader voice slot ──────────────────────────────────────────────
+    var readerHeader = document.createElement('p');
+    readerHeader.style.cssText = 'font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:0.06em;margin:16px 0 8px';
+    readerHeader.textContent = 'Story Reader voice';
+    stockList.appendChild(readerHeader);
+
+    _STOCK_VOICES.forEach(function(v) {
+      stockList.appendChild(_buildVoiceRow(v, 'story_reader', _cachedStoryReaderVoiceId, false));
+    });
+
+    if (_customVoices.length > 0) {
+      _customVoices.forEach(function(cv) {
+        stockList.appendChild(_buildVoiceRow(
+          { id: cv.voice_id, label: cv.label, desc: 'Your recorded voice' },
+          'story_reader', _cachedStoryReaderVoiceId, true
+        ));
+      });
+    }
+
+    // Show/hide custom voices section header
+    var customSection = document.getElementById('voicesCustomSection');
+    if (customSection) customSection.style.display = 'none'; // inlined above now
+
+    // Record button: disabled at cap (3 voices)
+    var recBtn = document.getElementById('voicesRecordBtn');
+    if (recBtn) {
+      var atCap = _customVoices.length >= 3;
+      if (atCap) {
+        recBtn.innerHTML = '\uD83C\uDF99\uFE0F + Record a voice <span style="font-size:0.75rem;color:var(--text-light)">(3 voice limit reached)</span>';
+        recBtn.disabled = true;
+        recBtn.title = '3 voice limit reached \u2014 delete a voice to record a new one';
+      } else {
+        recBtn.innerHTML = '\uD83C\uDF99\uFE0F + Record a voice';
+        recBtn.disabled = false;
+        recBtn.title = '';
+      }
+    }
+  }
+
+  // ── APP-53 Phase 3: Voice recording + clone flow ─────────────────────────
+  // State for the record overlay session
+  var _vrStream   = null;  // MediaStream from getUserMedia
+  var _vrRecorder = null;  // MediaRecorder instance
+  var _vrChunks   = [];    // collected audio chunks
+  var _vrMime     = '';    // MIME type chosen for this recording
+  var _vrBlob     = null;  // final recorded blob (set on onstop)
+  var _vrStartTs  = 0;     // recording start timestamp (ms)
+
+  function _vrGetMime() {
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+    for (var i = 0; i < candidates.length; i++) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return '';
+  }
+
+  function openVoiceRecord() {
+    var overlay = document.getElementById('voiceRecordOverlay');
+    if (!overlay) return;
+    // Reset state
+    _vrBlob = null; _vrChunks = []; _vrStream = null; _vrRecorder = null;
+    document.getElementById('vrLabelInput').value = '';
+    document.getElementById('vrConsentCheck').checked = false;
+    var statusEl = document.getElementById('vrStatus');
+    if (statusEl) { statusEl.textContent = 'Press Record and speak for 5\u201315 seconds.'; statusEl.style.color = 'var(--text-light)'; }
+    var recBtn = document.getElementById('vrRecordBtn');
+    if (recBtn) { recBtn.disabled = false; recBtn.textContent = '\uD83D\uDD34 Record'; }
+    var stopBtn = document.getElementById('vrStopBtn');
+    if (stopBtn) stopBtn.disabled = true;
+    var upBtn = document.getElementById('vrUploadBtn');
+    if (upBtn) { upBtn.disabled = true; upBtn.textContent = 'Save Voice'; }
+    var reviewSec = document.getElementById('vrReviewSection');
+    if (reviewSec) reviewSec.style.display = 'none';
+    overlay.style.display = 'flex';
+  }
+
+  function closeVoiceRecord() {
+    var overlay = document.getElementById('voiceRecordOverlay');
+    if (overlay) overlay.style.display = 'none';
+    _vrStopStream();
+  }
+
+  function _vrStopStream() {
+    if (_vrRecorder && _vrRecorder.state !== 'inactive') {
+      try { _vrRecorder.stop(); } catch(e) {}
+    }
+    if (_vrStream) {
+      _vrStream.getTracks().forEach(function(t) { t.stop(); });
+      _vrStream = null;
+    }
+  }
+
+  async function vrStartRecording() {
+    var statusEl = document.getElementById('vrStatus');
+    if (!statusEl) return;
+    try {
+      statusEl.textContent = 'Requesting microphone\u2026';
+      statusEl.style.color = 'var(--text-light)';
+      _vrStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      _vrMime   = _vrGetMime();
+      _vrChunks = [];
+      _vrRecorder = new MediaRecorder(_vrStream, _vrMime ? { mimeType: _vrMime } : {});
+      _vrRecorder.ondataavailable = function(e) { if (e.data && e.data.size > 0) _vrChunks.push(e.data); };
+      _vrRecorder.onstop = function() {
+        _vrBlob = new Blob(_vrChunks, { type: _vrMime || 'audio/webm' });
+        var elapsed = Math.round((Date.now() - _vrStartTs) / 1000);
+        var reviewSec = document.getElementById('vrReviewSection');
+        var upBtn = document.getElementById('vrUploadBtn');
+        var recBtn = document.getElementById('vrRecordBtn');
+        var stopBtn = document.getElementById('vrStopBtn');
+        if (elapsed < 5) {
+          statusEl.textContent = 'Too short (' + elapsed + 's) \u2014 please record at least 5 seconds.';
+          statusEl.style.color = 'var(--rose)';
+          _vrBlob = null;
+          if (recBtn) { recBtn.disabled = false; }
+          if (stopBtn) stopBtn.disabled = true;
+          if (reviewSec) reviewSec.style.display = 'none';
+          if (upBtn) upBtn.disabled = true;
+        } else {
+          statusEl.textContent = 'Recorded ' + elapsed + 's \u2014 add a label and consent below.';
+          statusEl.style.color = 'var(--sage)';
+          if (reviewSec) reviewSec.style.display = 'block';
+          if (upBtn) upBtn.disabled = true; // still needs label + consent
+          if (recBtn) recBtn.disabled = false;
+          if (stopBtn) stopBtn.disabled = true;
+        }
+        _vrStopStream();
+      };
+      _vrRecorder.start();
+      _vrStartTs = Date.now();
+      var recBtn2 = document.getElementById('vrRecordBtn');
+      var stopBtn2 = document.getElementById('vrStopBtn');
+      if (recBtn2) recBtn2.disabled = true;
+      if (stopBtn2) stopBtn2.disabled = false;
+      statusEl.textContent = '\uD83D\uDD34 Recording\u2026 (speak naturally for 5\u201315 seconds)';
+      statusEl.style.color = 'var(--rose)';
+      // Auto-stop at 15s
+      setTimeout(function() {
+        if (_vrRecorder && _vrRecorder.state === 'recording') vrStopRecording();
+      }, 15000);
+    } catch(e) {
+      statusEl.textContent = 'Microphone access denied or unavailable.';
+      statusEl.style.color = 'var(--rose)';
+      dbgWarn('VOICES', 'vrStartRecording error:', e.message);
+    }
+  }
+
+  function vrStopRecording() {
+    if (_vrRecorder && _vrRecorder.state === 'recording') {
+      _vrRecorder.stop();
+      var stopBtn = document.getElementById('vrStopBtn');
+      if (stopBtn) stopBtn.disabled = true;
+    }
+  }
+
+  function vrCheckUploadReady() {
+    var label   = (document.getElementById('vrLabelInput') ? document.getElementById('vrLabelInput').value : '').trim();
+    var consent = document.getElementById('vrConsentCheck') ? document.getElementById('vrConsentCheck').checked : false;
+    var upBtn = document.getElementById('vrUploadBtn');
+    if (upBtn) upBtn.disabled = !(_vrBlob && label && consent);
+  }
+
+  async function vrUpload() {
+    var labelEl   = document.getElementById('vrLabelInput');
+    var consentEl = document.getElementById('vrConsentCheck');
+    var statusEl  = document.getElementById('vrStatus');
+    var upBtn     = document.getElementById('vrUploadBtn');
+    var label   = labelEl ? labelEl.value.trim() : '';
+    var consent = consentEl ? consentEl.checked : false;
+    if (!_vrBlob || !label || !consent || !currentUser || !sessionToken) return;
+
+    if (upBtn) { upBtn.disabled = true; upBtn.textContent = 'Uploading\u2026'; }
+    if (statusEl) { statusEl.textContent = 'Sending to voice clone service\u2026'; statusEl.style.color = 'var(--text-light)'; }
+
+    try {
+      var freshToken = sessionToken;
+      try {
+        var sess = await sb.auth.getSession();
+        if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
+      } catch(e) {}
+
+      var form = new FormData();
+      var ext = (_vrMime && _vrMime.indexOf('mp4') !== -1) ? 'm4a' : 'webm';
+      form.append('audio', _vrBlob, 'voice_sample.' + ext);
+      form.append('label', label);
+
+      var CLONE_PROXY_URL = SUPABASE_URL + '/functions/v1/inworld-voice-clone-proxy';
+      var res = await fetch(CLONE_PROXY_URL, {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
+        body: form
+      });
+
+      if (res.status === 409) {
+        if (statusEl) { statusEl.textContent = 'Voice limit reached (3 max) \u2014 delete a voice first.'; statusEl.style.color = 'var(--rose)'; }
+        if (upBtn) { upBtn.textContent = 'Save Voice'; upBtn.disabled = false; }
+        return;
+      }
+      if (!res.ok) {
+        var errTxt = '';
+        try { errTxt = await res.text(); } catch(e2) {}
+        throw new Error('Clone proxy ' + res.status + ': ' + errTxt.slice(0, 120));
+      }
+
+      // Success: reload custom voices and re-render
+      var cvUrl = SUPABASE_URL + '/rest/v1/life_custom_voices?user_id=eq.' + currentUser.id + '&order=created_at.asc';
+      var cvRes = await fetch(cvUrl, { headers: getAuthHeaders() });
+      if (cvRes.ok) _customVoices = await cvRes.json();
+
+      closeVoiceRecord();
+      renderVoicesSettingsSection();
+      var voicesStatus = document.getElementById('voicesStatus');
+      if (voicesStatus) {
+        voicesStatus.textContent = '"' + label + '" saved to Your voices \u2713';
+        voicesStatus.style.color = 'var(--sage)';
+        setTimeout(function() { if (voicesStatus) voicesStatus.textContent = ''; }, 4000);
+      }
+    } catch(e) {
+      dbgWarn('VOICES', 'vrUpload error:', e.message);
+      if (statusEl) { statusEl.textContent = 'Upload failed \u2014 ' + (e.message || 'try again'); statusEl.style.color = 'var(--rose)'; }
+      if (upBtn) { upBtn.textContent = 'Save Voice'; upBtn.disabled = false; }
+    }
+  }
+
+  async function deleteCustomVoice(voiceId) {
+    if (!currentUser) return;
+    try {
+      var url = SUPABASE_URL + '/rest/v1/life_custom_voices?user_id=eq.' + currentUser.id + '&voice_id=eq.' + encodeURIComponent(voiceId);
+      await fetch(url, { method: 'DELETE', headers: getAuthHeaders() });
+
+      // Revert any slot using this voice_id to default
+      if (_cachedGethroVoiceId === voiceId) {
+        _cachedGethroVoiceId = null;
+        saveVoicePref('gethro_voice_id', null);
+      }
+      if (_cachedStoryReaderVoiceId === voiceId) {
+        _cachedStoryReaderVoiceId = null;
+        saveVoicePref('story_reader_voice_id', null);
+      }
+
+      // Reload + re-render
+      var cvUrl = SUPABASE_URL + '/rest/v1/life_custom_voices?user_id=eq.' + currentUser.id + '&order=created_at.asc';
+      var cvRes = await fetch(cvUrl, { headers: getAuthHeaders() });
+      if (cvRes.ok) _customVoices = await cvRes.json();
+      renderVoicesSettingsSection();
+    } catch(e) {
+      dbgWarn('VOICES', 'deleteCustomVoice error:', e.message);
+    }
+  }
+  // ── END APP-53 Phase 3 record flow ────────────────────────────────────────
+
   function renderPrivacySettingsSection() {
     var el = document.getElementById('settingsPrivacySection');
     if (!el) return;
@@ -23970,6 +24445,14 @@
     on('profileEditSaveBtn',   'click', saveProfileEdit);
     on('settingsBtn',          'click', openSettings);
     on('signOutBtn',    'click', signOut);
+    on('voicesRecordBtn', 'click', openVoiceRecord); // APP-53 Phase 3
+    // ── Voice Record Overlay (APP-53 Phase 3) ────────────────────────────────
+    on('vrCloseBtn',    'click', closeVoiceRecord);
+    on('vrRecordBtn',   'click', vrStartRecording);
+    on('vrStopBtn',     'click', vrStopRecording);
+    on('vrLabelInput',  'input', vrCheckUploadReady);
+    on('vrConsentCheck','change', vrCheckUploadReady);
+    on('vrUploadBtn',   'click', vrUpload);
 
     // ── Tag manager ───────────────────────────────────────────────────────
     on('tagManagerInput', 'keydown', function(e) { if(e.key==='Enter'){e.preventDefault();addTagManagerItem();} });
@@ -24697,6 +25180,26 @@
       <p style="font-size:0.85rem;color:var(--text-light)">Loading…</p>
     </div>
 
+    <!-- APP-53 Phase 2: Voices -->
+    <div id="settingsVoicesSection" style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">🎙️ Voices</h4>
+      <p style="font-size:0.82rem;color:var(--text-light);margin:0 0 14px">Choose who tells your story.</p>
+
+      <!-- Stock voices list -->
+      <div id="voicesStockList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
+
+      <!-- Your custom voices list (populated from life_custom_voices) -->
+      <div id="voicesCustomSection" style="display:none">
+        <p style="font-size:0.78rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px">Your recorded voices</p>
+        <div id="voicesCustomList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      </div>
+
+      <!-- Record CTA — wired in Phase 3 -->
+      <button id="voicesRecordBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:9px;margin-top:4px">&#x1F399;&#xFE0F; + Record a voice</button>
+
+      <p id="voicesStatus" style="font-size:0.78rem;color:var(--text-light);margin:8px 0 0;min-height:1em"></p>
+    </div>
+
     <!-- Delete Account -->
     <div style="border:2px solid var(--rose);border-radius:12px;padding:18px;background:rgba(180,60,60,0.04)">
       <h4 style="font-size:0.85rem;font-weight:700;color:var(--rose);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">⚠️ Delete Account</h4>
@@ -24820,6 +25323,36 @@
     <div style="display:flex;gap:10px">
       <button id="goalSkipBtn" class="btn btn-ghost" style="flex:1;font-size:0.85rem">Skip</button>
       <button id="goalNextBtn" class="btn btn-primary" style="flex:2;font-size:0.85rem" disabled>Next</button>
+    </div>
+  </div>
+</div>
+<!-- ── APP-53 Phase 3: Voice Record Overlay ─────────────────────────────── -->
+<div id="voiceRecordOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2200;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <h3 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin:0">&#x1F399;&#xFE0F; Record a Voice</h3>
+      <button id="vrCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
+    </div>
+    <!-- Instructions -->
+    <p style="font-size:0.83rem;color:var(--text-light);line-height:1.6;margin:0 0 16px">Record 5&#x2013;15 seconds of someone speaking naturally. LifeTold will clone this voice so it can read your story aloud.</p>
+    <!-- Record / Stop controls -->
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
+      <button id="vrStopBtn" class="btn btn-ghost" style="flex:1" disabled>&#x23F9; Stop</button>
+    </div>
+    <!-- Status line -->
+    <p id="vrStatus" style="font-size:0.82rem;color:var(--text-light);min-height:1.2em;margin:0 0 16px"></p>
+    <!-- Label + consent (shown after a valid recording) -->
+    <div id="vrReviewSection" style="display:none">
+      <label style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Voice name <span style="color:var(--rose)">*</span></label>
+      <input id="vrLabelInput" type="text" placeholder='e.g. "Mum" or "Dad"'
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.92rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:12px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px">
+        <input id="vrConsentCheck" type="checkbox" style="margin-top:3px;flex-shrink:0">
+        <span style="font-size:0.8rem;color:var(--text-light);line-height:1.55">I have this person&#x2019;s permission (or I am this person) and consent to cloning their voice within LifeTold.</span>
+      </label>
+      <button id="vrUploadBtn" class="btn btn-primary" style="width:100%;font-weight:700" disabled>Save Voice</button>
     </div>
   </div>
 </div>
