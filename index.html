@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.33';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.33: Fixed AGP mic chunk-flush bugs: (1) silence loop was spinning (re-fired every RAF frame after flush instead of waiting another 2s); (2) after chunks accumulated in _agpLiveText, the final 5s flush bailed on small blob without sending — now correctly sends accumulated text to Gethro.';
+  const APP_VERSION  = 'v6.34';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.34: Fixed AGP mid-conversation flush: separated concerns — silence loop (RAF) handles only the 5s send-to-Gethro trigger; chunk flushing now driven by a clean setInterval every AGP_FLUSH_MS=2s. Fixes spin loop and fixes accumulated liveText never being sent.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21231,6 +21231,7 @@
 
   function _agpMicRelease() {
     if (_agpMicSilenceRAF) { cancelAnimationFrame(_agpMicSilenceRAF); _agpMicSilenceRAF = null; }
+    if (_agpChunkInterval) { clearInterval(_agpChunkInterval); _agpChunkInterval = null; }
     if (_agpAnalyserCtx)   { try { _agpAnalyserCtx.close(); } catch(e) {} _agpAnalyserCtx = null; }
     _agpAnalyser        = null;
     _agpMicSilenceStart = null;
@@ -21243,13 +21244,12 @@
     _agpHadVoice        = false;
   }
 
-  // Silence detection loop — two-tier:
-  //   AGP_FLUSH_MS: short pause → flush chunk to Whisper + restart recorder (mid-sentence transcription)
-  //   AGP_SILENCE_MS: long pause → final flush + send to Gethro
+  // Silence detection loop — fires _agpFlushAndSend after AGP_SILENCE_MS of sustained silence.
+  // Mid-conversation chunk flushing is handled separately by _agpChunkInterval (setInterval).
   function _agpSilenceLoop() {
     if (!_agpMicActive) { _agpMicSilenceRAF = null; return; }
-    var now      = Date.now();
-    var recAge   = now - (_agpMicRecordStart || now);
+    var now    = Date.now();
+    var recAge = now - (_agpMicRecordStart || now);
     var isSilent;
 
     if (_agpAnalyser) {
@@ -21259,7 +21259,6 @@
       for (var i = 0; i < buf.length; i++) { var v = Math.abs(buf[i] - 128); if (v > vol) vol = v; }
       isSilent = (vol < AGP_SPEECH_THRESHOLD);
     } else {
-      // Fallback: chunk data-rate heuristic
       var avg = _agpMicRecentBytes.length
         ? _agpMicRecentBytes.reduce(function(a, b){ return a + b; }, 0) / _agpMicRecentBytes.length
         : 0;
@@ -21269,64 +21268,57 @@
     if (isSilent) {
       if (_agpMicSilenceStart === null) _agpMicSilenceStart = now;
       var silenceAge = now - _agpMicSilenceStart;
-      if (!_agpMicTranscribing && recAge >= AGP_MIN_REC_MS) {
-        if (silenceAge >= AGP_SILENCE_MS) {
-          // Tier 2: long pause — final flush and send to Gethro
-          dbg('AGP_MIC', 'Long silence (' + AGP_SILENCE_MS + 'ms) — final flush + send');
-          _agpMicSilenceRAF = null;
-          _agpFlushAndSend(true);
-          return;
-        } else if (silenceAge >= AGP_FLUSH_MS) {
-          // Tier 1: short pause — flush chunk, restart recorder, keep listening
-          dbg('AGP_MIC', 'Short silence (' + AGP_FLUSH_MS + 'ms) — flushing chunk');
-          _agpMicSilenceStart = now; // reset so we wait another AGP_FLUSH_MS before re-firing
-          _agpFlushChunk();
-          // loop continues — _agpFlushChunk is async and non-blocking
-        }
+      if (silenceAge >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpMicTranscribing) {
+        dbg('AGP_MIC', 'Silence (' + AGP_SILENCE_MS + 'ms) — sending to Gethro');
+        _agpMicSilenceRAF = null;
+        _agpFlushAndSend(true);
+        return;
       }
     } else {
       _agpMicSilenceStart = null;
-      _agpHadVoice = true; // real speech volume confirmed by AnalyserNode
+      _agpHadVoice = true;
     }
     _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
   }
 
-  // Flush current chunk to Whisper, restart recorder, accumulate into _agpLiveText.
-  // Mid-conversation version of _agpFlushAndSend — does NOT send to Gethro.
+  // Mid-conversation chunk flusher — runs on a fixed interval while mic is active.
+  // Every AGP_FLUSH_MS, if real speech was detected, transcribes the current chunk,
+  // restarts the recorder, and appends the result to _agpLiveText shown in the input.
+  // Does NOT send to Gethro — that is handled by the silence loop above.
   var _agpFlushCooldown = false;
+  var _agpChunkInterval = null;
+
   async function _agpFlushChunk() {
-    if (_agpMicTranscribing || _agpFlushCooldown) return;
-    if (!_agpMicRecorder || !_agpMicChunks.length) return;
-    var hadVoice      = _agpHadVoice;
-    var analyserWasOn = !!_agpAnalyserCtx;
-    if (analyserWasOn && !hadVoice) {
-      dbg('AGP_MIC', 'Chunk flush: no speech detected — skipping');
+    if (!_agpMicActive || _agpMicTranscribing || _agpFlushCooldown) return;
+    if (!_agpHadVoice) {
+      dbg('AGP_MIC', 'Chunk flush: no speech this segment — skipping');
       return;
     }
-    _agpMicTranscribing = true;
-    _agpFlushCooldown   = false;
+    if (!_agpMicRecorder || !_agpMicChunks.length) return;
 
-    // Stop current recorder and await full drain
+    _agpMicTranscribing = true;
+
+    // Stop recorder and await full chunk drain
     var oldRecorder = _agpMicRecorder;
     _agpMicRecorder = null;
+    var mime = _agpMicMime || 'audio/ogg';
     var blob = await new Promise(function(resolve) {
       var snap = _agpMicChunks.slice();
       oldRecorder.addEventListener('stop', function() {
         var tail = _agpMicChunks.slice(snap.length);
-        resolve(new Blob(snap.concat(tail), { type: _agpMicMime || 'audio/ogg' }));
+        resolve(new Blob(snap.concat(tail), { type: mime }));
       }, { once: true });
-      try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' })); }
-      catch(e) { resolve(new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' })); }
+      try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(new Blob(snap, { type: mime })); }
+      catch(e) { resolve(new Blob(snap, { type: mime })); }
     });
 
-    if (!_agpMicActive) { _agpMicTranscribing = false; return; } // stopped mid-flush
+    if (!_agpMicActive) { _agpMicTranscribing = false; return; }
 
-    // Reset chunks and restart recorder immediately so user speech is captured during transcription
+    // Restart recorder immediately — captures speech during Whisper round-trip
     _agpMicChunks      = [];
     _agpMicRecentBytes = [];
     _agpMicRecordStart = Date.now();
     _agpHadVoice       = false;
-    _agpMicSilenceStart = null; // reset silence timer for new segment
     try {
       var newRec = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
       newRec.ondataavailable = function(e) {
@@ -21336,7 +21328,7 @@
           if (_agpMicRecentBytes.length > AGP_CHUNK_RATE_WINDOW) _agpMicRecentBytes.shift();
         }
       };
-      newRec.onerror = function(e) { dbgErr('AGP_MIC', 'Restarted recorder error:', e.error); };
+      newRec.onerror = function(e) { dbgErr('AGP_MIC', 'Chunk recorder error:', e.error); };
       newRec.start(100);
       _agpMicRecorder = newRec;
       dbg('AGP_MIC', 'Recorder restarted for next chunk');
@@ -21350,7 +21342,6 @@
       _agpMicTranscribing = false; return;
     }
 
-    // POST chunk to Whisper
     try {
       var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
@@ -21364,15 +21355,15 @@
         body: form
       });
       var rawText = await res.text();
-      var data;
-      try { data = JSON.parse(rawText); } catch(e2) { throw new Error('Invalid JSON ' + res.status); }
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
-      var chunk = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      var parsed;
+      try { parsed = JSON.parse(rawText); } catch(e2) { throw new Error('Invalid JSON ' + res.status); }
+      if (!res.ok || !parsed.ok) throw new Error(parsed.error || 'Transcription error ' + res.status);
+      var chunk = (parsed.result && parsed.result.transcript) ? parsed.result.transcript.trim() : '';
       if (chunk && !AGP_HALLUCINATIONS.test(chunk)) {
         _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + chunk : chunk;
         var inp = document.getElementById('agpInput');
-        if (inp) inp.value = _agpLiveText; // show accumulating text live in input field
-        dbg('AGP_MIC', 'Chunk appended — "' + chunk + '" total=' + _agpLiveText.length + ' chars');
+        if (inp) inp.value = _agpLiveText;
+        dbg('AGP_MIC', 'Chunk appended — "' + chunk + '" / total=' + _agpLiveText.length + ' chars');
       } else if (chunk) {
         dbg('AGP_MIC', 'Chunk hallucination filtered: "' + chunk + '"');
       }
@@ -21584,6 +21575,8 @@
       _agpAnalyserCtx = null; _agpAnalyser = null;
     }
     _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
+    // Chunk interval: every AGP_FLUSH_MS, flush accumulated speech to Whisper
+    _agpChunkInterval = setInterval(_agpFlushChunk, AGP_FLUSH_MS);
   }
 
   function _agpStopMic(doSend) {
@@ -21591,6 +21584,7 @@
     // For panel-close and new-chat we don't want to send; for all other paths, send.
     if (!_agpMicActive) return;
     if (_agpMicSilenceRAF) { cancelAnimationFrame(_agpMicSilenceRAF); _agpMicSilenceRAF = null; }
+    if (_agpChunkInterval) { clearInterval(_agpChunkInterval); _agpChunkInterval = null; }
     _agpFlushAndSend(!!doSend);
   }
 
@@ -21599,6 +21593,7 @@
     if (_agpMicActive) {
       dbg('AGP_MIC', 'Manual stop — flushing and sending');
       if (_agpMicSilenceRAF) { cancelAnimationFrame(_agpMicSilenceRAF); _agpMicSilenceRAF = null; }
+      if (_agpChunkInterval) { clearInterval(_agpChunkInterval); _agpChunkInterval = null; }
       _agpFlushAndSend(true);
     } else {
       _agpStartMic();
