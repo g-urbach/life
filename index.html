@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.24';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic: _agpFlushChunk now awaits recorder stop before snapshotting chunks (mirrors _micFlushChunk fix). Without this, _agpRestartRecorder created a new MediaRecorder whose first chunk lacked a container header, causing Groq to reject every chunk after the first with 502 invalid media file.';
+  const APP_VERSION  = 'v6.25';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP conversation-mode mic fixes: (1) inactivity follow-up nudge now resets whenever real speech is detected (via volume analyser), instead of a fixed window from mic-start — fixes Gethro cutting users off mid-answer and firing a new follow-up on top of it (root cause of stacked questions like the "Something About Mary" repro); (2) nudge capped to 1 per turn, reset once the user actually replies, so Gethro can\u2019t ask a 2nd/3rd question before the 1st is answered; (3) bumped inactivity window 5s\u21929s to give realistic thinking time; (4) transcripts from segments where no voice was ever detected are now discarded as hallucinations regardless of content — fixes "What?" / random phrase fragments appearing with no speech; (5) AGP_HALLUCINATIONS regex broadened to catch more Whisper silence artefacts ("What?", "Okay.", "Hmm.", etc).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -20315,6 +20315,9 @@
     var fab   = document.getElementById('askGethroFab');
     if (!panel) return;
     featTrackGethroOpen();
+    // v6.25: fresh panel open — clear the "already nudged" counter so the
+    // inactivity follow-up can fire once for this new session.
+    _agpConsecutiveNudges = 0;
     // Stop memory mic if running — avoid two simultaneous mic streams competing.
     if (typeof memMicActive !== 'undefined' && memMicActive) {
       if (typeof stopMemMic === 'function') stopMemMic();
@@ -20716,6 +20719,10 @@
     var inp  = document.getElementById('agpInput');
     var text = (inp ? inp.value.trim() : '');
     if (!text) return;
+
+    // v6.25: the user has actually replied — clear the "already nudged this turn"
+    // counter so a future genuine silence can prompt one follow-up again.
+    _agpConsecutiveNudges = 0;
 
     // ── 'next' shortcut: ask a fresh question about the current memory ──
     var nextPhrases = ['next','next question','another question','ask me another',
@@ -21151,7 +21158,7 @@
   var _agpMicRecorder  = null;  // MediaRecorder instance
   var _agpMicChunks    = [];    // audio chunk accumulator for CURRENT segment
   var _agpMicMime      = '';    // MIME type chosen at start
-  var _agpInactivityTimer = null; // fires follow-up question if user silent for AGP_INACTIVITY_MS
+  var _agpInactivityTimer = null; // fires follow-up question if user genuinely silent for AGP_INACTIVITY_MS
   var _agpAnalyserCtx  = null;  // AudioContext for silence detection (isolated from TTS + mem mic)
   var _agpAnalyser     = null;  // AnalyserNode
   var _agpSilenceRAF   = null;  // rAF handle
@@ -21160,14 +21167,36 @@
   var _agpTranscribing = false; // true while a chunk transcription is in-flight
   var _agpLiveText     = '';    // accumulated live transcript shown in input (cleared on send)
   var _agpRecentChunkBytes = []; // rolling window for fallback silence detection
+  // v6.25: voice-activity tracking for the CURRENT recording segment — true once the
+  // analyser (or chunk-rate fallback) has detected actual speech volume. Used to (a)
+  // reset the inactivity timer so it only fires on genuine silence, not mid-sentence
+  // pauses before a flush, and (b) discard Whisper transcripts for segments where no
+  // voice was ever detected (kills "What?" / random-phrase hallucinations from background
+  // noise at the source, rather than relying solely on the regex blacklist below).
+  var _agpHadVoice         = false;
+  // v6.25: caps proactive "you've gone quiet" follow-up nudges to ONE per Gethro turn.
+  // Reset to 0 whenever the user actually sends a real message. Prevents Gethro from
+  // stacking 2nd/3rd questions back-to-back if the user simply hasn't replied yet.
+  var _agpConsecutiveNudges = 0;
+  const AGP_MAX_CONSECUTIVE_NUDGES = 1;
 
-  // Hallucinations Whisper emits on near-silence — discard these silently
-  var AGP_HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+|,+)$/i;
+  // Hallucinations Whisper emits on near-silence — discard these silently.
+  // Expanded v6.25 to cover short stock phrases Whisper tends to invent from
+  // background noise/silence (e.g. "What?", "Okay.", "Hmm.") in addition to the
+  // _agpHadVoice check above, as defense-in-depth.
+  var AGP_HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|what\??|okay\.?|ok\.?|yeah\.?|yes\.?|no\.?|huh\??|hmm+\.?|um+\.?|uh+\.?|hello\??|hi\.?|so\.?|right\.?|\[.*\]|\.+|,+)$/i;
 
   const AGP_SILENCE_MS        = 2500; // ms of sustained silence before auto-send
   const AGP_FLUSH_MS          = 1800; // ms of silence before flushing chunk live (shorter than send threshold)
   const AGP_TIME_FLUSH_MS     = 8000; // flush every 8s while actively speaking (live dictation feel)
-  const AGP_INACTIVITY_MS     = 5000; // if mic is on but user silent for 5s with no input, ask a follow-up
+  // v6.25: was 5000ms and measured from mic-start regardless of activity, so a user
+  // who started answering but paused (or just talked continuously past 5s without a
+  // flush) got cut off mid-answer and a NEW follow-up question fired on top of it.
+  // Now reset every time real speech is detected (see _agpSilenceLoop), so this is
+  // effectively "ms of TOTAL silence since mic start or since you last spoke" — bumped
+  // to give people a realistic moment to start recalling/answering before Gethro
+  // jumps in again.
+  const AGP_INACTIVITY_MS     = 9000; // if mic is on but genuinely silent (no speech detected) for 9s, ask a follow-up
   const AGP_MIN_REC_MS        = 800;  // don't auto-send if recording < 800ms (avoids accidental triggers)
   const AGP_MIN_CHUNK_BYTES   = 3000; // blobs below this are near-silence — skip Whisper
   const AGP_CHUNK_RATE_WINDOW  = 20;   // rolling window size for fallback silence detection
@@ -21197,6 +21226,44 @@
     _agpTranscribing     = false;
     _agpRecentChunkBytes = [];
     _agpMicActive        = false;
+  }
+
+  // v6.25: (Re)schedules the "you've gone quiet" inactivity nudge.
+  // Called once when the mic starts, and again every time _agpSilenceLoop detects
+  // real speech — so the timer always measures silence SINCE THE LAST TIME THE
+  // USER SPOKE (or since mic-start if they haven't spoken yet), not a fixed window
+  // from mic-start. That fixes the bug where someone talking continuously for more
+  // than AGP_INACTIVITY_MS — with no pause long enough to trigger a live flush —
+  // got cut off mid-sentence by this nudge, with their answer discarded and a new
+  // follow-up question fired on top of it.
+  // Also capped to AGP_MAX_CONSECUTIVE_NUDGES per Gethro turn (counter reset in
+  // sendToGethro() once the user actually replies) so Gethro can't stack 2nd/3rd
+  // follow-up questions while still waiting on the first answer.
+  function _agpScheduleInactivityTimer() {
+    if (_agpInactivityTimer) { clearTimeout(_agpInactivityTimer); _agpInactivityTimer = null; }
+    _agpInactivityTimer = setTimeout(function() {
+      _agpInactivityTimer = null;
+      // Mid-flight (transcribing a chunk, or Gethro already composing a reply) — let
+      // that resolve naturally rather than interrupting with another question.
+      if (!_agpMicActive || _agpTranscribing || _agpSending || _agpLiveText) return;
+      if (_agpConsecutiveNudges >= AGP_MAX_CONSECUTIVE_NUDGES) {
+        dbg('AGP_MIC', 'Inactivity timeout — already nudged this turn, staying quiet');
+        return; // already asked once without a reply — don't pile on more questions
+      }
+      var inp = document.getElementById('agpInput');
+      if (inp && inp.value.trim()) return; // text in box — user typed/transcribed something
+      dbg('AGP_MIC', 'Inactivity timeout (' + AGP_INACTIVITY_MS + 'ms genuine silence) — asking follow-up');
+      _agpConsecutiveNudges++;
+      _agpStopMic(false); // stop mic without sending
+      // Ask a follow-up seed question using whatever conversation context we have
+      var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
+      var memAnswer = ((document.getElementById('memAnswer') || {}).value || '').slice(0, 600);
+      var convoSoFar = _gethroHistory.slice(-6).map(function(m) {
+        return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
+      }).join('\n');
+      var ctx = (memAnswer + '\n\nCONVERSATION SO FAR:\n' + convoSoFar).trim().slice(0, 800);
+      _agpSeedMemoryQuestion(firstName, ctx, '');
+    }, AGP_INACTIVITY_MS);
   }
 
   function _agpSilenceLoop() {
@@ -21236,6 +21303,14 @@
       }
     } else {
       _agpSilenceStart = null;
+      // v6.25: real speech detected this frame — mark the segment as having voice
+      // (so a later "no transcript" result is treated as a genuine hallucination
+      // rather than a missed answer), and push the inactivity nudge timer out so
+      // it measures silence SINCE THE LAST TIME YOU SPOKE, not since mic-start.
+      // Without this, someone talking continuously past AGP_INACTIVITY_MS (with no
+      // flush yet) was getting cut off mid-sentence by the inactivity nudge.
+      _agpHadVoice = true;
+      _agpScheduleInactivityTimer();
       // Time-based flush: even while actively speaking, flush every AGP_TIME_FLUSH_MS
       // so text appears in the input field as the user talks (live dictation feel).
       if (recAge >= AGP_TIME_FLUSH_MS && !_agpTranscribing && _agpMicChunks.length > 0) {
@@ -21257,6 +21332,13 @@
   async function _agpFlushChunk() {
     if (_agpTranscribing || !_agpMicActive) return;
     _agpTranscribing = true;
+
+    // v6.25: snapshot whether THIS segment ever had real speech volume, before
+    // _agpRestartRecorder() resets _agpHadVoice for the next segment. If the
+    // analyser never saw speech-level volume during this chunk, any "transcript"
+    // Whisper returns for it is a hallucination from background noise/silence —
+    // discard it outright, regardless of what words it contains.
+    var segmentHadVoice = _agpHadVoice;
 
     // v6.24: Stop the current recorder and await full drain before snapshotting chunks.
     // Mirrors _micFlushChunk fix — without awaiting stop, _agpRestartRecorder() creates
@@ -21298,7 +21380,11 @@
       try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-      if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+      if (transcript && !segmentHadVoice) {
+        // v6.25: no speech volume detected this segment — Whisper hallucinated from
+        // background noise/silence (e.g. "What?", random phrases). Discard silently.
+        dbg('AGP_MIC', 'Chunk hallucination filtered (no voice detected): "' + transcript + '"');
+      } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
         // User said something real — cancel inactivity nudge
         if (_agpInactivityTimer) { clearTimeout(_agpInactivityTimer); _agpInactivityTimer = null; }
         _agpLiveText = (_agpLiveText ? _agpLiveText + ' ' : '') + transcript;
@@ -21323,6 +21409,7 @@
       _agpMicRecorder = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
       _agpMicChunks = [];
       _agpRecordStart = Date.now();
+      _agpHadVoice = false; // v6.25: fresh segment — no speech detected yet
       _agpMicRecorder.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) {
           _agpMicChunks.push(e.data);
@@ -21338,6 +21425,9 @@
             dbg('AGP_MIC', 'Restarted recorder onstop — ignoring (replaced)');
             return;
           }
+          // v6.25: snapshot this segment's voice-activity flag before _agpMicRelease()
+          // — used below to discard hallucinated transcripts from silent segments.
+          var segmentHadVoice = _agpHadVoice;
           var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/ogg' });
           var autoSend = !!(thisRecorder._autoSend);
           _agpMicRelease();
@@ -21376,7 +21466,20 @@
             try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
             if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
             var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-            if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+            if (transcript && !segmentHadVoice) {
+              // v6.25: no speech volume detected this segment — discard hallucinated transcript.
+              dbg('AGP_MIC', 'Restarted recorder hallucination filtered (no voice detected): "' + transcript + '"');
+              if (_agpLiveText) {
+                var inp = document.getElementById('agpInput');
+                if (inp && !inp.value) inp.value = _agpLiveText;
+                var lt0 = _agpLiveText; _agpLiveText = '';
+                if (autoSend) { if (lt0) sendToGethro(); }
+              } else {
+                _agpSetBtn('idle');
+                setTimeout(function() { _agpStartMic(); }, 300);
+                return;
+              }
+            } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
               var fullText = _agpLiveText ? _agpLiveText + ' ' + transcript : transcript;
               _agpLiveText = '';
               var inp = document.getElementById('agpInput');
@@ -21448,28 +21551,14 @@
     _agpMicActive        = true;
     _agpTranscribing     = false;
     _agpLiveText         = '';  // clear accumulated live text for this turn
+    _agpHadVoice         = false; // v6.25: no speech detected yet for this segment
     _agpRecordStart      = Date.now();
     _agpSilenceStart     = null;
     _agpSetBtn('recording');
     // Inactivity nudge: if user doesn't say anything within AGP_INACTIVITY_MS,
-    // stop the mic and ask a follow-up question.
-    if (_agpInactivityTimer) clearTimeout(_agpInactivityTimer);
-    _agpInactivityTimer = setTimeout(function() {
-      _agpInactivityTimer = null;
-      if (!_agpMicActive || _agpLiveText) return; // user already spoke — skip
-      var inp = document.getElementById('agpInput');
-      if (inp && inp.value.trim()) return; // text in box — user typed something
-      dbg('AGP_MIC', 'Inactivity timeout — asking follow-up');
-      _agpStopMic(false); // stop mic without sending
-      // Ask a follow-up seed question using whatever conversation context we have
-      var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
-      var memAnswer = ((document.getElementById('memAnswer') || {}).value || '').slice(0, 600);
-      var convoSoFar = _gethroHistory.slice(-6).map(function(m) {
-        return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
-      }).join('\n');
-      var ctx = (memAnswer + '\n\nCONVERSATION SO FAR:\n' + convoSoFar).trim().slice(0, 800);
-      _agpSeedMemoryQuestion(firstName, ctx, '');
-    }, AGP_INACTIVITY_MS);
+    // stop the mic and ask a follow-up question. Rescheduled on real speech — see
+    // _agpScheduleInactivityTimer().
+    _agpScheduleInactivityTimer();
     dbg('AGP_MIC', 'MediaRecorder start — mimeType: ' + (_agpMicMime || 'default'));
 
     try {
@@ -21494,6 +21583,9 @@
           dbg('AGP_MIC', 'Old recorder onstop — ignoring (replaced)');
           return;
         }
+        // v6.25: snapshot this segment's voice-activity flag before _agpMicRelease() —
+        // used below to discard hallucinated transcripts from silent segments.
+        var segmentHadVoice = _agpHadVoice;
         var blob = new Blob(_agpMicChunks, { type: captureMime || 'audio/ogg' });
         var autoSend = !!(thisRecorder._autoSend);
         _agpMicRelease();
@@ -21533,7 +21625,21 @@
           if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
           var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
 
-          if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
+          if (transcript && !segmentHadVoice) {
+            // v6.25: no speech volume detected this segment — Whisper hallucinated from
+            // background noise/silence. Discard, falling back to live text if any.
+            dbg('AGP_MIC', 'Final segment hallucination filtered (no voice detected): "' + transcript + '"');
+            if (_agpLiveText) {
+              var inp = document.getElementById('agpInput');
+              if (inp && !inp.value) inp.value = _agpLiveText;
+              var lt2 = _agpLiveText; _agpLiveText = '';
+              if (autoSend) { if (lt2) sendToGethro(); }
+            } else {
+              _agpSetBtn('idle');
+              setTimeout(function() { _agpStartMic(); }, 300);
+              return;
+            }
+          } else if (transcript && !AGP_HALLUCINATIONS.test(transcript)) {
             var fullText = _agpLiveText ? _agpLiveText + ' ' + transcript : transcript;
             _agpLiveText = '';
             var inp = document.getElementById('agpInput');
@@ -21588,6 +21694,12 @@
   function _agpStopMic(autoSend) {
     if (!_agpMicActive) return;
     if (_agpSilenceRAF) { cancelAnimationFrame(_agpSilenceRAF); _agpSilenceRAF = null; }
+    // v6.25: clear the inactivity nudge immediately rather than waiting for the
+    // async onstop -> _agpMicRelease() to run. Without this, a stop triggered by
+    // the silence-based auto-send (or a manual button press) could still have the
+    // inactivity timer fire moments later while transcription is in flight, racing
+    // a second "follow-up" question against the one already being sent.
+    if (_agpInactivityTimer) { clearTimeout(_agpInactivityTimer); _agpInactivityTimer = null; }
     _agpSetBtn('transcribing');
     if (_agpMicRecorder && _agpMicRecorder.state !== 'inactive') {
       _agpMicRecorder._autoSend = !!autoSend;
