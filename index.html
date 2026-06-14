@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.34';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.34: Fixed AGP mid-conversation flush: separated concerns — silence loop (RAF) handles only the 5s send-to-Gethro trigger; chunk flushing now driven by a clean setInterval every AGP_FLUSH_MS=2s. Fixes spin loop and fixes accumulated liveText never being sent.';
+  const APP_VERSION  = 'v6.35';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.35: Fixed Save as new memory: (1) mic now stopped immediately on save tap (was leaving memMic running and polluting memAnswer with noise); (2) suppressMemMic flag added to closeAskGethro so saving does not auto-restart memory tab mic; (3) In my own words now trims the opening greeting and starts from the first real Q&A exchange.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -20403,13 +20403,15 @@
     }, 200);
   }
 
-  function closeAskGethro() {
+  function closeAskGethro(suppressMemMic) {
     var panel = document.getElementById('askGethroPanel');
     var fab   = document.getElementById('askGethroFab');
-    // Restart memory mic if user is on the Memories tab and had it running
+    // Restart memory mic if user is on the Memories tab and had it running —
+    // but NOT when called from agpSaveToEntry (suppressMemMic=true), since
+    // the save panel is about to appear and we don't want mic noise in memAnswer.
     var onMemTab = !!(document.getElementById('panel-memories') &&
                       document.getElementById('panel-memories').classList.contains('active'));
-    if (onMemTab && typeof memMicActive !== 'undefined' && !memMicActive) {
+    if (!suppressMemMic && onMemTab && typeof memMicActive !== 'undefined' && !memMicActive) {
       if (typeof startMemMic === 'function') setTimeout(startMemMic, 300);
     }
     if (panel) panel.classList.remove('open');
@@ -20598,8 +20600,20 @@
   async function agpSaveToEntry() {
     if (!_gethroHistory.length) return toast('Nothing to save yet — have a chat with Gethro first.');
 
-    // Build readable transcript
-    var transcript = _gethroHistory.map(function(m) {
+    // Stop mic and clear any stale live text immediately — before navigation
+    // prevents memMic from auto-starting and polluting memAnswer with noise.
+    _agpStopMic(false);
+    _agpLiveText = '';
+    var agpInp = document.getElementById('agpInput');
+    if (agpInp) agpInp.value = '';
+
+    // Build readable transcript — skip the opening greeting before the user first spoke.
+    // Find first user turn; include that turn and everything after it.
+    var firstUserIdx = 0;
+    for (var ti = 0; ti < _gethroHistory.length; ti++) {
+      if (_gethroHistory[ti].role === 'user') { firstUserIdx = Math.max(0, ti - 1); break; }
+    }
+    var transcript = _gethroHistory.slice(firstUserIdx).map(function(m) {
       return (m.role === 'assistant' ? 'Gethro' : 'You') + ': ' + m.content;
     }).join('\n');
 
@@ -20622,7 +20636,7 @@
     _gethroHistory = [];
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
-    closeAskGethro();
+    closeAskGethro(true); // suppress memMic restart — save panel is about to appear
     showPanel('memories', null, 1);
 
     var existingAnswer = ((document.getElementById('memAnswer') || {}).value || '').trim();
