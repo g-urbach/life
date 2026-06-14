@@ -21175,6 +21175,7 @@
   var _agpMicRecentBytes  = [];   // rolling window for fallback silence detection
   var _agpLiveText        = '';   // accumulated live text shown in input (cleared on send)
   var _agpConsecutiveNudges = 0;  // retained for sendToGethro compat
+  var _agpHadVoice        = false; // true once analyser detected real speech this segment
 
   // Silence / timing constants
   const AGP_SILENCE_MS       = 5000;  // 5s sustained silence → transcribe & send
@@ -21214,6 +21215,7 @@
     _agpMicRecentBytes  = [];
     _agpMicTranscribing = false;
     _agpMicActive       = false;
+    _agpHadVoice        = false;
   }
 
   // Silence detection loop — identical pattern to _micSilenceLoop in mem mic.
@@ -21248,6 +21250,7 @@
       }
     } else {
       _agpMicSilenceStart = null;
+      _agpHadVoice = true; // real speech volume confirmed by AnalyserNode
     }
     _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
   }
@@ -21279,6 +21282,10 @@
       blob = new Blob(_agpMicChunks, { type: _agpMicMime || 'audio/ogg' });
     }
 
+    // Snapshot before _agpMicRelease() clears everything
+    var hadVoice       = _agpHadVoice;
+    var analyserWasOn  = !!_agpAnalyserCtx; // true = analyser was running during recording
+
     _agpMicRelease();
     _agpSetBtn(doSend ? 'transcribing' : 'idle');
 
@@ -21297,7 +21304,15 @@
       return;
     }
 
-    dbg('AGP_MIC', 'Transcribing blob — ' + blob.size + ' bytes');
+    // If AnalyserNode was running but never flagged real speech, this is ambient
+    // noise — Whisper will hallucinate. Discard without hitting the API.
+    if (analyserWasOn && !hadVoice) {
+      dbg('AGP_MIC', 'Analyser active but no speech detected — discarding (ambient noise)');
+      _agpSetBtn('idle');
+      _agpMicTranscribing = false;
+      return;
+    }
+    dbg('AGP_MIC', 'Transcribing blob — ' + blob.size + ' bytes (hadVoice=' + hadVoice + ')');
     try {
       var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
@@ -21374,6 +21389,7 @@
     _agpLiveText        = '';
     _agpMicRecordStart  = Date.now();
     _agpMicSilenceStart = null;
+    _agpHadVoice        = false;
     _agpSetBtn('recording');
     dbg('AGP_MIC', 'MediaRecorder start — mimeType: ' + (_agpMicMime || 'default'));
 
