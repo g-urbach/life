@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.30';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic v6.30: complete rewrite, ported from working mem mic pattern. Replaced inactivity-timer/autoSend/hadVoice complexity with simple silence loop: 5s silence → flush blob to Whisper → sendToGethro(). No more autoSend=false bug. Also adds AudioContext.resume() to fix suspended context on non-gesture mic start.';
+  const APP_VERSION  = 'v6.31';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.31: Fixed "In my own words" showing empty (user history was cleared before being read). Fixed hallucination bug: expanded AGP_HALLUCINATIONS from single-word regex to a function that also catches short multi-word filler strings like "Okay. Amen. uh Amen. Okay. Yeah." (≤8 words, all filler tokens).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -20606,6 +20606,17 @@
     _agpPendingMemoryConvo = false; // saved — no need to prompt on next open
     _convoClose(true);  // mark conversation as saved_to_entry=true
     featTrackConvoSave();
+
+    // Capture user-only lines NOW, before _gethroHistory is cleared below.
+    var userOnlyLinesPre = [];
+    for (var hi = 0; hi < _gethroHistory.length; hi++) {
+      if (_gethroHistory[hi].role === 'user') {
+        var userTextPre = (_gethroHistory[hi].content || '').trim();
+        if (userTextPre) userOnlyLinesPre.push(userTextPre);
+      }
+    }
+    var userOnlyTranscriptPre = userOnlyLinesPre.join('\n\n');
+
     // Clear history and memory mode BEFORE closeAskGethro so it doesn't
     // re-set _agpPendingMemoryConvo = true (which triggers the resume prompt).
     _gethroHistory = [];
@@ -20643,18 +20654,8 @@
       html += '<button class="btn btn-primary" data-action="agp-accept-ai" style="font-size:0.78rem;padding:7px 14px">\u2713 Use this version</button>';
       html += '</div>';
 
-      // Choice B: user's own words only — filter to answered exchanges only.
-      // Strip any trailing Gethro question that has no user answer after it,
-      // and show only the user's actual responses (not Gethro's questions).
-      var userOnlyLines = [];
-      var history = _gethroHistory || [];
-      for (var hi = 0; hi < history.length; hi++) {
-        if (history[hi].role === 'user') {
-          var userText = (history[hi].content || '').trim();
-          if (userText) userOnlyLines.push(userText);
-        }
-      }
-      var userOnlyTranscript = userOnlyLines.join('\n\n');
+      // Choice B: user's own words — captured above before history was cleared.
+      var userOnlyTranscript = userOnlyTranscriptPre;
 
       html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
       html += '<p style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:6px">In my own words \u2014 word for word</p>';
@@ -21186,7 +21187,20 @@
   const AGP_CHUNK_RATE_SILENCE = 60;  // avg bytes/chunk below this = silence (fallback)
 
   // Hallucinations Whisper emits on near-silence — discard silently.
-  var AGP_HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|what\??|okay\.?|ok\.?|yeah\.?|yes\.?|no\.?|huh\??|hmm+\.?|um+\.?|uh+\.?|hello\??|hi\.?|so\.?|right\.?|\[.*\]|\.+|,+)$/i;
+  // AGP_HALLUCINATIONS_TEST() catches both single-word fillers and short multi-word
+  // filler strings like "Okay. Amen. uh Amen. Okay. Yeah." (≤8 words, all filler tokens).
+  var _AGP_HALL_SINGLE = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|what\??|okay\.?|ok\.?|yeah\.?|yes\.?|no\.?|huh\??|hmm+\.?|um+\.?|uh+\.?|hello\??|hi\.?|so\.?|right\.?|amen\.?|sure\.?|yep\.?|nope\.?|oh\.?|ah\.?|\[.*\]|\.+|,+)$/i;
+  var _AGP_HALL_TOKENS = /^[\s,.]*(okay|ok|amen|yeah|yep|yes|no|nope|hmm+|um+|uh+|huh|oh|ah|right|sure|what|hi|bye|hello|thank you|thanks|so|well|alright|all right)[,.\s]*((okay|ok|amen|yeah|yep|yes|no|nope|hmm+|um+|uh+|huh|oh|ah|right|sure|what|hi|bye|hello|thank you|thanks|so|well|alright|all right)[,.\s]*){0,7}$/i;
+  function AGP_HALLUCINATIONS(t) {
+    if (!t) return true;
+    if (_AGP_HALL_SINGLE.test(t)) return true;
+    var wordCount = t.trim().split(/\s+/).length;
+    return (wordCount <= 8 && _AGP_HALL_TOKENS.test(t));
+  }
+  // Legacy .test() callers now call AGP_HALLUCINATIONS() directly — the function
+  // replaces the old regex variable; callers use AGP_HALLUCINATIONS.test(x) pattern
+  // which is now AGP_HALLUCINATIONS(x) === true. We also patch .test for compat:
+  AGP_HALLUCINATIONS.test = function(t) { return AGP_HALLUCINATIONS(t); };
 
   // AnalyserNode (isolated AudioContext — no sharing with TTS or mem mic)
   var _agpAnalyserCtx = null;
