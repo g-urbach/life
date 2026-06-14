@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.36';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.36: (1) Use my words now saves full Q&A dialogue not user-only lines. (2) Mic restarts after Gethro API error so user is not left in silence. (3) Entry content injected into system prompt is now sanitised to strip control chars and prompt-injection patterns — fixes rare violent/nonsense TTS output.';
+  const APP_VERSION  = 'v6.39';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.39: [APP-53] Phase 1 client side — gethroSpeak() and _abSpeak() switched from body-token auth to Authorization header (JWT verification ON on inworld-tts-proxy). Stale body token pattern and PRV-20 comment updated. Matches GETHRO_PROXY auth pattern.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5227,7 +5227,7 @@
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
   const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld)
-  const GETHRO_VOICE     = 'onyx'; // OpenAI TTS voice — used only for audiobook export; Gethro voice set server-side via INWORLD_VOICE env var
+  // GETHRO_VOICE constant removed v6.38 — was stale OpenAI 'onyx' placeholder; Inworld voice is set server-side via INWORLD_VOICE env var. Phase 3 (APP-53) will add voice_id selection from life_settings.
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
@@ -5774,7 +5774,7 @@
               return fetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
-                body: JSON.stringify({ action: 'get_tts', token: token, voice: GETHRO_VOICE, text: text })
+                body: JSON.stringify({ action: 'get_tts', token: token, text: text }) // voice_id: APP-53 Phase 3 will wire story_reader_voice_id here
               }).then(function(res) {
                 if (!res.ok) throw new Error('TTS error ' + res.status);
                 return res.arrayBuffer();
@@ -7847,11 +7847,11 @@
     } catch(e) { return null; }
   }
 
-  // ── Gethro voice (OpenAI TTS via TTS_PROXY edge function) ──────
+  // ── Gethro voice (Inworld TTS via inworld-tts-proxy edge function) ──────
   // gethroSpeak(text) — returns a Promise that resolves when audio finishes.
   // Falls back to browser speechSynthesis if TTS_PROXY fails or is unavailable.
   // All spoken questions and prompts go through this function.
-  // To change Gethro's voice: update the GETHRO_VOICE constant above.
+  // Voice is set server-side via INWORLD_VOICE env var. APP-53 Phase 3 adds voice_id selection.
   let _gethroAudio    = null; // current Audio element (if playing)
   let _gethroAudioCtx = null; // AudioContext for TTS — created once on first gesture,
                                // reused so resume() reliably unlocks desktop Chrome autoplay.
@@ -7961,19 +7961,18 @@
       gethroCancel();
       dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
       try {
-        // Pass session token in body (not header) to avoid CORS preflight.
-        // Edge function verifies token is a valid logged-in user before calling OpenAI.
+        // JWT ON: token sent as Authorization header. getSession() refreshes it if near-expiry.
         var freshToken = sessionToken;
         try {
           var sess = await sb.auth.getSession();
           if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
         } catch(e) { dbg('TTS', 'getSession err:', e.message); }
         dbg('TTS', 'fetching TTS_PROXY, freshToken=' + (freshToken ? 'ok' : 'NULL'));
-        // PRV-20: apikey passed as header (not URL param) to avoid exposure in server logs / browser history
+        // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
         var res = await fetch(TTS_PROXY_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, token: freshToken })
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
+          body: JSON.stringify({ text: text })
         });
         dbg('TTS', 'TTS_PROXY status=' + res.status + ', type=' + res.headers.get('content-type'));
         if (!res.ok) {
@@ -13255,10 +13254,11 @@
       var freshToken = sessionToken;
       sb.auth.getSession().then(function(sess) {
         if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
+        // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
         return fetch(TTS_PROXY_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain', 'apikey': SUPABASE_ANON },
-          body: JSON.stringify({ text: text, token: freshToken }),
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
+          body: JSON.stringify({ text: text }),
           signal: controller ? controller.signal : undefined
         });
       }).then(function(res) {
