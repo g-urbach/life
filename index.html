@@ -5210,8 +5210,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.27';
-  const DEPLOY_NOTES = APP_VERSION + ' — AGP conversation-mode mic fixes: (1) inactivity follow-up nudge now resets whenever real speech is detected (via volume analyser), instead of a fixed window from mic-start — fixes Gethro cutting users off mid-answer and firing a new follow-up on top of it (root cause of stacked questions like the "Something About Mary" repro); (2) nudge capped to 1 per turn, reset once the user actually replies, so Gethro can\u2019t ask a 2nd/3rd question before the 1st is answered; (3) bumped inactivity window 5s\u21929s to give realistic thinking time; (4) transcripts from segments where no voice was ever detected are now discarded as hallucinations regardless of content — fixes "What?" / random phrase fragments appearing with no speech; (5) AGP_HALLUCINATIONS regex broadened to catch more Whisper silence artefacts ("What?", "Okay.", "Hmm.", etc).';
+  const APP_VERSION  = 'v6.28';
+  const DEPLOY_NOTES = APP_VERSION + ' — AGP mic v6.28: inactivity timer now sends answer (not follow-up) when chunks/voice detected; chunk-rate used as secondary voice signal; silence loop time-flush restored; autoSend stamped before state check; RESTART_SAFE_BYTES 4000; early recorder restart before Whisper fetch.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -21252,12 +21252,23 @@
       // Mid-flight (transcribing a chunk, or Gethro already composing a reply) — let
       // that resolve naturally rather than interrupting with another question.
       if (!_agpMicActive || _agpTranscribing || _agpSending || _agpLiveText) return;
+      // v6.28: If the user has been speaking during this segment (detected by analyser
+      // OR by accumulated chunk data), stop and SEND their answer instead of firing a
+      // follow-up question. This fixes the inactivity timer stealing the send when the
+      // analyser threshold is too high for this device's mic gain.
+      var chunkTotal = _agpMicChunks.reduce(function(s, c) { return s + c.size; }, 0);
+      var chunksSuggestSpeech = chunkTotal > AGP_MIN_CHUNK_BYTES * 4;
+      if (_agpHadVoice || chunksSuggestSpeech) {
+        dbg('AGP_MIC', 'Inactivity timeout but voice/chunks detected — stopping to send (hadVoice=' + _agpHadVoice + ' chunkBytes=' + chunkTotal + ')');
+        _agpStopMic(true); // user was speaking — send their answer
+        return;
+      }
+      var inp = document.getElementById('agpInput');
+      if (inp && inp.value.trim()) return; // text in box — user typed/transcribed something
       if (_agpConsecutiveNudges >= AGP_MAX_CONSECUTIVE_NUDGES) {
         dbg('AGP_MIC', 'Inactivity timeout — already nudged this turn, staying quiet');
         return; // already asked once without a reply — don't pile on more questions
       }
-      var inp = document.getElementById('agpInput');
-      if (inp && inp.value.trim()) return; // text in box — user typed/transcribed something
       dbg('AGP_MIC', 'Inactivity timeout (' + AGP_INACTIVITY_MS + 'ms genuine silence) — asking follow-up');
       _agpConsecutiveNudges++;
       _agpStopMic(false); // stop mic without sending
@@ -21309,18 +21320,24 @@
       }
     } else {
       _agpSilenceStart = null;
-      // v6.25: real speech detected this frame — mark the segment as having voice
-      // (so a later "no transcript" result is treated as a genuine hallucination
-      // rather than a missed answer), and push the inactivity nudge timer out so
-      // it measures silence SINCE THE LAST TIME YOU SPOKE, not since mic-start.
-      // Without this, someone talking continuously past AGP_INACTIVITY_MS (with no
-      // flush yet) was getting cut off mid-sentence by the inactivity nudge.
       _agpHadVoice = true;
       _agpScheduleInactivityTimer();
       // Time-based flush: even while actively speaking, flush every AGP_TIME_FLUSH_MS
       // so text appears in the input field as the user talks (live dictation feel).
       if (recAge >= AGP_TIME_FLUSH_MS && !_agpTranscribing && _agpMicChunks.length > 0) {
         _agpFlushChunk();
+      }
+    }
+    // v6.28: Even in the "silent" branch, if chunks are accumulating at speech rates
+    // (analyser threshold may be too high for this mic), flag voice and reset inactivity
+    // timer so we don't fire a follow-up while the user is actively speaking.
+    if (!_agpHadVoice && _agpMicChunks.length > 0) {
+      var recentTotal = _agpRecentChunkBytes.reduce(function(s, v) { return s + v; }, 0);
+      var recentAvg = _agpRecentChunkBytes.length ? recentTotal / _agpRecentChunkBytes.length : 0;
+      if (recentAvg > AGP_CHUNK_RATE_SILENCE * 2) {
+        // chunks are big — user is probably speaking even though analyser doesn't confirm
+        _agpHadVoice = true;
+        _agpScheduleInactivityTimer();
       }
     }
     _agpSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
