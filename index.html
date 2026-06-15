@@ -24235,6 +24235,7 @@
   // FE-03 review state
   var _feRewrites      = [];    // [{id, original_passage, rewritten_passage, instruction, decision}]
   var _feReviewActive  = false; // true while review panel is shown
+  var _feReviewDelegate = null; // single persistent click handler — prevents listener stacking across re-renders
 
   async function _feSendToGethro() {
     if (_feAnnotations.length === 0) return;
@@ -24319,7 +24320,14 @@
     html += '<button id="feReviewSaveBtn" class="btn btn-primary" style="font-size:0.85rem;padding:9px 24px;font-weight:700' + (acceptedCount === 0 ? ';opacity:0.45' : '') + '"' + (acceptedCount === 0 ? ' disabled' : '') + '>Save ' + acceptedCount + ' change' + (acceptedCount === 1 ? '' : 's') + '</button>';
     html += '</div>';
     aiPanel.innerHTML = html;
-    var reviewDelegate = function(e) {
+    // FE-03 fix: remove the previous delegate before adding a new one.
+    // innerHTML replacement keeps the element but not its listeners, so the old
+    // handler is already detached — but _feReviewDelegate may still be set from a
+    // previous render cycle. Unconditionally removing then re-adding guarantees
+    // exactly one click handler is active regardless of how many times this
+    // function is called (prevents the stacking that caused burst 429s).
+    if (_feReviewDelegate) aiPanel.removeEventListener('click', _feReviewDelegate);
+    _feReviewDelegate = function(e) {
       var btn = e.target.closest('[data-action]');
       if (!btn) return;
       var action = btn.getAttribute('data-action');
@@ -24344,7 +24352,7 @@
         _feRenderReviewPanel();
       }
     };
-    aiPanel.addEventListener('click', reviewDelegate);
+    aiPanel.addEventListener('click', _feReviewDelegate);
     var acceptAllBtn = document.getElementById('feAcceptAllBtn');
     if (acceptAllBtn) acceptAllBtn.addEventListener('click', function() {
       _feRewrites.forEach(function(r) { if (r.decision !== 'rejected') r.decision = 'accepted'; });
@@ -24383,13 +24391,54 @@
     if (input) { input.focus(); input.select(); }
   }
 
+  // ── Proxy fetch with exponential backoff ─────────────────────────────────
+  // Wraps the final-edit-proxy POST with up to MAX_ATTEMPTS tries.
+  // Only retries on 500 (transient Anthropic errors) — 4xx surfaces immediately.
+  // onWait(secondsRemaining) is called each second during the cooldown so the
+  // caller can update button text with a countdown.
+  var _FE_BACKOFF_DELAYS = [2000, 4000, 8000]; // ms between attempts 1→2, 2→3, 3→fail
+  async function _feProxyFetch(token, body, onWait) {
+    var lastErr;
+    for (var attempt = 0; attempt <= _FE_BACKOFF_DELAYS.length; attempt++) {
+      var res  = await fetch(FINAL_EDIT_PROXY_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body:    JSON.stringify(body)
+      });
+      var data = await res.json();
+      if (res.ok && data.ok) return data; // success
+      // Don't retry 4xx — those are definitive (auth, rate limit, bad request)
+      if (res.status !== 500) throw new Error(data.error || 'HTTP ' + res.status);
+      lastErr = new Error(data.error || 'Gethro ran into a problem — please try again');
+      // If there's a backoff delay remaining, wait it out with a countdown
+      var delay = _FE_BACKOFF_DELAYS[attempt];
+      if (delay !== undefined) {
+        var secs = Math.round(delay / 1000);
+        if (onWait) onWait(secs);
+        await new Promise(function(resolve) {
+          var remaining = secs;
+          var tick = setInterval(function() {
+            remaining--;
+            if (remaining > 0) { if (onWait) onWait(remaining); }
+            else { clearInterval(tick); resolve(); }
+          }, 1000);
+        });
+      }
+    }
+    throw lastErr;
+  }
+
   // ── FE-03: Retry a single annotation ─────────────────────────────────────
   // Re-sends one annotation to Gethro with the (optionally edited) instruction
   // and replaces its rewrite in the review panel.
+  var _feRetryInFlight = {}; // keyed by annotation id — prevents concurrent duplicate calls
   async function _feRetryAnnotation(id, overrideInstruction) {
+    if (_feRetryInFlight[id]) return; // already awaiting a response for this id
     var r   = _feRewrites.find(function(x) { return x.id === id; });
     var ann = _feAnnotations.find(function(a) { return a.id === id; });
     if (!r || !ann) return;
+
+    _feRetryInFlight[id] = true;
 
     // Use the (possibly edited) instruction supplied by _feShowRetryInput;
     // persist it so the card header label stays consistent after re-render.
@@ -24406,25 +24455,23 @@
       var token   = session.data.session ? session.data.session.access_token : null;
       if (!token) throw new Error('Not authenticated');
 
-      var res = await fetch(FINAL_EDIT_PROXY_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body:    JSON.stringify({
-          full_text:   _feOriginalContent,
-          annotations: [{ id: ann.id, passage: ann.passage, instruction: instruction }]
-        })
+      var data = await _feProxyFetch(token, {
+        full_text:   _feOriginalContent,
+        annotations: [{ id: ann.id, passage: ann.passage, instruction: instruction }]
+      }, function(secsLeft) {
+        if (sendBtn) sendBtn.textContent = '\u21ba Retrying in ' + secsLeft + 's\u2026';
       });
-      var data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Unknown error');
 
       var newRewrite = data.rewrites.find(function(rw) { return rw.id === id; });
       if (newRewrite) {
         r.rewritten_passage = newRewrite.rewritten_passage;
         r.decision = 'pending';
       }
+      _feRetryInFlight[id] = false;
       _feRenderReviewPanel();
 
     } catch(e) {
+      _feRetryInFlight[id] = false;
       dbgErr('FE', 'feRetryAnnotation error: ' + e.message);
       toast('Retry failed \u2014 ' + e.message);
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '\u21ba Send'; }
@@ -24476,6 +24523,8 @@
 
   function _feReviewDiscard() {
     _feRewrites = []; _feReviewActive = false; _feAnnotations = [];
+    // Clear the delegate reference so the next review session starts clean
+    _feReviewDelegate = null;
     var aiPanel = document.getElementById('feAIPanel');
     if (!aiPanel) return;
     aiPanel.innerHTML =
