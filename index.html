@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.47';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.47: HOTFIX — _feSendToGethro() used showToast (undefined) instead of toast(). FE-02 Send to Gethro stub now calls correct toast() function.';
+  const APP_VERSION  = 'v6.48';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.48: [FE-03] Claude integration live. Send to Gethro calls final-edit-proxy (Sonnet, Premium only). Accept / Reject / Tweak per rewrite. Accept all. Save applies accepted rewrites surgically to original content. Version snapshot written before save (saved_by=ai). Discard returns to annotation view. No DB changes — requires final-edit-proxy edge function deployed.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5237,6 +5237,7 @@
   const VIDEO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-video';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
+  const FINAL_EDIT_PROXY_URL = SUPABASE_URL + '/functions/v1/final-edit-proxy'; // FE-03
   const STRIPE_PORTAL_URL   = 'https://billing.stripe.com/p/login/5kQfZjdx2b066bo1Sj2B200'; // SUB-01 customer portal
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
   const PIXABAY_MUSIC_KEY  = null; // APP-46: replaced by Freesound via music_proxy (Pixabay has no public music API on free tier)
@@ -24184,16 +24185,188 @@
     _feUpdateAnnoUI();
   }
 
-  // ── Send to Gethro (FE-03 stub — placeholder toast) ──────────────────────
-  // FE-03 will replace this with actual Claude integration via final-edit-proxy.
-  function _feSendToGethro() {
+  // ── FE-03: Send to Gethro — Claude integration + accept/reject ──────────────────
+
+  // FE-03 review state
+  var _feRewrites      = [];    // [{id, original_passage, rewritten_passage, instruction, decision}]
+  var _feReviewActive  = false; // true while review panel is shown
+
+  async function _feSendToGethro() {
     if (_feAnnotations.length === 0) return;
-    toast('FE-03 coming next \u2014 Claude integration will handle ' + _feAnnotations.length + ' annotation' + (_feAnnotations.length === 1 ? '' : 's') + '.');
+    var sendBtn = document.getElementById('feSendToGethroBtn');
+    var countEl = document.getElementById('feAnnoCount');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Gethro is thinking…'; }
+    if (countEl) countEl.textContent = 'Sending ' + _feAnnotations.length + ' annotation' + (_feAnnotations.length === 1 ? '' : 's') + ' to Gethro…';
+    try {
+      var session = await sb.auth.getSession();
+      var token   = session.data.session ? session.data.session.access_token : null;
+      if (!token) throw new Error('Not authenticated');
+      var res = await fetch(FINAL_EDIT_PROXY_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body:    JSON.stringify({
+          full_text:   _feOriginalContent,
+          annotations: _feAnnotations.map(function(a) { return { id: a.id, passage: a.passage, instruction: a.instruction }; })
+        })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Unknown error from Gethro');
+      _feRewrites = data.rewrites.map(function(r) {
+        var ann = _feAnnotations.find(function(a) { return a.id === r.id; });
+        return { id: r.id, original_passage: ann ? ann.passage : '', rewritten_passage: r.rewritten_passage, instruction: ann ? ann.instruction : '', decision: 'pending' };
+      });
+      _feReviewActive = true;
+      _feRenderReviewPanel();
+    } catch(e) {
+      dbgErr('FE', 'feSendToGethro error: ' + e.message);
+      toast('Gethro hit a problem — ' + e.message);
+      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send to Gethro →'; }
+      if (countEl) _feUpdateAnnoUI();
+    }
   }
 
-  // ── Delegate handler additions for FE-02 (wired in bindAllEvents) ─────────
-  // fe-tab, fe-anno-chip, fe-anno-remove, fe-anno-save, fe-anno-cancel
-  // ── END FE-02 ─────────────────────────────────────────────────────────────
+  function _feRenderReviewPanel() {
+    var aiPanel = document.getElementById('feAIPanel');
+    if (!aiPanel) return;
+    var acceptedCount = _feRewrites.filter(function(r) { return r.decision === 'accepted' || r.decision === 'tweaked'; }).length;
+    var html = '';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+    html += '<span style="font-size:0.82rem;color:var(--text-light);font-style:italic">Gethro rewrote ' + _feRewrites.length + ' passage' + (_feRewrites.length === 1 ? '' : 's') + ' — review each one below.</span>';
+    html += '<button id="feAcceptAllBtn" class="btn btn-primary" style="font-size:0.8rem;padding:6px 14px;font-weight:700">✓ Accept all</button>';
+    html += '</div>';
+    _feRewrites.forEach(function(r) {
+      var d = r.decision;
+      var borderColor = (d === 'accepted' || d === 'tweaked') ? 'var(--sage)' : d === 'rejected' ? 'var(--rose)' : 'var(--border)';
+      html += '<div data-review-id="' + r.id + '" style="border:1.5px solid ' + borderColor + ';border-radius:10px;padding:14px 14px 12px;margin-bottom:12px;background:var(--surface);transition:border-color 0.2s">';
+      html += '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:8px">' + _feEscHtml(r.instruction) + '</div>';
+      if (d === 'rejected') {
+        html += '<div style="font-size:0.88rem;line-height:1.65;color:var(--rose);text-decoration:line-through;margin-bottom:8px;font-style:italic">' + _feEscHtml(r.original_passage) + '</div>';
+        html += '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px">Original kept.</div>';
+      } else if (d === 'tweaked') {
+        html += '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:4px;text-decoration:line-through;font-style:italic">' + _feEscHtml(r.original_passage) + '</div>';
+        html += '<textarea data-tweak-id="' + r.id + '" rows="3" style="width:100%;padding:8px 10px;border:1px solid var(--sage);border-radius:7px;font-family:Lato,sans-serif;font-size:0.88rem;line-height:1.6;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;margin-bottom:8px">' + _feEscHtml(r.rewritten_passage) + '</textarea>';
+      } else {
+        html += '<div style="font-size:0.88rem;line-height:1.65;color:var(--rose);text-decoration:line-through;margin-bottom:4px;font-style:italic">' + _feEscHtml(r.original_passage) + '</div>';
+        html += '<div style="font-size:0.88rem;line-height:1.65;color:var(--sage);font-weight:' + (d === 'accepted' ? '700' : '400') + ';margin-bottom:8px">' + _feEscHtml(r.rewritten_passage) + '</div>';
+      }
+      if (d !== 'rejected') {
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        if (d !== 'accepted' && d !== 'tweaked') {
+          html += '<button data-action="fe-review-accept" data-id="' + r.id + '" class="btn btn-primary" style="font-size:0.78rem;padding:5px 14px">✓ Accept</button>';
+        } else if (d === 'accepted') {
+          html += '<span style="font-size:0.78rem;color:var(--sage);font-weight:700">✓ Accepted</span>';
+        }
+        if (d !== 'tweaked') {
+          html += '<button data-action="fe-review-tweak" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer">✏️ Tweak</button>';
+        } else {
+          html += '<button data-action="fe-review-tweak-save" data-id="' + r.id + '" class="btn btn-primary" style="font-size:0.78rem;padding:5px 14px">Save tweak</button>';
+        }
+        html += '<button data-action="fe-review-reject" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--rose);cursor:pointer">✕ Reject</button>';
+        html += '</div>';
+      } else {
+        html += '<button data-action="fe-review-undo" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer">Undo reject</button>';
+      }
+      html += '</div>';
+    });
+    html += '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">';
+    html += '<button id="feReviewDiscardBtn" class="btn btn-ghost" style="font-size:0.85rem;padding:9px 20px">Discard all</button>';
+    html += '<button id="feReviewSaveBtn" class="btn btn-primary" style="font-size:0.85rem;padding:9px 24px;font-weight:700' + (acceptedCount === 0 ? ';opacity:0.45' : '') + '"' + (acceptedCount === 0 ? ' disabled' : '') + '>Save ' + acceptedCount + ' change' + (acceptedCount === 1 ? '' : 's') + '</button>';
+    html += '</div>';
+    aiPanel.innerHTML = html;
+    var reviewDelegate = function(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.getAttribute('data-action');
+      var id     = Number(btn.getAttribute('data-id'));
+      var r      = _feRewrites.find(function(x) { return x.id === id; });
+      if (!r) return;
+      if (action === 'fe-review-accept')     { r.decision = 'accepted'; _feRenderReviewPanel(); }
+      else if (action === 'fe-review-reject') { r.decision = 'rejected'; _feRenderReviewPanel(); }
+      else if (action === 'fe-review-undo')   { r.decision = 'pending';  _feRenderReviewPanel(); }
+      else if (action === 'fe-review-tweak')  { r.decision = 'tweaked';  _feRenderReviewPanel(); }
+      else if (action === 'fe-review-tweak-save') {
+        var ta = document.querySelector('[data-tweak-id="' + id + '"]');
+        if (ta) r.rewritten_passage = ta.value;
+        r.decision = 'accepted';
+        _feRenderReviewPanel();
+      }
+    };
+    aiPanel.addEventListener('click', reviewDelegate);
+    var acceptAllBtn = document.getElementById('feAcceptAllBtn');
+    if (acceptAllBtn) acceptAllBtn.addEventListener('click', function() {
+      _feRewrites.forEach(function(r) { if (r.decision !== 'rejected') r.decision = 'accepted'; });
+      _feRenderReviewPanel();
+    });
+    var saveBtn = document.getElementById('feReviewSaveBtn');
+    if (saveBtn) saveBtn.addEventListener('click', _feReviewSave);
+    var discardBtn = document.getElementById('feReviewDiscardBtn');
+    if (discardBtn) discardBtn.addEventListener('click', _feReviewDiscard);
+  }
+
+  async function _feReviewSave() {
+    var accepted = _feRewrites.filter(function(r) { return r.decision === 'accepted'; });
+    if (accepted.length === 0) { toast('Accept at least one change to save.'); return; }
+    var annsSorted = accepted.map(function(r) {
+      var ann = _feAnnotations.find(function(a) { return a.id === r.id; });
+      return ann ? { startIdx: ann.startIdx, endIdx: ann.endIdx, rewritten: r.rewritten_passage } : null;
+    }).filter(Boolean).sort(function(a, b) { return b.startIdx - a.startIdx; });
+    var newContent = _feOriginalContent;
+    annsSorted.forEach(function(a) { newContent = newContent.slice(0, a.startIdx) + a.rewritten + newContent.slice(a.endIdx); });
+    var saveBtn = document.getElementById('feReviewSaveBtn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    try {
+      var versionNum = 1;
+      try {
+        var vRes = await sb.from('life_entry_versions').select('version_num')
+          .eq('user_id', currentUser.id).eq('source_table', 'life_story_components')
+          .eq('source_id', _feCurrentPieceId).order('version_num', { ascending: false }).limit(1);
+        if (vRes.data && vRes.data.length > 0) versionNum = vRes.data[0].version_num + 1;
+      } catch(ve) { dbgWarn('FE', 'Version num check: ' + ve.message); }
+      await sb.from('life_entry_versions').insert({
+        user_id: currentUser.id, source_table: 'life_story_components',
+        source_id: _feCurrentPieceId, version_num: versionNum,
+        content: _feOriginalContent, title: _feOriginalTitle,
+        saved_by: 'ai', note: 'AI polish — ' + accepted.length + ' annotation' + (accepted.length === 1 ? '' : 's')
+      });
+      var newUpdatedAt = new Date().toISOString();
+      var patchErr = (await sb.from('life_story_components').update({ content: newContent, updated_at: newUpdatedAt }).eq('id', _feCurrentPieceId).eq('user_id', currentUser.id)).error;
+      if (patchErr) throw patchErr;
+      toast('✓ ' + accepted.length + ' AI change' + (accepted.length === 1 ? '' : 's') + ' saved');
+      setTimeout(function() {
+        closeFinalEdit(); renderLibrary();
+        if (_storyLibCurrentPiece && _storyLibCurrentPiece.id === _feCurrentPieceId) {
+          _storyLibCurrentPiece.content = newContent; _storyLibCurrentPiece.updated_at = newUpdatedAt;
+          _storyLibOpenOverlay(_storyLibCurrentPiece);
+        }
+      }, 700);
+    } catch(e) {
+      dbgErr('FE', 'feReviewSave error: ' + e.message);
+      toast('Save failed — please try again');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
+    }
+  }
+
+  function _feReviewDiscard() {
+    _feRewrites = []; _feReviewActive = false; _feAnnotations = [];
+    var aiPanel = document.getElementById('feAIPanel');
+    if (!aiPanel) return;
+    aiPanel.innerHTML =
+      '<p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark — your voice stays yours.</p>' +
+      '<div id="feAnnoBody" style="min-height:260px;max-height:440px;overflow-y:auto;padding:14px 16px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.9rem;line-height:1.8;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text" contenteditable="false"></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:6px"><span id="feAnnoCount" style="font-size:0.78rem;color:var(--text-light)">No annotations yet — select text to begin</span><button id="feSendToGethroBtn" class="btn btn-primary" disabled style="font-size:0.85rem;padding:8px 18px;font-weight:700;opacity:0.45">Send to Gethro →</button></div>' +
+      '<div id="feAnnoList" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>';
+    var feAnnoBody = document.getElementById('feAnnoBody');
+    if (feAnnoBody) {
+      feAnnoBody.addEventListener('mouseup', _feHandleAnnoSelection);
+      feAnnoBody.addEventListener('touchend', function() { setTimeout(_feHandleAnnoSelection, 80); });
+    }
+    var sendBtn = document.getElementById('feSendToGethroBtn');
+    if (sendBtn) sendBtn.addEventListener('click', _feSendToGethro);
+    _feRenderAnnoBody();
+    _feUpdateAnnoUI();
+  }
+
+  // ── END FE-02 / FE-03 ──────────────────────────────────────────────────────────────
 
   // ── APP-53 Phase 3: Voice recording + clone flow ─────────────────────────
   // State for the record overlay session
