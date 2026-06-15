@@ -5212,7 +5212,7 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.49';
+  const APP_VERSION  = 'v6.50';
   const DEPLOY_NOTES = APP_VERSION + ' — v6.49: FE-02/03 fixes — (1) Tab active state: direct style assignment replaces fragile regex, both tabs now highlight correctly. (2) Annotation × button: instruction now editable inline in chip; remove wired via event delegation, survives DOM rebuilds. (3) Review panel: ↺ Try again button re-sends single annotation to Gethro with updated instruction. No DB/edge function changes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -23867,6 +23867,23 @@
     _feOriginalTitle   = piece.title   || '';
     _feOriginalContent = piece.content || '';
 
+    // FE-03 fix: always reset review state so re-opening the overlay
+    // never jumps straight back into the review panel.
+    _feRewrites     = [];
+    _feReviewActive = false;
+    _feAnnotations  = [];
+
+    // Restore the AI panel to its initial annotation state so stale
+    // review HTML from a previous session is cleared.
+    var aiPanel = document.getElementById('feAIPanel');
+    if (aiPanel) {
+      aiPanel.innerHTML =
+        '<p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark \u2014 your voice stays yours.</p>' +
+        '<div id="feAnnoBody" style="min-height:260px;max-height:440px;overflow-y:auto;padding:14px 16px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.9rem;line-height:1.8;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text" contenteditable="false"></div>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:6px"><span id="feAnnoCount" style="font-size:0.78rem;color:var(--text-light)">No annotations yet \u2014 select text to begin</span><button id="feSendToGethroBtn" class="btn btn-primary" disabled style="font-size:0.85rem;padding:8px 18px;font-weight:700;opacity:0.45">Send to Gethro \u2192</button></div>' +
+        '<div id="feAnnoList" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>';
+    }
+
     var titleInput = document.getElementById('feTitleInput');
     var bodyInput  = document.getElementById('feBodyInput');
     var status     = document.getElementById('feStatus');
@@ -24300,7 +24317,13 @@
       else if (action === 'fe-review-reject') { r.decision = 'rejected'; _feRenderReviewPanel(); }
       else if (action === 'fe-review-undo')   { r.decision = 'pending';  _feRenderReviewPanel(); }
       else if (action === 'fe-review-tweak')  { r.decision = 'tweaked';  _feRenderReviewPanel(); }
-      else if (action === 'fe-review-retry')  { _feRetryAnnotation(id); }
+      else if (action === 'fe-review-retry')  { _feShowRetryInput(id); }
+      else if (action === 'fe-review-retry-send') {
+        var inputEl = document.querySelector('[data-retry-input="' + id + '"]');
+        var instruction = inputEl ? inputEl.value.trim() : '';
+        if (instruction) _feRetryAnnotation(id, instruction);
+      }
+      else if (action === 'fe-review-retry-cancel') { _feRenderReviewPanel(); }
       else if (action === 'fe-review-tweak-save') {
         var ta = document.querySelector('[data-tweak-id="' + id + '"]');
         if (ta) r.rewritten_passage = ta.value;
@@ -24320,17 +24343,50 @@
     if (discardBtn) discardBtn.addEventListener('click', _feReviewDiscard);
   }
 
+  // ── FE-03: Show inline retry instruction editor ───────────────────────────
+  // Replaces the action button row inside the review card with a small
+  // editable field pre-filled with the original instruction, so the user
+  // can tweak it before re-sending to Gethro.
+  function _feShowRetryInput(id) {
+    var r = _feRewrites.find(function(x) { return x.id === id; });
+    if (!r) return;
+    var card = document.querySelector('[data-review-id="' + id + '"]');
+    if (!card) return;
+    var btnRow = card.querySelector('[style*="display:flex;gap:8px"]');
+    if (!btnRow) return;
+    btnRow.innerHTML =
+      '<div style="width:100%">' +
+        '<label style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Edit instruction before retrying</label>' +
+        '<input data-retry-input="' + id + '" type="text" value="' + _feEscHtml(r.instruction) + '" ' +
+          'style="width:100%;padding:7px 10px;border:1px solid var(--gold);border-radius:7px;font-family:Lato,sans-serif;font-size:0.83rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:8px">' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button data-action="fe-review-retry-cancel" data-id="' + id + '" ' +
+            'style="background:none;border:none;font-size:0.78rem;color:var(--text-light);cursor:pointer;padding:4px 8px">Cancel</button>' +
+          '<button data-action="fe-review-retry-send" data-id="' + id + '" class="btn btn-primary" ' +
+            'style="font-size:0.78rem;padding:5px 14px">\u21ba Send</button>' +
+        '</div>' +
+      '</div>';
+    var input = card.querySelector('[data-retry-input="' + id + '"]');
+    if (input) { input.focus(); input.select(); }
+  }
+
   // ── FE-03: Retry a single annotation ─────────────────────────────────────
-  // Re-sends just one annotation to Gethro (with optionally edited instruction)
+  // Re-sends one annotation to Gethro with the (optionally edited) instruction
   // and replaces its rewrite in the review panel.
-  async function _feRetryAnnotation(id) {
+  async function _feRetryAnnotation(id, overrideInstruction) {
     var r   = _feRewrites.find(function(x) { return x.id === id; });
     var ann = _feAnnotations.find(function(a) { return a.id === id; });
     if (!r || !ann) return;
 
-    // Find the retry button and show loading state
-    var retryBtn = document.querySelector('[data-action="fe-review-retry"][data-id="' + id + '"]');
-    if (retryBtn) { retryBtn.disabled = true; retryBtn.textContent = '\u21ba Retrying\u2026'; }
+    // Use the (possibly edited) instruction supplied by _feShowRetryInput;
+    // persist it so the card header label stays consistent after re-render.
+    var instruction = (overrideInstruction && overrideInstruction.length) ? overrideInstruction : ann.instruction;
+    ann.instruction = instruction;
+    r.instruction   = instruction;
+
+    // Show loading state on the Send button inside the retry input UI
+    var sendBtn = document.querySelector('[data-action="fe-review-retry-send"][data-id="' + id + '"]');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '\u21ba Sending\u2026'; }
 
     try {
       var session = await sb.auth.getSession();
@@ -24342,7 +24398,7 @@
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body:    JSON.stringify({
           full_text:   _feOriginalContent,
-          annotations: [{ id: ann.id, passage: ann.passage, instruction: ann.instruction }]
+          annotations: [{ id: ann.id, passage: ann.passage, instruction: instruction }]
         })
       });
       var data = await res.json();
@@ -24358,7 +24414,7 @@
     } catch(e) {
       dbgErr('FE', 'feRetryAnnotation error: ' + e.message);
       toast('Retry failed \u2014 ' + e.message);
-      if (retryBtn) { retryBtn.disabled = false; retryBtn.textContent = '\u21ba Try again'; }
+      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '\u21ba Send'; }
     }
   }
 
