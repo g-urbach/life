@@ -3144,6 +3144,8 @@
     <div id="storyLibOverlay" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);overflow-y:auto">
       <div style="max-width:680px;margin:40px auto 40px;background:var(--bg);border-radius:16px;padding:24px 28px;position:relative;box-sizing:border-box">
         <button id="storyLibCloseBtn" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light)">✕</button>
+        <!-- FE-01: Edit button in reading view -->
+        <button id="storyLibEditBtn" style="position:absolute;top:14px;right:52px;background:none;border:1px solid var(--border);border-radius:7px;font-size:0.75rem;font-weight:700;padding:4px 11px;cursor:pointer;color:var(--text-light);font-family:'Lato',sans-serif">✏️ Edit</button>
         <div id="storyLibOverlayContent"></div>
       </div>
     </div>
@@ -5210,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.42';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.42: Voice preview text personalised — addresses user by first name and extended ~30% longer. _VOICE_PREVIEW_TEXT replaced with _voicePreviewText() function reading userProfile.firstName.';
+  const APP_VERSION  = 'v6.44';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.44: [FE-01] Final Edit — simple edit overlay live. Edit button on library card + inside reading overlay. Title + body textarea. Version snapshot written to life_entry_versions before every save. Char count. Refreshes library and reading overlay on save. Free for all users.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -11970,6 +11972,15 @@
     shareBtn.setAttribute('data-title', piece.title || _autoStoryTitle(meta, dateStr));
 
     actions.appendChild(readBtn);
+
+    // FE-01: Edit button — all users
+    var editBtn = document.createElement('button');
+    editBtn.style.cssText = 'padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);font-family:\'Lato\',sans-serif;font-size:0.75rem;color:var(--text-light);cursor:pointer';
+    editBtn.textContent = '✏️ Edit';
+    editBtn.setAttribute('data-action', 'lib-edit');
+    editBtn.setAttribute('data-id', piece.id);
+    actions.appendChild(editBtn);
+
     actions.appendChild(shareBtn);
     // Phase 2: Listen button — queues piece and starts audiobook player immediately
     var listenBtn = document.createElement('button');
@@ -12032,7 +12043,10 @@
   }
 
   // Expand overlay
+  var _storyLibCurrentPiece = null; // FE-01: piece currently open in reading overlay
+
   function _storyLibOpenOverlay(piece) {
+    _storyLibCurrentPiece = piece; // FE-01
     var overlay = document.getElementById('storyLibOverlay');
     var content = document.getElementById('storyLibOverlayContent');
     if (!overlay || !content) return;
@@ -12060,6 +12074,7 @@
     var overlay = document.getElementById('storyLibOverlay');
     if (overlay) overlay.style.display = 'none';
     document.body.style.overflow = '';
+    _storyLibCurrentPiece = null; // FE-01
   }
 
   // Navigate to Story tab → Library sub-tab, then open the piece overlay.
@@ -23827,6 +23842,127 @@
     }
   }
 
+  // ── FE-01: Final Edit ────────────────────────────────────────────────────
+  var _feCurrentPieceId  = null;  // id of piece being edited
+  var _feOriginalTitle   = '';    // title at open time (for dirty check)
+  var _feOriginalContent = '';    // content at open time (for dirty check)
+
+  function openFinalEdit(piece) {
+    if (!piece || !piece.id) return;
+    _feCurrentPieceId  = piece.id;
+    _feOriginalTitle   = piece.title   || '';
+    _feOriginalContent = piece.content || '';
+
+    var titleInput = document.getElementById('feTitleInput');
+    var bodyInput  = document.getElementById('feBodyInput');
+    var status     = document.getElementById('feStatus');
+    var charCount  = document.getElementById('feCharCount');
+    var saveBtn    = document.getElementById('feSaveBtn');
+
+    if (titleInput) titleInput.value = _feOriginalTitle;
+    if (bodyInput)  bodyInput.value  = _feOriginalContent;
+    if (status)     { status.textContent = ''; status.style.color = 'var(--text-light)'; }
+    if (saveBtn)    { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
+    if (charCount)  charCount.textContent = _feOriginalContent.length + ' characters';
+
+    var overlay = document.getElementById('finalEditOverlay');
+    if (overlay) { overlay.style.display = 'block'; document.body.style.overflow = 'hidden'; }
+  }
+
+  function closeFinalEdit() {
+    var overlay = document.getElementById('finalEditOverlay');
+    if (overlay) overlay.style.display = 'none';
+    document.body.style.overflow = '';
+    _feCurrentPieceId  = null;
+    _feOriginalTitle   = '';
+    _feOriginalContent = '';
+  }
+
+  function feUpdateCharCount() {
+    var bodyInput = document.getElementById('feBodyInput');
+    var charCount = document.getElementById('feCharCount');
+    if (bodyInput && charCount) charCount.textContent = bodyInput.value.length + ' characters';
+  }
+
+  async function feSave() {
+    if (!_feCurrentPieceId || !currentUser) return;
+    var titleInput = document.getElementById('feTitleInput');
+    var bodyInput  = document.getElementById('feBodyInput');
+    var status     = document.getElementById('feStatus');
+    var saveBtn    = document.getElementById('feSaveBtn');
+
+    var newTitle   = titleInput ? titleInput.value.trim()  : _feOriginalTitle;
+    var newContent = bodyInput  ? bodyInput.value           : _feOriginalContent;
+
+    // Skip save if nothing changed
+    if (newTitle === _feOriginalTitle && newContent === _feOriginalContent) {
+      closeFinalEdit();
+      return;
+    }
+
+    if (saveBtn)  { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    if (status)   { status.textContent = ''; status.style.color = 'var(--text-light)'; }
+
+    try {
+      // 1. Write version snapshot before overwriting
+      var versionNum = 1;
+      try {
+        var vRes = await sb
+          .from('life_entry_versions')
+          .select('version_num')
+          .eq('user_id', currentUser.id)
+          .eq('source_table', 'life_story_components')
+          .eq('source_id', _feCurrentPieceId)
+          .order('version_num', { ascending: false })
+          .limit(1);
+        if (vRes.data && vRes.data.length > 0) versionNum = vRes.data[0].version_num + 1;
+      } catch(ve) { dbgWarn('FE', 'Version num check failed: ' + ve.message); }
+
+      await sb.from('life_entry_versions').insert({
+        user_id:      currentUser.id,
+        source_table: 'life_story_components',
+        source_id:    _feCurrentPieceId,
+        version_num:  versionNum,
+        content:      _feOriginalContent,
+        title:        _feOriginalTitle,
+        saved_by:     'user',
+        note:         'before edit'
+      });
+
+      // 2. Patch the piece
+      var patch = { updated_at: new Date().toISOString() };
+      if (newTitle   !== _feOriginalTitle)   patch.title   = newTitle;
+      if (newContent !== _feOriginalContent) patch.content = newContent;
+
+      var { error: patchErr } = await sb
+        .from('life_story_components')
+        .update(patch)
+        .eq('id', _feCurrentPieceId)
+        .eq('user_id', currentUser.id);
+
+      if (patchErr) throw patchErr;
+
+      // 3. Refresh library + close
+      if (status) { status.textContent = 'Saved \u2713'; status.style.color = 'var(--sage)'; }
+      setTimeout(function() {
+        closeFinalEdit();
+        renderLibrary();
+        // If reading overlay is open for this piece, update its content live
+        if (_storyLibCurrentPiece && _storyLibCurrentPiece.id === _feCurrentPieceId) {
+          _storyLibCurrentPiece.title   = newTitle;
+          _storyLibCurrentPiece.content = newContent;
+          _storyLibOpenOverlay(_storyLibCurrentPiece);
+        }
+      }, 700);
+
+    } catch(e) {
+      dbgErr('FE', 'feSave error: ' + e.message);
+      if (status)  { status.textContent = 'Save failed — please try again'; status.style.color = 'var(--rose)'; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
+    }
+  }
+  // ── END FE-01 ─────────────────────────────────────────────────────────────
+
   // ── APP-53 Phase 3: Voice recording + clone flow ─────────────────────────
   // State for the record overlay session
   var _vrStream   = null;  // MediaStream from getUserMedia
@@ -24450,6 +24586,15 @@
     on('profileEditSaveBtn',   'click', saveProfileEdit);
     on('settingsBtn',          'click', openSettings);
     on('signOutBtn',    'click', signOut);
+    // ── FE-01: Final Edit overlay ─────────────────────────────────────────
+    on('feCloseBtn',    'click', closeFinalEdit);
+    on('feCancelBtn',   'click', closeFinalEdit);
+    on('feSaveBtn',     'click', feSave);
+    on('feBodyInput',   'input', feUpdateCharCount);
+    // Edit button inside reading overlay
+    on('storyLibEditBtn', 'click', function() {
+      if (_storyLibCurrentPiece) openFinalEdit(_storyLibCurrentPiece);
+    });
     on('voicesRecordBtn', 'click', openVoiceRecord); // APP-53 Phase 3
     // ── Voice Record Overlay (APP-53 Phase 3) ────────────────────────────────
     on('vrCloseBtn',    'click', closeVoiceRecord);
@@ -25083,6 +25228,10 @@
         } else if (id) {
           _storyLibListen(id);
         }
+      } else if (action === 'lib-edit') {
+        // FE-01: open Final Edit overlay for this piece
+        var editPiece = _libPieceMap[id];
+        if (editPiece) openFinalEdit(editPiece);
       } else if (action === 'lib-edit-title') {
         // data-id is not set on the title span — read id from data-lib-title instead
         var titleEl = btn.closest('[data-lib-title]') || btn;
@@ -25331,6 +25480,35 @@
     </div>
   </div>
 </div>
+<!-- ── FE-01: Final Edit Overlay ─────────────────────────────────────────── -->
+<div id="finalEditOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9500;overflow-y:auto">
+  <div style="max-width:700px;margin:32px auto 48px;background:var(--bg);border-radius:16px;padding:28px 28px 24px;position:relative;box-sizing:border-box">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <h2 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">✏️ Edit Entry</h2>
+      <button id="feCloseBtn" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">✕</button>
+    </div>
+    <!-- Title field -->
+    <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Title</label>
+    <input id="feTitleInput" type="text" placeholder="Entry title…"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;font-weight:700;color:var(--text);background:var(--surface);box-sizing:border-box;margin-bottom:14px">
+    <!-- Body field -->
+    <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Story</label>
+    <textarea id="feBodyInput" rows="16" placeholder="Your story…"
+      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;line-height:1.7;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical"></textarea>
+    <!-- Char count + status -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;margin-bottom:18px">
+      <span id="feCharCount" style="font-size:0.75rem;color:var(--text-light)"></span>
+      <span id="feStatus" style="font-size:0.78rem;color:var(--text-light)"></span>
+    </div>
+    <!-- Actions -->
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button id="feCancelBtn" class="btn btn-ghost" style="font-size:0.88rem;padding:9px 20px">Cancel</button>
+      <button id="feSaveBtn" class="btn btn-primary" style="font-size:0.88rem;padding:9px 24px;font-weight:700">Save changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── APP-53 Phase 3: Voice Record Overlay ─────────────────────────────── -->
 <div id="voiceRecordOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2200;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
