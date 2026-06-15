@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.44';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.44: [FE-01] Final Edit — simple edit overlay live. Edit button on library card + inside reading overlay. Title + body textarea. Version snapshot written to life_entry_versions before every save. Char count. Refreshes library and reading overlay on save. Free for all users.';
+  const APP_VERSION  = 'v6.45';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.45: [APP-FE-DB-01] HOTFIX — life_story_components.updated_at column + trigger added (mirrors life_entries from v3.91). Fixes feSave() 400/schema-cache error on Final Edit save. Library card + reading overlay now show "(edited DD Mon YYYY)" after a save, same as journal entries. ⚠️ Run the migration SQL (see CONSOLIDATED BACKLOG, APP-FE-DB-01) BEFORE deploying this version. | v6.44: [FE-01] Final Edit — simple edit overlay live. Edit button on library card + inside reading overlay. Title + body textarea. Version snapshot written to life_entry_versions before every save. Char count. Refreshes library and reading overlay on save. Free for all users.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -11796,7 +11796,7 @@
     try {
       var { data: pieces, error } = await sb
         .from('life_story_components')
-        .select('id, type, title, content, metadata, created_at, bg_music_url')
+        .select('id, type, title, content, metadata, created_at, updated_at, bg_music_url')
         .order('created_at', { ascending: false })
         .limit(50);
 
@@ -11925,7 +11925,14 @@
 
     var meta2 = document.createElement('span');
     meta2.style.cssText = 'font-size:0.72rem;color:var(--text-light);display:block;margin-top:2px';
-    meta2.textContent = typeMeta.label + ' · ' + dateStr + (wordCount ? ' · ' + wordCount + ' words' : '');
+    // FE-01 / APP-FE-DB-01: show "(edited ...)" when updated_at differs from created_at date,
+    // mirroring the life_entries pattern from v3.91.
+    var editedStr = '';
+    if (piece.updated_at && piece.created_at &&
+        piece.updated_at.substring(0,10) !== new Date(piece.created_at).toISOString().substring(0,10)) {
+      editedStr = ' · (edited ' + new Date(piece.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')';
+    }
+    meta2.textContent = typeMeta.label + ' · ' + dateStr + (wordCount ? ' · ' + wordCount + ' words' : '') + editedStr;
 
     titleWrap.appendChild(titleSpan);
     titleWrap.appendChild(meta2);
@@ -12055,10 +12062,16 @@
     var dateStr  = piece.created_at
       ? new Date(piece.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
       : '';
+    // FE-01 / APP-FE-DB-01: same "(edited ...)" treatment as the library card.
+    var editedStr = '';
+    if (piece.updated_at && piece.created_at &&
+        piece.updated_at.substring(0,10) !== new Date(piece.created_at).toISOString().substring(0,10)) {
+      editedStr = ' · (edited ' + new Date(piece.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}) + ')';
+    }
     var safeContent = (piece.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
     content.innerHTML =
       '<div style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px">' +
-        typeMeta.emoji + ' ' + typeMeta.label + ' · ' + dateStr +
+        typeMeta.emoji + ' ' + typeMeta.label + ' · ' + dateStr + editedStr +
       '</div>' +
       '<div style="font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:16px;line-height:1.3">' +
         escHtml(piece.title || '') +
@@ -23930,7 +23943,12 @@
       });
 
       // 2. Patch the piece
-      var patch = { updated_at: new Date().toISOString() };
+      // updated_at column + BEFORE UPDATE trigger added to life_story_components
+      // via APP-FE-DB-01 (see CONSOLIDATED BACKLOG, SPRINT FE) — mirrors the
+      // life_entries.updated_at pattern from v3.91 so FE-05 (version history)
+      // behaves consistently across both tables.
+      var newUpdatedAt = new Date().toISOString();
+      var patch = { updated_at: newUpdatedAt };
       if (newTitle   !== _feOriginalTitle)   patch.title   = newTitle;
       if (newContent !== _feOriginalContent) patch.content = newContent;
 
@@ -23949,8 +23967,9 @@
         renderLibrary();
         // If reading overlay is open for this piece, update its content live
         if (_storyLibCurrentPiece && _storyLibCurrentPiece.id === _feCurrentPieceId) {
-          _storyLibCurrentPiece.title   = newTitle;
-          _storyLibCurrentPiece.content = newContent;
+          _storyLibCurrentPiece.title      = newTitle;
+          _storyLibCurrentPiece.content    = newContent;
+          _storyLibCurrentPiece.updated_at = newUpdatedAt;
           _storyLibOpenOverlay(_storyLibCurrentPiece);
         }
       }, 700);
