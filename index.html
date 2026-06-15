@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.48';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.48: [FE-03] Claude integration live. Send to Gethro calls final-edit-proxy (Sonnet, Premium only). Accept / Reject / Tweak per rewrite. Accept all. Save applies accepted rewrites surgically to original content. Version snapshot written before save (saved_by=ai). Discard returns to annotation view. No DB changes — requires final-edit-proxy edge function deployed.';
+  const APP_VERSION  = 'v6.49';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.49: FE-02/03 fixes — (1) Tab active state: direct style assignment replaces fragile regex, both tabs now highlight correctly. (2) Annotation × button: instruction now editable inline in chip; remove wired via event delegation, survives DOM rebuilds. (3) Review panel: ↺ Try again button re-sends single annotation to Gethro with updated instruction. No DB/edge function changes.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -24010,12 +24010,17 @@
     if (simplePanel) simplePanel.style.display = isSimple ? 'block' : 'none';
     if (aiPanel)     aiPanel.style.display     = isSimple ? 'none'  : 'block';
 
-    var activeStyle   = 'background:var(--gold);color:#1a1208;';
-    var inactiveStyle = 'background:transparent;color:var(--text-light);';
-    if (tabSimple) tabSimple.setAttribute('style',
-      tabSimple.getAttribute('style').replace(/background:[^;]+;color:[^;]+;/, isSimple ? activeStyle : inactiveStyle));
-    if (tabAI) tabAI.setAttribute('style',
-      tabAI.getAttribute('style').replace(/background:[^;]+;color:[^;]+;/, !isSimple ? activeStyle : inactiveStyle));
+    // Direct style — avoids fragile regex on existing style string
+    if (tabSimple) {
+      tabSimple.style.background = isSimple  ? 'var(--gold)' : 'transparent';
+      tabSimple.style.color      = isSimple  ? '#1a1208'     : 'var(--text-light)';
+      tabSimple.style.fontWeight = isSimple  ? '700'         : '600';
+    }
+    if (tabAI) {
+      tabAI.style.background = !isSimple ? 'var(--gold)' : 'transparent';
+      tabAI.style.color      = !isSimple ? '#1a1208'     : 'var(--text-light)';
+      tabAI.style.fontWeight = !isSimple ? '700'         : '600';
+    }
 
     if (!isSimple) _feRenderAnnoBody();
     _feCloseAnnoPopover();
@@ -24056,7 +24061,7 @@
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── Annotation count label ────────────────────────────────────────────────
+  // ── Annotation count label + chip list ─────────────────────────────────────────────────────────────────────────
   function _feUpdateAnnoUI() {
     var countEl  = document.getElementById('feAnnoCount');
     var sendBtn  = document.getElementById('feSendToGethroBtn');
@@ -24072,7 +24077,6 @@
       sendBtn.style.opacity = n === 0 ? '0.45' : '1';
     }
 
-    // Render annotation chips list
     if (!listEl) return;
     listEl.innerHTML = '';
     _feAnnotations.forEach(function(ann) {
@@ -24081,11 +24085,22 @@
       var snippet = ann.passage.length > 50 ? ann.passage.slice(0, 50) + '…' : ann.passage;
       chip.innerHTML =
         '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:0.78rem;font-weight:700;color:var(--gold);margin-bottom:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&ldquo;' + _feEscHtml(snippet) + '&rdquo;</div>' +
-          '<div style="font-size:0.78rem;color:var(--text-light)">' + _feEscHtml(ann.instruction) + '</div>' +
+          '<div style="font-size:0.78rem;font-weight:700;color:var(--gold);margin-bottom:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&ldquo;' + _feEscHtml(snippet) + '&rdquo;</div>' +
+          '<input data-anno-inst-id="' + ann.id + '" type="text" value="' + _feEscHtml(ann.instruction) + '" ' +
+            'style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text);background:var(--bg);box-sizing:border-box">' +
         '</div>' +
-        '<button data-action="fe-anno-remove" data-id="' + ann.id + '" style="background:none;border:none;font-size:1rem;cursor:pointer;color:var(--text-light);padding:0 2px;flex-shrink:0" aria-label="Remove annotation">×</button>';
+        '<button data-action="fe-anno-remove" data-id="' + ann.id + '" ' +
+          'style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:var(--text-light);padding:0 4px;flex-shrink:0;line-height:1.4" aria-label="Remove">×</button>';
       listEl.appendChild(chip);
+    });
+
+    // Sync instruction edits back to _feAnnotations on input
+    listEl.querySelectorAll('[data-anno-inst-id]').forEach(function(input) {
+      input.addEventListener('input', function() {
+        var id  = Number(input.getAttribute('data-anno-inst-id'));
+        var ann = _feAnnotations.find(function(a) { return a.id === id; });
+        if (ann) ann.instruction = input.value;
+      });
     });
   }
 
@@ -24252,16 +24267,17 @@
       if (d !== 'rejected') {
         html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
         if (d !== 'accepted' && d !== 'tweaked') {
-          html += '<button data-action="fe-review-accept" data-id="' + r.id + '" class="btn btn-primary" style="font-size:0.78rem;padding:5px 14px">✓ Accept</button>';
+          html += '<button data-action="fe-review-accept" data-id="' + r.id + '" class="btn btn-primary" style="font-size:0.78rem;padding:5px 14px">\u2713 Accept</button>';
         } else if (d === 'accepted') {
-          html += '<span style="font-size:0.78rem;color:var(--sage);font-weight:700">✓ Accepted</span>';
+          html += '<span style="font-size:0.78rem;color:var(--sage);font-weight:700">\u2713 Accepted</span>';
         }
         if (d !== 'tweaked') {
-          html += '<button data-action="fe-review-tweak" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer">✏️ Tweak</button>';
+          html += '<button data-action="fe-review-tweak" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer">\u270f\ufe0f Tweak</button>';
         } else {
           html += '<button data-action="fe-review-tweak-save" data-id="' + r.id + '" class="btn btn-primary" style="font-size:0.78rem;padding:5px 14px">Save tweak</button>';
         }
-        html += '<button data-action="fe-review-reject" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--rose);cursor:pointer">✕ Reject</button>';
+        html += '<button data-action="fe-review-retry" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--gold-dark);cursor:pointer">\u21ba Try again</button>';
+        html += '<button data-action="fe-review-reject" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--rose);cursor:pointer">\u2715 Reject</button>';
         html += '</div>';
       } else {
         html += '<button data-action="fe-review-undo" data-id="' + r.id + '" style="padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:none;font-family:Lato,sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer">Undo reject</button>';
@@ -24284,6 +24300,7 @@
       else if (action === 'fe-review-reject') { r.decision = 'rejected'; _feRenderReviewPanel(); }
       else if (action === 'fe-review-undo')   { r.decision = 'pending';  _feRenderReviewPanel(); }
       else if (action === 'fe-review-tweak')  { r.decision = 'tweaked';  _feRenderReviewPanel(); }
+      else if (action === 'fe-review-retry')  { _feRetryAnnotation(id); }
       else if (action === 'fe-review-tweak-save') {
         var ta = document.querySelector('[data-tweak-id="' + id + '"]');
         if (ta) r.rewritten_passage = ta.value;
@@ -24301,6 +24318,48 @@
     if (saveBtn) saveBtn.addEventListener('click', _feReviewSave);
     var discardBtn = document.getElementById('feReviewDiscardBtn');
     if (discardBtn) discardBtn.addEventListener('click', _feReviewDiscard);
+  }
+
+  // ── FE-03: Retry a single annotation ─────────────────────────────────────
+  // Re-sends just one annotation to Gethro (with optionally edited instruction)
+  // and replaces its rewrite in the review panel.
+  async function _feRetryAnnotation(id) {
+    var r   = _feRewrites.find(function(x) { return x.id === id; });
+    var ann = _feAnnotations.find(function(a) { return a.id === id; });
+    if (!r || !ann) return;
+
+    // Find the retry button and show loading state
+    var retryBtn = document.querySelector('[data-action="fe-review-retry"][data-id="' + id + '"]');
+    if (retryBtn) { retryBtn.disabled = true; retryBtn.textContent = '\u21ba Retrying\u2026'; }
+
+    try {
+      var session = await sb.auth.getSession();
+      var token   = session.data.session ? session.data.session.access_token : null;
+      if (!token) throw new Error('Not authenticated');
+
+      var res = await fetch(FINAL_EDIT_PROXY_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body:    JSON.stringify({
+          full_text:   _feOriginalContent,
+          annotations: [{ id: ann.id, passage: ann.passage, instruction: ann.instruction }]
+        })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Unknown error');
+
+      var newRewrite = data.rewrites.find(function(rw) { return rw.id === id; });
+      if (newRewrite) {
+        r.rewritten_passage = newRewrite.rewritten_passage;
+        r.decision = 'pending';
+      }
+      _feRenderReviewPanel();
+
+    } catch(e) {
+      dbgErr('FE', 'feRetryAnnotation error: ' + e.message);
+      toast('Retry failed \u2014 ' + e.message);
+      if (retryBtn) { retryBtn.disabled = false; retryBtn.textContent = '\u21ba Try again'; }
+    }
   }
 
   async function _feReviewSave() {
