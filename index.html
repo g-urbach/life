@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.45';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.45: [APP-FE-DB-01] HOTFIX — life_story_components.updated_at column + trigger added (mirrors life_entries from v3.91). Fixes feSave() 400/schema-cache error on Final Edit save. Library card + reading overlay now show "(edited DD Mon YYYY)" after a save, same as journal entries. ⚠️ Run the migration SQL (see CONSOLIDATED BACKLOG, APP-FE-DB-01) BEFORE deploying this version. | v6.44: [FE-01] Final Edit — simple edit overlay live. Edit button on library card + inside reading overlay. Title + body textarea. Version snapshot written to life_entry_versions before every save. Char count. Refreshes library and reading overlay on save. Free for all users.';
+  const APP_VERSION  = 'v6.46';
+  const DEPLOY_NOTES = APP_VERSION + ' — v6.46: [FE-02] AI annotation layer live. Premium users see ✨ Polish with AI tab in the Edit overlay. Select any passage → floating popover with action chips (Make warmer, Expand, Simplify, Fix tone, Shorten) + free-text instruction → Annotate. Multiple annotations accumulate with yellow underline highlights + chip list. Send to Gethro button ready (FE-03 stub). Non-premium users see simple edit tab only — no AI tab visible. No DB changes required.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -23878,6 +23878,11 @@
     if (saveBtn)    { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
     if (charCount)  charCount.textContent = _feOriginalContent.length + ' characters';
 
+    // FE-02: show AI tab for premium users; always start on simple tab
+    var aiTab = document.getElementById('feTabAI');
+    if (aiTab) aiTab.style.display = isPremium() ? 'block' : 'none';
+    _feSetTab('simple');
+
     var overlay = document.getElementById('finalEditOverlay');
     if (overlay) { overlay.style.display = 'block'; document.body.style.overflow = 'hidden'; }
   }
@@ -23889,6 +23894,8 @@
     _feCurrentPieceId  = null;
     _feOriginalTitle   = '';
     _feOriginalContent = '';
+    _feCloseAnnoPopover();  // FE-02: hide any open popover
+    _feAnnotations = [];    // FE-02: clear annotation state
   }
 
   function feUpdateCharCount() {
@@ -23980,7 +23987,213 @@
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
     }
   }
+
   // ── END FE-01 ─────────────────────────────────────────────────────────────
+
+  // ── FE-02: AI Annotation layer ───────────────────────────────────────────
+  // State
+  var _feAnnotations   = [];       // [{id, passage, instruction, startIdx, endIdx}]
+  var _feAnnoIdCounter = 0;        // monotonic ID for each annotation
+  var _feActiveTab     = 'simple'; // 'simple' | 'ai'
+  var _fePendingRange  = null;     // saved Selection range while popover is open
+
+  // ── Tab switching ─────────────────────────────────────────────────────────
+  function _feSetTab(tab) {
+    _feActiveTab = tab;
+    var simplePanel = document.getElementById('feSimplePanel');
+    var aiPanel     = document.getElementById('feAIPanel');
+    var tabSimple   = document.getElementById('feTabSimple');
+    var tabAI       = document.getElementById('feTabAI');
+    var isSimple    = tab === 'simple';
+
+    if (simplePanel) simplePanel.style.display = isSimple ? 'block' : 'none';
+    if (aiPanel)     aiPanel.style.display     = isSimple ? 'none'  : 'block';
+
+    var activeStyle   = 'background:var(--gold);color:#1a1208;';
+    var inactiveStyle = 'background:transparent;color:var(--text-light);';
+    if (tabSimple) tabSimple.setAttribute('style',
+      tabSimple.getAttribute('style').replace(/background:[^;]+;color:[^;]+;/, isSimple ? activeStyle : inactiveStyle));
+    if (tabAI) tabAI.setAttribute('style',
+      tabAI.getAttribute('style').replace(/background:[^;]+;color:[^;]+;/, !isSimple ? activeStyle : inactiveStyle));
+
+    if (!isSimple) _feRenderAnnoBody();
+    _feCloseAnnoPopover();
+  }
+
+  // ── Annotation body render ────────────────────────────────────────────────
+  // Renders _feOriginalContent into #feAnnoBody with highlight spans for each annotation.
+  // Annotations are sorted by startIdx to build the highlighted HTML safely.
+  function _feRenderAnnoBody() {
+    var el = document.getElementById('feAnnoBody');
+    if (!el) return;
+    var text = _feOriginalContent;
+
+    if (_feAnnotations.length === 0) {
+      el.textContent = text;
+      return;
+    }
+
+    // Sort annotations by startIdx, then build interleaved HTML
+    var sorted = _feAnnotations.slice().sort(function(a, b) { return a.startIdx - b.startIdx; });
+    var html = '';
+    var cursor = 0;
+    for (var i = 0; i < sorted.length; i++) {
+      var ann = sorted[i];
+      // Guard against overlaps: skip any annotation that starts before cursor
+      if (ann.startIdx < cursor) continue;
+      // Plain text before this annotation
+      html += _feEscHtml(text.slice(cursor, ann.startIdx));
+      // Highlighted span
+      html += '<mark data-anno-id="' + ann.id + '" style="background:rgba(201,169,110,0.28);border-bottom:2px solid var(--gold);border-radius:2px;cursor:pointer;padding:0 1px" title="' + _feEscHtml(ann.instruction) + '">' + _feEscHtml(text.slice(ann.startIdx, ann.endIdx)) + '</mark>';
+      cursor = ann.endIdx;
+    }
+    html += _feEscHtml(text.slice(cursor));
+    el.innerHTML = html;
+  }
+
+  function _feEscHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Annotation count label ────────────────────────────────────────────────
+  function _feUpdateAnnoUI() {
+    var countEl  = document.getElementById('feAnnoCount');
+    var sendBtn  = document.getElementById('feSendToGethroBtn');
+    var listEl   = document.getElementById('feAnnoList');
+    var n = _feAnnotations.length;
+
+    if (countEl) countEl.textContent = n === 0
+      ? 'No annotations yet — select text to begin'
+      : n + ' annotation' + (n === 1 ? '' : 's') + ' ready';
+
+    if (sendBtn) {
+      sendBtn.disabled = n === 0;
+      sendBtn.style.opacity = n === 0 ? '0.45' : '1';
+    }
+
+    // Render annotation chips list
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    _feAnnotations.forEach(function(ann) {
+      var chip = document.createElement('div');
+      chip.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;';
+      var snippet = ann.passage.length > 50 ? ann.passage.slice(0, 50) + '…' : ann.passage;
+      chip.innerHTML =
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:0.78rem;font-weight:700;color:var(--gold);margin-bottom:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&ldquo;' + _feEscHtml(snippet) + '&rdquo;</div>' +
+          '<div style="font-size:0.78rem;color:var(--text-light)">' + _feEscHtml(ann.instruction) + '</div>' +
+        '</div>' +
+        '<button data-action="fe-anno-remove" data-id="' + ann.id + '" style="background:none;border:none;font-size:1rem;cursor:pointer;color:var(--text-light);padding:0 2px;flex-shrink:0" aria-label="Remove annotation">×</button>';
+      listEl.appendChild(chip);
+    });
+  }
+
+  // ── Popover open/close ────────────────────────────────────────────────────
+  function _feShowAnnoPopover(x, y) {
+    var pop = document.getElementById('feAnnoPopover');
+    var instInput = document.getElementById('feAnnoInstInput');
+    if (!pop) return;
+    if (instInput) { instInput.value = ''; instInput.style.borderColor = 'var(--border)'; }
+    // Reset chip active states
+    var chips = pop.querySelectorAll('[data-action="fe-anno-chip"]');
+    chips.forEach(function(c) {
+      c.style.background = 'var(--surface)';
+      c.style.color = 'var(--text-light)';
+      c.style.borderColor = 'var(--border)';
+      c.removeAttribute('data-selected');
+    });
+    pop.style.display = 'block';
+    // Position: prefer below selection, keep within viewport
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var pw = 280, ph = 180;
+    var left = Math.min(x, vw - pw - 12);
+    var top  = y + 10;
+    if (top + ph > vh) top = y - ph - 10;
+    pop.style.left = left + 'px';
+    pop.style.top  = top  + 'px';
+  }
+
+  function _feCloseAnnoPopover() {
+    var pop = document.getElementById('feAnnoPopover');
+    if (pop) pop.style.display = 'none';
+    _fePendingRange = null;
+  }
+
+  // ── Selection handler on feAnnoBody ──────────────────────────────────────
+  function _feHandleAnnoSelection() {
+    if (_feActiveTab !== 'ai') return;
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    var range = sel.getRangeAt(0);
+    var body  = document.getElementById('feAnnoBody');
+    if (!body || !body.contains(range.commonAncestorContainer)) return;
+    var text = sel.toString().trim();
+    if (!text) return;
+    _fePendingRange = range.cloneRange();
+    // Position popover near end of selection
+    var rect = range.getBoundingClientRect();
+    _feShowAnnoPopover(rect.left, rect.bottom + window.scrollY);
+  }
+
+  // ── Save an annotation from the popover ──────────────────────────────────
+  function _feSaveAnnotation() {
+    if (!_fePendingRange) return;
+    var instInput = document.getElementById('feAnnoInstInput');
+    var instruction = instInput ? instInput.value.trim() : '';
+    if (!instruction) {
+      if (instInput) instInput.style.borderColor = 'var(--rose)';
+      return;
+    }
+    var passage = _fePendingRange.toString().trim();
+    if (!passage) { _feCloseAnnoPopover(); return; }
+
+    // Find character indices in _feOriginalContent
+    // We use the text content of feAnnoBody up to the selection start
+    var body = document.getElementById('feAnnoBody');
+    if (!body) { _feCloseAnnoPopover(); return; }
+
+    // Build a range from body start to selection start to measure character offset
+    var preRange = document.createRange();
+    preRange.setStart(body, 0);
+    preRange.setEnd(_fePendingRange.startContainer, _fePendingRange.startOffset);
+    var preText  = preRange.toString();
+    var startIdx = preText.length;
+    var endIdx   = startIdx + passage.length;
+
+    // Guard: indices must be within original content
+    if (endIdx > _feOriginalContent.length) { _feCloseAnnoPopover(); return; }
+
+    _feAnnotations.push({
+      id:          ++_feAnnoIdCounter,
+      passage:     passage,
+      instruction: instruction,
+      startIdx:    startIdx,
+      endIdx:      endIdx
+    });
+
+    _feCloseAnnoPopover();
+    window.getSelection().removeAllRanges();
+    _feRenderAnnoBody();
+    _feUpdateAnnoUI();
+  }
+
+  // ── Remove annotation ─────────────────────────────────────────────────────
+  function _feRemoveAnnotation(id) {
+    _feAnnotations = _feAnnotations.filter(function(a) { return a.id !== Number(id); });
+    _feRenderAnnoBody();
+    _feUpdateAnnoUI();
+  }
+
+  // ── Send to Gethro (FE-03 stub — placeholder toast) ──────────────────────
+  // FE-03 will replace this with actual Claude integration via final-edit-proxy.
+  function _feSendToGethro() {
+    if (_feAnnotations.length === 0) return;
+    showToast('FE-03 coming next — Claude integration will handle ' + _feAnnotations.length + ' annotation' + (_feAnnotations.length === 1 ? '' : 's') + '.');
+  }
+
+  // ── Delegate handler additions for FE-02 (wired in bindAllEvents) ─────────
+  // fe-tab, fe-anno-chip, fe-anno-remove, fe-anno-save, fe-anno-cancel
+  // ── END FE-02 ─────────────────────────────────────────────────────────────
 
   // ── APP-53 Phase 3: Voice recording + clone flow ─────────────────────────
   // State for the record overlay session
@@ -24613,6 +24826,54 @@
     // Edit button inside reading overlay
     on('storyLibEditBtn', 'click', function() {
       if (_storyLibCurrentPiece) openFinalEdit(_storyLibCurrentPiece);
+    });
+    // ── FE-02: Annotation layer ───────────────────────────────────────────
+    on('feAnnoSaveBtn',   'click', _feSaveAnnotation);
+    on('feAnnoCancelBtn', 'click', _feCloseAnnoPopover);
+    on('feSendToGethroBtn', 'click', _feSendToGethro);
+    // Selection on annotation body
+    var feAnnoBody = document.getElementById('feAnnoBody');
+    if (feAnnoBody) feAnnoBody.addEventListener('mouseup', _feHandleAnnoSelection);
+    if (feAnnoBody) feAnnoBody.addEventListener('touchend', function() { setTimeout(_feHandleAnnoSelection, 80); });
+    // Click on annotation mark (highlight) — show popover pre-filled — FE-03 enhancement
+    // Tab bar delegate — handled in _feTabBarDelegate below
+    var feTabBar = document.getElementById('feTabBar');
+    if (feTabBar) feTabBar.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="fe-tab"]');
+      if (btn) _feSetTab(btn.getAttribute('data-tab'));
+    });
+    // Annotation chips in popover
+    var feAnnoPopover = document.getElementById('feAnnoPopover');
+    if (feAnnoPopover) feAnnoPopover.addEventListener('click', function(e) {
+      var chip = e.target.closest('[data-action="fe-anno-chip"]');
+      if (chip) {
+        var instInput = document.getElementById('feAnnoInstInput');
+        if (instInput) instInput.value = chip.getAttribute('data-instruction');
+        // Visual active state on chip
+        var allChips = feAnnoPopover.querySelectorAll('[data-action="fe-anno-chip"]');
+        allChips.forEach(function(c) {
+          c.style.background = 'var(--surface)';
+          c.style.color = 'var(--text-light)';
+          c.style.borderColor = 'var(--border)';
+        });
+        chip.style.background = 'var(--gold)';
+        chip.style.color = '#1a1208';
+        chip.style.borderColor = 'var(--gold)';
+      }
+    });
+    // Annotation remove chips in feAnnoList
+    var feAnnoList = document.getElementById('feAnnoList');
+    if (feAnnoList) feAnnoList.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action="fe-anno-remove"]');
+      if (btn) _feRemoveAnnotation(btn.getAttribute('data-id'));
+    });
+    // Close popover when clicking outside it
+    document.addEventListener('mousedown', function(e) {
+      var pop = document.getElementById('feAnnoPopover');
+      if (pop && pop.style.display !== 'none' && !pop.contains(e.target)) {
+        var body = document.getElementById('feAnnoBody');
+        if (!body || !body.contains(e.target)) _feCloseAnnoPopover();
+      }
     });
     on('voicesRecordBtn', 'click', openVoiceRecord); // APP-53 Phase 3
     // ── Voice Record Overlay (APP-53 Phase 3) ────────────────────────────────
@@ -25499,32 +25760,86 @@
     </div>
   </div>
 </div>
-<!-- ── FE-01: Final Edit Overlay ─────────────────────────────────────────── -->
+<!-- ── FE-01 / FE-02: Final Edit Overlay ──────────────────────────────────── -->
 <div id="finalEditOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9500;overflow-y:auto">
   <div style="max-width:700px;margin:32px auto 48px;background:var(--bg);border-radius:16px;padding:28px 28px 24px;position:relative;box-sizing:border-box">
     <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h2 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0">✏️ Edit Entry</h2>
       <button id="feCloseBtn" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">✕</button>
     </div>
-    <!-- Title field -->
-    <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Title</label>
-    <input id="feTitleInput" type="text" placeholder="Entry title…"
-      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;font-weight:700;color:var(--text);background:var(--surface);box-sizing:border-box;margin-bottom:14px">
-    <!-- Body field -->
-    <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Story</label>
-    <textarea id="feBodyInput" rows="16" placeholder="Your story…"
-      style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;line-height:1.7;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical"></textarea>
-    <!-- Char count + status -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;margin-bottom:18px">
-      <span id="feCharCount" style="font-size:0.75rem;color:var(--text-light)"></span>
-      <span id="feStatus" style="font-size:0.78rem;color:var(--text-light)"></span>
+    <!-- FE-02: Tab bar — Simple tab always shown; AI tab only for Premium users (toggled by JS) -->
+    <div id="feTabBar" style="display:flex;gap:6px;margin-bottom:18px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px">
+      <button id="feTabSimple" data-action="fe-tab" data-tab="simple"
+        style="flex:1;padding:7px 10px;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--gold);color:#1a1208;transition:all 0.15s">✏️ Edit</button>
+      <button id="feTabAI" data-action="fe-tab" data-tab="ai"
+        style="display:none;flex:1;padding:7px 10px;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);transition:all 0.15s">✨ Polish with AI</button>
     </div>
-    <!-- Actions -->
-    <div style="display:flex;gap:10px;justify-content:flex-end">
-      <button id="feCancelBtn" class="btn btn-ghost" style="font-size:0.88rem;padding:9px 20px">Cancel</button>
-      <button id="feSaveBtn" class="btn btn-primary" style="font-size:0.88rem;padding:9px 24px;font-weight:700">Save changes</button>
+
+    <!-- ── FE-01: Simple Edit panel ───────────────────────────────────────── -->
+    <div id="feSimplePanel">
+      <!-- Title field -->
+      <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Title</label>
+      <input id="feTitleInput" type="text" placeholder="Entry title…"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.95rem;font-weight:700;color:var(--text);background:var(--surface);box-sizing:border-box;margin-bottom:14px">
+      <!-- Body field -->
+      <label style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Story</label>
+      <textarea id="feBodyInput" rows="16" placeholder="Your story…"
+        style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;line-height:1.7;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical"></textarea>
+      <!-- Char count + status -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;margin-bottom:18px">
+        <span id="feCharCount" style="font-size:0.75rem;color:var(--text-light)"></span>
+        <span id="feStatus" style="font-size:0.78rem;color:var(--text-light)"></span>
+      </div>
+      <!-- Actions -->
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="feCancelBtn" class="btn btn-ghost" style="font-size:0.88rem;padding:9px 20px">Cancel</button>
+        <button id="feSaveBtn" class="btn btn-primary" style="font-size:0.88rem;padding:9px 24px;font-weight:700">Save changes</button>
+      </div>
     </div>
+
+    <!-- ── FE-02: AI Annotation panel ─────────────────────────────────────── -->
+    <div id="feAIPanel" style="display:none">
+      <!-- Instruction hint -->
+      <p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark — your voice stays yours.</p>
+      <!-- Annotatable content area -->
+      <div id="feAnnoBody"
+        style="min-height:260px;max-height:440px;overflow-y:auto;padding:14px 16px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;line-height:1.8;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text"
+        contenteditable="false"></div>
+      <!-- Annotation count + Send button row -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:6px">
+        <span id="feAnnoCount" style="font-size:0.78rem;color:var(--text-light)">No annotations yet — select text to begin</span>
+        <button id="feSendToGethroBtn" class="btn btn-primary" disabled
+          style="font-size:0.85rem;padding:8px 18px;font-weight:700;opacity:0.45">Send to Gethro →</button>
+      </div>
+      <!-- Annotation list (chips) -->
+      <div id="feAnnoList" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── FE-02: Annotation Popover ──────────────────────────────────────────── -->
+<div id="feAnnoPopover" style="display:none;position:fixed;z-index:9600;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.22);padding:14px 14px 12px;width:280px">
+  <!-- Action chips -->
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px" id="feAnnoChips">
+    <button data-action="fe-anno-chip" data-instruction="Make this warmer and more personal"
+      style="padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text-light);cursor:pointer;transition:all 0.12s">Make warmer</button>
+    <button data-action="fe-anno-chip" data-instruction="Expand this with more detail and feeling"
+      style="padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text-light);cursor:pointer;transition:all 0.12s">Expand</button>
+    <button data-action="fe-anno-chip" data-instruction="Simplify this — make it clearer and shorter"
+      style="padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text-light);cursor:pointer;transition:all 0.12s">Simplify</button>
+    <button data-action="fe-anno-chip" data-instruction="Fix the tone — make it feel more natural and authentic"
+      style="padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text-light);cursor:pointer;transition:all 0.12s">Fix tone</button>
+    <button data-action="fe-anno-chip" data-instruction="Shorten this without losing the key meaning"
+      style="padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface);font-family:'Lato',sans-serif;font-size:0.75rem;font-weight:700;color:var(--text-light);cursor:pointer;transition:all 0.12s">Shorten</button>
+  </div>
+  <!-- Free-text instruction -->
+  <input id="feAnnoInstInput" type="text" placeholder="Tell Gethro what to change…"
+    style="width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:7px;font-family:'Lato',sans-serif;font-size:0.83rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:10px">
+  <!-- Annotate button -->
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button id="feAnnoCancelBtn" style="background:none;border:none;font-size:0.8rem;color:var(--text-light);cursor:pointer;padding:4px 8px">Cancel</button>
+    <button id="feAnnoSaveBtn" class="btn btn-primary" style="font-size:0.8rem;padding:6px 16px;font-weight:700">Annotate</button>
   </div>
 </div>
 
