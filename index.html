@@ -23960,6 +23960,9 @@
     if (aiTab) aiTab.style.display = isPremium() ? 'block' : 'none';
     _feSetTab('simple');
 
+    // FE-05: check whether any versions exist and show/hide the link accordingly
+    _feCheckVersions();
+
     var overlay = document.getElementById('finalEditOverlay');
     if (overlay) { overlay.style.display = 'block'; document.body.style.overflow = 'hidden'; }
   }
@@ -23973,6 +23976,182 @@
     _feOriginalContent = '';
     _feCloseAnnoPopover();  // FE-02: hide any open popover
     _feAnnotations = [];    // FE-02: clear annotation state
+  }
+
+  // ── FE-05: Version history ────────────────────────────────────────────────
+
+  // Check whether any versions exist for the current piece and show/hide the link.
+  async function _feCheckVersions() {
+    var link = document.getElementById('feVersionHistoryLink');
+    if (!link || !_feCurrentPieceId || !currentUser) return;
+    try {
+      var { count } = await sb
+        .from('life_entry_versions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', currentUser.id)
+        .eq('source_table', 'life_story_components')
+        .eq('source_id', _feCurrentPieceId);
+      link.style.display = (count && count > 0) ? 'inline' : 'none';
+    } catch(e) { dbgWarn('FE', 'Version count check failed: ' + e.message); }
+  }
+
+  async function _feOpenVersionHistory() {
+    if (!_feCurrentPieceId || !currentUser) return;
+    var overlay  = document.getElementById('feVersionOverlay');
+    var list     = document.getElementById('feVersionList');
+    var empty    = document.getElementById('feVersionEmpty');
+    if (!overlay || !list || !empty) return;
+
+    list.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light);text-align:center;padding:20px 0">Loading…</p>';
+    empty.style.display = 'none';
+    overlay.style.display = 'block';
+
+    try {
+      var { data: versions, error } = await sb
+        .from('life_entry_versions')
+        .select('id, version_num, content, title, saved_by, note, created_at')
+        .eq('user_id', currentUser.id)
+        .eq('source_table', 'life_story_components')
+        .eq('source_id', _feCurrentPieceId)
+        .order('version_num', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      list.innerHTML = '';
+      if (!versions || versions.length === 0) {
+        empty.style.display = 'block';
+        return;
+      }
+
+      versions.forEach(function(v) {
+        var d    = new Date(v.created_at);
+        var date = d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+        var time = d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+        var who  = v.saved_by === 'ai' ? 'AI polish' : 'You';
+        var note = v.note ? ' — ' + v.note : '';
+        var preview = (v.content || '').replace(/\s+/g, ' ').trim().substring(0, 100);
+        if ((v.content || '').length > 100) preview += '…';
+
+        var card = document.createElement('div');
+        card.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px';
+        card.innerHTML =
+          '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">' +
+            '<div style="min-width:0">' +
+              '<div style="font-size:0.75rem;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-light);margin-bottom:3px">' +
+                'v' + v.version_num + ' &middot; ' + who + note +
+              '</div>' +
+              '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:8px">' + date + ' at ' + time + '</div>' +
+              (preview ? '<div style="font-size:0.83rem;color:var(--text);line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(preview) + '</div>' : '') +
+            '</div>' +
+            '<button data-version-id="' + v.id + '" data-version-content="' + _escAttr(v.content || '') + '" data-version-title="' + _escAttr(v.title || '') + '" data-version-num="' + v.version_num + '" class="btn btn-ghost fe-restore-btn" style="flex-shrink:0;font-size:0.78rem;padding:6px 14px;white-space:nowrap">Restore</button>' +
+          '</div>';
+        list.appendChild(card);
+      });
+
+    } catch(e) {
+      dbgErr('FE', 'Version history load failed: ' + e.message);
+      list.innerHTML = '<p style="font-size:0.83rem;color:var(--rose);text-align:center;padding:20px 0">Couldn\'t load versions — please try again.</p>';
+    }
+  }
+
+  function _feCloseVersionOverlay() {
+    var overlay = document.getElementById('feVersionOverlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  async function _feRestoreVersion(btn) {
+    if (!btn || !_feCurrentPieceId || !currentUser) return;
+    var restoredContent = btn.getAttribute('data-version-content');
+    var restoredTitle   = btn.getAttribute('data-version-title');
+    var restoredNum     = btn.getAttribute('data-version-num');
+
+    if (!confirm('Restore version ' + restoredNum + '? Your current text will be saved as a new version first.')) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Restoring…';
+
+    try {
+      // 1. Snapshot the current content first (safety net)
+      var { data: vRows } = await sb
+        .from('life_entry_versions')
+        .select('version_num')
+        .eq('user_id', currentUser.id)
+        .eq('source_table', 'life_story_components')
+        .eq('source_id', _feCurrentPieceId)
+        .order('version_num', { ascending: false })
+        .limit(1);
+      var nextNum = (vRows && vRows.length > 0) ? vRows[0].version_num + 1 : 1;
+
+      var bodyInput  = document.getElementById('feBodyInput');
+      var titleInput = document.getElementById('feTitleInput');
+      var curContent = bodyInput  ? bodyInput.value  : _feOriginalContent;
+      var curTitle   = titleInput ? titleInput.value : _feOriginalTitle;
+
+      await sb.from('life_entry_versions').insert({
+        user_id:      currentUser.id,
+        source_table: 'life_story_components',
+        source_id:    _feCurrentPieceId,
+        version_num:  nextNum,
+        content:      curContent,
+        title:        curTitle,
+        saved_by:     'user',
+        note:         'before restore to v' + restoredNum
+      });
+
+      // 2. Prune to 10 versions
+      await _feVersionPrune();
+
+      // 3. Patch the piece with the restored content
+      var { error: patchErr } = await sb
+        .from('life_story_components')
+        .update({ content: restoredContent, title: restoredTitle || curTitle, updated_at: new Date().toISOString() })
+        .eq('id', _feCurrentPieceId)
+        .eq('user_id', currentUser.id);
+      if (patchErr) throw patchErr;
+
+      // 4. Update editor fields and internal state so the overlay reflects the restore
+      if (bodyInput)  bodyInput.value  = restoredContent;
+      if (titleInput) titleInput.value = restoredTitle || curTitle;
+      _feOriginalContent = restoredContent;
+      _feOriginalTitle   = restoredTitle || curTitle;
+      feUpdateCharCount();
+
+      toast('↩ Restored to version ' + restoredNum);
+      _feCloseVersionOverlay();
+      renderLibrary();
+
+    } catch(e) {
+      dbgErr('FE', 'Restore failed: ' + e.message);
+      toast('Restore failed — please try again');
+      btn.disabled = false;
+      btn.textContent = 'Restore';
+    }
+  }
+
+  // Prune versions for the current piece to max 10 — delete oldest if over limit.
+  async function _feVersionPrune() {
+    if (!_feCurrentPieceId || !currentUser) return;
+    try {
+      var { data: all } = await sb
+        .from('life_entry_versions')
+        .select('id, version_num')
+        .eq('user_id', currentUser.id)
+        .eq('source_table', 'life_story_components')
+        .eq('source_id', _feCurrentPieceId)
+        .order('version_num', { ascending: false });
+      if (!all || all.length <= 10) return;
+      var toDelete = all.slice(10).map(function(r) { return r.id; });
+      await sb.from('life_entry_versions').delete().in('id', toDelete);
+    } catch(e) { dbgWarn('FE', 'Version prune failed: ' + e.message); }
+  }
+
+  // Small HTML-escape helpers used by version history cards
+  function _escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function _escAttr(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   function feUpdateCharCount() {
@@ -24025,6 +24204,9 @@
         saved_by:     'user',
         note:         'before edit'
       });
+
+      // FE-05: prune to max 10 versions
+      await _feVersionPrune();
 
       // 2. Patch the piece
       // updated_at column + BEFORE UPDATE trigger added to life_story_components
@@ -24654,6 +24836,8 @@
         content: _feOriginalContent, title: _feOriginalTitle,
         saved_by: 'ai', note: 'AI polish — ' + accepted.length + ' annotation' + (accepted.length === 1 ? '' : 's')
       });
+      // FE-05: prune to max 10 versions
+      await _feVersionPrune();
       var newUpdatedAt = new Date().toISOString();
       var patchErr = (await sb.from('life_story_components').update({ content: newContent, updated_at: newUpdatedAt }).eq('id', _feCurrentPieceId).eq('user_id', currentUser.id)).error;
       if (patchErr) throw patchErr;
@@ -25393,6 +25577,16 @@
     on('feCancelBtn',   'click', closeFinalEdit);
     on('feSaveBtn',     'click', feSave);
     on('feBodyInput',   'input', feUpdateCharCount);
+    // FE-05: Version history
+    on('feVersionHistoryLink', 'click', _feOpenVersionHistory);
+    on('feVersionCloseBtn',    'click', _feCloseVersionOverlay);
+    var feVersionOverlay = document.getElementById('feVersionOverlay');
+    if (feVersionOverlay) feVersionOverlay.addEventListener('click', function(e) {
+      var btn = e.target.closest('.fe-restore-btn');
+      if (btn) _feRestoreVersion(btn);
+      // Click on backdrop closes the overlay
+      if (e.target === feVersionOverlay) _feCloseVersionOverlay();
+    });
     // Edit button inside reading overlay
     on('storyLibEditBtn', 'click', function() {
       if (_storyLibCurrentPiece) openFinalEdit(_storyLibCurrentPiece);
@@ -26374,6 +26568,10 @@
         <button id="feCancelBtn" class="btn btn-ghost" style="font-size:0.88rem;padding:9px 20px">Cancel</button>
         <button id="feSaveBtn" class="btn btn-primary" style="font-size:0.88rem;padding:9px 24px;font-weight:700">Save changes</button>
       </div>
+      <!-- FE-05: Version history link — shown only when versions exist (JS sets display) -->
+      <div style="text-align:center;margin-top:14px">
+        <button id="feVersionHistoryLink" style="display:none;background:none;border:none;font-family:'Lato',sans-serif;font-size:0.78rem;color:var(--text-light);cursor:pointer;text-decoration:underline;text-underline-offset:2px;padding:0">🕓 Version history</button>
+      </div>
     </div>
 
     <!-- ── FE-02: AI Annotation panel ─────────────────────────────────────── -->
@@ -26395,6 +26593,19 @@
       <!-- Annotation list (chips) -->
       <div id="feAnnoList" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>
     </div>
+  </div>
+</div>
+
+<!-- ── FE-05: Version History Overlay ─────────────────────────────────────── -->
+<div id="feVersionOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9700;overflow-y:auto">
+  <div style="max-width:540px;margin:48px auto 48px;background:var(--bg);border-radius:16px;padding:28px 28px 24px;position:relative;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h3 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin:0">🕓 Version history</h3>
+      <button id="feVersionCloseBtn" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">✕</button>
+    </div>
+    <p style="font-size:0.82rem;color:var(--text-light);margin:0 0 18px;line-height:1.55">Each save creates a snapshot. Restoring a version saves your current text first, so nothing is lost.</p>
+    <div id="feVersionList" style="display:flex;flex-direction:column;gap:10px"></div>
+    <p id="feVersionEmpty" style="display:none;font-size:0.85rem;color:var(--text-light);text-align:center;padding:24px 0">No saved versions yet — versions are created each time you save.</p>
   </div>
 </div>
 
