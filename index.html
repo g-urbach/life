@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.52';
-  const DEPLOY_NOTES = APP_VERSION + ' — (1) Voice overlay off-screen fix: inner card missing max-height+overflow-y and Record/Stop button wrapper div was broken by previous script panel insertion — both fixed. (2) Background music duck timing: _abDuck() was called at TTS fetch start causing music to drop during 1-3s network+decode wait creating silent half-ducked gaps; now ducks only at source.start(0) — the true moment speech begins. Inter-segment _abDuck() removed for same reason — swell covers entire gap+fetch wait, duck fires naturally when next speech starts.';
+  const APP_VERSION  = 'v6.53';
+  const DEPLOY_NOTES = APP_VERSION + ' — Voice clone quality fixes: (1) getUserMedia now requests mono/48kHz with echoCancellation=false, noiseSuppression=false, autoGainControl=false — browser audio processing was mangling the signal and causing Inworld to produce spliced multi-voice output. (2) MediaRecorder now uses audioBitsPerSecond=128000 (up from browser default ~64kbps) for higher fidelity clone input. (3) Reading script extended ~30% with two additional paragraphs covering varied pace and emotional register.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -24570,12 +24570,17 @@
   var VR_MAX_SECONDS = 60; // Inworld accepts up to several minutes; 60s is a great sweet spot
 
   function _vrGetMime() {
+    // Prefer opus at high bitrate — best fidelity for voice cloning.
+    // audio/mp4 (AAC) is the fallback for Safari which doesn't support WebM.
+    // audio/ogg is last resort.
     var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
     for (var i = 0; i < candidates.length; i++) {
       if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
     }
     return '';
   }
+
+  var VR_AUDIO_BITRATE = 128000; // 128 kbps — well above the 64kbps default; better clone fidelity
 
   function openVoiceRecord() {
     var overlay = document.getElementById('voiceRecordOverlay');
@@ -24628,10 +24633,23 @@
     try {
       statusEl.textContent = 'Requesting microphone\u2026';
       statusEl.style.color = 'var(--text-light)';
-      _vrStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // For voice cloning we want the cleanest possible signal — disable all
+      // browser-side audio processing (noise suppression, echo cancellation, AGC)
+      // which can introduce artefacts that confuse Inworld's cloning model.
+      // Mono + 48kHz is the sweet spot: single voice, high fidelity, manageable file size.
+      _vrStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount:         1,       // mono — single voice, no stereo width artefacts
+          sampleRate:           48000,   // 48kHz — Inworld's preferred input rate
+          echoCancellation:     false,   // off — EC introduces phase distortion
+          noiseSuppression:     false,   // off — NS can strip consonants and sibilants
+          autoGainControl:      false    // off — AGC causes level pumping that confuses cloner
+        }
+      });
       _vrMime   = _vrGetMime();
       _vrChunks = [];
-      _vrRecorder = new MediaRecorder(_vrStream, _vrMime ? { mimeType: _vrMime } : {});
+      var recOpts = _vrMime ? { mimeType: _vrMime, audioBitsPerSecond: VR_AUDIO_BITRATE } : { audioBitsPerSecond: VR_AUDIO_BITRATE };
+      _vrRecorder = new MediaRecorder(_vrStream, recOpts);
       _vrRecorder.ondataavailable = function(e) { if (e.data && e.data.size > 0) _vrChunks.push(e.data); };
       _vrRecorder.onstop = function() {
         // Cancel countdown in case onstop fired before auto-stop timer
@@ -26266,7 +26284,9 @@
       <button id="vrScriptToggle" style="background:none;border:none;font-size:0.8rem;color:var(--gold-dark);cursor:pointer;padding:0;font-family:Lato,sans-serif;text-decoration:underline;text-underline-offset:2px">Need something to read? Show me a script ›</button>
       <div id="vrScriptPanel" style="display:none;margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:0.82rem;line-height:1.8;color:var(--text)">
         <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px">Read this aloud naturally — take your time</div>
-        The kettle's just boiled, if you'd like a cup. I've been thinking about what to make for dinner — maybe something simple tonight. Did you hear back from them yet? I wasn't sure whether to call or just wait. The weather's been strange lately, hasn't it? One minute it's warm, the next you need a coat. Anyway, I wanted to tell you something — I came across an old photo the other day and it just stopped me in my tracks. Isn't it funny how a single image can bring everything rushing back? I could have stood there looking at it for hours. Right, I'd better get on with things. Talk soon.
+        The kettle's just boiled, if you'd like a cup. I've been thinking about what to make for dinner — maybe something simple tonight. Did you hear back from them yet? I wasn't sure whether to call or just wait. The weather's been strange lately, hasn't it? One minute it's warm, the next you need a coat. Anyway, I wanted to tell you something — I came across an old photo the other day and it just stopped me in my tracks. Isn't it funny how a single image can bring everything rushing back? I could have stood there looking at it for hours.<br><br>
+        There's a lot I should have said back then. Not in a regretful way — just things I assumed were understood, and maybe they were. I don't know. You get to a certain point and you start to wonder which memories other people are carrying around, and whether they match yours. I suppose that's why I think it matters to write things down.<br><br>
+        Right, I'd better get on with things. There's still the washing to deal with, and I promised I'd ring before seven. Talk soon — and take care of yourself, won't you.
       </div>
     </div>
     <!-- Record / Stop controls -->
