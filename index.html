@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.53';
-  const DEPLOY_NOTES = APP_VERSION + ' — Voice clone quality fixes: (1) getUserMedia now requests mono/48kHz with echoCancellation=false, noiseSuppression=false, autoGainControl=false — browser audio processing was mangling the signal and causing Inworld to produce spliced multi-voice output. (2) MediaRecorder now uses audioBitsPerSecond=128000 (up from browser default ~64kbps) for higher fidelity clone input. (3) Reading script extended ~30% with two additional paragraphs covering varied pace and emotional register.';
+  const APP_VERSION  = 'v6.55';
+  const DEPLOY_NOTES = APP_VERSION + ' — Full Telegram alert audit. _WARN_NOTIFY_AREAS expanded from 13 to 22 areas covering every real service failure: added DASH, PEOPLE, OFFLINE, BOOKSETTINGS, CONVO, LIB, FE, EMAIL, UNSUB, DISCLAIMER. Excluded noise (NET offline event, OFFLINE pruning, LIB info logs, NOTIFY recursive) with documented rationale. Two LIB info-level dbgWarn calls downgraded to dbg (duplicate-skip and save-success are not warnings). OFFLINE pruned and NET offline also downgraded to dbg.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5316,7 +5316,31 @@
   // areas, also fires Telegram so important warnings surface in real-time.
   // Non-fatal noise (PEECHO cleanup, caption failures etc.) excluded from Telegram only —
   // they still go to Supabase for post-hoc analysis.
-  var _WARN_NOTIFY_AREAS = ['AUTH','DB','INIT','MIC','AI','PEECHO','RENDER','SHARE','MUSIC','SUB'];
+  // Areas that fire Telegram on dbgWarn. Rule: include if a warning means a feature
+  // is broken or data may be lost and you'd want to know NOW to fix it. Exclude if it's
+  // expected noise (device offline, routine cleanup, user-facing fallback already shown).
+  // EXCLUDED intentionally: NET (offline event), PWA (SW reg fails in Safari/dev),
+  // OFFLINE-PRUNED (routine queue maintenance), UX-M06 (UI state flag only),
+  // AGP-TAGS/AGP_MIC (non-critical fallbacks), NUDGE (cosmetic), STORY/PHOTO/VIDEO/AUDIO
+  // (fallbacks shown to user), AI-REVIEW (non-blocking), MEM (auto-title, non-blocking),
+  // FEAT (analytics tracking, non-blocking), NOTIFY (avoid recursive Telegram loop).
+  var _WARN_NOTIFY_AREAS = [
+    'AUTH','DB','INIT',                       // core infrastructure
+    'AI','CONVO',                             // AI proxy / conversation
+    'TTS','AUDIOBOOK','MUSIC','VOICES',       // audio pipeline
+    'MIC',                                    // microphone (recording feature)
+    'SHARE','PEECHO',                         // sharing + print (revenue/core features)
+    'SUB',                                    // subscription (revenue)
+    'RENDER',                                 // render failures (user sees broken UI)
+    'DASH',                                   // dashboard DB/render failures
+    'PEOPLE',                                 // people graph data failures
+    'OFFLINE',                                // offline queue sync (data loss risk)
+    'BOOKSETTINGS',                           // book settings save failures (silent data loss)
+    'LIB',                                    // library save/load failures
+    'FE',                                     // final edit failures
+    'EMAIL','UNSUB',                          // email prefs + unsubscribe proxy
+    'DISCLAIMER'                              // disclaimer DB failures (legal relevance)
+  ];
   function dbgWarn(area,...args){
     console.warn(`[${area}] WARN`,...args);
     try {
@@ -11766,7 +11790,7 @@
         .eq('metadata->>contentHash', hash)
         .limit(1);
       if (existing && existing.length > 0) {
-        dbgWarn('LIB', 'Skipping duplicate save (hash match)');
+        dbg('LIB', 'Skipping duplicate save (hash match)');
         return existing[0].id;
       }
 
@@ -11777,7 +11801,7 @@
         .single();
 
       if (error) { dbgErr('LIB', 'Save failed: ' + error.message); return null; }
-      dbgWarn('LIB', 'Saved component id=' + data.id);
+      dbg('LIB', 'Saved component id=' + data.id);
       return data.id;
     } catch (err) {
       dbgErr('LIB', 'saveStoryComponent error: ' + (err.message || err));
@@ -13324,7 +13348,12 @@
           if (_abPlayer.stopFlag) { _abSwell(); resolve(); return; }
           var source = ctx.createBufferSource();
           source.buffer = decoded;
-          source.connect(ctx.destination);
+          // Normalise TTS voice to a constant level via gain node.
+          // Music volume varies (duck/swell) but voice volume must always be the same.
+          var ttsGain = ctx.createGain();
+          ttsGain.gain.value = 1.0; // full gain — Inworld audio is already well-levelled
+          source.connect(ttsGain);
+          ttsGain.connect(ctx.destination);
           // Store source so _abStopAudio can call source.stop()
           _abPlayer.audio = source;
           source.onended = function() {
@@ -13347,7 +13376,7 @@
       }).catch(function(err) {
         _abPlayer.fetchAbort = null;
         if (err && (err.name === 'AbortError' || _abPlayer.stopFlag)) { _abSwell(); resolve(); return; }
-        dbgWarn('AUDIOBOOK', '_abSpeak error: ' + (err && err.message));
+        dbgErr('AUDIOBOOK', '_abSpeak error: ' + (err && err.message));
         // Fallback: browser speechSynthesis
         if (window.speechSynthesis) {
           var utt = new SpeechSynthesisUtterance(text);
@@ -21687,7 +21716,7 @@
     if (!banner) return;
     if (!navigator.onLine) {
       banner.style.display = 'block';
-      dbgWarn('NET', 'Device went offline');
+      dbg('NET', 'Device went offline');
     } else {
       banner.style.display = 'none';
       dbg('NET', 'Device back online');
@@ -21709,7 +21738,7 @@
       var cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
       var pruned = q.filter(function(item) { return !item._queued_at || item._queued_at >= cutoff; });
       if (pruned.length < q.length) {
-        dbgWarn('OFFLINE', 'Pruned', q.length - pruned.length, 'stale queue item(s) older than 7 days');
+        dbg('OFFLINE', 'Pruned', q.length - pruned.length, 'stale queue item(s) older than 7 days');
         try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(pruned)); } catch(e) {}
       }
       return pruned;
@@ -24630,6 +24659,20 @@
   async function vrStartRecording() {
     var statusEl = document.getElementById('vrStatus');
     if (!statusEl) return;
+    // If user is re-recording (a previous take exists), reset the review section
+    // so Save Voice and consent are fully cleared — not just the button greyed out.
+    if (_vrBlob) {
+      _vrBlob = null;
+      _vrChunks = [];
+      var prevReview = document.getElementById('vrReviewSection');
+      if (prevReview) prevReview.style.display = 'none';
+      var prevLabel = document.getElementById('vrLabelInput');
+      if (prevLabel) prevLabel.value = '';
+      var prevConsent = document.getElementById('vrConsentCheck');
+      if (prevConsent) prevConsent.checked = false;
+      var prevUp = document.getElementById('vrUploadBtn');
+      if (prevUp) { prevUp.disabled = true; prevUp.textContent = 'Save Voice'; }
+    }
     try {
       statusEl.textContent = 'Requesting microphone\u2026';
       statusEl.style.color = 'var(--text-light)';
@@ -26279,8 +26322,13 @@
       <div>&#x2022; Read aloud from a book, letter, or news article for natural flow</div>
       <div>&#x2022; Aim for 30&ndash;60 seconds &mdash; longer samples clone more accurately</div>
     </div>
-    <!-- Script offer -->
-    <div style="margin-bottom:16px">
+    <!-- Record / Stop controls -->
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
+      <button id="vrStopBtn" class="btn btn-ghost" style="flex:1" disabled>&#x23F9; Stop</button>
+    </div>
+    <!-- Script offer — below controls so Record button is always visible -->
+    <div style="margin-bottom:12px">
       <button id="vrScriptToggle" style="background:none;border:none;font-size:0.8rem;color:var(--gold-dark);cursor:pointer;padding:0;font-family:Lato,sans-serif;text-decoration:underline;text-underline-offset:2px">Need something to read? Show me a script ›</button>
       <div id="vrScriptPanel" style="display:none;margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:0.82rem;line-height:1.8;color:var(--text)">
         <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px">Read this aloud naturally — take your time</div>
@@ -26288,11 +26336,6 @@
         There's a lot I should have said back then. Not in a regretful way — just things I assumed were understood, and maybe they were. I don't know. You get to a certain point and you start to wonder which memories other people are carrying around, and whether they match yours. I suppose that's why I think it matters to write things down.<br><br>
         Right, I'd better get on with things. There's still the washing to deal with, and I promised I'd ring before seven. Talk soon — and take care of yourself, won't you.
       </div>
-    </div>
-    <!-- Record / Stop controls -->
-    <div style="display:flex;gap:10px;margin-bottom:14px">
-      <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
-      <button id="vrStopBtn" class="btn btn-ghost" style="flex:1" disabled>&#x23F9; Stop</button>
     </div>
     <!-- Status line -->
     <p id="vrStatus" style="font-size:0.82rem;color:var(--text-light);min-height:1.2em;margin:0 0 16px"></p>
