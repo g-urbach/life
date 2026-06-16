@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.55';
-  const DEPLOY_NOTES = APP_VERSION + ' — Full Telegram alert audit. _WARN_NOTIFY_AREAS expanded from 13 to 22 areas covering every real service failure: added DASH, PEOPLE, OFFLINE, BOOKSETTINGS, CONVO, LIB, FE, EMAIL, UNSUB, DISCLAIMER. Excluded noise (NET offline event, OFFLINE pruning, LIB info logs, NOTIFY recursive) with documented rationale. Two LIB info-level dbgWarn calls downgraded to dbg (duplicate-skip and save-success are not warnings). OFFLINE pruned and NET offline also downgraded to dbg.';
+  const APP_VERSION  = 'v6.57';
+  const DEPLOY_NOTES = APP_VERSION + ' — Rate limit UX for Final Edit. _feShowRateLimitMessage() detects 429 from final-edit-proxy and shows a tier-aware panel instead of a raw toast: premium users see reset-time hint; free users see upsell to Premium. Added FE-RL-01 backlog item documenting the edge function changes needed for tiered limits (free: 5/hr, premium: 30/hr) and structured 429 JSON response.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -23918,6 +23918,7 @@
     var aiPanel = document.getElementById('feAIPanel');
     if (aiPanel) {
       aiPanel.innerHTML =
+        '<button id="feGethroReviewBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:10px 16px;font-weight:700;margin-bottom:14px;border:1.5px solid var(--gold);color:var(--gold-dark)">\u2728 Let Gethro read this</button>' +
         '<p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark \u2014 your voice stays yours.</p>' +
         '<div id="feAnnoBody" style="min-height:260px;max-height:440px;overflow-y:auto;padding:14px 16px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.9rem;line-height:1.8;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text" contenteditable="false"></div>' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:6px"><span id="feAnnoCount" style="font-size:0.78rem;color:var(--text-light)">No annotations yet \u2014 select text to begin</span><button id="feSendToGethroBtn" class="btn btn-primary" disabled style="font-size:0.85rem;padding:8px 18px;font-weight:700;opacity:0.45">Send to Gethro \u2192</button></div>' +
@@ -23932,6 +23933,12 @@
       }
       var sendBtn = document.getElementById('feSendToGethroBtn');
       if (sendBtn) sendBtn.addEventListener('click', _feSendToGethro);
+      // FE-04: Gethro proactive review entry point — Premium only
+      var gethroReviewBtn = document.getElementById('feGethroReviewBtn');
+      if (gethroReviewBtn) {
+        gethroReviewBtn.style.display = isPremium() ? 'block' : 'none';
+        gethroReviewBtn.addEventListener('click', _feRequestGethroReview);
+      }
       _feRenderAnnoBody();
       _feUpdateAnnoUI();
     }
@@ -24270,6 +24277,101 @@
     _feUpdateAnnoUI();
   }
 
+  // ── FE-04: Gethro proactive review ───────────────────────────────────────
+  // "✨ Let Gethro read this" — sends the full entry with review_mode:true.
+  // Claude picks 2-3 passages itself and returns them in the same shape as
+  // user-created annotations/rewrites, so they drop straight into the existing
+  // accept/reject review panel (FE-03) with no separate rendering path.
+  async function _feRequestGethroReview() {
+    if (!_feOriginalContent) return;
+    var btn = document.getElementById('feGethroReviewBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Gethro is reading your entry…'; }
+    try {
+      var session = await sb.auth.getSession();
+      var token   = session.data.session ? session.data.session.access_token : null;
+      if (!token) throw new Error('Not authenticated');
+
+      var data = await _feProxyFetch(token, {
+        full_text:   _feOriginalContent,
+        review_mode: true
+      }, function(secsLeft) {
+        if (btn) btn.textContent = '\u21ba Retrying in ' + secsLeft + 's\u2026';
+      });
+
+      var picks = (data.rewrites || []).map(function(r) {
+        // Edge function returns original_passage for review_mode picks (no
+        // pre-existing annotation to source it from, unlike manual FE-03 flow).
+        var startIdx = _feOriginalContent.indexOf(r.original_passage);
+        if (startIdx === -1) {
+          dbgWarn('FE', 'Gethro review pick did not match entry text — skipped: "' + (r.original_passage || '').slice(0, 40) + '…"');
+          return null;
+        }
+        var id = ++_feAnnoIdCounter;
+        return {
+          ann: { id: id, passage: r.original_passage, instruction: r.instruction || 'Gethro\u2019s suggestion', startIdx: startIdx, endIdx: startIdx + r.original_passage.length },
+          rewrite: { id: id, original_passage: r.original_passage, rewritten_passage: r.rewritten_passage, instruction: r.instruction || 'Gethro\u2019s suggestion', decision: 'pending' }
+        };
+      }).filter(Boolean);
+
+      if (picks.length === 0) {
+        toast('Gethro didn\u2019t find anything to flag \u2014 try again or annotate a passage yourself.');
+        if (btn) { btn.disabled = false; btn.textContent = '\u2728 Let Gethro read this'; }
+        return;
+      }
+
+      // Merge into existing state rather than replace — user may have already
+      // added their own annotations before tapping this button.
+      _feAnnotations = _feAnnotations.concat(picks.map(function(p) { return p.ann; }));
+      _feRewrites     = _feRewrites.concat(picks.map(function(p) { return p.rewrite; }));
+      _feReviewActive = true;
+      _feRenderReviewPanel();
+
+    } catch(e) {
+      dbgErr('FE', '_feRequestGethroReview error: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '\u2728 Let Gethro read this'; }
+      if (e.message && (e.message.indexOf('429') !== -1 || e.message.toLowerCase().indexOf('rate limit') !== -1)) {
+        _feShowRateLimitMessage(e.message);
+      } else {
+        toast('Gethro hit a problem \u2014 ' + e.message);
+      }
+    }
+  }
+
+  // ── FE-03: Rate limit UX ─────────────────────────────────────────────────────
+  // Shows a tier-aware message when the edge function returns 429.
+  // Premium users get the full limit, free users get an upsell.
+  // Edge function should return the reset time in the error body (see FE-RL-01 backlog).
+  function _feShowRateLimitMessage(errMsg) {
+    var aiPanel = document.getElementById('feAIPanel');
+    if (!aiPanel) { toast('Gethro has reached her edit limit for now — ' + errMsg); return; }
+
+    // Try to extract a time hint from the error message ("try again in an hour", "try again in 23m" etc.)
+    var timeHint = '';
+    var inMatch  = errMsg.match(/in (\d+\s*(?:hour|minute|min|hr|second|sec)[s]?)/i);
+    if (inMatch) timeHint = ' — ' + inMatch[1];
+
+    var premium = isPremium();
+    var msg, sub;
+    if (premium) {
+      msg = 'You\u2019ve reached your edit limit for this hour' + timeHint + '.';
+      sub = 'Your limit resets each hour. Come back shortly and Gethro will be ready to continue polishing.';
+    } else {
+      msg = 'You\u2019ve reached the free edit limit' + timeHint + '.';
+      sub = 'Premium members get a much higher limit. Upgrade to keep editing with Gethro today.';
+    }
+
+    var html = '';
+    html += '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px 16px;gap:10px">';
+    html += '<span style="font-size:1.5rem">⏱️</span>';
+    html += '<p style="margin:0;font-size:0.9rem;font-weight:700;color:var(--text)">' + msg + '</p>';
+    html += '<p style="margin:0;font-size:0.82rem;color:var(--text-light);line-height:1.5">' + sub + '</p>';
+    if (!premium) {
+      html += '<button class="btn btn-primary" style="margin-top:8px;font-size:0.85rem;padding:9px 22px" onclick="openUpgradeOverlay && openUpgradeOverlay()">✨ Upgrade to Premium</button>';
+    }
+    html += '</div>';
+    aiPanel.innerHTML = html;
+  }
+
   // ── FE-03: Send to Gethro — Claude integration + accept/reject ──────────────────
 
   // FE-03 review state
@@ -24305,9 +24407,14 @@
       _feRenderReviewPanel();
     } catch(e) {
       dbgErr('FE', 'feSendToGethro error: ' + e.message);
-      toast('Gethro hit a problem — ' + e.message);
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send to Gethro →'; }
       if (countEl) _feUpdateAnnoUI();
+      // Detect rate limit (429) and show a helpful message instead of raw error
+      if (e.message && (e.message.indexOf('429') !== -1 || e.message.toLowerCase().indexOf('rate limit') !== -1)) {
+        _feShowRateLimitMessage(e.message);
+      } else {
+        toast('Gethro hit a problem — ' + e.message);
+      }
     }
   }
 
@@ -24513,8 +24620,12 @@
     } catch(e) {
       _feRetryInFlight[id] = false;
       dbgErr('FE', 'feRetryAnnotation error: ' + e.message);
-      toast('Retry failed \u2014 ' + e.message);
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '\u21ba Send'; }
+      if (e.message && (e.message.indexOf('429') !== -1 || e.message.toLowerCase().indexOf('rate limit') !== -1)) {
+        _feShowRateLimitMessage(e.message);
+      } else {
+        toast('Retry failed \u2014 ' + e.message);
+      }
     }
   }
 
@@ -24568,6 +24679,7 @@
     var aiPanel = document.getElementById('feAIPanel');
     if (!aiPanel) return;
     aiPanel.innerHTML =
+      '<button id="feGethroReviewBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:10px 16px;font-weight:700;margin-bottom:14px;border:1.5px solid var(--gold);color:var(--gold-dark)">✨ Let Gethro read this</button>' +
       '<p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark — your voice stays yours.</p>' +
       '<div id="feAnnoBody" style="min-height:260px;max-height:440px;overflow-y:auto;padding:14px 16px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.9rem;line-height:1.8;color:var(--text);background:var(--surface);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text" contenteditable="false"></div>' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:6px"><span id="feAnnoCount" style="font-size:0.78rem;color:var(--text-light)">No annotations yet — select text to begin</span><button id="feSendToGethroBtn" class="btn btn-primary" disabled style="font-size:0.85rem;padding:8px 18px;font-weight:700;opacity:0.45">Send to Gethro →</button></div>' +
@@ -24579,6 +24691,12 @@
     }
     var sendBtn = document.getElementById('feSendToGethroBtn');
     if (sendBtn) sendBtn.addEventListener('click', _feSendToGethro);
+    // FE-04: Gethro proactive review entry point — Premium only
+    var gethroReviewBtn = document.getElementById('feGethroReviewBtn');
+    if (gethroReviewBtn) {
+      gethroReviewBtn.style.display = isPremium() ? 'block' : 'none';
+      gethroReviewBtn.addEventListener('click', _feRequestGethroReview);
+    }
     _feRenderAnnoBody();
     _feUpdateAnnoUI();
   }
@@ -26260,6 +26378,8 @@
 
     <!-- ── FE-02: AI Annotation panel ─────────────────────────────────────── -->
     <div id="feAIPanel" style="display:none">
+      <!-- FE-04: Gethro proactive review entry point -->
+      <button id="feGethroReviewBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:10px 16px;font-weight:700;margin-bottom:14px;border:1.5px solid var(--gold);color:var(--gold-dark)">✨ Let Gethro read this</button>
       <!-- Instruction hint -->
       <p style="font-size:0.82rem;color:var(--text-light);line-height:1.6;margin:0 0 12px;font-style:italic">Select any passage below to annotate it. Gethro will rewrite only what you mark — your voice stays yours.</p>
       <!-- Annotatable content area -->
