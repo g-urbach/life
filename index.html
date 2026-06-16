@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.50';
-  const DEPLOY_NOTES = APP_VERSION + ' — v6.49: FE-02/03 fixes — (1) Tab active state: direct style assignment replaces fragile regex, both tabs now highlight correctly. (2) Annotation × button: instruction now editable inline in chip; remove wired via event delegation, survives DOM rebuilds. (3) Review panel: ↺ Try again button re-sends single annotation to Gethro with updated instruction. No DB/edge function changes.';
+  const APP_VERSION  = 'v6.51';
+  const DEPLOY_NOTES = APP_VERSION + ' — Multiple bug fixes and UX improvements: (1) FE-03 annotation popover fix: position:fixed popover was offset by window.scrollY causing it to render off-screen — removed scrollY addition so viewport coords are used directly. (2) FE-03 review panel listener stacking: _feReviewDelegate now stored at module scope; removed before each re-render to prevent N duplicate handlers firing on retry-send. (3) FE-03 exponential backoff: _feProxyFetch helper retries on 500s with 2s/4s/8s delays and live countdown on send button; 4xx surfaces immediately. (4) Voice recording 2nd/3rd slot bug: dangling auto-stop setTimeout from previous session was firing into new recorder — _vrAutoStopTimer and _vrCountdownTimer now stored and cancelled in openVoiceRecord and closeVoiceRecord. (5) Voice recording max duration extended 15s → 60s with live countdown. (6) Voice settings not showing custom voices: loadVoicePrefs is async but renderVoicesSettingsSection was called before it resolved — now re-renders at end of loadVoicePrefs. (7) Voice overlay: added reading script panel (toggle show/hide) with natural conversational text covering varied pace, emotion, and cadence. (8) Voice overlay: added recording tips panel.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -23648,6 +23648,12 @@
       var cvRes = await fetch(cvUrl, { headers: getAuthHeaders() });
       if (cvRes.ok) _customVoices = await cvRes.json();
     } catch(e) { dbgWarn('VOICES', 'loadCustomVoices error:', e.message); }
+
+    // Re-render now that both prefs and custom voices are loaded.
+    // renderVoicesSettingsSection() is called synchronously at settings-open time,
+    // but loadVoicePrefs() is async — without this, custom voices never appear on
+    // first open and the cap message fires with no delete buttons visible.
+    renderVoicesSettingsSection();
   }
 
   async function saveVoicePref(key, value) {
@@ -25258,6 +25264,14 @@
     on('voicesRecordBtn', 'click', openVoiceRecord); // APP-53 Phase 3
     // ── Voice Record Overlay (APP-53 Phase 3) ────────────────────────────────
     on('vrCloseBtn',    'click', closeVoiceRecord);
+    on('vrScriptToggle','click', function() {
+      var panel = document.getElementById('vrScriptPanel');
+      var btn   = document.getElementById('vrScriptToggle');
+      if (!panel || !btn) return;
+      var showing = panel.style.display !== 'none';
+      panel.style.display = showing ? 'none' : 'block';
+      btn.textContent = showing ? 'Need something to read? Show me a script ›' : 'Hide script ›';
+    });
     on('vrRecordBtn',   'click', vrStartRecording);
     on('vrStopBtn',     'click', vrStopRecording);
     on('vrLabelInput',  'input', vrCheckUploadReady);
@@ -26242,8 +26256,14 @@
       <div>&#x2022; Read aloud from a book, letter, or news article for natural flow</div>
       <div>&#x2022; Aim for 30&ndash;60 seconds &mdash; longer samples clone more accurately</div>
     </div>
-    <!-- Record / Stop controls -->
-    <div style="display:flex;gap:10px;margin-bottom:14px">
+    <!-- Script offer -->
+    <div style="margin-bottom:16px">
+      <button id="vrScriptToggle" style="background:none;border:none;font-size:0.8rem;color:var(--gold-dark);cursor:pointer;padding:0;font-family:Lato,sans-serif;text-decoration:underline;text-underline-offset:2px">Need something to read? Show me a script ›</button>
+      <div id="vrScriptPanel" style="display:none;margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:0.82rem;line-height:1.8;color:var(--text)">
+        <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px">Read this aloud naturally — take your time</div>
+        The kettle's just boiled, if you'd like a cup. I've been thinking about what to make for dinner — maybe something simple tonight. Did you hear back from them yet? I wasn't sure whether to call or just wait. The weather's been strange lately, hasn't it? One minute it's warm, the next you need a coat. Anyway, I wanted to tell you something — I came across an old photo the other day and it just stopped me in my tracks. Isn't it funny how a single image can bring everything rushing back? I could have stood there looking at it for hours. Right, I'd better get on with things. Talk soon.
+      </div>
+    </div>
       <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
       <button id="vrStopBtn" class="btn btn-ghost" style="flex:1" disabled>&#x23F9; Stop</button>
     </div>
