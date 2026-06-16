@@ -5212,8 +5212,8 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-  const APP_VERSION  = 'v6.51';
-  const DEPLOY_NOTES = APP_VERSION + ' — Multiple bug fixes and UX improvements: (1) FE-03 annotation popover fix: position:fixed popover was offset by window.scrollY causing it to render off-screen — removed scrollY addition so viewport coords are used directly. (2) FE-03 review panel listener stacking: _feReviewDelegate now stored at module scope; removed before each re-render to prevent N duplicate handlers firing on retry-send. (3) FE-03 exponential backoff: _feProxyFetch helper retries on 500s with 2s/4s/8s delays and live countdown on send button; 4xx surfaces immediately. (4) Voice recording 2nd/3rd slot bug: dangling auto-stop setTimeout from previous session was firing into new recorder — _vrAutoStopTimer and _vrCountdownTimer now stored and cancelled in openVoiceRecord and closeVoiceRecord. (5) Voice recording max duration extended 15s → 60s with live countdown. (6) Voice settings not showing custom voices: loadVoicePrefs is async but renderVoicesSettingsSection was called before it resolved — now re-renders at end of loadVoicePrefs. (7) Voice overlay: added reading script panel (toggle show/hide) with natural conversational text covering varied pace, emotion, and cadence. (8) Voice overlay: added recording tips panel.';
+  const APP_VERSION  = 'v6.52';
+  const DEPLOY_NOTES = APP_VERSION + ' — (1) Voice overlay off-screen fix: inner card missing max-height+overflow-y and Record/Stop button wrapper div was broken by previous script panel insertion — both fixed. (2) Background music duck timing: _abDuck() was called at TTS fetch start causing music to drop during 1-3s network+decode wait creating silent half-ducked gaps; now ducks only at source.start(0) — the true moment speech begins. Inter-segment _abDuck() removed for same reason — swell covers entire gap+fetch wait, duck fires naturally when next speech starts.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -13282,7 +13282,10 @@
       if (!sessionToken) { resolve(); return; }
       _abPlayer.resolveSpeak = resolve;
       dbg('AUDIOBOOK', '_abSpeak (' + text.length + ' chars)');
-      _abDuck(); // APP-46 Phase 3b: duck music before TTS starts
+      // NOTE: _abDuck() is NOT called here — we duck only when audio actually starts
+      // playing (inside decodeAudioData callback below). Ducking at fetch-start causes
+      // music to drop during the 1-3s network+decode wait, creating silent gaps where
+      // music neither swells nor is at full volume. See APP-46 Phase 3b timing fix.
 
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       _abPlayer.fetchAbort = controller;
@@ -13330,6 +13333,7 @@
             _abSwell(); // APP-46 Phase 3b: swell music after speech ends
             resolve();
           };
+          _abDuck(); // Duck exactly when speech starts — not at fetch time
           source.start(0);
           dbg('AUDIOBOOK', 'AudioContext source started, duration=' + decoded.duration.toFixed(1) + 's');
           // Start elapsed seconds display now that we know the real duration
@@ -13490,10 +13494,11 @@
         await _abSpeak(seg.text);
         if (_abPlayer.stopFlag) break;
         if (seg.pause_after_ms > 0) {
-          // APP-46 Phase 3b: swell during the inter-section gap, then duck for next segment
+          // Swell during the inter-section gap. Duck is no longer called here —
+          // _abSpeak now ducks at the moment audio actually starts playing,
+          // so the music stays at full volume across the entire gap + fetch wait.
           _abSwell();
           await new Promise(function(r) { setTimeout(r, seg.pause_after_ms); });
-          if (!_abPlayer.stopFlag) _abDuck();
         }
       }
 
@@ -26239,7 +26244,7 @@
 
 <!-- ── APP-53 Phase 3: Voice Record Overlay ─────────────────────────────── -->
 <div id="voiceRecordOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2200;align-items:center;justify-content:center;padding:20px">
-  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
+  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative;max-height:calc(100dvh - 40px);overflow-y:auto">
     <!-- Header -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin:0">&#x1F399;&#xFE0F; Record a Voice</h3>
@@ -26264,6 +26269,8 @@
         The kettle's just boiled, if you'd like a cup. I've been thinking about what to make for dinner — maybe something simple tonight. Did you hear back from them yet? I wasn't sure whether to call or just wait. The weather's been strange lately, hasn't it? One minute it's warm, the next you need a coat. Anyway, I wanted to tell you something — I came across an old photo the other day and it just stopped me in my tracks. Isn't it funny how a single image can bring everything rushing back? I could have stood there looking at it for hours. Right, I'd better get on with things. Talk soon.
       </div>
     </div>
+    <!-- Record / Stop controls -->
+    <div style="display:flex;gap:10px;margin-bottom:14px">
       <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
       <button id="vrStopBtn" class="btn btn-ghost" style="flex:1" disabled>&#x23F9; Stop</button>
     </div>
