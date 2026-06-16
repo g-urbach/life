@@ -24547,12 +24547,16 @@
 
   // ── APP-53 Phase 3: Voice recording + clone flow ─────────────────────────
   // State for the record overlay session
-  var _vrStream   = null;  // MediaStream from getUserMedia
-  var _vrRecorder = null;  // MediaRecorder instance
-  var _vrChunks   = [];    // collected audio chunks
-  var _vrMime     = '';    // MIME type chosen for this recording
-  var _vrBlob     = null;  // final recorded blob (set on onstop)
-  var _vrStartTs  = 0;     // recording start timestamp (ms)
+  var _vrStream      = null;  // MediaStream from getUserMedia
+  var _vrRecorder    = null;  // MediaRecorder instance
+  var _vrChunks      = [];    // collected audio chunks
+  var _vrMime        = '';    // MIME type chosen for this recording
+  var _vrBlob        = null;  // final recorded blob (set on onstop)
+  var _vrStartTs     = 0;     // recording start timestamp (ms)
+  var _vrAutoStopTimer  = null; // handle for the auto-stop setTimeout — must be cancelled on reset
+  var _vrCountdownTimer = null; // handle for the live countdown interval
+
+  var VR_MAX_SECONDS = 60; // Inworld accepts up to several minutes; 60s is a great sweet spot
 
   function _vrGetMime() {
     var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
@@ -24565,12 +24569,19 @@
   function openVoiceRecord() {
     var overlay = document.getElementById('voiceRecordOverlay');
     if (!overlay) return;
+    // Cancel any dangling timers from a previous session BEFORE resetting state.
+    // Without this, the auto-stop setTimeout fires into the new recording and
+    // kills it at an arbitrary time — the bug that broke 2nd/3rd voice recordings.
+    if (_vrAutoStopTimer)  { clearTimeout(_vrAutoStopTimer);   _vrAutoStopTimer  = null; }
+    if (_vrCountdownTimer) { clearInterval(_vrCountdownTimer); _vrCountdownTimer = null; }
+    // Stop any live stream/recorder from the previous session
+    _vrStopStream();
     // Reset state
     _vrBlob = null; _vrChunks = []; _vrStream = null; _vrRecorder = null;
     document.getElementById('vrLabelInput').value = '';
     document.getElementById('vrConsentCheck').checked = false;
     var statusEl = document.getElementById('vrStatus');
-    if (statusEl) { statusEl.textContent = 'Press Record and speak for 5\u201315 seconds.'; statusEl.style.color = 'var(--text-light)'; }
+    if (statusEl) { statusEl.textContent = 'Press Record and speak naturally for 30\u201360 seconds.'; statusEl.style.color = 'var(--text-light)'; }
     var recBtn = document.getElementById('vrRecordBtn');
     if (recBtn) { recBtn.disabled = false; recBtn.textContent = '\uD83D\uDD34 Record'; }
     var stopBtn = document.getElementById('vrStopBtn');
@@ -24583,6 +24594,8 @@
   }
 
   function closeVoiceRecord() {
+    if (_vrAutoStopTimer)  { clearTimeout(_vrAutoStopTimer);   _vrAutoStopTimer  = null; }
+    if (_vrCountdownTimer) { clearInterval(_vrCountdownTimer); _vrCountdownTimer = null; }
     var overlay = document.getElementById('voiceRecordOverlay');
     if (overlay) overlay.style.display = 'none';
     _vrStopStream();
@@ -24610,42 +24623,59 @@
       _vrRecorder = new MediaRecorder(_vrStream, _vrMime ? { mimeType: _vrMime } : {});
       _vrRecorder.ondataavailable = function(e) { if (e.data && e.data.size > 0) _vrChunks.push(e.data); };
       _vrRecorder.onstop = function() {
+        // Cancel countdown in case onstop fired before auto-stop timer
+        if (_vrCountdownTimer) { clearInterval(_vrCountdownTimer); _vrCountdownTimer = null; }
         _vrBlob = new Blob(_vrChunks, { type: _vrMime || 'audio/webm' });
         var elapsed = Math.round((Date.now() - _vrStartTs) / 1000);
         var reviewSec = document.getElementById('vrReviewSection');
-        var upBtn = document.getElementById('vrUploadBtn');
+        var upBtn  = document.getElementById('vrUploadBtn');
         var recBtn = document.getElementById('vrRecordBtn');
         var stopBtn = document.getElementById('vrStopBtn');
         if (elapsed < 5) {
-          statusEl.textContent = 'Too short (' + elapsed + 's) \u2014 please record at least 5 seconds.';
+          statusEl.textContent = 'Too short (' + elapsed + 's) \u2014 please record at least 15 seconds for a good clone.';
           statusEl.style.color = 'var(--rose)';
           _vrBlob = null;
-          if (recBtn) { recBtn.disabled = false; }
+          if (recBtn)  { recBtn.disabled = false; }
           if (stopBtn) stopBtn.disabled = true;
           if (reviewSec) reviewSec.style.display = 'none';
-          if (upBtn) upBtn.disabled = true;
+          if (upBtn)   upBtn.disabled = true;
         } else {
-          statusEl.textContent = 'Recorded ' + elapsed + 's \u2014 add a label and consent below.';
+          statusEl.textContent = '\u2713 Recorded ' + elapsed + 's \u2014 add a label and consent below.';
           statusEl.style.color = 'var(--sage)';
           if (reviewSec) reviewSec.style.display = 'block';
-          if (upBtn) upBtn.disabled = true; // still needs label + consent
-          if (recBtn) recBtn.disabled = false;
+          if (upBtn)   upBtn.disabled = true; // still needs label + consent
+          if (recBtn)  recBtn.disabled = false;
           if (stopBtn) stopBtn.disabled = true;
         }
         _vrStopStream();
       };
       _vrRecorder.start();
       _vrStartTs = Date.now();
-      var recBtn2 = document.getElementById('vrRecordBtn');
+      var recBtn2  = document.getElementById('vrRecordBtn');
       var stopBtn2 = document.getElementById('vrStopBtn');
-      if (recBtn2) recBtn2.disabled = true;
+      if (recBtn2)  recBtn2.disabled  = true;
       if (stopBtn2) stopBtn2.disabled = false;
-      statusEl.textContent = '\uD83D\uDD34 Recording\u2026 (speak naturally for 5\u201315 seconds)';
+
+      // Live countdown: shows seconds remaining, reassures user recording is active
+      var secondsLeft = VR_MAX_SECONDS;
+      statusEl.textContent = '\uD83D\uDD34 Recording\u2026 ' + secondsLeft + 's remaining';
       statusEl.style.color = 'var(--rose)';
-      // Auto-stop at 15s
-      setTimeout(function() {
+      _vrCountdownTimer = setInterval(function() {
+        secondsLeft--;
+        if (secondsLeft > 0) {
+          statusEl.textContent = '\uD83D\uDD34 Recording\u2026 ' + secondsLeft + 's remaining';
+        } else {
+          clearInterval(_vrCountdownTimer);
+          _vrCountdownTimer = null;
+        }
+      }, 1000);
+
+      // Auto-stop at VR_MAX_SECONDS — store handle so openVoiceRecord can cancel it
+      _vrAutoStopTimer = setTimeout(function() {
+        _vrAutoStopTimer = null;
         if (_vrRecorder && _vrRecorder.state === 'recording') vrStopRecording();
-      }, 15000);
+      }, VR_MAX_SECONDS * 1000);
+
     } catch(e) {
       statusEl.textContent = 'Microphone access denied or unavailable.';
       statusEl.style.color = 'var(--rose)';
@@ -26195,14 +26225,23 @@
 
 <!-- ── APP-53 Phase 3: Voice Record Overlay ─────────────────────────────── -->
 <div id="voiceRecordOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2200;align-items:center;justify-content:center;padding:20px">
-  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
+  <div style="background:var(--surface);border-radius:20px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative">
     <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin:0">&#x1F399;&#xFE0F; Record a Voice</h3>
       <button id="vrCloseBtn" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
     </div>
     <!-- Instructions -->
-    <p style="font-size:0.83rem;color:var(--text-light);line-height:1.6;margin:0 0 16px">Record 5&#x2013;15 seconds of someone speaking naturally. LifeTold will clone this voice so it can read your story aloud.</p>
+    <p style="font-size:0.83rem;color:var(--text-light);line-height:1.6;margin:0 0 10px">Speak naturally for <strong>30&ndash;60 seconds</strong> &mdash; the longer and clearer the sample, the better the clone.</p>
+    <!-- Tips -->
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:0.78rem;color:var(--text-light);line-height:1.7">
+      <div style="font-weight:700;color:var(--text);margin-bottom:4px">Tips for a great recording</div>
+      <div>&#x2022; Quiet room &mdash; no TV, music, or background noise</div>
+      <div>&#x2022; Hold the phone 15&ndash;20 cm from your mouth</div>
+      <div>&#x2022; Speak at a normal, relaxed pace &mdash; not too fast or slow</div>
+      <div>&#x2022; Read aloud from a book, letter, or news article for natural flow</div>
+      <div>&#x2022; Aim for 30&ndash;60 seconds &mdash; longer samples clone more accurately</div>
+    </div>
     <!-- Record / Stop controls -->
     <div style="display:flex;gap:10px;margin-bottom:14px">
       <button id="vrRecordBtn" class="btn btn-primary" style="flex:1">&#x1F534; Record</button>
