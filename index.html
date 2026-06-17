@@ -5213,8 +5213,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.60';
-  const DEPLOY_NOTES = APP_VERSION + ' — Code + comment hygiene: dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
+  const APP_VERSION  = 'v6.62';
+  const DEPLOY_NOTES = APP_VERSION + ' — Fix: TTS playback parity. In-app: removed hardcoded "Next" from song announcement. Share page: title/song announcement now plays before first segment, matching in-app. Share music start and UI update guarded against double-fire when announce is present.'; // now appears from any tab after first memory answer. Two-part fix: (1) My Story screen context hint now tells Gethro that life conversations are valid there; (2) memory_conversation:true instruction broadened from "actively writing or sharing" to "shares or describes any personal memory or life event, even one answer". Client-side AI flag handler was already tab-agnostic. // dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5798,16 +5798,38 @@
             }
 
             try {
-              // Decode first TTS segment; then start music so both begin together
+              // Announce title before first segment (mirrors in-app audiobook behaviour)
+              var _spAnnounce = isSong
+                ? 'A song' + (data.piece.title ? ' called ' + data.piece.title : '')
+                    + (pMeta.songStyle ? ', written in the style of ' + pMeta.songStyle.replace(/_/g, ' ') : '') + '.'
+                : data.piece.title || '';
+              if (_spAnnounce) {
+                try {
+                  var announceDecoded = await _spFetchSegment(_spAnnounce);
+                  if (!_shareStopFlag) {
+                    if (isSong && bgMusicUrl) await _spStartBgMusic();
+                    _spDuck();
+                    shareListenBtn.disabled = false;
+                    shareListenBtn.innerHTML = '<span style="font-size:0.9rem">⏹</span> Stop';
+                    if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+                    await _spPlayBuffer(announceDecoded);
+                  }
+                } catch(e) { /* non-fatal — skip announce, play content */ }
+              }
+              if (_shareStopFlag) { _sharePlaying = false; _spStopMusic(); return; }
+
+              // Decode first TTS segment; then start music if no announce (song without title)
               var firstDecoded = await _spFetchSegment(segments[0].text);
               if (_shareStopFlag) { _sharePlaying = false; _spStopMusic(); return; }
 
-              if (isSong && bgMusicUrl) await _spStartBgMusic();
-              _spDuck(); // duck music while voice plays
-
-              shareListenBtn.disabled = false;
-              shareListenBtn.innerHTML = '<span style="font-size:0.9rem">⏹</span> Stop';
-              if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+              // Only start music/update UI here if announce didn't already do it
+              if (!_spAnnounce) {
+                if (isSong && bgMusicUrl) await _spStartBgMusic();
+                _spDuck();
+                shareListenBtn.disabled = false;
+                shareListenBtn.innerHTML = '<span style="font-size:0.9rem">⏹</span> Stop';
+                if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
+              }
 
               for (var si = 0; si < segments.length; si++) {
                 if (_shareStopFlag) break;
@@ -13456,7 +13478,7 @@
       // APP-46 Phase 3a: song-style intro announcement (Phase 2 spec folded in)
       var announce = 'Chapter ' + (i + 1) + '. ' + (piece.title || (meta.label + ' ' + (i + 1)));
       if (piece.type === 'song') {
-        announce = 'Next — a song' + (piece.title ? ' called ' + piece.title : '')
+        announce = 'A song' + (piece.title ? ' called ' + piece.title : '')
           + (piece.songStyle ? ', written in the style of ' + piece.songStyle.replace(/_/g, ' ') : '') + '.';
       }
       // APP-47c: append theme lens description to announcement
@@ -21016,7 +21038,7 @@
       (currentScreen === 'my_people' ? 'They are looking at their family tree. Proactively help with: adding people, setting relationships, navigating Tree vs Directory tabs, or tapping a node to edit.\n' : '') +
       (currentScreen === 'memories' ? 'They are on the Add Memory tab. Proactively help with: saving an entry, using the mic, adding details (chapter/people/photos), or using AI Review.\n' : '') +
       (currentScreen === 'entries' ? 'They are browsing their saved memories. Proactively help with: searching, filtering, editing, or sharing an entry.\n' : '') +
-      (currentScreen === 'story' ? 'They are on the My Story tab. Proactively help with: generating a story, choosing a format, book details, or printing.\n' : '') +
+      (currentScreen === 'story' ? 'They are on the My Story tab. Proactively help with: generating a story, choosing a format, book details, or printing. IMPORTANT: if the user starts sharing personal memories or life experiences in conversation (even if unprompted), treat it as a memory conversation and set memory_conversation:true — people often reminisce while reviewing their story.\n' : '') +
       (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' : '') +
       (currentScreen === 'print_preview' ? 'They are in the print preview. Proactively help with: cover styles, filling in book details, or placing an order via Peecho.\n' : '') +
       (currentScreen === 'book_organiser' ? 'They are in the Organise My Book screen. They can: (1) change the chapter for each memory using the dropdown, (2) set a date/year, and (3) drag the ☰ handle on any row to reorder memories within their chapter. Changes save when they tap Save All Changes.\n' : '');
@@ -21089,7 +21111,7 @@
       '}\n' +
       'If no action is needed, omit the action field entirely.\n' +
       'If no observation, omit the observation field.\n' +
-      'Set "memory_conversation": true ONLY when discussing a personal story or life event the user is actively writing or sharing. Do NOT set it for navigation, app-feature questions, reviewing entries, or any action that routes elsewhere.\n' +
+      'Set "memory_conversation": true whenever the user shares or describes a personal memory, life experience, or family story — regardless of which tab they are on. Even one answer about a real life event qualifies. Do NOT set it for: navigation requests, app-feature questions, notification responses, or any exchange that is purely about using the app.\n' +
       'Keep reply under 60 words — direct and specific, not rambling.\n' +
       'ALWAYS end your reply with one specific fact-seeking question — who, what, where, when, or what happened next. Not "how did that feel?"\n' +
       'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, events, sequence). Do not drift to adjacent topics.\n' +
