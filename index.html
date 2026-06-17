@@ -3025,7 +3025,7 @@
 
           <!-- Row 2: Unified media + People + References -->
           <div class="tag-field" style="grid-column:1/-1">
-            <label>📎 Media <span style="font-weight:400;font-size:0.8em;color:var(--text-light)">— photos, audio, or a short video</span></label>
+            <label>📎 Media <span style="font-weight:400;font-size:0.8em;color:var(--text-light)">— photos or audio</span></label>
             <!-- Hidden file inputs -->
             <input type="file" id="recPhotoInput"   accept="image/*"                              multiple style="display:none">
             <input type="file" id="recPhotoCapture" accept="image/*" capture="environment"                 style="display:none">
@@ -3055,11 +3055,7 @@
                   style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
                   🎙️ Record audio
                 </button>
-                <button type="button" id="recVideoRecordBtn"
-                  disabled title="Video recording coming soon"
-                  style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light);cursor:not-allowed;font-family:'Lato',sans-serif;opacity:0.5">
-                  🎬 Video (coming soon)
-                </button>
+                <!-- recVideoRecordBtn removed v6.60 — video machinery kept for APP-30; re-add when bucket is live -->
               </span>
             </div>
             <!-- Unified strip: photos + audio + video all together -->
@@ -5212,14 +5208,13 @@
   // This script and the Peecho injector are whitelisted in _headers via SHA-256 hashes.
   // Hash comments MUST NOT be placed inside this script block — they create a
   // self-referential hash that never converges. Hashes are in _headers and project memory.
-
   // ═══════════════════════════════════════════════════════════════════════════════
-  // ⚠️  BUMP THIS on EVERY build — output filename MUST match (e.g. v6.59 → index_v6_59.html)
+  // ⚠️  BUMP THIS on EVERY build — output filename MUST match (e.g. v6.60 → index_v6_60.html)
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.59';
-  const DEPLOY_NOTES = APP_VERSION + ' — Code hygiene: DEPLOYER_ANNOTATIONS stripped of all completed sprint history (now backlog-only actionable items); PROJECT MEMORY step 5 corruption fixed; stale v6.55 version ref in PROJECT MEMORY corrected; unmissable APP_VERSION banner comment added; mandatory last-step filename-match rule added to MANDATORY STEPS.';
+  const APP_VERSION  = 'v6.60';
+  const DEPLOY_NOTES = APP_VERSION + ' — Code + comment hygiene: dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5246,7 +5241,6 @@
   const FINAL_EDIT_PROXY_URL = SUPABASE_URL + '/functions/v1/final-edit-proxy'; // FE-03
   const STRIPE_PORTAL_URL   = 'https://billing.stripe.com/p/login/5kQfZjdx2b066bo1Sj2B200'; // SUB-01 customer portal
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
-  const PIXABAY_MUSIC_KEY  = null; // APP-46: replaced by Freesound via music_proxy (Pixabay has no public music API on free tier)
 
   // ── Peecho (PRODUCTION environment) ────────────────────────────
   const PEECHO_URL       = 'https://www.peecho.com/rest/v3/order/';
@@ -5263,12 +5257,8 @@
   let userProfile  = { name: null, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null };
   let recognition  = null;
   let currentStory = null;
-  let funnyMode    = false;
   let currentQuestion = '';
-  let lastTags        = {};  // carries forward to next question as default
-  let iosRecording    = false;
-  let listeningActive = false;  // controls persistent mic restart loop
-  let iosTranscript   = '';  // used by persistent listener
+  // iosRecording, iosTranscript, lastTags, listeningActive removed v6.60 — declared but never used (confirmed dead, APP-52 cleanup)
   let photoFile       = null;
   let photoRecActive  = false;
   let photoRecRec     = null;
@@ -5508,11 +5498,6 @@
       } catch(e) {}
     };
   })();
-  function _isKnownNoise(msg) {
-    if (!msg) return false;
-    var s = String(msg).toLowerCase();
-    return _globalErrNoisePatterns.some(function(p) { return s.includes(p.toLowerCase()); });
-  }
   window.addEventListener('unhandledrejection', function(e) {
     var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
     var stack = (e.reason && e.reason.stack) ? '\n' + e.reason.stack.substring(0, 300) : '';
@@ -5531,33 +5516,7 @@
     return false; // don't suppress browser default handling
   };
 
-  window.testHtml2pdf = async function() {
-    const el = document.createElement('div');
-    el.style.cssText = 'position:fixed;top:110vh;left:0;width:148mm;background:white;font-size:12pt;padding:20mm;color:black;';
-    el.innerHTML = '<h1>Test Document</h1><p>This is a test paragraph with some content to render into a PDF.</p><p>If this works, html2pdf is functional.</p>';
-    document.body.appendChild(el);
-    console.log('TEST: el added, offsetHeight=', el.offsetHeight);
-    try {
-      const blob = await html2pdf().set({
-        margin: 10,
-        html2canvas: { scale: 1, logging: true, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4' }
-      }).from(el).outputPdf('blob');
-      console.log('TEST: blob size=', blob.size, 'type=', blob.type);
-      if (blob.size > 5000) {
-        console.log('TEST: SUCCESS - html2pdf works');
-        // Download it so we can verify
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = 'test.pdf'; a.click();
-      } else {
-        console.error('TEST: FAILED - blob too small:', blob.size);
-      }
-    } catch(e) {
-      console.error('TEST: threw:', e.message);
-    }
-    document.body.removeChild(el);
-  };
+  // testHtml2pdf removed v6.60 — dev artifact; html2pdf not in self-hosted deps (use jsPDF)
 
   // ══════════════════════════════════════════════════════════════════
   // SHARE PAGE — public visitor view (no auth)
@@ -8086,9 +8045,6 @@
       setTimeout(function() { speechSynthesis.onvoiceschanged = null; _speak(); }, 1000);
     }
   }
-  // Legacy alias — speakAndWait now routes through Gethro
-  function speakAndWait(text) { return gethroSpeak(text); }
-
   // ── stopListening (legacy — kept for safety; no longer called after APP-52 Phase 4) ──
   function stopListening() {
     listeningActive = false;
@@ -14479,6 +14435,19 @@
         await loadEntries();
         toast('Photos saved ✓');
       }
+      // Upload any queued audios from the edit panel
+      const queuedAudios = _editPanelAudios[entryId] || [];
+      if (queuedAudios.length) {
+        toast('Uploading ' + queuedAudios.length + ' audio' + (queuedAudios.length>1?'s':'') + '...');
+        const entryForAudio = entries.find(function(e) { return e.id === entryId; });
+        for (const a of queuedAudios) {
+          const au = await uploadAudioFile(a.file);
+          if (au) await addEntry(entryForAudio?.chapter || 'Unspecified', a.caption || 'Audio', null, null, null, getEntryTags(entryForAudio) || {}, entryId, au.path);
+        }
+        _editPanelAudios[entryId] = [];
+        await loadEntries();
+        toast('Audio saved ✓');
+      }
       const panel = document.getElementById('edit-' + entryId) || document.getElementById('redit-' + entryId) || document.getElementById('cdedit-' + entryId);
       if (panel) panel.style.display = 'none';
       // Refresh whichever panel is active
@@ -14652,16 +14621,35 @@
           <input type="hidden" id="${prefix}_${entryId}TagRefUrl">
         </div>
 
-        <!-- Row 3: Photos (full width) -->
+        <!-- Row 3: Media (full width) — photos + audio, mirrors Add Memory toolbar -->
         <div class="tag-field" style="grid-column:1/-1">
-          <label>📷 Photos</label>
-          <div id="${prefix}PhotoStrip${entryId}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:22px">
-            ${photosHtml}
-            <button type="button" data-action="open-tag-photo" data-id="${entryId}" data-prefix="${prefix}"
-              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Add photo</button>
-          </div>
+          <label>📎 Media <span style="font-weight:400;font-size:0.8em;color:var(--text-light)">— photos or audio</span></label>
+          <!-- Hidden file inputs -->
           <input type="file" id="${prefix}PhotoInput${entryId}" accept="image/*" multiple style="display:none">
-          ${audiosHtml ? '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">' + audiosHtml + '</div>' : ''}
+          <input type="file" id="${prefix}AudioInput${entryId}" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm" multiple style="display:none">
+          <!-- Action buttons row -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <button type="button" data-action="open-tag-photo" data-id="${entryId}" data-prefix="${prefix}"
+              style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">🖼️ Add photo</button>
+            <button type="button" data-action="open-tag-audio-file" data-id="${entryId}" data-prefix="${prefix}"
+              style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">🎵 Audio file</button>
+            <button type="button" data-action="open-tag-audio-record" data-id="${entryId}" data-prefix="${prefix}"
+              style="font-size:0.75rem;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">🎙️ Record audio</button>
+          </div>
+          <!-- Existing photos strip -->
+          <div id="${prefix}PhotoStrip${entryId}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:4px">
+            ${photosHtml}
+          </div>
+          <!-- Existing + queued audio clips -->
+          <div id="${prefix}AudioStrip${entryId}" style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+            ${audiosHtml || ''}
+          </div>
+          <!-- Live recording status indicator -->
+          <div id="${prefix}AudioRecStatus${entryId}" style="display:none;margin-top:6px;align-items:center;gap:6px;padding:6px 10px;background:var(--surface2);border:2px solid var(--rose);border-radius:8px;font-size:0.78rem;color:var(--rose)">
+            <span style="animation:pulse 1s infinite">⏺</span> Recording…
+            <button type="button" data-action="stop-edit-audio-rec" data-id="${entryId}" data-prefix="${prefix}"
+              style="margin-left:4px;padding:2px 8px;border:1px solid var(--rose);border-radius:4px;background:none;color:var(--rose);cursor:pointer;font-size:0.72rem">⏹ Stop</button>
+          </div>
         </div>
 
         <!-- Save / Cancel -->
@@ -14717,7 +14705,97 @@
 
   // ── Delete a child entry (photo or audio) attached to a parent entry ──────
   // Called from the ✕ button on existing photo/audio thumbs in buildEditPanel.
-  async function deleteChildEntry(childId, parentId, prefix) {
+  // ── Edit panel audio handling (mirrors Add Memory audio capability) ──────────
+  const _editPanelAudios         = {}; // entryId -> [{file, preview, caption, recorded}]
+  const _editPanelAudioRec       = {}; // entryId -> MediaRecorder instance
+  const _editPanelAudioRecording = {}; // entryId -> bool
+
+  function handleEditPanelAudioFile(input, entryId, prefix) {
+    if (!_editPanelAudios[entryId]) _editPanelAudios[entryId] = [];
+    Array.from(input.files).forEach(function(file) {
+      if (file.size > 20 * 1024 * 1024) { toast(file.name + ' too large -- max 20MB'); return; }
+      _editPanelAudios[entryId].push({ file: file, preview: URL.createObjectURL(file), caption: '', recorded: false });
+    });
+    input.value = '';
+    renderEditPanelAudioStrip(entryId, prefix);
+  }
+
+  function renderEditPanelAudioStrip(entryId, prefix) {
+    var strip = document.getElementById(prefix + 'AudioStrip' + entryId);
+    if (!strip) return;
+    var queued = _editPanelAudios[entryId] || [];
+    // Keep existing saved audio rows (eaudio-* ids from buildEditPanel), append queued new ones
+    var existingRows = Array.from(strip.querySelectorAll('[id^="eaudio-"]')).map(function(el) { return el.outerHTML; }).join('');
+    var newRows = queued.map(function(a, i) {
+      var captionVal = (a.caption || '').replace(/"/g, '&quot;');
+      return '<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border:2px solid var(--gold);border-radius:8px;padding:4px 8px;position:relative;flex-wrap:wrap">' +
+        '<span style="font-size:1rem;flex-shrink:0">' + String.fromCodePoint(0x1F3B5) + '</span>' +
+        '<audio src="' + a.preview + '" controls style="height:24px;min-width:100px;max-width:140px"></audio>' +
+        '<input type="text" placeholder="Caption..." value="' + captionVal + '" ' +
+          'data-edit-audio-caption="' + i + '" data-entry-id="' + entryId + '" data-prefix="' + prefix + '" ' +
+          'style="font-size:0.68rem;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:70px">' +
+        '<button type="button" data-action="remove-edit-audio" data-media-index="' + i + '" data-id="' + entryId + '" data-prefix="' + prefix + '" ' +
+          'style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--rose);color:white;border:none;font-size:10px;cursor:pointer;line-height:18px;text-align:center">&times;</button>' +
+      '</div>';
+    }).join('');
+    strip.innerHTML = existingRows + newRows;
+    strip.querySelectorAll('[data-edit-audio-caption]').forEach(function(inp) {
+      inp.addEventListener('input', function() {
+        var idx2 = parseInt(this.dataset.editAudioCaption, 10);
+        var eid = this.dataset.entryId;
+        if (_editPanelAudios[eid] && _editPanelAudios[eid][idx2]) _editPanelAudios[eid][idx2].caption = this.value;
+      });
+    });
+  }
+
+  function removeEditPanelAudio(entryId, idx, prefix) {
+    if (_editPanelAudios[entryId] && _editPanelAudios[entryId][idx]) {
+      URL.revokeObjectURL(_editPanelAudios[entryId][idx].preview);
+      _editPanelAudios[entryId].splice(idx, 1);
+    }
+    renderEditPanelAudioStrip(entryId, prefix);
+  }
+
+  async function startEditPanelAudioRecord(entryId, prefix) {
+    if (_editPanelAudioRecording[entryId]) return;
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+                   : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      var opts = mimeType ? { mimeType: mimeType } : {};
+      var recorder = new MediaRecorder(stream, opts);
+      var chunks = [];
+      recorder.ondataavailable = function(e) { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = function() {
+        stream.getTracks().forEach(function(t) { t.stop(); });
+        var blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+        var ext  = (mimeType || '').includes('webm') ? 'webm' : 'mp3';
+        var file = new File([blob], 'recording_' + Date.now() + '.' + ext, { type: blob.type });
+        if (!_editPanelAudios[entryId]) _editPanelAudios[entryId] = [];
+        _editPanelAudios[entryId].push({ file: file, preview: URL.createObjectURL(blob), caption: '', recorded: true });
+        _editPanelAudioRecording[entryId] = false;
+        var statusEl = document.getElementById(prefix + 'AudioRecStatus' + entryId);
+        if (statusEl) statusEl.style.display = 'none';
+        renderEditPanelAudioStrip(entryId, prefix);
+      };
+      _editPanelAudioRec[entryId] = recorder;
+      _editPanelAudioRecording[entryId] = true;
+      recorder.start();
+      var statusEl = document.getElementById(prefix + 'AudioRecStatus' + entryId);
+      if (statusEl) statusEl.style.display = 'flex';
+    } catch(err) {
+      toast('Mic error: ' + err.message);
+      dbgWarn('MIC', 'Edit panel audio record failed:', err.message);
+    }
+  }
+
+  function stopEditPanelAudioRecord(entryId, prefix) {
+    var rec = _editPanelAudioRec[entryId];
+    if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch(e) {} }
+    _editPanelAudioRec[entryId] = null;
+  }
+
+    async function deleteChildEntry(childId, parentId, prefix) {
     if (!childId || !currentUser) return;
     if (!confirm('Delete this attachment? This cannot be undone.')) return;
     try {
@@ -25703,11 +25781,21 @@
     on('recPhotoInput',   'change', function() { handleRecPhotos(this); });
     on('recPhotoCapture', 'change', function() { handleRecPhotos(this); });
     on('recAudioInput',   'change', function() { handleRecAudios(this); });
+    // Edit panel audio file inputs are dynamic (id contains prefix+entryId)
+    // — handled via delegated listener below
     on('recVideoInput',   'change', function() { handleRecVideos(this); });
     on('recAddMediaBtn',  'click',  toggleMediaOptions);
     on('recPhotoFileBtn', 'click',  function() { document.getElementById('recPhotoInput').click(); hideMediaOptions(); });
     on('recPhotoCaptureBtn','click',function() { document.getElementById('recPhotoCapture').click(); hideMediaOptions(); });
     on('recAudioFileBtn', 'click',  function() { document.getElementById('recAudioInput').click(); hideMediaOptions(); });
+    // Delegated change listener for edit-panel dynamic audio file inputs
+    document.addEventListener('change', function(ev) {
+      var t = ev.target;
+      if (!t || t.type !== 'file' || !t.accept || !t.accept.includes('audio')) return;
+      // Match id pattern: {prefix}AudioInput{entryId}
+      var m = t.id && t.id.match(/^(.+)AudioInput(.+)$/);
+      if (m) handleEditPanelAudioFile(t, m[2], m[1]);
+    });
     on('recAudioRecordBtn','click', function() { toggleAudioRecording(); hideMediaOptions(); });
     on('recPeopleTagBtn', 'click',  function() { openTagManager('people','rec'); });
     on('recRefTagBtn',    'click',  function() { openTagManager('ref','rec'); });
@@ -26092,6 +26180,28 @@
           var _tagPrefixP = btn.dataset.prefix || 'edit';
           var _photoInput = id ? document.getElementById(_tagPrefixP + 'PhotoInput' + id) : null;
           if (_photoInput) _photoInput.click();
+          break;
+        }
+        case 'open-tag-audio-file': {
+          var _tagPrefixAF = btn.dataset.prefix || 'edit';
+          var _audioInput = id ? document.getElementById(_tagPrefixAF + 'AudioInput' + id) : null;
+          if (_audioInput) _audioInput.click();
+          break;
+        }
+        case 'open-tag-audio-record': {
+          var _tagPrefixAR = btn.dataset.prefix || 'edit';
+          if (id) startEditPanelAudioRecord(id, _tagPrefixAR);
+          break;
+        }
+        case 'stop-edit-audio-rec': {
+          var _tagPrefixSA = btn.dataset.prefix || 'edit';
+          if (id) stopEditPanelAudioRecord(id, _tagPrefixSA);
+          break;
+        }
+        case 'remove-edit-audio': {
+          var _tagPrefixRA = btn.dataset.prefix || 'edit';
+          var _audioIdx = parseInt(btn.dataset.mediaIndex || '0', 10);
+          if (id) removeEditPanelAudio(id, _audioIdx, _tagPrefixRA);
           break;
         }
         case 'save-edit-tags': {
