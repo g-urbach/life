@@ -5213,8 +5213,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.62';
-  const DEPLOY_NOTES = APP_VERSION + ' — Fix: TTS playback parity. In-app: removed hardcoded "Next" from song announcement. Share page: title/song announcement now plays before first segment, matching in-app. Share music start and UI update guarded against double-fire when announce is present.'; // now appears from any tab after first memory answer. Two-part fix: (1) My Story screen context hint now tells Gethro that life conversations are valid there; (2) memory_conversation:true instruction broadened from "actively writing or sharing" to "shares or describes any personal memory or life event, even one answer". Client-side AI flag handler was already tab-agnostic. // dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
+  const APP_VERSION  = 'v6.64';
+  const DEPLOY_NOTES = APP_VERSION + ' — Backlog only (no code changes). SPRINT RL (Unified Rate Limiting) added: unified 5-hour AI call counter across all proxies, premium gate removal from Final Edit and Gethro proactive review, structured 429 responses, client UX standardisation, DB config table. FE-RL-01 closed/superseded by SPRINT RL. SEC-EF01 scoped to JWT work only. FE sprint intro and FE-04 notes updated to reflect rate-limit-as-differentiator model.'; // ' — Usage analytics wave 1: added share_viewed (entry + piece paths), share_tts_played, share_feedback_submitted, audiobook_started, audiobook_stopped, final_edit_opened, premium_gate_hit. All client-side logActivity() calls, no edge function changes. Wave 2 (tab_viewed, entry_type on save, simple vs AI edit split, session_resumed) in backlog. // In-app: removed hardcoded "Next" from song announcement. Share page: title/song announcement now plays before first segment, matching in-app. Share music start and UI update guarded against double-fire when announce is present.'; // now appears from any tab after first memory answer. Two-part fix: (1) My Story screen context hint now tells Gethro that life conversations are valid there; (2) memory_conversation:true instruction broadened from "actively writing or sharing" to "shares or describes any personal memory or life event, even one answer". Client-side AI flag handler was already tab-agnostic. // dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5629,6 +5629,7 @@
 
         document.getElementById('shareLoading').style.display = 'none';
         document.getElementById('shareContent').style.display = 'block';
+        logActivity('share_viewed', JSON.stringify({ type: data.piece.type || 'piece', token: token }), 'info', 'SHARE');
 
         // UX-M11: expiry warning (reused for pieces too)
         var expiryElP  = document.getElementById('shareExpiryWarning');
@@ -5761,6 +5762,7 @@
 
             _sharePlaying  = true;
             _shareStopFlag = false;
+            logActivity('share_tts_played', JSON.stringify({ token: token }), 'info', 'SHARE');
 
             function _spFetchSegment(text) {
               var spBody = { action: 'get_tts', token: token, text: text };
@@ -5988,6 +5990,7 @@
       // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
+      logActivity('share_viewed', JSON.stringify({ type: 'entry', token: token }), 'info', 'SHARE');
 
       // UX-M11: show expiry warning if link expires within 7 days
       // Requires SHARE_PROXY get_entry to return expiresAt (ISO string) — gracefully skipped if absent.
@@ -6243,6 +6246,7 @@
       sessionStorage.setItem(_shareRLCoolKey, String(_now + 30000)); // 30s cooldown
 
       // Success
+      logActivity('share_feedback_submitted', JSON.stringify({ token: token, hasPhoto: !!_shareFbPhoto, hasAudio: !!_shareFbAudio }), 'info', 'SHARE');
       document.getElementById('shareFeedbackForm').style.display    = 'none';
       document.getElementById('shareFeedbackSuccess').style.display = 'block';
 
@@ -13455,6 +13459,7 @@
     _abPlayer.stopFlag = false;
     _abPlayer.curIdx   = startIdx || 0;
     _abUpdatePlayBtn();
+    logActivity('audiobook_started', JSON.stringify({ pieces: _abQueue.filter(function(q){return q.enabled!==false;}).length }), 'info', 'AUDIOBOOK');
 
     // APP-46 Phase 3a: start background music based on first enabled piece genre.
     // Pass piece so _abFetchAndPlayMusic can use/persist bg_music_url for consistency.
@@ -13551,6 +13556,9 @@
   function _abStop() {
     _abStopAudio();
     _abStopMusic(); // APP-46 Phase 3a
+    if (_abPlayer.playing || _abPlayer.paused) {
+      logActivity('audiobook_stopped', JSON.stringify({ curIdx: _abPlayer.curIdx }), 'info', 'AUDIOBOOK');
+    }
     // Restore library card Listen button label if we were playing a single piece
     if (_abQueue.length === 1 && _abQueue[0] && _abQueue[0].component_id) {
       var lBtn = document.getElementById('listenBtn_' + _abQueue[0].component_id);
@@ -24061,6 +24069,7 @@
     // FE-02: show AI tab for premium users; always start on simple tab
     var aiTab = document.getElementById('feTabAI');
     if (aiTab) aiTab.style.display = isPremium() ? 'block' : 'none';
+    logActivity('final_edit_opened', JSON.stringify({ piece_id: piece.id, premium: isPremium() }), 'info', 'FE');
     _feSetTab('simple');
 
     // FE-05: check whether any versions exist and show/hide the link accordingly
