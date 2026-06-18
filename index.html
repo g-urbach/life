@@ -5198,8 +5198,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.71';
-  const DEPLOY_NOTES = APP_VERSION + ' — Backlog planning only, NO code changes this build. Gap found while discussing RL-05\u2019s premium value prop (developer clarified premium uplift = longer rate-limit sessions + sharing + storage): SPRINT FE already confirmed "sharing/share page" and "photo/video storage" as premium gates (~line 1869, predates this session) but sharing was never actually implemented \u2014 checked _createShareLink() and its call site directly, confirmed zero subscriptionTier/isPremium() check exists anywhere in the share-link-creation path today; any free user can create one. Recorded as new [RL-06], moved into SPRINT RL per developer instruction so it ships alongside RL-05 rather than sitting as a separate untracked gap. Storage gating (already tracked as SUB-30, Sprint S4) intentionally left where it is, not merged in. RL-06 deliberately leaves the exact free/premium sharing split (hard gate vs count-limited vs expiry-limited) as an open product decision rather than picking one \u2014 flagged the tension between a hard all-or-nothing gate and this sprint\u2019s stated "rate limits not feature gates" philosophy, but left the call to the developer. Also flagged that whatever is decided needs server-side (RLS/edge function) enforcement, not just a client-side check, since the share-token insert currently goes straight from client to Supabase with the user\u2019s own auth. No code touched this build.';
+  const APP_VERSION  = 'v6.72';
+  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: logActivity() inserts to life_activity_log were silently failing 400 on every call (found during RL live-testing, v6.71). Root cause: payload includes platform_detail (added via _parseUaDetail(), never migrated onto the table — see schema note above, ~line 321). _doInsert\u2019s fetch never checked response.ok, so the failure was invisible everywhere except the browser\u2019s own network console (not in Supabase, not in Telegram) \u2014 confirmed via live console trace showing showPanel \u2192 logActivity(\u2018tab_viewed\u2019) 400ing both pre- and post-auth. THIS BUILD: _doInsert now checks response.ok and console.errors the response body on any non-2xx, so future schema drift on this table surfaces immediately instead of vanishing silently. DOES NOT fix the platform_detail column itself \u2014 developer is running `ALTER TABLE life_activity_log ADD COLUMN IF NOT EXISTS platform_detail text;` separately in Supabase SQL editor. No other code changed this build. Two other issues raised in the same testing session \u2014 (1) first 5 free-tier sessions should get a premium-length rate-limit ceiling to drive early investment, confirmed NOT built anywhere in this codebase, pure new feature; (2) rate-limit breaches hit during free-tier testing weren\u2019t showing in the activity log dashboard or Telegram \u2014 are NOT addressed in this build. Both need the three edge function files (GETHRO_PROXY, AI_PROXY, final-edit-proxy index.ts + supabase/functions/_shared/rateLimitUnified.ts), which live outside this client bundle and weren\u2019t provided this session.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5462,6 +5462,19 @@
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + token, 'Prefer': 'return=minimal' },
         body:    JSON.stringify(payload)
+      }).then(function(res) {
+        // BUG FIX v6.72: fetch only rejects on network failure, never on HTTP error
+        // status — a 400/403/500 response was previously swallowed completely
+        // (invisible to console, Supabase, and Telegram alike). Surface it now.
+        // Root cause of the v6.71 silent-400 bug: payload included platform_detail,
+        // a column never migrated onto life_activity_log. This check doesn't fix
+        // that (see SQL migration, run separately) — it just makes sure the NEXT
+        // schema drift doesn't go silent again.
+        if (!res.ok) {
+          res.text().then(function(t) {
+            console.error('[ACTIVITY] Insert rejected ' + res.status + ':', t);
+          }).catch(function() {});
+        }
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
       });
