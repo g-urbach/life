@@ -2595,27 +2595,12 @@
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
 
-          <!-- Media attachments -->
-          <div style="margin-bottom:16px">
-            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:8px">Attach media</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-              <button type="button" id="shareFbPhotoBtn"
-                style="font-size:0.8rem;padding:7px 14px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
-                📷 Photo
-              </button>
-              <button type="button" id="shareFbAudioBtn"
-                style="font-size:0.8rem;padding:7px 14px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
-                🎙️ Voice memo
-              </button>
-              <button type="button" id="shareFbVideoBtn"
-                style="font-size:0.8rem;padding:7px 14px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">
-                🎬 Video (10s)
-              </button>
-            </div>
-            <input type="file" id="shareFbPhotoInput" accept="image/*" style="display:none">
-            <!-- Media preview strip -->
-            <div id="shareFbMediaStrip" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;min-height:4px"></div>
-          </div>
+          <!-- Media attachments — REMOVED v6.66. Root cause + fix requirements tracked
+               as [APP-58 / BACKLOG-SHARE-MEDIA] in CONSOLIDATED BACKLOG (top of file).
+               JS handlers (toggleShareFbAudio, toggleShareFbVideo, handleShareFbPhoto,
+               renderShareFbStrip) left in place, just unwired — restore this block +
+               the on(...) listeners in the init section to re-enable once a server-side
+               upload action exists on SHARE_PROXY_URL. -->
 
           <!-- Privacy notice + consent (PRV-03) -->
           <div style="background:rgba(201,169,110,0.07);border:1px solid rgba(201,169,110,0.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.78rem;color:var(--text-light);line-height:1.6">
@@ -5213,8 +5198,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.64';
-  const DEPLOY_NOTES = APP_VERSION + ' — Backlog only (no code changes). SPRINT RL (Unified Rate Limiting) added: unified 5-hour AI call counter across all proxies, premium gate removal from Final Edit and Gethro proactive review, structured 429 responses, client UX standardisation, DB config table. FE-RL-01 closed/superseded by SPRINT RL. SEC-EF01 scoped to JWT work only. FE sprint intro and FE-04 notes updated to reflect rate-limit-as-differentiator model.'; // ' — Usage analytics wave 1: added share_viewed (entry + piece paths), share_tts_played, share_feedback_submitted, audiobook_started, audiobook_stopped, final_edit_opened, premium_gate_hit. All client-side logActivity() calls, no edge function changes. Wave 2 (tab_viewed, entry_type on save, simple vs AI edit split, session_resumed) in backlog. // In-app: removed hardcoded "Next" from song announcement. Share page: title/song announcement now plays before first segment, matching in-app. Share music start and UI update guarded against double-fire when announce is present.'; // now appears from any tab after first memory answer. Two-part fix: (1) My Story screen context hint now tells Gethro that life conversations are valid there; (2) memory_conversation:true instruction broadened from "actively writing or sharing" to "shares or describes any personal memory or life event, even one answer". Client-side AI flag handler was already tab-agnostic. // dead globals removed (iosRecording, iosTranscript, lastTags, funnyMode); duplicate _isKnownNoise removed; testHtml2pdf dev artifact removed; speakAndWait dead alias removed; PIXABAY_MUSIC_KEY null constant removed; Video “coming soon” button removed (machinery kept for APP-30); My Memories edit panel upgraded to full media parity with Add Memory (audio file upload + record); DEPLOYER_ANNOTATIONS stripped to actionable only; PROJECT MEMORY step 5 corruption fixed; APP_VERSION banner added; mandatory filename-match rule 13 added.'; // ORIGINAL_DEPLOY_NOTES = 🕓 Version history link in Simple Edit footer, version list overlay, Restore flow (snapshots current before restoring), prune-to-10 on every save. PRV-09 fix: deployer (deploy-v71) now always pushes _headers to public repo — CSP no longer missing after builds that omit the file.';
+  const APP_VERSION  = 'v6.71';
+  const DEPLOY_NOTES = APP_VERSION + ' — Backlog planning only, NO code changes this build. Gap found while discussing RL-05\u2019s premium value prop (developer clarified premium uplift = longer rate-limit sessions + sharing + storage): SPRINT FE already confirmed "sharing/share page" and "photo/video storage" as premium gates (~line 1869, predates this session) but sharing was never actually implemented \u2014 checked _createShareLink() and its call site directly, confirmed zero subscriptionTier/isPremium() check exists anywhere in the share-link-creation path today; any free user can create one. Recorded as new [RL-06], moved into SPRINT RL per developer instruction so it ships alongside RL-05 rather than sitting as a separate untracked gap. Storage gating (already tracked as SUB-30, Sprint S4) intentionally left where it is, not merged in. RL-06 deliberately leaves the exact free/premium sharing split (hard gate vs count-limited vs expiry-limited) as an open product decision rather than picking one \u2014 flagged the tension between a hard all-or-nothing gate and this sprint\u2019s stated "rate limits not feature gates" philosophy, but left the call to the developer. Also flagged that whatever is decided needs server-side (RLS/edge function) enforcement, not just a client-side check, since the share-token insert currently goes straight from client to Supabase with the user\u2019s own auth. No code touched this build.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -6210,7 +6195,12 @@
     } catch(e) {
       _shareFbVideoRecording = false;
       if (btn) { btn.textContent = '🎬 Video (10s)'; btn.style.color = ''; btn.style.borderColor = ''; }
-      alert('Could not access camera — ' + e.message);
+      logActivity('media_permission_error', JSON.stringify({ context: 'shareFbVideo', error_name: e && e.name, error_message: e && e.message }), 'warn', 'SHARE');
+      if (e && e.name === 'NotAllowedError') {
+        alert('Camera access was denied. Check your browser/app\'s site settings to allow camera access, or — if you opened this link inside another app (e.g. Messages) — try opening it directly in Safari or Chrome.');
+      } else {
+        alert('Could not access camera — ' + e.message);
+      }
     }
   }
 
@@ -6304,8 +6294,8 @@
       document.getElementById('shareName').focus();
       return;
     }
-    if (!text && !_shareFbPhoto && !_shareFbAudio && !_shareFbVideo) {
-      errEl.textContent = 'Please write a message or attach some media before sending.';
+    if (!text) {
+      errEl.textContent = 'Please write a message before sending.';
       errEl.style.display = 'block';
       return;
     }
@@ -6326,9 +6316,10 @@
         commenterName: name,
         text:          text || null,
         entryTitle:    _shareEntryTitle,
-        photoUrl:      _shareFbPhoto ? '(pending)' : null,
-        audioUrl:      _shareFbAudio ? '(pending)' : null,
-        videoUrl:      _shareFbVideo ? '(pending)' : null,
+        // photoUrl/audioUrl/videoUrl removed v6.66 — see BACKLOG-SHARE-MEDIA.
+        // Never functioned: these used to send the literal string '(pending)'
+        // with no actual file upload behind it. Text-only until a server-side
+        // upload action exists on SHARE_PROXY_URL.
         _hp:           document.getElementById('shareHoneypot')?.value || '', // SEC-06: server-side honeypot check
       };
 
@@ -6348,7 +6339,7 @@
       sessionStorage.setItem(_shareRLCoolKey, String(_now + 30000)); // 30s cooldown
 
       // Success
-      logActivity('share_feedback_submitted', JSON.stringify({ token: token, hasPhoto: !!_shareFbPhoto, hasAudio: !!_shareFbAudio }), 'info', 'SHARE');
+      logActivity('share_feedback_submitted', JSON.stringify({ token: token }), 'info', 'SHARE');
       document.getElementById('shareFeedbackForm').style.display    = 'none';
       document.getElementById('shareFeedbackSuccess').style.display = 'block';
 
@@ -7152,6 +7143,7 @@
       if (event === 'SIGNED_IN' && session && (_appFullyLoaded || _appInitInProgress)) {
         sessionToken = session.access_token;
         dbg('AUTH', 'SIGNED_IN while app ' + (_appFullyLoaded ? 'fully loaded' : 'init in progress') + ' — token updated, no reload');
+        logActivity('session_resumed', 'via=focus_return: ' + session.user.email, 'info', 'AUTH'); // ANALYTICS-02 (4)
         return;
       }
 
@@ -7168,6 +7160,11 @@
         if (!_initSessionRestored) {
           notifyDev('warn', 'AUTH', 'Sign-in: ' + session.user.email);
           logActivity('sign_in', 'Sign-in: ' + session.user.email, 'warn', 'AUTH');
+        } else {
+          // ANALYTICS-02 (4): page-load restore — a cached session, not a fresh login.
+          // Distinct from the focus_return case above, which short-circuits earlier
+          // (only reachable once _appFullyLoaded/_appInitInProgress is true).
+          logActivity('session_resumed', 'via=page_load: ' + session.user.email, 'info', 'AUTH');
         }
         _initSessionRestored = false;
       }
@@ -8184,6 +8181,11 @@
   // ── callGethro — JWT-authenticated AI proxy (Phase 1–5, all actions) ────
   // Prompts are built server-side — client sends data, not prompt strings.
   // callAI() retired in Phase 5 (life_model — mineEssentials).
+  // RL-03: 429s are surfaced via the shared rate-limit toast here, at the single
+  // chokepoint all 19 call sites funnel through, rather than patching each call
+  // site individually. Still throws afterward so callers keep their existing
+  // catch-block cleanup (re-enabling buttons, resetting loading state, etc.) —
+  // this only adds user-visible feedback, it doesn't change control flow.
   async function callGethro(action, payload = {}) {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) throw new Error('Not authenticated');
@@ -8200,6 +8202,16 @@
       new Promise((_,reject) => setTimeout(() => reject(new Error('Timed out after 45s')), 45000))
     ]);
     const data = await res.json();
+    if (res.status === 429 || data.rate_limited) {
+      _showRateLimitPanel({
+        reset_in_minutes: data.reset_in_minutes,
+        calls_made: data.calls_made,
+        calls_limit: data.calls_limit,
+        tier: data.tier,
+        context: 'Gethro'
+      });
+      throw new Error(data.error || 'rate_limited');
+    }
     if (!res.ok) throw new Error(data.error || 'GETHRO_PROXY error ' + res.status);
     if (!data.ok) throw new Error(data.error || 'GETHRO_PROXY returned not-ok');
     return data.result;
@@ -8410,6 +8422,7 @@
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
     dbg('PANEL', 'showPanel(' + name + ') scrollY=' + scrollBefore + ' overlayVisible=' + overlayVisible + ' activePanels=[' + activePanels.join(',') + ']');
+    logActivity('tab_viewed', name, 'info', 'NAV'); // ANALYTICS-02 (1): one line, covers all tabs automatically
     // Persist last tab so focus-return / page reload restores the correct screen
     // BUG FIX v4.81: also persist storySubTab so My Story sub-tab is restored correctly
     try {
@@ -8538,6 +8551,13 @@
     // Capture title/answer before saving (form may be reset after)
     const _titleBeforeSave = (document.getElementById('memTitle') || {}).value || '';
     const _answerBeforeSave = (document.getElementById('memAnswer') || {}).value || '';
+    // ANALYTICS-02 (2): capture entry type + edit-vs-new before memResetForm clears
+    // recPhotos/recAudios/_memEditEntryId — by the time we'd log post-reset, this is gone.
+    const _memEditEntryIdBeforeSave = _memEditEntryId;
+    const _entryTypesBeforeSave = [];
+    if (_answerBeforeSave.trim()) _entryTypesBeforeSave.push('text');
+    if (recPhotos.length)         _entryTypesBeforeSave.push('photo');
+    if (recAudios.length)         _entryTypesBeforeSave.push('audio');
     try {
       savedId = await memSaveCurrentEntry();
     } catch(err) {
@@ -8558,7 +8578,7 @@
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles everything: title/answer, accordion, tags, media, mic, _memEditEntryId
     memResetForm();
-    logActivity('entry_saved', null, 'info', 'DB');
+    logActivity('entry_saved', 'type=' + (_entryTypesBeforeSave.join('+') || 'empty') + ', mode=' + (_memEditEntryIdBeforeSave ? 'edit' : 'new'), 'info', 'DB');
     featTrackSave();
     featCheckNudge();
     checkMilestones(); // UX-NEW-05: milestone celebration moments
@@ -10046,7 +10066,12 @@
       _videoRecording = false;
       if (btn) { btn.textContent = '\uD83C\uDF9E\uFE0F Video (10s)'; btn.style.color = ''; btn.style.borderColor = ''; }
       dbgWarn('VIDEO', 'Recording failed:', err.message);
-      toast('Could not access camera \u2014 ' + err.message);
+      logActivity('media_permission_error', JSON.stringify({ context: 'toggleVideoRecording', error_name: err && err.name, error_message: err && err.message }), 'warn', 'APP');
+      if (err && err.name === 'NotAllowedError') {
+        toast('Camera access was denied \u2014 check your browser\u2019s site settings to allow it');
+      } else {
+        toast('Could not access camera \u2014 ' + err.message);
+      }
       renderUnifiedMediaStrip();
     }
   }
@@ -10247,6 +10272,22 @@
               prompt: 'Describe this photo in rich, vivid detail for use in a personal memoir. Note the people, setting, mood, era, clothing, expressions, and any details that tell a story. Be warm and observational. 3-5 sentences.' })
           });
           const data = await res.json();
+          // RL-03: previously any non-ok response (including 429) silently resolved
+          // null with zero user feedback — the photo would save with no AI caption
+          // and nobody would know why. Surface rate limits via the shared toast;
+          // the photo upload itself still proceeds without a caption either way,
+          // this only adds visibility into *why*.
+          if (res.status === 429 || data.rate_limited) {
+            _showRateLimitPanel({
+              reset_in_minutes: data.reset_in_minutes,
+              calls_made: data.calls_made,
+              calls_limit: data.calls_limit,
+              tier: data.tier,
+              context: 'photo description'
+            });
+            resolve(null);
+            return;
+          }
           resolve(data?.result?.trim() ?? null);
         } catch(err) { resolve(null); }
       };
@@ -24164,10 +24205,12 @@
       }
       var sendBtn = document.getElementById('feSendToGethroBtn');
       if (sendBtn) sendBtn.addEventListener('click', _feSendToGethro);
-      // FE-04: Gethro proactive review entry point — Premium only
+      // RL-00: Gethro proactive review — premium gate removed (June 2026). Available to
+      // all users; the unified AI rate limit (RL-01) is the free/premium differentiator
+      // now, not visibility of this button. Was: gated by isPremium() per FE-04.
       var gethroReviewBtn = document.getElementById('feGethroReviewBtn');
       if (gethroReviewBtn) {
-        gethroReviewBtn.style.display = isPremium() ? 'block' : 'none';
+        gethroReviewBtn.style.display = 'block';
         gethroReviewBtn.addEventListener('click', _feRequestGethroReview);
       }
       _feRenderAnnoBody();
@@ -24186,9 +24229,11 @@
     if (saveBtn)    { saveBtn.disabled = false; saveBtn.textContent = 'Save changes'; }
     if (charCount)  charCount.textContent = _feOriginalContent.length + ' characters';
 
-    // FE-02: show AI tab for premium users; always start on simple tab
+    // RL-00: AI Edit tab now shown to all users (June 2026) — premium gate removed.
+    // Final Edit (simple + AI) is rate-limited via the unified counter (RL-01), not
+    // feature-gated by tier. Was: gated by isPremium() per FE-02.
     var aiTab = document.getElementById('feTabAI');
-    if (aiTab) aiTab.style.display = isPremium() ? 'block' : 'none';
+    if (aiTab) aiTab.style.display = 'block';
     logActivity('final_edit_opened', JSON.stringify({ piece_id: piece.id, premium: isPremium() }), 'info', 'FE');
     _feSetTab('simple');
 
@@ -24457,6 +24502,8 @@
         .eq('user_id', currentUser.id);
 
       if (patchErr) throw patchErr;
+
+      logActivity('final_edit_saved', 'tab=simple', 'info', 'FE'); // ANALYTICS-02 (3)
 
       // 3. Refresh library + close
       if (status) { status.textContent = 'Saved \u2713'; status.style.color = 'var(--sage)'; }
@@ -24751,27 +24798,43 @@
     }
   }
 
-  // ── FE-03: Rate limit UX ─────────────────────────────────────────────────────
-  // Shows a tier-aware message when the edge function returns 429.
-  // Premium users get the full limit, free users get an upsell.
-  // Edge function should return the reset time in the error body (see FE-RL-01 backlog).
-  function _feShowRateLimitMessage(errMsg) {
-    var aiPanel = document.getElementById('feAIPanel');
-    if (!aiPanel) { toast('Gethro has reached her edit limit for now — ' + errMsg); return; }
+  // ── RL-03: Unified rate-limit UX ─────────────────────────────────────────────
+  // Single shared renderer for the structured 429 shape every AI proxy now returns
+  // (see SPRINT RL / RL-01): { ok:false, error, rate_limited:true, reset_in_minutes,
+  // tier, calls_made, calls_limit }. Falls back to regex-parsing the error string
+  // for proxies that haven't shipped the structured response yet, so this works
+  // incrementally as RL-01 rolls out proxy by proxy.
+  //
+  // opts: { reset_in_minutes, calls_made, calls_limit, tier, context, target }
+  //   context — short human label for what hit the limit, e.g. "edit", "Gethro",
+  //             "photo description" — used in the message copy.
+  //   target  — DOM element to render into. If omitted, falls back to toast().
+  function _showRateLimitPanel(opts) {
+    opts = opts || {};
+    var context = opts.context || 'AI';
+    var target  = opts.target || null;
+    var premium = (opts.tier === 'premium') || (opts.tier == null && isPremium());
 
-    // Try to extract a time hint from the error message ("try again in an hour", "try again in 23m" etc.)
     var timeHint = '';
-    var inMatch  = errMsg.match(/in (\d+\s*(?:hour|minute|min|hr|second|sec)[s]?)/i);
-    if (inMatch) timeHint = ' — ' + inMatch[1];
+    if (typeof opts.reset_in_minutes === 'number' && opts.reset_in_minutes >= 0) {
+      var mins = opts.reset_in_minutes;
+      timeHint = mins >= 60
+        ? ' — resets in about ' + Math.round(mins / 60) + (Math.round(mins / 60) === 1 ? ' hour' : ' hours')
+        : ' — resets in about ' + Math.max(1, Math.round(mins)) + (Math.round(mins) === 1 ? ' minute' : ' minutes');
+    }
 
-    var premium = isPremium();
     var msg, sub;
     if (premium) {
-      msg = 'You\u2019ve reached your edit limit for this hour' + timeHint + '.';
-      sub = 'Your limit resets each hour. Come back shortly and Gethro will be ready to continue polishing.';
+      msg = 'You\u2019ve reached your ' + context + ' limit for now' + timeHint + '.';
+      sub = 'Your limit resets across a rolling 5-hour window. Come back shortly and Gethro will be ready to continue.';
     } else {
-      msg = 'You\u2019ve reached the free edit limit' + timeHint + '.';
-      sub = 'Premium members get a much higher limit. Upgrade to keep editing with Gethro today.';
+      msg = 'You\u2019ve reached the free ' + context + ' limit' + timeHint + '.';
+      sub = 'Premium members get a much higher limit. Upgrade to keep going with Gethro today.';
+    }
+
+    if (!target) {
+      toast(msg + (premium ? '' : ' Upgrade to Premium for a higher limit.'));
+      return;
     }
 
     var html = '';
@@ -24783,7 +24846,49 @@
       html += '<button class="btn btn-primary" style="margin-top:8px;font-size:0.85rem;padding:9px 22px" onclick="openUpgradeOverlay && openUpgradeOverlay()">✨ Upgrade to Premium</button>';
     }
     html += '</div>';
-    aiPanel.innerHTML = html;
+    target.innerHTML = html;
+  }
+
+  // Parses a proxy error into the shape _showRateLimitPanel expects. Accepts either
+  // a structured 429 body (preferred, post RL-01) or a raw Error whose .message may
+  // contain an embedded JSON body or just free text (pre RL-01 proxies / network
+  // errors) — extracts a time hint via regex as a last resort so older responses
+  // still degrade gracefully instead of showing a raw error string.
+  function _parseRateLimitError(errOrMessage) {
+    var raw = (errOrMessage && errOrMessage.message) ? errOrMessage.message : String(errOrMessage || '');
+    // Structured body may have been JSON.stringify'd into the Error message by the
+    // caller (e.g. `data.error` is itself the parsed body) — try to recover fields.
+    var out = { reset_in_minutes: null, calls_made: null, calls_limit: null, tier: null };
+    var minMatch = raw.match(/reset_in_minutes["\s:]+(\d+)/i);
+    if (minMatch) out.reset_in_minutes = parseInt(minMatch[1], 10);
+    if (out.reset_in_minutes === null) {
+      var inMatch = raw.match(/in (\d+)\s*(hour|hr|minute|min)/i);
+      if (inMatch) {
+        var n = parseInt(inMatch[1], 10);
+        out.reset_in_minutes = /hour|hr/i.test(inMatch[2]) ? n * 60 : n;
+      }
+    }
+    var tierMatch = raw.match(/"tier"\s*:\s*"(free|premium)"/i);
+    if (tierMatch) out.tier = tierMatch[1].toLowerCase();
+    return out;
+  }
+
+  function _isRateLimitError(err) {
+    var msg = (err && err.message) ? err.message : String(err || '');
+    return msg.indexOf('429') !== -1 || msg.toLowerCase().indexOf('rate limit') !== -1 || msg.toLowerCase().indexOf('rate_limited') !== -1;
+  }
+
+  // Back-compat shim — old name, used by final-edit flows. Renders into #feAIPanel
+  // specifically (FE's existing behaviour) using the new shared panel underneath.
+  function _feShowRateLimitMessage(errMsg) {
+    var aiPanel = document.getElementById('feAIPanel');
+    var parsed  = _parseRateLimitError(errMsg);
+    _showRateLimitPanel({
+      reset_in_minutes: parsed.reset_in_minutes,
+      tier: parsed.tier,
+      context: 'edit',
+      target: aiPanel
+    });
   }
 
   // ── FE-03: Send to Gethro — Claude integration + accept/reject ──────────────────
@@ -25073,6 +25178,7 @@
       var newUpdatedAt = new Date().toISOString();
       var patchErr = (await sb.from('life_story_components').update({ content: newContent, updated_at: newUpdatedAt }).eq('id', _feCurrentPieceId).eq('user_id', currentUser.id)).error;
       if (patchErr) throw patchErr;
+      logActivity('final_edit_saved', 'tab=ai, accepted=' + accepted.length, 'info', 'FE'); // ANALYTICS-02 (3)
       toast('✓ ' + accepted.length + ' AI change' + (accepted.length === 1 ? '' : 's') + ' saved');
       setTimeout(function() {
         closeFinalEdit(); renderLibrary();
@@ -25107,10 +25213,11 @@
     }
     var sendBtn = document.getElementById('feSendToGethroBtn');
     if (sendBtn) sendBtn.addEventListener('click', _feSendToGethro);
-    // FE-04: Gethro proactive review entry point — Premium only
+    // RL-00: Gethro proactive review — premium gate removed (June 2026). See matching
+    // comment in the other render path above for rationale.
     var gethroReviewBtn = document.getElementById('feGethroReviewBtn');
     if (gethroReviewBtn) {
-      gethroReviewBtn.style.display = isPremium() ? 'block' : 'none';
+      gethroReviewBtn.style.display = 'block';
       gethroReviewBtn.addEventListener('click', _feRequestGethroReview);
     }
     _feRenderAnnoBody();
@@ -25775,10 +25882,12 @@
     }
 
     // ── Share feedback page ───────────────────────────────────────────────
-    on('shareFbPhotoBtn',  'click', function() { document.getElementById('shareFbPhotoInput').click(); });
-    on('shareFbPhotoInput','change', handleShareFbPhoto);
-    on('shareFbAudioBtn',  'click', toggleShareFbAudio);
-    on('shareFbVideoBtn',  'click', toggleShareFbVideo);
+    // Photo/audio/video attach buttons removed v6.66 — see BACKLOG-SHARE-MEDIA
+    // comment near the feedback form HTML. Re-add these three lines if restored:
+    //   on('shareFbPhotoBtn',  'click', function() { document.getElementById('shareFbPhotoInput').click(); });
+    //   on('shareFbPhotoInput','change', handleShareFbPhoto);
+    //   on('shareFbAudioBtn',  'click', toggleShareFbAudio);
+    //   on('shareFbVideoBtn',  'click', toggleShareFbVideo);
     on('shareFbSubmitBtn', 'click', submitShareFeedback);
 
     // ── Landing / auth ────────────────────────────────────────────────────
