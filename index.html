@@ -5198,8 +5198,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.72';
-  const DEPLOY_NOTES = APP_VERSION + ' — BUG FIX: logActivity() inserts to life_activity_log were silently failing 400 on every call (found during RL live-testing, v6.71). Root cause: payload includes platform_detail (added via _parseUaDetail(), never migrated onto the table — see schema note above, ~line 321). _doInsert\u2019s fetch never checked response.ok, so the failure was invisible everywhere except the browser\u2019s own network console (not in Supabase, not in Telegram) \u2014 confirmed via live console trace showing showPanel \u2192 logActivity(\u2018tab_viewed\u2019) 400ing both pre- and post-auth. THIS BUILD: _doInsert now checks response.ok and console.errors the response body on any non-2xx, so future schema drift on this table surfaces immediately instead of vanishing silently. DOES NOT fix the platform_detail column itself \u2014 developer is running `ALTER TABLE life_activity_log ADD COLUMN IF NOT EXISTS platform_detail text;` separately in Supabase SQL editor. No other code changed this build. Two other issues raised in the same testing session \u2014 (1) first 5 free-tier sessions should get a premium-length rate-limit ceiling to drive early investment, confirmed NOT built anywhere in this codebase, pure new feature; (2) rate-limit breaches hit during free-tier testing weren\u2019t showing in the activity log dashboard or Telegram \u2014 are NOT addressed in this build. Both need the three edge function files (GETHRO_PROXY, AI_PROXY, final-edit-proxy index.ts + supabase/functions/_shared/rateLimitUnified.ts), which live outside this client bundle and weren\u2019t provided this session.';
+  const APP_VERSION  = 'v6.75';
+  const DEPLOY_NOTES = APP_VERSION + ' — RL-02 actioned per developer instruction (combine TTS/STT/everything into one pool, keep it simple): merged TTS into the existing ai_unified counter rather than a separate tier. STT was already inside ai_unified (confirmed v6.73). CLIENT (this build): all three TTS_PROXY_URL call sites \u2014 gethroSpeak(), _abSpeak(), _previewVoice() \u2014 now detect a 429/rate_limited response instead of treating it as a generic failure (this is RL-03 item 4, bundled in since it was blocked on RL-02 and shipping the counter without the client handling would reproduce the AGP_MIC mislabelling bug for TTS). gethroSpeak/_abSpeak keep their existing speechSynthesis fallback (so voice playback doesn\u2019t break) but log quietly and show _showRateLimitPanel once per page load via a shared flag, not once per call. _previewVoice has no fallback by design, just swapped its generic failure text for a clear rate-limit message. SERVER (NOT done here, needs developer action in Supabase \u2014 see RL-02 entry for the exact snippets): bump FREE_LIMIT 20\u219250 and PREMIUM_LIMIT 100\u2192250 in _shared/rateLimitUnified.ts (simple sum of the old ai_unified ceiling + the never-shipped separate-TTS draft \u2014 starting point only, tune after testing), add the same checkUnifiedRateLimit() call to inworld-tts-proxy/index.ts that the other three proxies already use (soft-block for premium, matching GETHRO_PROXY), then redeploy all four proxies since Supabase bundles _shared/ imports at deploy time. No DB migration needed \u2014 life_rate_limits and the ai_unified tier already exist. Per developer instruction: NO FURTHER CODE CHANGES until this build is tested.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8090,6 +8090,21 @@
     }
     if (window.speechSynthesis) speechSynthesis.cancel();
   }
+  // BUG FIX v6.75 (RL-02/RL-03 item 4): shared across gethroSpeak() and _abSpeak() —
+  // both hit the same ai_unified counter via TTS_PROXY_URL, so once you're rate
+  // limited you'd stay limited for the rest of the window. Showing the panel on
+  // every single TTS call (every line of dialogue, every audiobook segment) would
+  // spam it; this just shows it once per page load instead.
+  var _ttsRateLimitToastShown = false;
+  function _maybeShowTtsRateLimitToast(rlParsed) {
+    if (_ttsRateLimitToastShown) return;
+    _ttsRateLimitToastShown = true;
+    _showRateLimitPanel({
+      reset_in_minutes: rlParsed ? rlParsed.reset_in_minutes : null,
+      tier: rlParsed ? rlParsed.tier : null,
+      context: 'voice'
+    });
+  }
   function gethroSpeak(text) {
     return new Promise(async function(resolve) {
       if (!text || !text.trim()) { resolve(); return; }
@@ -8115,6 +8130,17 @@
         if (!res.ok) {
           var errBody = '';
           try { errBody = await res.text(); } catch(e2) {}
+          var rlParsed = null;
+          try { rlParsed = JSON.parse(errBody); } catch(e3) {}
+          if (res.status === 429 || (rlParsed && rlParsed.rate_limited)) {
+            // BUG FIX v6.75 (RL-02/RL-03 item 4): a rate limit here isn't a bug —
+            // don't log it as one. Keep the existing speechSynthesis fallback so
+            // the conversation doesn't break, just stop mislabelling it.
+            dbg('TTS', 'gethroSpeak rate-limited — falling back to speechSynthesis');
+            _maybeShowTtsRateLimitToast(rlParsed);
+            _gethroFallback(text, resolve);
+            return;
+          }
           throw new Error('TTS_PROXY ' + res.status + ': ' + errBody.slice(0, 200));
         }
         var arrayBuf = await res.arrayBuffer();
@@ -13478,6 +13504,13 @@
           signal: controller ? controller.signal : undefined
         });
       }).then(function(res) {
+        if (res.status === 429) {
+          return res.text().then(function(t) {
+            var rlParsed = null;
+            try { rlParsed = JSON.parse(t); } catch(e) {}
+            throw { __rateLimited: true, parsed: rlParsed };
+          });
+        }
         if (!res.ok) throw new Error('TTS_PROXY ' + res.status);
         return res.arrayBuffer();
       }).then(function(arrayBuf) {
@@ -13527,7 +13560,15 @@
       }).catch(function(err) {
         _abPlayer.fetchAbort = null;
         if (err && (err.name === 'AbortError' || _abPlayer.stopFlag)) { _abSwell(); resolve(); return; }
-        dbgErr('AUDIOBOOK', '_abSpeak error: ' + (err && err.message));
+        if (err && err.__rateLimited) {
+          // BUG FIX v6.75 (RL-02/RL-03 item 4): expected, not a bug — quiet log,
+          // shared toast (once per page load, see _maybeShowTtsRateLimitToast),
+          // same fallback as any other failure so playback doesn't break.
+          dbg('AUDIOBOOK', '_abSpeak rate-limited — falling back to speechSynthesis');
+          _maybeShowTtsRateLimitToast(err.parsed);
+        } else {
+          dbgErr('AUDIOBOOK', '_abSpeak error: ' + (err && err.message));
+        }
         // Fallback: browser speechSynthesis
         if (window.speechSynthesis) {
           var utt = new SpeechSynthesisUtterance(text);
@@ -21739,6 +21780,20 @@
       var rawText = await res.text();
       var parsed;
       try { parsed = JSON.parse(rawText); } catch(e2) { throw new Error('Invalid JSON ' + res.status); }
+      if (res.status === 429 || (parsed && parsed.rate_limited)) {
+        // BUG FIX v6.73: this multipart/transcribe path calls GETHRO_PROXY directly,
+        // bypassing callGethro() — the single chokepoint RL-03 wired the shared
+        // rate-limit UX into. A free user hitting their ceiling here was falling
+        // through to the generic catch below and logging as app_error/console_error
+        // ("Chunk transcription failed: Rate limit reached") — expected behaviour
+        // mislabelled as a bug, with none of the friendly messaging/Upgrade CTA.
+        dbg('AGP_MIC', 'Chunk transcription rate-limited');
+        _showRateLimitPanel({ reset_in_minutes: parsed.reset_in_minutes, tier: parsed.tier, context: 'voice dictation' });
+        _agpFlushCooldown = true;
+        setTimeout(function() { _agpFlushCooldown = false; }, 4000);
+        _agpMicTranscribing = false;
+        return;
+      }
       if (!res.ok || !parsed.ok) throw new Error(parsed.error || 'Transcription error ' + res.status);
       var chunk = (parsed.result && parsed.result.transcript) ? parsed.result.transcript.trim() : '';
       if (chunk && !AGP_HALLUCINATIONS.test(chunk)) {
@@ -21841,6 +21896,16 @@
       var rawText = await res.text();
       var data;
       try { data = JSON.parse(rawText); } catch(e) { throw new Error('Invalid JSON from proxy (status ' + res.status + ')'); }
+      if (res.status === 429 || (data && data.rate_limited)) {
+        // BUG FIX v6.73: same RL-03 gap as _agpFlushChunk (see comment there) —
+        // this is the manual-stop/final-flush transcription call, same direct
+        // fetch to GETHRO_PROXY bypassing callGethro()'s shared rate-limit UX.
+        dbg('AGP_MIC', 'Transcription rate-limited');
+        _showRateLimitPanel({ reset_in_minutes: data.reset_in_minutes, tier: data.tier, context: 'voice dictation' });
+        _agpSetBtn('idle');
+        _agpMicTranscribing = false;
+        return;
+      }
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
       var transcriptIsReal = transcript && !AGP_HALLUCINATIONS.test(transcript);
@@ -24074,6 +24139,12 @@
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
         body: JSON.stringify(body)
       });
+      if (res.status === 429) {
+        var rlText = await res.text();
+        var rlParsed = null;
+        try { rlParsed = JSON.parse(rlText); } catch(e0) {}
+        throw { __rateLimited: true, parsed: rlParsed };
+      }
       if (!res.ok) throw new Error('TTS ' + res.status);
       var buf = await res.arrayBuffer();
       if (!buf.byteLength) throw new Error('empty');
@@ -24088,11 +24159,19 @@
         src.onended = function() { btnEl.textContent = origText; btnEl.disabled = false; };
       }, function() { btnEl.textContent = origText; btnEl.disabled = false; });
     } catch(e) {
-      dbgWarn('VOICES', 'preview error:', e.message);
       btnEl.textContent = origText;
       btnEl.disabled = false;
       var statusEl = document.getElementById('voicesStatus');
-      if (statusEl) { statusEl.textContent = 'Preview failed — try again.'; statusEl.style.color = 'var(--rose)'; }
+      if (e && e.__rateLimited) {
+        // BUG FIX v6.75 (RL-02/RL-03 item 4): expected, not a bug — no fallback
+        // here by design (previewing a specific voice, substituting a different
+        // one silently would defeat the point), just a clearer status message.
+        dbg('VOICES', 'preview rate-limited');
+        if (statusEl) { statusEl.textContent = 'You\u2019ve reached your voice preview limit for now — try again later.'; statusEl.style.color = 'var(--rose)'; }
+      } else {
+        dbgWarn('VOICES', 'preview error:', e.message);
+        if (statusEl) { statusEl.textContent = 'Preview failed — try again.'; statusEl.style.color = 'var(--rose)'; }
+      }
     }
   }
 
