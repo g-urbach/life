@@ -5198,8 +5198,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.75';
-  const DEPLOY_NOTES = APP_VERSION + ' — RL-02 actioned per developer instruction (combine TTS/STT/everything into one pool, keep it simple): merged TTS into the existing ai_unified counter rather than a separate tier. STT was already inside ai_unified (confirmed v6.73). CLIENT (this build): all three TTS_PROXY_URL call sites \u2014 gethroSpeak(), _abSpeak(), _previewVoice() \u2014 now detect a 429/rate_limited response instead of treating it as a generic failure (this is RL-03 item 4, bundled in since it was blocked on RL-02 and shipping the counter without the client handling would reproduce the AGP_MIC mislabelling bug for TTS). gethroSpeak/_abSpeak keep their existing speechSynthesis fallback (so voice playback doesn\u2019t break) but log quietly and show _showRateLimitPanel once per page load via a shared flag, not once per call. _previewVoice has no fallback by design, just swapped its generic failure text for a clear rate-limit message. SERVER (NOT done here, needs developer action in Supabase \u2014 see RL-02 entry for the exact snippets): bump FREE_LIMIT 20\u219250 and PREMIUM_LIMIT 100\u2192250 in _shared/rateLimitUnified.ts (simple sum of the old ai_unified ceiling + the never-shipped separate-TTS draft \u2014 starting point only, tune after testing), add the same checkUnifiedRateLimit() call to inworld-tts-proxy/index.ts that the other three proxies already use (soft-block for premium, matching GETHRO_PROXY), then redeploy all four proxies since Supabase bundles _shared/ imports at deploy time. No DB migration needed \u2014 life_rate_limits and the ai_unified tier already exist. Per developer instruction: NO FURTHER CODE CHANGES until this build is tested.';
+  const APP_VERSION  = 'v6.81';
+  const DEPLOY_NOTES = APP_VERSION + ' \u2014 SPRINT RL: RL-03 item 7 (AGP_MIC voice dictation rate-limit UX) closed out \u2014 verified, not coded. Both _agpFlushChunk and _agpFlushAndSend already called the shared _showRateLimitPanel() with no DOM target; once v6.79 changed that function\u2019s no-target fallback from a toast to the full upgrade modal, these two call sites started opening the modal automatically with zero changes needed. Updated stale in-code comments at both sites (still described the old toast behaviour) so this doesn\u2019t look like outstanding work on a future read. RL-03 ticket is now fully done \u2014 items 1\u20137 all shipped/confirmed, no remaining client sites left toast-only.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5224,6 +5224,7 @@
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
   const FINAL_EDIT_PROXY_URL = SUPABASE_URL + '/functions/v1/final-edit-proxy'; // FE-03
+  const RATE_LIMIT_STATUS_URL = SUPABASE_URL + '/functions/v1/rate-limit-status'; // RL-09: advisory pre-flight check, never increments
   const STRIPE_PORTAL_URL   = 'https://billing.stripe.com/p/login/5kQfZjdx2b066bo1Sj2B200'; // SUB-01 customer portal
   const AUDIO_MAX_BYTES    = 5 * 1024 * 1024; // 5MB limit
 
@@ -6375,6 +6376,12 @@
   // ── Step 5: Create share link flow ──────────────────────────────
 
   function showShareConsent(entryId) {
+    // RL-06: sharing is premium-only. Free users see a warm nudge instead.
+    if (!isPremium()) {
+      logActivity('premium_gate_hit', 'feature=share_link', 'info', 'RL');
+      toast('\uD83D\uDD10 Sharing memories is a Premium feature \u2014 upgrade to share with family.');
+      return;
+    }
     _shareConsentEntryId = entryId;
     document.getElementById('shareConsentLabel').value = '';
     document.getElementById('shareConsentNote').value  = '';
@@ -8095,6 +8102,10 @@
   // limited you'd stay limited for the rest of the window. Showing the panel on
   // every single TTS call (every line of dialogue, every audiobook segment) would
   // spam it; this just shows it once per page load instead.
+  // UPDATED (RL-03 item 5, modal decision) — _showRateLimitPanel with no target
+  // now opens the full upgrade MODAL instead of a toast. No change needed here;
+  // this function already calls it without a target, so it inherits the modal
+  // automatically. The once-per-load guard below still applies to the modal too.
   var _ttsRateLimitToastShown = false;
   function _maybeShowTtsRateLimitToast(rlParsed) {
     if (_ttsRateLimitToastShown) return;
@@ -8220,11 +8231,14 @@
   // ── callGethro — JWT-authenticated AI proxy (Phase 1–5, all actions) ────
   // Prompts are built server-side — client sends data, not prompt strings.
   // callAI() retired in Phase 5 (life_model — mineEssentials).
-  // RL-03: 429s are surfaced via the shared rate-limit toast here, at the single
+  // RL-03: 429s are surfaced via the shared rate-limit modal here, at the single
   // chokepoint all 19 call sites funnel through, rather than patching each call
   // site individually. Still throws afterward so callers keep their existing
   // catch-block cleanup (re-enabling buttons, resetting loading state, etc.) —
   // this only adds user-visible feedback, it doesn't change control flow.
+  // UPDATED (RL-03 item 5, modal decision) — _showRateLimitPanel with no target
+  // now opens the full upgrade MODAL instead of a toast; no change needed in the
+  // call below, it already omits target so it inherits the modal automatically.
   async function callGethro(action, payload = {}) {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) throw new Error('Not authenticated');
@@ -10298,6 +10312,32 @@
     document.getElementById('photoRecordStatus').textContent = 'Recording stopped';
   }
 
+  // RL-09: advisory pre-flight check — asks "would I currently be blocked?"
+  // without spending a real AI call. Never increments/writes anything server-
+  // side (see rate-limit-status/index.ts). Returns null on any failure (network
+  // error, auth issue, etc.) so callers can simply skip the nudge and let the
+  // real enforcement inside checkUnifiedRateLimit() do its job as it always has —
+  // this endpoint only ever improves UX, never gates anything by itself.
+  async function checkRateLimitStatus() {
+    try {
+      var freshToken = sessionToken;
+      try {
+        var sess = await sb.auth.getSession();
+        if (sess && sess.data && sess.data.session) freshToken = sess.data.session.access_token;
+      } catch(e) {}
+      if (!freshToken) return null;
+      var res = await fetch(RATE_LIMIT_STATUS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
+        body: JSON.stringify({})
+      });
+      if (!res.ok) return null;
+      var data = await res.json();
+      if (!data || data.ok === false) return null;
+      return data; // { ok, tier, calls_made, calls_limit, would_be_blocked, reset_in_minutes }
+    } catch(e) { return null; }
+  }
+
   async function describePhoto(file) {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -10341,6 +10381,26 @@
     if (!story) return toast('Please tell the story behind these photos');
     const cat  = document.getElementById('photoCat').value || 'Unspecified';
     const tags = readTags('photo');
+
+    // RL-09 / RL-03 item 3: pre-flight check at button-press, BEFORE any AI call.
+    // Advisory only — per the confirmed approach, this shows the nudge early so
+    // the user isn't surprised mid-upload, but does NOT block the save. The real
+    // enforcement is unchanged and still lives inside checkUnifiedRateLimit() on
+    // the actual AI_PROXY call in describePhoto(); a user who passes this check
+    // but races past the real limit (e.g. several photos in flight) still saves
+    // fine, just without an AI caption on the photos that land after the limit.
+    try {
+      var rlStatus = await checkRateLimitStatus();
+      if (rlStatus && rlStatus.would_be_blocked) {
+        _showRateLimitPanel({
+          reset_in_minutes: rlStatus.reset_in_minutes,
+          calls_made: rlStatus.calls_made,
+          calls_limit: rlStatus.calls_limit,
+          tier: rlStatus.tier,
+          context: 'photo description'
+        });
+      }
+    } catch(e) { /* advisory only — never block the save on a pre-flight failure */ }
 
     toast('Saving entry...');
     try {
@@ -21787,6 +21847,12 @@
         // through to the generic catch below and logging as app_error/console_error
         // ("Chunk transcription failed: Rate limit reached") — expected behaviour
         // mislabelled as a bug, with none of the friendly messaging/Upgrade CTA.
+        // RL-03 item 7 (v6.81): no `target` is passed here, so since the v6.79
+        // modal refactor this now opens the full _showRateLimitModal (overlay +
+        // premium-benefits card), not the old toast — same upgrade nudge every
+        // other free-tier site gets. No code change needed beyond this comment:
+        // this call was already correct, it just inherited the modal automatically
+        // once the shared function's no-target path changed underneath it.
         dbg('AGP_MIC', 'Chunk transcription rate-limited');
         _showRateLimitPanel({ reset_in_minutes: parsed.reset_in_minutes, tier: parsed.tier, context: 'voice dictation' });
         _agpFlushCooldown = true;
@@ -21900,6 +21966,9 @@
         // BUG FIX v6.73: same RL-03 gap as _agpFlushChunk (see comment there) —
         // this is the manual-stop/final-flush transcription call, same direct
         // fetch to GETHRO_PROXY bypassing callGethro()'s shared rate-limit UX.
+        // RL-03 item 7 (v6.81): same as _agpFlushChunk — no `target` passed,
+        // so this now opens the full upgrade modal automatically (v6.79 change),
+        // not a toast. No code change needed beyond this comment.
         dbg('AGP_MIC', 'Transcription rate-limited');
         _showRateLimitPanel({ reset_in_minutes: data.reset_in_minutes, tier: data.tier, context: 'voice dictation' });
         _agpSetBtn('idle');
@@ -24163,11 +24232,20 @@
       btnEl.disabled = false;
       var statusEl = document.getElementById('voicesStatus');
       if (e && e.__rateLimited) {
-        // BUG FIX v6.75 (RL-02/RL-03 item 4): expected, not a bug — no fallback
-        // here by design (previewing a specific voice, substituting a different
-        // one silently would defeat the point), just a clearer status message.
+        // UPDATED (RL-03 item 5, modal decision, June 19/20 2026) — was inline
+        // status text only ("no room for a button" in the old inline-panel
+        // framing). Developer overrode that once the nudge became a modal —
+        // a modal has no inline-text space constraint, so this site no longer
+        // needs to be the one inconsistent exception. Status text kept too
+        // (cheap, already there, doesn't hurt) but the modal is now the real
+        // nudge, matching every other rate-limited site in the app.
         dbg('VOICES', 'preview rate-limited');
         if (statusEl) { statusEl.textContent = 'You\u2019ve reached your voice preview limit for now — try again later.'; statusEl.style.color = 'var(--rose)'; }
+        _showRateLimitPanel({
+          reset_in_minutes: e.parsed ? e.parsed.reset_in_minutes : null,
+          tier: e.parsed ? e.parsed.tier : null,
+          context: 'voice preview'
+        });
       } else {
         dbgWarn('VOICES', 'preview error:', e.message);
         if (statusEl) { statusEl.textContent = 'Preview failed — try again.'; statusEl.style.color = 'var(--rose)'; }
@@ -24900,7 +24978,10 @@
   // opts: { reset_in_minutes, calls_made, calls_limit, tier, context, target }
   //   context — short human label for what hit the limit, e.g. "edit", "Gethro",
   //             "photo description" — used in the message copy.
-  //   target  — DOM element to render into. If omitted, falls back to toast().
+  //   target  — DOM element to render into (inline panel). If omitted, opens the
+  //             full-screen upgrade MODAL instead (RL-03 item 5 decision, June
+  //             19/20 2026) — every site except final-edit (#feAIPanel) calls
+  //             this with no target, so they all get the modal automatically.
   function _showRateLimitPanel(opts) {
     opts = opts || {};
     var context = opts.context || 'AI';
@@ -24924,8 +25005,10 @@
       sub = 'Premium members get a much higher limit. Upgrade to keep going with Gethro today.';
     }
 
+    // No target → full modal (RL-03 item 5). This is now the path every site
+    // hits except final-edit, which still passes #feAIPanel explicitly below.
     if (!target) {
-      toast(msg + (premium ? '' : ' Upgrade to Premium for a higher limit.'));
+      _showRateLimitModal({ msg: msg, sub: sub, premium: premium });
       return;
     }
 
@@ -24935,10 +25018,40 @@
     html += '<p style="margin:0;font-size:0.9rem;font-weight:700;color:var(--text)">' + msg + '</p>';
     html += '<p style="margin:0;font-size:0.82rem;color:var(--text-light);line-height:1.5">' + sub + '</p>';
     if (!premium) {
-      html += '<button class="btn btn-primary" style="margin-top:8px;font-size:0.85rem;padding:9px 22px" onclick="openUpgradeOverlay && openUpgradeOverlay()">✨ Upgrade to Premium</button>';
+      // NOTE: inline onclick used deliberately here (not data-action) — this HTML
+      // is injected via innerHTML into #feAIPanel, which has no delegated
+      // data-action listener of its own (unlike settingsPremiumSection). The
+      // previous version called a nonexistent openUpgradeOverlay() — dead
+      // reference, silently no-op'd via `&&`. Fixed to call the real function.
+      html += '<button class="btn btn-primary" style="margin-top:8px;font-size:0.85rem;padding:9px 22px" onclick="startUpgradeCheckout()">✨ Upgrade to Premium</button>';
     }
     html += '</div>';
     target.innerHTML = html;
+  }
+
+  // RL-09 / RL-03 item 5: full-screen upgrade modal. Replaces the toast that
+  // used to fire whenever _showRateLimitPanel was called with no target.
+  // opts: { msg, sub, premium }
+  function _showRateLimitModal(opts) {
+    opts = opts || {};
+    var overlay   = document.getElementById('rlUpgradeModal');
+    if (!overlay) { toast(opts.msg || 'Rate limit reached'); return; } // safety net if markup ever missing
+    var titleEl    = document.getElementById('rlModalTitle');
+    var subEl      = document.getElementById('rlModalSub');
+    var benefitsEl = document.getElementById('rlModalBenefits');
+    var upgradeBtn = document.getElementById('rlModalUpgradeBtn');
+    if (titleEl) titleEl.textContent = opts.msg || 'You\u2019ve reached your limit for now';
+    if (subEl)   subEl.textContent   = opts.sub || '';
+    var showUpgrade = !opts.premium;
+    if (benefitsEl)  benefitsEl.style.display  = showUpgrade ? 'block' : 'none';
+    if (upgradeBtn)  upgradeBtn.style.display  = showUpgrade ? 'block' : 'none';
+    overlay.style.display = 'flex';
+    try { logActivity('rate_limit_modal_shown', opts.premium ? 'premium' : 'free', 'info', 'RL'); } catch(e) {}
+  }
+
+  function _closeRateLimitModal() {
+    var overlay = document.getElementById('rlUpgradeModal');
+    if (overlay) overlay.style.display = 'none';
   }
 
   // Parses a proxy error into the shape _showRateLimitPanel expects. Accepts either
@@ -26025,6 +26138,17 @@
       if (btn) _feRestoreVersion(btn);
       // Click on backdrop closes the overlay
       if (e.target === feVersionOverlay) _feCloseVersionOverlay();
+    });
+    // RL-09 / RL-03 item 5: rate-limit upgrade modal — close/dismiss/upgrade + backdrop click
+    var rlUpgradeModal = document.getElementById('rlUpgradeModal');
+    if (rlUpgradeModal) rlUpgradeModal.addEventListener('click', function(e) {
+      var actionBtn = e.target.closest('[data-action]');
+      if (actionBtn) {
+        var action = actionBtn.dataset.action;
+        if (action === 'rl-modal-close')   { _closeRateLimitModal(); return; }
+        if (action === 'rl-modal-upgrade') { _closeRateLimitModal(); startUpgradeCheckout(); return; }
+      }
+      if (e.target === rlUpgradeModal) _closeRateLimitModal();
     });
     // Edit button inside reading overlay
     on('storyLibEditBtn', 'click', function() {
@@ -27151,6 +27275,38 @@
         <span style="font-size:0.8rem;color:var(--text-light);line-height:1.55">I have this person&#x2019;s permission (or I am this person) and consent to cloning their voice within LifeTold.</span>
       </label>
       <button id="vrUploadBtn" class="btn btn-primary" style="width:100%;font-weight:700" disabled>Save Voice</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── RL-09 / RL-03 item 5: Rate-Limit Upgrade Modal ─────────────────────── -->
+<!-- Full modal (overlay + centered card), not a small inline panel — developer
+     decision June 19/20 2026 (see SPRINT RL / RL-03 item 5 summary): room for
+     real premium-benefits messaging, in the spirit of upgrade interstitials in
+     apps like Claude. Used everywhere a free-tier rate limit is hit or a
+     pre-flight check shows would_be_blocked: Gethro chat (callGethro), TTS
+     (gethroSpeak/_abSpeak), voice preview (_previewVoice), and photo
+     description pre-flight (describePhoto via RL-09). Final Edit keeps its
+     existing #feAIPanel inline treatment — not in scope for this modal. -->
+<div id="rlUpgradeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9800;align-items:center;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="background:var(--bg);border-radius:20px;padding:32px 28px 26px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative;box-sizing:border-box;margin:auto">
+    <button id="rlModalCloseBtn" data-action="rl-modal-close" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
+    <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px">
+      <span id="rlModalIcon" style="font-size:2rem">&#x23F1;&#xFE0F;</span>
+      <h3 id="rlModalTitle" style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0">You&#x2019;ve reached your limit for now</h3>
+      <p id="rlModalSub" style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin:0"></p>
+      <!-- Premium benefits — shown only to free-tier users -->
+      <div id="rlModalBenefits" style="display:none;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-top:6px;text-align:left">
+        <div style="font-size:0.78rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:10px">&#x2728; With Premium</div>
+        <div style="font-size:0.85rem;color:var(--text);line-height:2;display:flex;flex-direction:column;gap:2px">
+          <span>&#x2022; A much higher limit before you hit a wall</span>
+          <span>&#x2022; Full-resolution photo storage</span>
+          <span>&#x2022; Share your stories with family</span>
+          <span>&#x2022; Support LifeTold directly</span>
+        </div>
+      </div>
+      <button id="rlModalUpgradeBtn" data-action="rl-modal-upgrade" class="btn btn-primary" style="width:100%;font-weight:700;font-size:0.92rem;padding:12px;margin-top:8px;display:none">&#x2728; Upgrade to Premium &mdash; A$9/mo</button>
+      <button id="rlModalDismissBtn" data-action="rl-modal-close" style="background:none;border:none;font-size:0.82rem;color:var(--text-light);cursor:pointer;padding:8px;margin-top:2px">Not now</button>
     </div>
   </div>
 </div>
