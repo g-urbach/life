@@ -4497,6 +4497,18 @@
 </div>
 
 <!-- DISCLAIMER -->
+<!-- PRV-28 Build F (v6.90): disclaimer DB fetch failure overlay.
+     Shown if life_disclaimer_facts is unreachable or empty on login.
+     Blocks the app — no silent fallback to stale hardcoded text. -->
+<div id="disclaimerErrorOverlay" style="display:none;position:fixed;inset:0;background:rgba(44,36,22,0.85);align-items:center;justify-content:center;z-index:2000;padding:20px">
+  <div style="background:var(--cream);border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center">
+    <p style="font-size:2rem;margin-bottom:12px">⚠️</p>
+    <h2 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;margin-bottom:12px">Unable to load Terms</h2>
+    <p style="font-size:0.9rem;color:var(--text-light);line-height:1.6;margin-bottom:20px">We couldn't load the Privacy &amp; Terms — this is required before you can continue. Please check your connection and try again.</p>
+    <button onclick="location.reload()" style="padding:12px 28px;border-radius:10px;border:none;cursor:pointer;background:var(--gold);color:#3a2a0a;font-family:'Lato',sans-serif;font-size:0.9rem;font-weight:700">Try again</button>
+  </div>
+</div>
+
 <div id="disclaimerOverlay" style="display:none">
   <div id="disclaimerBox">
     <h2>Privacy &amp; Terms</h2>
@@ -5190,8 +5202,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v6.89';
-  const DEPLOY_NOTES = APP_VERSION + ' — RL-06 closed: RLS on life_share_tokens hardened server-side (premium-only INSERT policy). Backlog updated.';
+  const APP_VERSION  = 'v6.90';
+  const DEPLOY_NOTES = APP_VERSION + ' — PRV-28 Build F: DISCLAIMER_VERSION/TEXT constants removed. Disclaimer now fetched from life_disclaimer_facts (DB) at login. Hard fail + Telegram alert if DB unreachable — no silent fallback. SQL migration required before deploy (see backlog PRV-28 Build F).';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -7576,17 +7588,24 @@
   async function _saveDisclaimerAcceptance() {
     if (!currentUser) return;
     var now = window._pendingDisclaimerAcceptedAt || new Date().toISOString();
+    // PRV-28 Build F (v6.90): version and text now come from life_disclaimer_facts (DB),
+    // passed via window._pendingDisclaimerVersion/Text set in _checkDisclaimerVersion().
+    // Fallback to 'unknown' if somehow called outside that flow — will alert in DB audit.
+    var version = window._pendingDisclaimerVersion || 'unknown';
+    var text    = window._pendingDisclaimerText    || '';
     var settingsHeaders  = { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' };
     var versionsHeaders  = { ...getAuthHeaders(), 'Prefer': 'resolution=ignore-duplicates,return=minimal', 'Content-Type': 'application/json' };
     await Promise.all([
       // Per-user acceptance record in life_settings
-      fetch(DB_SETTINGS_URL, { method:'POST', headers:settingsHeaders, body: JSON.stringify({ user_id:currentUser.id, key:'disclaimer_version', value:DISCLAIMER_VERSION, updated_at:now }) }),
+      fetch(DB_SETTINGS_URL, { method:'POST', headers:settingsHeaders, body: JSON.stringify({ user_id:currentUser.id, key:'disclaimer_version', value:version, updated_at:now }) }),
       fetch(DB_SETTINGS_URL, { method:'POST', headers:settingsHeaders, body: JSON.stringify({ user_id:currentUser.id, key:'disclaimer_accepted_at', value:now, updated_at:now }) }),
       // Version text archive in life_disclaimer_versions — idempotent (ignore-duplicates if version already stored)
-      fetch(DB_DISCLAIMER_URL, { method:'POST', headers:versionsHeaders, body: JSON.stringify({ version:DISCLAIMER_VERSION, text:DISCLAIMER_TEXT, created_at:now }) })
+      fetch(DB_DISCLAIMER_URL, { method:'POST', headers:versionsHeaders, body: JSON.stringify({ version:version, text:text, created_at:now }) })
     ]);
-    dbg('DISCLAIMER', 'Acceptance saved: version='+DISCLAIMER_VERSION+' at='+now);
+    dbg('DISCLAIMER', 'Acceptance saved: version='+version+' at='+now);
     window._pendingDisclaimerAcceptedAt = null;
+    window._pendingDisclaimerVersion    = null;
+    window._pendingDisclaimerText       = null;
   }
 
   // Check if the user has seen the current privacy.html version. Unlike
@@ -7628,19 +7647,53 @@
   // Returns a Promise that resolves immediately if already accepted, or only
   // after the user clicks "I Agree" if they haven't. This ensures the rest of
   // the login sequence (loadEntries → onboarding) is blocked until T&Cs are done.
+  // PRV-28 Build F (v6.90): _checkDisclaimerVersion() now fetches DISCLAIMER_VERSION
+  // and DISCLAIMER_TEXT from life_disclaimer_facts (DB) instead of hardcoded constants.
+  // HARD FAIL policy: if DB is unreachable or table is empty, the app is blocked and
+  // a 🔴 Telegram alert fires. No silent fallback to stale hardcoded text — for a
+  // legal consent instrument, a visible failure is always safer than silent staleness.
   async function _checkDisclaimerVersion() {
     if (!currentUser) return;
     try {
-      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.disclaimer_version', { headers: getAuthHeaders() });
-      if (!res.ok) { dbgWarn('DISCLAIMER', 'DB check failed, status:', res.status); return; }
-      var rows = await res.json();
-      var savedVersion = (rows[0] || {}).value || null;
-      if (savedVersion === DISCLAIMER_VERSION) {
+      // ── Step 1: fetch current disclaimer from life_disclaimer_facts ──
+      var factsRes = await fetch(
+        DB_DISCLAIMER_FACTS_URL + '?order=effective_date.desc&limit=1',
+        { headers: getAuthHeaders() }
+      );
+      if (!factsRes.ok) throw new Error('life_disclaimer_facts fetch failed: HTTP ' + factsRes.status);
+      var factsRows = await factsRes.json();
+      var facts = factsRows && factsRows[0];
+      if (!facts || !facts.version || !facts.clauses) throw new Error('life_disclaimer_facts is empty or malformed');
+
+      var currentVersion = facts.version;
+      var clauseText     = Array.isArray(facts.clauses) ? facts.clauses.join('\n') : facts.clauses;
+
+      // ── Step 2: check what version this user has already accepted ──
+      var settRes = await fetch(
+        DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.disclaimer_version',
+        { headers: getAuthHeaders() }
+      );
+      if (!settRes.ok) throw new Error('disclaimer_version settings fetch failed: HTTP ' + settRes.status);
+      var settRows = await settRes.json();
+      var savedVersion = (settRows[0] || {}).value || null;
+
+      if (savedVersion === currentVersion) {
         dbg('DISCLAIMER', 'Current version already accepted:', savedVersion);
         return; // already accepted — continue immediately
       }
-      // Not yet accepted — show overlay and wait for user to agree before resolving
-      dbg('DISCLAIMER', 'Showing disclaimer — saved:', savedVersion, 'current:', DISCLAIMER_VERSION);
+
+      // ── Step 3: show overlay, populated from DB content ──
+      dbg('DISCLAIMER', 'Showing disclaimer — saved:', savedVersion, 'current:', currentVersion);
+
+      // Populate the disclaimer body from DB clauses
+      var bodyEl = document.querySelector('.disclaimer-body');
+      if (bodyEl && facts.html_content) {
+        bodyEl.innerHTML = facts.html_content; // rich HTML if stored
+      }
+      // version label in header
+      var versionLbl = document.querySelector('#disclaimerBox strong');
+      if (versionLbl) versionLbl.textContent = 'Privacy & Terms — ' + currentVersion;
+
       return new Promise(function(resolve) {
         var overlay = document.getElementById('disclaimerOverlay');
         var checkEl = document.getElementById('disclaimerCheck');
@@ -7652,15 +7705,26 @@
             if (!checkEl.checked) return toast('Please tick the checkbox to agree');
             overlay.style.display = 'none';
             window._pendingDisclaimerAcceptedAt = new Date().toISOString();
+            // Store the DB-sourced version and clause text for the audit record
+            window._pendingDisclaimerVersion = currentVersion;
+            window._pendingDisclaimerText    = clauseText;
             await _saveDisclaimerAcceptance();
             toast('Thank you — your acceptance has been recorded.');
-            resolve(); // now let the rest of login proceed
+            resolve();
           };
         }
         if (overlay) overlay.style.display = 'flex';
       });
+
     } catch(err) {
-      dbgWarn('DISCLAIMER', 'Version check failed (non-fatal):', err.message);
+      // HARD FAIL — block the app and alert immediately
+      dbgErr('DISCLAIMER', 'CRITICAL: could not load disclaimer from DB:', err.message);
+      logActivity('disclaimer_db_fetch_failed', err.message, 'error', 'PRV');
+      notifyDev('error', 'PRV', '🚨 DISCLAIMER DB FETCH FAILED — app blocked for ' + (currentUser?.email || 'unknown') + ': ' + err.message);
+      var errOverlay = document.getElementById('disclaimerErrorOverlay');
+      if (errOverlay) errOverlay.style.display = 'flex';
+      // Return a never-resolving promise — app stays blocked until user reloads
+      return new Promise(function() {});
     }
   }
 
@@ -7741,30 +7805,22 @@
   }
 
   // ── Database ──────────────────────────────────────────────────────
-  const DISCLAIMER_VERSION = 'v1.5'; // Bump when terms materially change — triggers re-consent for existing users
-  // v1.2 (v4.12): PRV-04 — added explicit cross-border transfer disclosure (APP 8) naming Groq (US) and OpenAI (US); added OpenAI TTS disclosure (PRV-21)
-  // v1.3 (v4.31): PRV-24 — updated Data Storage to confirm Australian data residency (ap-southeast-2 Sydney)
-  // v1.4 (v5.62): SUB-31 — Anthropic, Inc. (United States) added as premium AI processor; zero-retention note added for both Groq and Anthropic
-  // v1.5 (v6.84): Build C — RL-05 architecture reflected. Anthropic is now primary processor for ALL plans (not Premium-only); Groq reframed as zero-retention failover only, not a separate free-tier processor; OpenAI TTS replaced with Inworld AI (TTS provider since v6.02-v6.10, disclaimer was stale)
-  // Plain-text snapshot of disclaimer for audit storage — update alongside the HTML when terms change
-  const DISCLAIMER_TEXT = [
-    'Privacy & Terms v1.5',
-    '',
-    '1. Third-Party AI Processing & Overseas Data Transfer. Memoir content is sent for AI processing: Anthropic, Inc. (United States), for all plans, free and Premium. If Anthropic is temporarily unavailable, requests automatically fail over to Groq, Inc. (United States), configured with zero data retention enabled. Text is sent to Inworld AI, Inc. (United States) for text-to-speech voice features. Anthropic, Groq, and Inworld are based in the United States. Australian Privacy Law (including the Australian Privacy Act 1988) may not apply to your information once disclosed to these overseas recipients. Anthropic, Groq, and Inworld do not retain prompts or responses after processing and do not use them for model training. By continuing, you expressly consent to this cross-border disclosure under APP 8.2(a). See anthropic.com/legal/privacy, groq.com/privacy-policy, and inworld.ai/privacy.',
-    '2. Print Services. If you order a printed book, your story content is sent to Peecho B.V. (Netherlands) for print-on-demand fulfilment. See peecho.com/privacy-policy.',
-    '3. Data Storage. Entries, photos and account data are stored securely in Australia via Supabase (Sydney region, ap-southeast-2). See supabase.com/privacy.',
-    '4. Data Care. We take reasonable care to protect your data but cannot guarantee against loss in the event of a technical failure. We recommend exporting your entries periodically.',
-    '5. Limitation of Liability. The developer shall not be liable for any loss or harm arising from use of this application.',
-    '6. Changes to Terms. We may update these terms from time to time. You will be asked to re-accept any material changes before continuing.',
-    '7. Privacy Policy. A full Privacy Policy is available at lifetold.app/privacy.',
-  ].join('\n');
+  // PRV-28 Build F (v6.90): DISCLAIMER_VERSION and DISCLAIMER_TEXT constants removed.
+  // Disclaimer version and clause text are now fetched from life_disclaimer_facts (DB)
+  // at login via _checkDisclaimerVersion(). Hard fail + Telegram alert if DB unreachable.
+  // Version history (for reference — authoritative record is in life_disclaimer_facts):
+  //   v1.2 (v4.12): PRV-04 — cross-border transfer disclosure, Groq + OpenAI named
+  //   v1.3 (v4.31): PRV-24 — Australian data residency confirmed (ap-southeast-2)
+  //   v1.4 (v5.62): SUB-31 — Anthropic added as premium processor
+  //   v1.5 (v6.84): Build C — Anthropic primary for all plans, Groq failover, Inworld TTS
   const DB_URL              = SUPABASE_URL + '/rest/v1/life_entries';
   const DB_SETTINGS_URL     = SUPABASE_URL + '/rest/v1/life_settings';
   const DB_SHARE_TOKENS_URL   = SUPABASE_URL + '/rest/v1/life_share_tokens';
   const DB_SHARE_FEEDBACK_URL = SUPABASE_URL + '/rest/v1/life_share_feedback';
   const DB_FEATURE_URL      = SUPABASE_URL + '/rest/v1/life_feature_usage';
   const DB_CONVERSATIONS_URL = SUPABASE_URL + '/rest/v1/life_conversations';
-  const DB_DISCLAIMER_URL   = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
+  const DB_DISCLAIMER_URL        = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
+  const DB_DISCLAIMER_FACTS_URL  = SUPABASE_URL + '/rest/v1/life_disclaimer_facts'; // PRV-28 Build F
   // PRV-26/27 (Build D, v6.84): lightweight version tracking for privacy.html.
   // Deliberately NOT a full-text duplicate of the policy (that mismatch — two
   // unsynced copies of the same facts — is exactly how §4 went stale before).
