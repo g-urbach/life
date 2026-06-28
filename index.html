@@ -4032,8 +4032,8 @@
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px">
 
       <!-- Date of birth (optional) -->
-      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
-      <input id="mpPersonDob" type="date"
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional — a year is fine</span></label>
+      <input id="mpPersonDob" type="text" placeholder="e.g. 1948 or 12 March 1948"
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:16px">
 
       <!-- Bio (optional) -->
@@ -5188,8 +5188,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.13';
-  const DEPLOY_NOTES = APP_VERSION + ' \u2014 [PRV-09 merge fix] Restored correct PRV-09 wiring lost in v7.12: disclaimerReloadBtn id + on() binding, landingScreen delegated listener for data-action="reload-page". Merged v7.10 and v7.12 changes \u2014 all SUB-P03 revert, RL-06 server confirmation, and knowledge updates from v7.12 retained. Zero onclick= in file.';
+  const APP_VERSION  = 'v7.15';
+  const DEPLOY_NOTES = APP_VERSION + ' \u2014 [UX-P01 + UX-P02] DOB field changed from date-picker to free text in profile edit and My People (year-only accepted). Profile edit now includes subject mode toggle — owner can switch between own story and loved one\'s story post-onboarding, with subject name and relationship fields. Dashboard re-renders immediately on save. DOB year-extraction made regex-first for reliability.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -11849,12 +11849,16 @@
         if (userProfile.name) profileContext += '- Name: ' + userProfile.name + '\n';
         if (userProfile.sex)  profileContext += '- Sex: ' + userProfile.sex + '\n';
         if (userProfile.dob) {
-          const dob    = new Date(userProfile.dob);
-          const year   = dob.getFullYear();
-          const age    = new Date().getFullYear() - year;
-          const dobFmt = dob.toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'});
-          profileContext += '- Date of birth: ' + dobFmt + ' (age ' + age + ')\n';
-          profileContext += '- Birth year: ' + year + ' — weave in world events, music, fashion of that era.\n';
+          const dobRaw    = userProfile.dob;
+          const yearMatch = dobRaw.match(/\b(18|19|20)\d{2}\b/);
+          const year      = yearMatch ? parseInt(yearMatch[0]) : (isNaN(new Date(dobRaw).getFullYear()) ? null : new Date(dobRaw).getFullYear());
+          if (year && !isNaN(year)) {
+            const age = new Date().getFullYear() - year;
+            profileContext += '- Date of birth: ' + dobRaw + ' (age approx. ' + age + ')\\n';
+            profileContext += '- Birth year: ' + year + ' — weave in world events, music, fashion of that era.\\n';
+          } else {
+            profileContext += '- Date of birth: ' + dobRaw + '\\n';
+          }
         }
         profileContext += '\n';
       }
@@ -15651,7 +15655,7 @@
     if (real.length >= 5) {
       const dob = entries.find(e => e.category === '_profile_dob')?.answer;
       if (dob) {
-        const birthYear = new Date(dob).getFullYear();
+        const _dobYearMatch = dob.match(/\b(18|19|20)\d{2}\b/); const birthYear = _dobYearMatch ? parseInt(_dobYearMatch[0]) : new Date(dob).getFullYear();
         const currentYear = new Date().getFullYear();
         const age = currentYear - birthYear;
         const decades = [];
@@ -23865,15 +23869,40 @@
     document.getElementById('profileEditLastName').value  = userProfile.lastName  || '';
     document.getElementById('profileEditDob').value       = userProfile.dob       || '';
     document.getElementById('profileEditSex').value       = userProfile.sex       || '';
+
+    // FAM-01: populate subject mode toggle
+    var mode = userProfile.subjectMode || 'self';
+    _profileEditMode = mode;
+    _profileUpdateModeBtns(mode);
+    document.getElementById('profileSubjectName').value  = userProfile.subjectName  || '';
+    document.getElementById('profileRelationship').value = userProfile.relationship || '';
+
     document.getElementById('profileEditOverlay').style.display = 'flex';
+  }
+
+  var _profileEditMode = 'self';
+  function _profileUpdateModeBtns(mode) {
+    var selfBtn  = document.getElementById('profileModeSelf');
+    var otherBtn = document.getElementById('profileModeOther');
+    var fields   = document.getElementById('profileSubjectFields');
+    var gold = 'var(--gold-dark)', border = '2px solid ' + gold, plain = '2px solid var(--border)';
+    if (selfBtn)  { selfBtn.style.border  = mode === 'self'  ? border : plain; selfBtn.style.color  = mode === 'self'  ? gold : 'var(--text)'; }
+    if (otherBtn) { otherBtn.style.border = mode === 'other' ? border : plain; otherBtn.style.color = mode === 'other' ? gold : 'var(--text)'; }
+    if (fields)   fields.style.display = mode === 'other' ? '' : 'none';
+    _profileEditMode = mode;
   }
 
   async function saveProfileEdit() {
     const firstName = document.getElementById('profileEditFirstName').value.trim();
     const lastName  = document.getElementById('profileEditLastName').value.trim();
-    const dob       = document.getElementById('profileEditDob').value;
+    const dob       = document.getElementById('profileEditDob').value.trim();
     const sex       = document.getElementById('profileEditSex').value;
+    const subjectMode = _profileEditMode || 'self';
+    const subjectName = (document.getElementById('profileSubjectName')?.value || '').trim();
+    const relationship = (document.getElementById('profileRelationship')?.value || '').trim();
+
     if (!firstName) return toast('First name is required');
+    if (subjectMode === 'other' && !subjectName) return toast('Please enter their name');
 
     const fullName = lastName ? firstName + ' ' + lastName : firstName;
 
@@ -23901,6 +23930,9 @@
       const saves = [
         upsertProfile('_profile_first_name', firstName, 'What is your first name?'),
         upsertProfile('_profile_name', fullName, 'What is your name?'),
+        upsertProfile('_profile_subject_mode', subjectMode, 'Whose story is this?'),
+        upsertProfile('_profile_subject_name', subjectName, 'What is the name of the person whose story this is?'),
+        upsertProfile('_profile_relationship', relationship, 'What is your relationship to this person?'),
       ];
       if (lastName || entries.find(e => e.category === '_profile_last_name')) {
         saves.push(upsertProfile('_profile_last_name', lastName || '', 'What is your last name?'));
@@ -23913,15 +23945,20 @@
       }
       await Promise.all(saves);
 
-      userProfile.firstName = firstName;
-      userProfile.lastName  = lastName || null;
-      userProfile.name      = fullName;
-      userProfile.dob       = dob || null;
-      userProfile.sex       = sex || null;
+      userProfile.firstName    = firstName;
+      userProfile.lastName     = lastName || null;
+      userProfile.name         = fullName;
+      userProfile.dob          = dob || null;
+      userProfile.sex          = sex || null;
+      userProfile.subjectMode  = subjectMode;
+      userProfile.subjectName  = subjectName || null;
+      userProfile.relationship = relationship || null;
 
       document.getElementById('profileEditOverlay').style.display = 'none';
       toast('Profile updated ✓');
       logActivity('profile_updated', fullName, 'info', 'PROFILE');
+      // Refresh dashboard headline/greeting immediately if visible
+      if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
     } catch(err) {
       dbgErr('PROFILE', 'saveProfileEdit error:', err.message);
       toast('Could not save — please try again');
@@ -26385,6 +26422,8 @@
     on('profileEditCloseBtn',  'click', function() { document.getElementById('profileEditOverlay').style.display = 'none'; });
     on('profileEditCancelBtn', 'click', function() { document.getElementById('profileEditOverlay').style.display = 'none'; });
     on('profileEditSaveBtn',   'click', saveProfileEdit);
+    on('profileModeSelf',      'click', function() { _profileUpdateModeBtns('self'); });
+    on('profileModeOther',     'click', function() { _profileUpdateModeBtns('other'); setTimeout(function() { var el = document.getElementById('profileSubjectName'); if (el) el.focus(); }, 100); });
     on('settingsBtn',          'click', openSettings);
     on('signOutBtn',    'click', signOut);
     // ── FE-01: Final Edit overlay ─────────────────────────────────────────
@@ -27315,17 +27354,36 @@
     <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Last name <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
     <input id="profileEditLastName" type="text" autocomplete="family-name"
       style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
-    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
-    <input id="profileEditDob" type="date"
+    <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Date of birth <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional — a year is fine</span></label>
+    <input id="profileEditDob" type="text" placeholder="e.g. 1952 or 12 March 1952"
       style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
     <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Sex <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
     <select id="profileEditSex"
-      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:24px">
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:20px">
       <option value="">Prefer not to say</option>
       <option value="male">Male</option>
       <option value="female">Female</option>
       <option value="other">Other</option>
     </select>
+    <!-- FAM-01 subject mode toggle in profile -->
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:20px">
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:8px">Whose story is this?</label>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button id="profileModeSelf" onclick="void(0)"
+          style="flex:1;padding:10px 8px;border-radius:8px;font-family:Lato,sans-serif;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.15s;border:2px solid var(--border);background:var(--surface);color:var(--text)">My own story</button>
+        <button id="profileModeOther" onclick="void(0)"
+          style="flex:1;padding:10px 8px;border-radius:8px;font-family:Lato,sans-serif;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.15s;border:2px solid var(--border);background:var(--surface);color:var(--text)">A loved one's story</button>
+      </div>
+      <div id="profileSubjectFields" style="display:none">
+        <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Their name <span style="color:var(--rose)">*</span></label>
+        <input id="profileSubjectName" type="text" placeholder="e.g. Patricia"
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:10px">
+        <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your relationship <span style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+        <input id="profileRelationship" type="text" placeholder="e.g. Mum, Dad, Grandma"
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:4px">
+        <p style="font-size:0.78rem;color:var(--text-light);margin:0 0 10px;line-height:1.5">Gethro will ask questions about their life. Your own name stays as it is.</p>
+      </div>
+    </div>
     <div style="display:flex;gap:10px">
       <button id="profileEditCancelBtn" class="btn btn-ghost" style="flex:1">Cancel</button>
       <button id="profileEditSaveBtn" class="btn btn-primary" style="flex:2">Save</button>
