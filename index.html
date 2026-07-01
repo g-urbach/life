@@ -5190,8 +5190,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.32';
-  const DEPLOY_NOTES = APP_VERSION + ' — Two bug fixes: (1) Archive refinement clobber guard fix (proxy v6.20) — apply_voice_transcript was always discarding with reason=edited because the full-string baseline comparison never matched (liveAnswer includes the live-transcribed turn text appended after baseline was captured). Guard now compares only the prefix up to text_offset — aborts only if text before this turn was edited. (2) Mic red tab indicator fix — small-blob isFinal early-return path was missing _micRelease(), leaving stream tracks live and the browser tab showing the red recording dot after stop.';
+  const APP_VERSION  = 'v7.33';
+  const DEPLOY_NOTES = APP_VERSION + ' — Red tab mic indicator fix (take 2): stopMemMic() was calling MicManager.stop() which fires _recorder.stop() but has no onstop listener — onChunk(isFinal=true) → _micRelease() is only triggered via MicManager.flush(true) which internally sets up the onstop promise. Without this, stream tracks stayed live after stop and the browser tab kept showing the red recording dot. Fixed by replacing MicManager.stop() with MicManager.flush(true) in stopMemMic().';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -9656,7 +9656,11 @@
     // Never hold the orange screen after user taps stop.
     _setMicState('idle');
     setMemStatus('idle', '');
-    MicManager.stop();
+    // v7.33: flush(true) instead of stop(). stop() calls _recorder.stop() but has no
+    // onstop listener — onChunk(isFinal=true) → _micRelease() only fires via flush(true)
+    // which sets up the onstop promise internally. Without this, stream tracks stayed
+    // live and the browser tab kept showing the red recording dot after stop.
+    MicManager.flush(true);
   }
 
   function toggleMemMic() {
