@@ -5190,8 +5190,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.33';
-  const DEPLOY_NOTES = APP_VERSION + ' — Red tab mic indicator fix (take 2): stopMemMic() was calling MicManager.stop() which fires _recorder.stop() but has no onstop listener — onChunk(isFinal=true) → _micRelease() is only triggered via MicManager.flush(true) which internally sets up the onstop promise. Without this, stream tracks stayed live after stop and the browser tab kept showing the red recording dot. Fixed by replacing MicManager.stop() with MicManager.flush(true) in stopMemMic().';
+  const APP_VERSION  = 'v7.34';
+  const DEPLOY_NOTES = APP_VERSION + ' — Archive staging fix: MicManager.flush(true) was early-returning when _chunks was empty (common when the periodic timer had already flushed all chunks and restarted the recorder). This meant onChunk(isFinal=true) never fired, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed empty, and commit_voice_turn/apply_voice_transcript were never reached — the root cause of archive refinement never working. Fixed by splitting the early-return guard: isFinal=true now only checks !_recorder; non-final flushes still no-op on empty chunks.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -9210,7 +9210,15 @@
     // Flush current chunks into a blob and restart the recorder.
     // isFinal=true: stop recorder, do not restart, release will be called by caller.
     async function flush(isFinal) {
-      if (!_recorder || _chunks.length === 0) return;
+      // v7.34: for isFinal=true, do NOT early-return when _chunks is empty.
+      // When the periodic timer has already flushed all chunks, the recorder was
+      // restarted and _chunks is empty on the new instance — but _turnSegments
+      // already holds all prior blobs. The old early-return meant onChunk(isFinal=true)
+      // was never called, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed
+      // empty, and commit_voice_turn/apply_voice_transcript were never reached.
+      // Non-final flushes with empty chunks are still no-ops (nothing to send to Whisper).
+      if (!_recorder) return;
+      if (!isFinal && _chunks.length === 0) return;
       var mime     = _mime;
       var callbacks = _callbacks;
 
