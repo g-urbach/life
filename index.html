@@ -4688,7 +4688,7 @@
         <div class="ob-bubble" id="obBubble4">
           <p class="ob-bubble-eyebrow">A little about you</p>
           <p class="ob-bubble-title" id="obStep4Title">What brings you here?</p>
-          <p class="ob-bubble-body">I can help with a few memories or your whole life story &#8212; what feels right?</p>
+          <p class="ob-bubble-body" id="obStep4Body">I can help with a few memories or your whole life story &#8212; what feels right?</p>
         </div>
         <div class="ob-goal-grid">
           <button class="ob-goal-card" id="obGoalFamily">&#127969;<span>For my family</span></button>
@@ -5188,8 +5188,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.16';
-  const DEPLOY_NOTES = APP_VERSION + ' \u2014 [PRV-09 fix] Pre-existing regression: 7 occurrences of literal "onclick=" in PRV-09 backlog history comment were being caught by the static HTML event-handler scanner (deployer strips script blocks but not HTML comments). Rephrased to [onclick] in comment text. Zero code changes.';
+  const APP_VERSION  = 'v7.28';
+  const DEPLOY_NOTES = APP_VERSION + ' — [APP-55 Phase 6] Conversation thread playback UI. voiceArchiveStripHtml rebuilt: grouped under single header, sorted by turn_index, per-turn Gethro question + play button, inline Rename (blur/Enter PATCH, Escape revert, optimistic UI). _loadVoiceArchivesForEntries SELECT extended to include question + turn_index, ORDER BY turn_index. Single-turn entries unchanged in appearance. REQUIRES VA-M01b migration + GETHRO_PROXY v6.19 deployed.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5211,6 +5211,8 @@
   const AUDIO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-audio';
   const VIDEO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-video';
   const VIDEO_STORAGE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-video';
+  const VOICE_ARCHIVE_URL  = SUPABASE_URL + '/storage/v1/object/life-voice-archive';
+  const VOICE_ARCHIVE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-voice-archive';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
   const FINAL_EDIT_PROXY_URL = SUPABASE_URL + '/functions/v1/final-edit-proxy'; // FE-03
@@ -5233,6 +5235,7 @@
   let currentUser  = null;
   let sessionToken = null;
   let entries      = [];
+  var _voiceArchiveCache = {}; // APP-55 Phase 2: { entryId: [voiceArchiveRows] } lazy-fetched per render
   let userProfile  = { name: null, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null, subjectMode: 'self', subjectName: null, relationship: null };
   let recognition  = null;
   let currentStory = null;
@@ -6629,7 +6632,59 @@
     }
   }
 
-  // Load share indicators for all visible entries (called after renderEntries)
+  // APP-55 Phase 6: Fetch voice archives for a batch of entries, populate _voiceArchiveCache.
+  // select now includes question + turn_index (added by VA-M01b migration) for thread render.
+  async function _loadVoiceArchivesForEntries(entryIds) {
+    if (!entryIds || !entryIds.length || !currentUser) return;
+    var needed = entryIds.filter(function(id) { return !_voiceArchiveCache[id]; });
+    if (!needed.length) return;
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) return;
+      var ids = needed.map(function(id) { return 'entry_id.eq.' + id; }).join(',');
+      var res = await fetch(
+        SUPABASE_URL + '/rest/v1/life_voice_archives?user_id=eq.' + currentUser.id +
+        '&or=(' + ids + ')&order=turn_index.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index',
+        { headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON } }
+      );
+      if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return; }
+      var rows = await res.json();
+      needed.forEach(function(id) { if (!_voiceArchiveCache[id]) _voiceArchiveCache[id] = []; });
+      rows.forEach(function(row) {
+        if (!_voiceArchiveCache[row.entry_id]) _voiceArchiveCache[row.entry_id] = [];
+        _voiceArchiveCache[row.entry_id].push(row);
+      });
+      dbg('VA', 'Loaded ' + rows.length + ' archive(s) for ' + needed.length + ' entries');
+    } catch(e) {
+      dbgErr('VA', '_loadVoiceArchivesForEntries threw:', e.message);
+    }
+  }
+
+  // APP-55 Phase 2: Sign a voice archive path and inject an inline audio player
+  async function _playVoiceArchive(vaId, storagePath, playerContainerId) {
+    var container = document.getElementById(playerContainerId);
+    if (!container) return;
+    container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-light)">Loading…</span>';
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      var signRes = await fetch(VOICE_ARCHIVE_SIGN + '/' + storagePath, {
+        method:  'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ expiresIn: 3600 })
+      });
+      if (!signRes.ok) throw new Error('Sign failed: ' + signRes.status);
+      var signData = await signRes.json();
+      var signedUrl = signData.signedURL || signData.signedUrl || '';
+      if (!signedUrl) throw new Error('No signed URL in response');
+      container.innerHTML =
+        '<audio src="' + escHtml(signedUrl) + '" controls style="width:100%;height:32px"></audio>';
+    } catch(e) {
+      dbgErr('VA', '_playVoiceArchive failed:', e.message);
+      container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">Could not load audio — ' + escHtml(e.message) + '</span>';
+    }
+  }
+
   async function loadAllShareIndicators() {
     if (!currentUser) return;
     // Fetch all non-expired tokens for this user in one query
@@ -8557,13 +8612,22 @@
         }, 300);
       }
     } else if (step === 4) {
-      var firstName = (document.getElementById('onboardFirstName').value || '').trim();
-      var titleEl = document.getElementById('obStep4Title');
+      var firstName   = (document.getElementById('onboardFirstName').value || '').trim();
+      var subjectName = (document.getElementById('onboardSubjectName')?.value || '').trim();
+      var isOther     = (_obSubjectMode === 'other' && subjectName);
+      var titleEl     = document.getElementById('obStep4Title');
+      var bodyEl      = document.getElementById('obStep4Body');
+      var ring        = document.getElementById('obAvatarRing4');
       if (titleEl && firstName) titleEl.textContent = firstName + ', what brings you here?';
-      var ring = document.getElementById('obAvatarRing4');
+      if (bodyEl) bodyEl.textContent = isOther
+        ? 'I can help with a few memories or ' + subjectName + '\u2019s whole life story \u2014 what feels right?'
+        : 'I can help with a few memories or your whole life story \u2014 what feels right?';
       setTimeout(function() {
         if (ring) ring.classList.add('speaking');
-        gethroSpeak("I can help you capture a few memories or your whole life story. What brings you here?").then(function() {
+        var speech = isOther
+          ? 'I can help you capture a few memories or ' + subjectName + '\u2019s whole life story. What brings you here?'
+          : 'I can help you capture a few memories or your whole life story. What brings you here?';
+        gethroSpeak(speech).then(function() {
           if (ring) ring.classList.remove('speaking');
         }).catch(function() { if (ring) ring.classList.remove('speaking'); });
       }, 300);
@@ -8855,6 +8919,105 @@
     }
   }
 
+  // ── APP-55 Phase 4/5 (moat-protected): commit a staged voice turn + apply ───
+  // Called fire-and-forget from memDone(), once per staged turn, after a
+  // successful save. Two network calls per turn:
+  //   1. commit_voice_turn (multipart) — server generates label/path/turn_index,
+  //      uploads the blob, inserts the row. Client supplies offset and
+  //      baselineSnapshot (inherently client-known — only the client knows
+  //      where the textarea was at mic-open) but nothing else.
+  //   2. apply_voice_transcript (JSON, { turnId }) — server re-transcribes the
+  //      blob it just stored, runs the offset-safe patch decision against its
+  //      own row, and writes the result directly. Client never sees offset,
+  //      baseline, or the transcript text — only applied: true/false.
+  // Never blocks the save UX. Silent on failure (logs to activity log).
+  async function _commitAndApplyVoiceTurn(entryId, turn) {
+    if (!currentUser) return;
+    if (!turn || !turn.blob || turn.blob.size === 0) return;
+    var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
+            : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
+
+    var committed;
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      var form = new FormData();
+      form.append('action', 'commit_voice_turn');
+      form.append('entryId', entryId);
+      form.append('question', turn.question || '');
+      form.append('offset', String(turn.offset));
+      form.append('baselineSnapshot', turn.baselineSnapshot || '');
+      form.append('audio', turn.blob, 'turn.' + ext);
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form,
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Commit failed ' + res.status);
+      committed = data;
+    } catch(e) {
+      dbgErr('VA', 'commit_voice_turn failed:', e.message);
+      logActivity('voice_archive_error', 'entry=' + entryId + ' err=' + e.message, 'error', 'VA');
+      return; // no point attempting apply if the commit itself failed
+    }
+    dbg('VA', 'Turn committed — entry=' + entryId + ' turn_index=' + committed.turn_index + ' id=' + committed.id);
+    logActivity('voice_archive_saved', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'VA');
+    // Update local cache immediately so the playback pill (Phase 2/6) works without a re-fetch.
+    if (!_voiceArchiveCache[entryId]) _voiceArchiveCache[entryId] = [];
+    _voiceArchiveCache[entryId].push({
+      id: committed.id,
+      entry_id: entryId,
+      storage_path: committed.storage_path,
+      label: committed.label,
+      size_bytes: committed.size_bytes,
+      turn_index: committed.turn_index,
+      question: turn.question || null
+    });
+
+    // ── Phase 5: fire the quality pass — independent of any other turn ──────
+    try {
+      var session2 = (await sb.auth.getSession()).data.session;
+      if (!session2) throw new Error('Not authenticated');
+      var applyRes = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session2.access_token,
+          'apikey': SUPABASE_ANON,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ action: 'apply_voice_transcript', turnId: committed.id })
+      });
+      var applyData = await applyRes.json();
+      if (!applyRes.ok || !applyData.ok) throw new Error(applyData.error || 'Apply failed ' + applyRes.status);
+      if (applyData.applied) {
+        dbg('VA', 'Transcript improved — entry=' + entryId + ' turn=' + committed.turn_index + ' +' + (applyData.charsAdded || 0) + ' chars');
+        logActivity('voice_retranscript', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'GROQ');
+        // Server already patched the DB row — refresh the local cache so any
+        // open view reflects the improved text without a manual reload.
+        var cached = (entries || []).find(function(e) { return e.id === entryId; });
+        if (cached) {
+          try {
+            var refreshRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id + '&select=answer', {
+              headers: getAuthHeaders()
+            });
+            if (refreshRes.ok) {
+              var rows = await refreshRes.json();
+              if (rows && rows[0] && typeof rows[0].answer === 'string') cached.answer = rows[0].answer;
+            }
+          } catch(e2) { dbgErr('VA', 'Post-apply cache refresh failed:', e2.message); }
+        }
+        toast('✨ Transcript improved from your recording', 3000);
+      } else {
+        dbg('VA', 'Transcript not applied — reason=' + applyData.reason);
+        // Silent by design — 'edited', 'empty_transcript', 'unchanged' etc. are all expected, non-error outcomes.
+      }
+    } catch(e) {
+      dbgErr('VA', 'apply_voice_transcript failed:', e.message);
+      logActivity('voice_retranscript_error', 'entry=' + entryId + ' err=' + e.message, 'error', 'GROQ');
+    }
+  }
+
   async function memDone() {
     memClearSaveError(); // clear any prior banner before attempting
     let savedId;
@@ -8884,6 +9047,18 @@
     // ── Auto-title: if saved without a title, generate one in the background ──
     if (!_titleBeforeSave.trim() && _answerBeforeSave.trim() && savedId && savedId !== 'offline') {
       _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
+    }
+    // ── APP-55 Phase 4/5 (moat-protected): commit + apply each staged voice turn ──
+    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below. Each turn
+    // commits and applies independently — one slow/failed turn never blocks
+    // or breaks the others, and none of this blocks the save UX.
+    if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
+      var _turnsToCommit = _stagedVoiceArchives.slice();
+      _turnsToCommit.forEach(function(turn) {
+        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
+          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
+        });
+      });
     }
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles everything: title/answer, accordion, tags, media, mic, _memEditEntryId
@@ -8932,6 +9107,203 @@
     }
   }
 
+  // ── APP-55 Phase 0: MicManager — shared MediaRecorder + silence detection ──────
+  // Extracted from APP-52 Phase 2 (dictation) and Phase 4 (AGP chat).
+  // Both call sites had identical getUserMedia/MediaRecorder/AnalyserNode/release
+  // logic. APP-55 Phase 1 adds a third consumer (voice archive accumulation).
+  // Centralising here means bugs get fixed once, not in two (or three) places.
+  //
+  // MicManager owns: stream, recorder, analyser, chunks, silence RAF, release.
+  // Call sites own: state enum, UI updates, transcript handling, timers.
+  //
+  // Usage:
+  //   await MicManager.start({
+  //     mime:        preferred mime type (or null for auto-detect)
+  //     onChunk:     async function(blob, mime, isFinal) — called on each flush
+  //     onVolume:    function(vol) — called each RAF with 0-127 volume level
+  //     onError:     function(err) — called on MediaRecorder error
+  //   });
+  //   MicManager.flush(isFinal)  — manually trigger a chunk flush
+  //   MicManager.stop()          — stop recorder (triggers final onstop)
+  //   MicManager.release()       — tear down stream/analyser/RAF (call in onChunk isFinal path)
+  //
+  // isIOS: reuses the existing const isIOS at init time (already canonical).
+
+  const MicManager = (function() {
+    var _stream      = null;
+    var _recorder    = null;
+    var _analyserCtx = null;
+    var _analyser    = null;
+    var _chunks      = [];
+    var _silenceRAF  = null;
+    var _active      = false;
+    var _mime        = '';
+    var _callbacks   = {};
+
+    // Pick best MIME type: ogg/opus preferred (Chrome, Firefox); mp4 fallback (Safari).
+    // Deliberately excludes audio/webm — Inworld STT rejects it; Whisper handles ogg/mp4.
+    function _pickMime(preferred) {
+      if (preferred && MediaRecorder.isTypeSupported(preferred)) return preferred;
+      var candidates = ['audio/ogg;codecs=opus', 'audio/mp4'];
+      for (var i = 0; i < candidates.length; i++) {
+        if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+      }
+      return '';
+    }
+
+    function _ext(mime) {
+      return (mime && mime.includes('mp4')) ? 'm4a' : 'ogg';
+    }
+
+    function _makeRecorder(stream, mime, callbacks) {
+      var rec;
+      try {
+        rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      } catch(e) {
+        callbacks.onError && callbacks.onError(e);
+        return null;
+      }
+      rec.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) _chunks.push(e.data);
+      };
+      rec.onerror = function(e) {
+        dbgErr('MIC_MGR', 'MediaRecorder error:', e.error);
+        callbacks.onError && callbacks.onError(e.error || new Error('MediaRecorder error'));
+      };
+      return rec;
+    }
+
+    // Flush current chunks into a blob and restart the recorder.
+    // isFinal=true: stop recorder, do not restart, release will be called by caller.
+    async function flush(isFinal) {
+      if (!_recorder || _chunks.length === 0) return;
+      var mime     = _mime;
+      var callbacks = _callbacks;
+
+      if (isFinal) {
+        // Simple stop — onstop handled by _makeRecorder's caller if needed.
+        // Snapshot chunks before stop drains any tail.
+        var snap = _chunks.slice();
+        await new Promise(function(resolve) {
+          _recorder.addEventListener('stop', resolve, { once: true });
+          try {
+            if (_recorder.state !== 'inactive') _recorder.stop();
+            else resolve();
+          } catch(e) { resolve(); }
+        });
+        var tail = _chunks.slice(snap.length);
+        var blob = new Blob(snap.concat(tail), { type: mime || 'audio/ogg' });
+        _chunks = [];
+        if (callbacks.onChunk) await callbacks.onChunk(blob, mime, _ext(mime), true);
+      } else {
+        // Restart strategy: stop old recorder, collect its chunks, start new one.
+        // Each segment is a standalone valid container with its own header.
+        var oldRec  = _recorder;
+        _recorder   = null;  // signal: mid-restart
+        var snap2   = _chunks.slice();
+        await new Promise(function(resolve) {
+          oldRec.addEventListener('stop', resolve, { once: true });
+          try {
+            if (oldRec.state !== 'inactive') oldRec.stop();
+            else resolve();
+          } catch(e) { resolve(); }
+        });
+        var tail2   = _chunks.slice(snap2.length);
+        var blob2   = new Blob(snap2.concat(tail2), { type: mime || 'audio/ogg' });
+        _chunks     = [];
+
+        // Restart immediately so we capture speech during Whisper round-trip
+        var newRec  = _makeRecorder(_stream, mime, callbacks);
+        if (newRec) { newRec.start(100); _recorder = newRec; }
+
+        if (callbacks.onChunk) await callbacks.onChunk(blob2, mime, _ext(mime), false);
+      }
+    }
+
+    function _silenceLoop() {
+      if (!_active) { _silenceRAF = null; return; }
+      var vol = 0;
+      if (_analyser) {
+        var buf = new Uint8Array(_analyser.fftSize);
+        _analyser.getByteTimeDomainData(buf);
+        for (var i = 0; i < buf.length; i++) { var v = Math.abs(buf[i] - 128); if (v > vol) vol = v; }
+      }
+      if (_callbacks.onVolume) _callbacks.onVolume(vol);
+      _silenceRAF = requestAnimationFrame(_silenceLoop);
+    }
+
+    async function start(opts) {
+      if (_active) return false;
+      opts = opts || {};
+
+      // Acquire stream
+      try {
+        _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch(permErr) {
+        return permErr;
+      }
+
+      _mime      = _pickMime(opts.mime || null);
+      _chunks    = [];
+      _callbacks = opts;
+      _active    = true;
+
+      _recorder  = _makeRecorder(_stream, _mime, opts);
+      if (!_recorder) { release(); return new Error('Could not create MediaRecorder'); }
+      _recorder.start(100);
+
+      // AnalyserNode — isolated context, never shared with TTS or music (v2.36 lesson)
+      try {
+        _analyserCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (_analyserCtx.state === 'suspended') _analyserCtx.resume().catch(function(){});
+        var src      = _analyserCtx.createMediaStreamSource(_stream);
+        _analyser    = _analyserCtx.createAnalyser();
+        _analyser.fftSize = 512;
+        src.connect(_analyser);
+        dbg('MIC_MGR', 'AnalyserNode ready — ctx state=' + _analyserCtx.state);
+      } catch(acErr) {
+        dbgWarn('MIC_MGR', 'AudioContext failed — onVolume will not fire:', acErr.message);
+        _analyserCtx = null; _analyser = null;
+      }
+      _silenceRAF = requestAnimationFrame(_silenceLoop);
+      dbg('MIC_MGR', 'Started — mime=' + (_mime || 'default'));
+      return null; // null = success
+    }
+
+    function stop() {
+      if (!_recorder) return;
+      try {
+        if (_recorder.state === 'paused') _recorder.resume();
+        if (_recorder.state !== 'inactive') _recorder.stop();
+      } catch(e) { dbgWarn('MIC_MGR', 'stop() threw:', e.message); }
+    }
+
+    function release() {
+      if (_silenceRAF) { cancelAnimationFrame(_silenceRAF); _silenceRAF = null; }
+      if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
+      _analyser = null;
+      if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
+      _recorder = null;
+      _chunks   = [];
+      _active   = false;
+      _mime     = '';
+      _callbacks = {};
+      dbg('MIC_MGR', 'Released');
+    }
+
+    return {
+      isIOS:   isIOS,   // canonical const defined at init (line 11706)
+      get active()   { return _active; },
+      get stream()   { return _stream; },  // read-only: AGP flush uses stream to restart its own recorder
+      get mime()     { return _mime; },
+      get chunks()   { return _chunks; },  // read-only access for archive accumulation (Phase 1)
+      start:   start,
+      flush:   flush,
+      stop:    stop,
+      release: release,
+    };
+  })();
+
   // ── APP-52 Phase 2: MediaRecorder + Whisper mic dictation ────────────────────
   // Replaces SpeechRecognition entirely for the Add Memory mic button.
   // State enum: 'idle' | 'recording' | 'transcribing' | 'error'
@@ -8940,8 +9312,8 @@
   // _agpStartMic (Ask Gethro panel) left on SpeechRecognition for now — Phase 4.
 
   let _micState    = 'idle';    // 'idle' | 'recording' | 'transcribing' | 'error'
-  let _micStream   = null;      // getUserMedia stream — released on stop
-  let _micRecorder = null;      // MediaRecorder instance
+  // (removed v7.19 — now internal to MicManager)
+  // (removed v7.19 — now internal to MicManager)
   let _micChunks   = [];        // chunks for CURRENT segment — reset after each flush (v6.07+ restart strategy)
   // WebM mid-session flush strategy: restart MediaRecorder on each flush so every segment
   // is a fresh standalone WebM with its own header. _micChunks is reset ONLY after the old
@@ -8960,13 +9332,17 @@
   // Original approach restored — mute button (not AudioContext) was causing vol=0 readings.
   // Fallback: if AudioContext fails or vol stays 0, chunk data-rate heuristic kicks in
   // (_micRecentChunkBytes rolling average — small = silence, large = speech).
-  let _micAnalyserCtx       = null;  // AudioContext for volume analysis (isolated from TTS/music)
-  let _micAnalyser          = null;  // AnalyserNode
+  // (removed v7.19 — now internal to MicManager)
+  // (removed v7.19 — now internal to MicManager)
   let _micSilenceStart      = null;  // timestamp when silence began (null = not silent)
   let _micRecordStart       = null;  // timestamp when current segment recording began
-  let _micSilenceRAF        = null;  // requestAnimationFrame handle for silence loop
+  // (removed v7.19 — now internal to MicManager)
   let _micTranscribing      = false; // true while a background chunk POST is in flight
   let _micFlushCooldown     = false; // true for MIC_COOLDOWN_MS after a failed chunk POST
+  let _micArchiveSegments  = []; // RETIRED — Phase 1 design superseded by per-turn staging below. No longer pushed to; kept declared only so any stray reference doesn't throw. Safe to delete once a full regression pass confirms nothing reads it.
+  let _micPreRecordLength  = 0;  // APP-55 Phase 4: textarea length at mic-start — doubles as this turn's offset (_turnOffset)
+  let _turnSegments        = []; // APP-55 Phase 4: chunks for the CURRENT mic session only — reset each mic-open, assembled into one blob at mic-stop
+  let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
@@ -9013,21 +9389,17 @@
   // Keep legacy setMicUI alias so any external call sites don't break
   function setMicUI(active) { _setMicState(active ? 'recording' : 'idle'); }
 
+  // _micRelease: tear down stream/analyser/recorder via MicManager; clear dictation-only timers.
   function _micRelease() {
-    if (_micStream) { _micStream.getTracks().forEach(function(t){ t.stop(); }); _micStream = null; }
     if (_micWarnTimer)  { clearTimeout(_micWarnTimer);   _micWarnTimer  = null; }
     if (_micMaxTimer)   { clearTimeout(_micMaxTimer);    _micMaxTimer   = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
-    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
-    if (_micAnalyserCtx) { try { _micAnalyserCtx.close(); } catch(e) {} _micAnalyserCtx = null; }
-    _micAnalyser         = null;
     _micSilenceStart     = null;
     _micRecordStart      = null;
     _micTranscribing     = false;
     _micRecentChunkBytes = [];
-    _micRecorder = null;
-    _micChunks   = [];
     memMicActive = false;
+    MicManager.release();
   }
 
   // ── APP-52 Phase 3: Background chunk transcription ────────────────────────────
@@ -9035,210 +9407,48 @@
   // immediately start a fresh MediaRecorder on the same stream (new WebM = valid header),
   // then POST the segment to Whisper non-blocking.
   // Each segment is a standalone valid WebM file — no header-stripping problems.
-  async function _micFlushChunk(isFinal) {
-    if (!_micRecorder || _micChunks.length === 0) return;
-    if (_micFlushCooldown && !isFinal) { dbg('MIC', 'Flush skipped — cooldown active'); return; }
-
-    if (!isFinal) {
-      // KEY FIX (v6.08): await the old recorder stop event so ondataavailable fully drains
-      // BEFORE we snapshot _micChunks. Without this, oldRecorder.stop() is async and its
-      // final tail chunks land in _micChunks AFTER we've already reset it — those headerless
-      // tail chunks corrupt the new segment's first blob.
-      var oldRecorder = _micRecorder;
-      _micRecorder = null; // swap to null so stopMemMic knows a restart is in progress
-      await new Promise(function(resolve) {
-        oldRecorder.addEventListener('stop', resolve, { once: true });
-        try { if (oldRecorder.state !== 'inactive') oldRecorder.stop(); else resolve(); } catch(e) { resolve(); }
-      });
-      // All ondataavailable events for oldRecorder have now fired. _micChunks is fully drained.
-
-      // FIX (v6.09): after the await, the user may have tapped stop — _micStream is released.
-      // Guard here so we don't try to construct a new MediaRecorder on a null stream.
-      if (_micState !== 'recording' || !_micStream) {
-        dbg('MIC', 'Flush aborted after await — recording stopped mid-flush (state=' + _micState + ')');
-        return;
-      }
-    }
-
-    // NOW snapshot the fully-drained chunks and build the blob
-    var blob = new Blob(_micChunks, { type: _micChunkMimeType || 'audio/webm' });
-    dbg('MIC', 'Flushing chunk — ' + blob.size + ' bytes, isFinal=' + isFinal + ', chunks=' + _micChunks.length);
-
-    if (blob.size < MIC_MIN_CHUNK_BYTES) {
-      dbg('MIC', 'Chunk too small (' + blob.size + ' bytes) — waiting for more speech');
-      if (!isFinal) {
-        // Still start the new recorder even when skipping transcription
-        if (!_micStream) { dbg('MIC', 'Flush small-chunk: stream gone, aborting restart'); return; }
-        _micChunks = [];
-        _micFlushedUpTo = 0;
-        _micRecordStart = Date.now();
-        try {
-          var skipRec = new MediaRecorder(_micStream, _micChunkMimeType ? { mimeType: _micChunkMimeType } : {});
-          skipRec.ondataavailable = function(e) {
-            if (e.data && e.data.size > 0) {
-              _micChunks.push(e.data);
-              _micRecentChunkBytes.push(e.data.size);
-              if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
-            }
-          };
-          skipRec.onstop = _makeMicOnstop(_micChunkMimeType);
-          skipRec.onerror = function(e) { dbgErr('MIC', 'MediaRecorder error:', e.error); };
-          skipRec.start(100);
-          _micRecorder = skipRec;
-          dbg('MIC', 'Recorder restarted (chunk too small, skipping transcription)');
-        } catch(e) { dbgErr('MIC', 'Failed to restart recorder after small chunk:', e.message); stopMemMic(); }
-      }
-      return;
-    }
-
-    // Reset chunk buffer and start new recorder BEFORE the async fetch,
-    // so speech captured during transcription goes into the next clean segment.
-    if (!isFinal) {
-      _micChunks = [];
-      _micFlushedUpTo = 0;
-      _micRecordStart = Date.now();
-      try {
-        var newRec = new MediaRecorder(_micStream, _micChunkMimeType ? { mimeType: _micChunkMimeType } : {});
-        newRec.ondataavailable = function(e) {
-          if (e.data && e.data.size > 0) {
-            _micChunks.push(e.data);
-            _micRecentChunkBytes.push(e.data.size);
-            if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
-          }
-        };
-        newRec.onstop = _makeMicOnstop(_micChunkMimeType); // factory — avoids undefined _micRecorder_onstop
-        newRec.onerror = function(e) { dbgErr('MIC', 'MediaRecorder error:', e.error); };
-        newRec.start(100);
-        _micRecorder = newRec;
-        dbg('MIC', 'Recorder restarted for next segment');
-      } catch(e) {
-        dbgErr('MIC', 'Failed to restart recorder:', e.message);
-        stopMemMic();
-        return;
-      }
-    }
-
-    // POST segment to Whisper
-    setMemStatus('listening', '✍️ Transcribing…');
-    _micTranscribing = true;
-    try {
-      var session = (await sb.auth.getSession()).data.session;
-      if (!session) throw new Error('Not authenticated');
-      var form = new FormData();
-      form.append('action', 'transcribe');
-      var ext = (_micChunkMimeType && _micChunkMimeType.includes('mp4')) ? 'm4a' : 'webm';
-      form.append('audio', blob, 'chunk.' + ext);
-      var res = await fetch(GETHRO_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-        body: form,
-      });
-      var data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
-      var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-      // Filter Whisper silence hallucinations
-      var HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+)$/i;
-      if (transcript && !HALLUCINATIONS.test(transcript)) {
-        var el = document.getElementById('memAnswer');
-        var current = el.value;
-        var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
-        el.value = current + sep + transcript;
-        _userHasTyped = true;
-        memCheckButtons();
-        dbg('MIC', 'Chunk appended — ' + transcript.length + ' chars');
-      } else if (transcript) {
-        dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
-      }
-    } catch (err) {
-      dbgErr('MIC', 'Chunk transcription failed:', err.message);
-      toast('Chunk transcription failed — keep speaking, or tap stop to retry', 4000);
-      _micFlushCooldown = true;
-      setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
-    }
-    _micTranscribing = false;
-    if (_micState === 'recording') {
-      setMemStatus('listening', '🎙️ Recording… tap to transcribe');
-    }
-  }
-  // ── APP-52 Phase 3: Silence detection loop ───────────────────────────────────
-  // Primary: AnalyserNode volume reading (0-127 scale).
-  // Fallback: if analyser unavailable, uses rolling average of ondataavailable
-  // chunk sizes — small chunks = silence, large = speech.
-  // Flushes on MIC_SILENCE_MS of sustained silence, provided chunk is old/large enough.
-  function _micSilenceLoop() {
-    if (_micState !== 'recording') { _micSilenceRAF = null; return; }
-    var now = Date.now();
-    var chunkAge = now - (_micRecordStart || now);
-    var isSilent;
-
-    if (_micAnalyser) {
-      // Primary path: AnalyserNode
-      var buffer = new Uint8Array(_micAnalyser.fftSize);
-      _micAnalyser.getByteTimeDomainData(buffer);
-      var volume = 0;
-      for (var i = 0; i < buffer.length; i++) {
-        var v = Math.abs(buffer[i] - 128);
-        if (v > volume) volume = v;
-      }
-      isSilent = (volume < MIC_SILENCE_THRESHOLD);
-    } else {
-      // Fallback path: chunk data-rate heuristic
-      var avg = _micRecentChunkBytes.length
-        ? _micRecentChunkBytes.reduce(function(a,b){return a+b;}, 0) / _micRecentChunkBytes.length
-        : 0;
-      isSilent = (avg < MIC_CHUNK_RATE_SILENCE);
-    }
-
-    if (isSilent) {
-      if (_micSilenceStart === null) _micSilenceStart = now;
-      var silenceDuration = now - _micSilenceStart;
-      if (silenceDuration >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing && !_micFlushCooldown) {
-        _micSilenceStart = null;
-        _micFlushChunk(false);
-      }
-    } else {
-      _micSilenceStart = null;
-    }
-    _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
-  }
+  // ── APP-52 Phase 3 + APP-55 Phase 0: Chunk flush delegated to MicManager ────
+  // MicManager.flush() owns recorder restart and blob assembly.
+  // This wrapper owns: cooldown gate, Whisper POST, transcript append,
+  // hallucination filter, UI status updates. Archive accumulation added Phase 1.
+  // _micFlushChunk and _micSilenceLoop removed v7.19.
+  // Flush: handled by MicManager.flush() + onChunk callback in startMemMic().
+  // Silence: handled by onVolume callback in startMemMic().
 
   // Factory for onstop handlers on restarted recorders.
   // Avoids the undefined _micRecorder_onstop reference from v6.07.
   // Called at recorder-creation time so mimeType is captured in closure.
-  function _makeMicOnstop(mimeType) {
-    return async function() {
-      // Guard: only treat as final stop if _micRecorder is still this recorder.
-      // _makeMicOnstop is assigned immediately after recorder creation, so at call time
-      // _micRecorder should still equal the recorder this onstop belongs to — unless:
-      //   null  → mid-flush (flush nulled it and is restarting), ignore
-      //   different recorder → a newer recorder replaced this one, ignore
-      // The flush itself handles transcription for mid-session stops; don't double-transcribe.
-      if (_micRecorder === null) {
-        dbg('MIC', '_makeMicOnstop ignoring — _micRecorder null (mid-flush restart)');
-        return;
-      }
-      // _micRecorder is null: either stopMemMic fired during a mid-restart, or
-      // something went wrong. Assemble remaining chunks and transcribe if any.
-      if (!memMicActive && _micState !== 'transcribing') { _micRelease(); return; }
-      var blob = new Blob(_micChunks, { type: mimeType || 'audio/webm' });
-      _micRelease();
-      dbg('MIC', '_makeMicOnstop final blob — ' + blob.size + ' bytes');
-      if (blob.size < MIC_MIN_CHUNK_BYTES) {
-        _setMicState('idle'); setMemStatus('idle', '');
-        if (!document.getElementById('memAnswer') || !document.getElementById('memAnswer').value.trim()) {
-          toast('No speech detected — tap mic and speak, then tap stop');
-        }
-        return;
-      }
-      _setMicState('transcribing');
-      setMemStatus('listening', '⏳ Transcribing…');
+  // _makeMicOnstop removed v7.19 — final blob now handled by
+  // MicManager.flush(isFinal=true) → onChunk(isFinal=true) in startMemMic().
+  async function startMemMic() {
+    if (_micState !== 'idle') return; // guard double-tap
+
+    if (!_mediaRecordingSupported()) {
+      logActivity('media_unsupported', JSON.stringify({ context: 'startMemMic' }), 'warn', 'APP');
+      return toast(_mediaUnsupportedMessage());
+    }
+
+    // Reset dictation state
+    _micFlushedUpTo      = 0;
+    _micTranscriptSoFar  = '';
+    _micRecordStart      = Date.now();
+    _micRecentChunkBytes = [];
+    _micFlushCooldown    = false;
+    _micSilenceStart     = null;
+    _micTranscribing     = false;
+    _turnSegments        = []; // APP-55 Phase 4: fresh accumulation for THIS turn only
+    _micPreRecordLength  = (document.getElementById('memAnswer') || {}).value?.length || 0; // APP-55 Phase 4: this turn's offset
+
+    // ── Shared transcription helper (used by both chunk and final paths) ────
+    var HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+)$/i;
+    async function _transcribeBlob(blob, ext, isFinal) {
       try {
         var session = (await sb.auth.getSession()).data.session;
         if (!session) throw new Error('Not authenticated');
         var form = new FormData();
         form.append('action', 'transcribe');
-        form.append('audio', blob, 'dictation.' + ((mimeType && mimeType.includes('mp4')) ? 'm4a' : 'ogg'));
-        var res = await fetch(GETHRO_PROXY_URL, {
+        form.append('audio', blob, (isFinal ? 'dictation.' : 'chunk.') + ext);
+        var res  = await fetch(GETHRO_PROXY_URL, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
           body: form,
@@ -9246,229 +9456,162 @@
         var data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
         var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-        var HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+)$/i;
         if (transcript && !HALLUCINATIONS.test(transcript)) {
-          var el = document.getElementById('memAnswer');
-          var current = el.value;
-          var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
-          el.value = current + sep + transcript;
+          var el  = document.getElementById('memAnswer');
+          var cur = el.value;
+          var sep = (cur && !cur.endsWith('\n') && !cur.endsWith(' ')) ? ' ' : '';
+          el.value = cur + sep + transcript;
           _userHasTyped = true;
           memCheckButtons();
-          dbg('MIC', '_makeMicOnstop appended — ' + transcript.length + ' chars');
+          dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcript appended — ' + transcript.length + ' chars');
         } else if (transcript) {
-          dbg('MIC', '_makeMicOnstop hallucination filtered: "' + transcript + '"');
+          dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
+        } else if (isFinal) {
+          var el2 = document.getElementById('memAnswer');
+          if (!el2 || !el2.value.trim()) toast('No speech detected — try again');
         }
-      } catch (err) {
-        dbgErr('MIC', '_makeMicOnstop transcription failed:', err.message);
-        toast('Transcription unavailable — ' + err.message, 6000);
-      }
-      _setMicState('idle');
-      setMemStatus('idle', '');
-    };
-  }
-
-  async function startMemMic() {
-    if (_micState !== 'idle') return; // guard double-tap
-
-    // Check MediaRecorder support (all modern browsers; replaces SR browser check)
-    if (!_mediaRecordingSupported()) {
-      logActivity('media_unsupported', JSON.stringify({ context: 'startMemMic' }), 'warn', 'APP');
-      return toast(_mediaUnsupportedMessage());
-    }
-
-    // Acquire mic
-    try {
-      _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (permErr) {
-      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
-        return toast('Microphone access denied — please allow mic in your browser settings');
-      }
-      return toast('Could not access microphone — ' + permErr.message);
-    }
-
-    // Pick best MIME type for Inworld STT.
-    // Inworld supports OGG_OPUS reliably; audio/mp4 (M4A) fails with code:13.
-    // Prefer audio/ogg;codecs=opus — Chrome (v74+) and Firefox both support it.
-    // Fall back to audio/mp4 for Safari (which lacks OGG support in MediaRecorder).
-    // Deliberately excluded: audio/webm — Inworld STT rejects it regardless of model.
-    var mimeType = null;
-    var candidates = ['audio/ogg;codecs=opus', 'audio/mp4'];
-    for (var i = 0; i < candidates.length; i++) {
-      if (MediaRecorder.isTypeSupported(candidates[i])) {
-        mimeType = candidates[i]; break;
-      }
-    }
-    if (mimeType === null) {
-      _micRelease(); _setMicState('idle');
-      return toast('Voice recording not supported in this browser — please try Chrome, Firefox, or Safari.', 5000);
-    }
-    _micChunkMimeType = mimeType; // Phase 3: shared by _micFlushChunk
-
-    _micChunks            = [];
-    _micFlushedUpTo       = 0;
-    _micTranscriptSoFar   = '';
-    _micRecordStart       = Date.now();
-    _micRecentChunkBytes  = [];
-    _micFlushCooldown     = false;
-    _micSilenceStart      = null;
-    memMicActive = true;
-    _setMicState('recording');
-    setMemStatus('listening', '🎙️ Recording… tap to transcribe');
-    dbg('MIC', 'MediaRecorder start — mimeType: ' + (mimeType || 'default'));
-
-    try {
-      _micRecorder = new MediaRecorder(_micStream, mimeType ? { mimeType: mimeType } : {});
-    } catch (e) {
-      _micRelease(); _setMicState('idle');
-      return toast('Could not start recorder — ' + e.message);
-    }
-
-    _micRecorder.ondataavailable = function(e) {
-      if (e.data && e.data.size > 0) {
-        _micChunks.push(e.data);
-        // Track rolling chunk sizes for fallback silence detection
-        _micRecentChunkBytes.push(e.data.size);
-        if (_micRecentChunkBytes.length > MIC_CHUNK_RATE_WINDOW) _micRecentChunkBytes.shift();
-      }
-    };
-
-    // onstop fires when: (a) user taps stop → stopMemMic() → we transcribe remaining chunks
-    //                    (b) _micFlushChunk restarted the recorder → old recorder fires onstop; IGNORE (new recorder already running)
-    // We distinguish by checking if this recorder is still the active _micRecorder.
-    (function(thisRecorder) {
-      thisRecorder.onstop = async function() {
-        // If this recorder has been replaced (or nulled out mid-flush restart), ignore.
-        // _micRecorder === null means _micFlushChunk is mid-restart — do NOT treat as final stop.
-        // _micRecorder !== thisRecorder means a new recorder is already live — also ignore.
-        if (_micRecorder === null || _micRecorder !== thisRecorder) {
-          dbg('MIC', 'Old recorder onstop — ignoring (mid-flush or replaced, _micRecorder=' + (_micRecorder ? 'new' : 'null') + ')');
-          return;
-        }
-        // This is the final stop (user tapped stop or max time).
-        if (!memMicActive && _micState !== 'transcribing') { _micRelease(); return; }
-        var blob = new Blob(_micChunks, { type: mimeType || 'audio/webm' });
-        _micRelease();
-        dbg('MIC', 'Final blob — ' + blob.size + ' bytes');
-        if (blob.size < MIC_MIN_CHUNK_BYTES) {
-          dbg('MIC', 'Final blob too small — no speech detected');
-          _setMicState('idle'); setMemStatus('idle', '');
-          // Only show "no speech" if nothing was transcribed at all this session
-          if (!document.getElementById('memAnswer') || !document.getElementById('memAnswer').value.trim()) {
-            toast('No speech detected — tap mic and speak, then tap stop');
-          }
-          return;
-        }
-        _setMicState('transcribing');
-        setMemStatus('listening', '⏳ Transcribing…');
-        try {
-          var session = (await sb.auth.getSession()).data.session;
-          if (!session) throw new Error('Not authenticated');
-          var form = new FormData();
-          form.append('action', 'transcribe');
-          form.append('audio', blob, 'dictation.' + (mimeType.includes('mp4') ? 'm4a' : 'ogg'));
-          var res = await fetch(GETHRO_PROXY_URL, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-            body: form,
-          });
-          var data = await res.json();
-          if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
-          var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-          var HALLUCINATIONS = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|\[.*\]|\.+)$/i;
-          if (transcript && !HALLUCINATIONS.test(transcript)) {
-            var el = document.getElementById('memAnswer');
-            var current = el.value;
-            var sep = (current && !current.endsWith('\n') && !current.endsWith(' ')) ? ' ' : '';
-            el.value = current + sep + transcript;
-            _userHasTyped = true;
-            memCheckButtons();
-            dbg('MIC', 'Final transcription appended — ' + transcript.length + ' chars');
-          } else if (transcript) {
-            dbg('MIC', 'Final hallucination filtered: "' + transcript + '"');
-          } else if (!document.getElementById('memAnswer') || !document.getElementById('memAnswer').value.trim()) {
-            toast('No speech detected — try again');
-          }
-        } catch (err) {
-          dbgErr('MIC', 'Transcription failed:', err.message);
+      } catch(err) {
+        dbgErr('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcription failed:', err.message);
+        if (!isFinal) {
+          toast('Chunk transcription failed — keep speaking, or tap stop to retry', 4000);
+          _micFlushCooldown = true;
+          setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
+        } else {
           toast('Transcription unavailable — ' + err.message, 6000);
         }
-        _setMicState('idle');
-        setMemStatus('idle', '');
-      };
-    })(_micRecorder);
-
-    _micRecorder.onerror = function(e) {
-      dbgErr('MIC', 'MediaRecorder error:', e.error);
-      _micRelease(); _setMicState('error'); setMemStatus('idle', '');
-      toast('Recording error — tap mic to try again');
-    };
-
-    // Start recorder requesting timesliced chunks (100ms) so ondataavailable fires
-    // continuously — required for the pause/resume chunk-flush pattern in Phase 3.
-    _micRecorder.start(100);
-
-    // Phase 3: AudioContext + AnalyserNode for silence detection.
-    // Isolated context — do NOT share with _gethroAudioCtx or _bgMusicCtx (v2.36 lesson).
-    // If AudioContext fails (e.g. browser restriction), silence loop falls back to
-    // chunk data-rate heuristic via _micRecentChunkBytes.
-    try {
-      _micAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
-      var source = _micAnalyserCtx.createMediaStreamSource(_micStream);
-      _micAnalyser = _micAnalyserCtx.createAnalyser();
-      _micAnalyser.fftSize = 512;
-      source.connect(_micAnalyser);
-      dbg('MIC', 'Silence detector started (AnalyserNode)');
-    } catch (acErr) {
-      dbgWarn('MIC', 'AudioContext failed — falling back to chunk-rate heuristic:', acErr.message);
-      _micAnalyserCtx = null; _micAnalyser = null;
+      }
     }
-    _micSilenceRAF = requestAnimationFrame(_micSilenceLoop);
 
-    // Periodic ticker: flush every 5s while speaking (reassurance — text appears before silence).
-    // Also serves as the safety net if silence detection misses a long pause.
-    // Only fires if chunk is old enough and not mid-transcribe/cooldown.
+    // ── APP-55 Phase 4: stage the current turn into memory (no network call here —
+    // commit_voice_turn fires later, from memDone(), only if the user saves) ────
+    function _stageCurrentTurn() {
+      if (!_turnSegments.length) return; // nothing recorded this turn (e.g. instant tap-stop)
+      var turnMime = MicManager.mime || _micChunkMimeType || 'audio/ogg';
+      var turnBlob;
+      try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
+      catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
+      _turnSegments = [];
+      if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
+      var answerEl = document.getElementById('memAnswer');
+      _stagedVoiceArchives.push({
+        blob: turnBlob,
+        mime: turnMime,
+        offset: _micPreRecordLength,
+        question: recCurQuestion || null,
+        baselineSnapshot: (answerEl ? answerEl.value : '')
+      });
+      dbg('VA', 'Phase 4: turn staged — ' + turnBlob.size + ' bytes, offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
+    }
+
+    // ── Start MicManager ────────────────────────────────────────────────────
+    var err = await MicManager.start({
+      onChunk: async function(blob, mime, ext, isFinal) {
+        // isFinal=false: chunk flush (silence or periodic timer)
+        // isFinal=true:  user tapped stop or max time reached
+        // APP-55 Phase 4: accumulate into THIS turn's segment array regardless of
+        // size (even tiny chunks contribute valid audio; Whisper's min-size check
+        // below is about live transcription quality, not archive completeness)
+        if (blob && blob.size > 0) _turnSegments.push(blob);
+        if (blob.size < MIC_MIN_CHUNK_BYTES) {
+          dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
+          if (isFinal) {
+            _stageCurrentTurn();
+            _setMicState('idle'); setMemStatus('idle', '');
+          }
+          return;
+        }
+        _micChunkMimeType = mime; // keep in sync for legacy references
+        if (isFinal) {
+          _setMicState('transcribing');
+          setMemStatus('listening', '\u23F3 Transcribing\u2026');
+        } else {
+          _micTranscribing = true;
+          setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
+        }
+        await _transcribeBlob(blob, ext, isFinal);
+        _micTranscribing = false;
+        if (isFinal) {
+          _stageCurrentTurn(); // APP-55 Phase 4: stage AFTER chunk transcription has appended its text — baselineSnapshot reflects the chunk-transcribed answer, ready to be improved by Phase 5
+          _micRelease();
+          _setMicState('idle');
+          setMemStatus('idle', '');
+        } else if (_micState === 'recording') {
+          setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+        }
+      },
+
+      onVolume: function(vol) {
+        // Silence detection — dictation-specific thresholds
+        if (_micState !== 'recording') return;
+        var now       = Date.now();
+        var chunkAge  = now - (_micRecordStart || now);
+        var isSilent  = (vol < MIC_SILENCE_THRESHOLD);
+        if (isSilent) {
+          if (_micSilenceStart === null) _micSilenceStart = now;
+          var silenceDur = now - _micSilenceStart;
+          if (silenceDur >= MIC_SILENCE_MS && chunkAge >= MIC_MIN_CHUNK_MS && !_micTranscribing && !_micFlushCooldown) {
+            _micSilenceStart = null;
+            _micRecordStart  = Date.now(); // reset for next segment
+            MicManager.flush(false);
+          }
+        } else {
+          _micSilenceStart = null;
+        }
+      },
+
+      onError: function(e) {
+        dbgErr('MIC', 'MediaRecorder error:', e);
+        _micRelease(); _setMicState('error'); setMemStatus('idle', '');
+        toast('Recording error — tap mic to try again');
+      },
+    });
+
+    if (err) {
+      // err is an Error object from getUserMedia or MediaRecorder creation
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        return toast('Microphone access denied — please allow mic in your browser settings');
+      }
+      if (err.message && err.message.includes('MediaRecorder')) {
+        return toast('Voice recording not supported in this browser — please try Chrome, Firefox, or Safari.', 5000);
+      }
+      return toast('Could not access microphone — ' + err.message);
+    }
+
+    _micChunkMimeType = MicManager.mime;
+    memMicActive      = true;
+    _setMicState('recording');
+    setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+    dbg('MIC', 'Started via MicManager — mime=' + MicManager.mime);
+
+    // Periodic flush timer (safety net + reassurance)
     _micChunkTimer = setInterval(function() {
       if (_micState !== 'recording' || _micTranscribing || _micFlushCooldown) return;
       var chunkAge = Date.now() - (_micRecordStart || Date.now());
       if (chunkAge < MIC_MIN_CHUNK_MS) return;
       dbg('MIC', 'Periodic flush — ' + Math.round(chunkAge/1000) + 's elapsed');
-      _micFlushChunk(false);
+      _micRecordStart = Date.now();
+      MicManager.flush(false);
     }, 5000);
 
     // Soft warn at 10 min
     _micWarnTimer = setTimeout(function() {
-      if (_micState === 'recording') toast('You\'ve been recording for 10 minutes — tap stop to save your words', 6000);
+      if (_micState === 'recording') toast("You've been recording for 10 minutes \u2014 tap stop to save your words", 6000);
     }, MIC_WARN_MS);
 
     // Hard stop at 14 min
     _micMaxTimer = setTimeout(function() {
-      if (_micState === 'recording') { stopMemMic(); toast('Recording stopped — maximum length reached. Your words are being transcribed.', 5000); }
+      if (_micState === 'recording') { stopMemMic(); toast('Recording stopped \u2014 maximum length reached. Your words are being transcribed.', 5000); }
     }, MIC_MAX_MS);
   }
 
   function stopMemMic() {
     if (_micState !== 'recording') return;
-    if (_micSilenceRAF) { cancelAnimationFrame(_micSilenceRAF); _micSilenceRAF = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
-    _setMicState('transcribing'); // show spinner immediately while onstop fires
-    if (_micRecorder && _micRecorder.state !== 'inactive') {
-      if (_micRecorder.state === 'paused') {
-        try { _micRecorder.resume(); } catch(e) {}
-      }
-      try { _micRecorder.stop(); } catch(e) { dbgWarn('MIC', 'recorder.stop() threw:', e.message); }
-    } else if (!_micRecorder) {
-      // Recorder is null — _micFlushChunk is mid-restart. Wait briefly then retry.
-      dbg('MIC', 'stopMemMic: recorder null mid-restart — retrying in 150ms');
-      setTimeout(function() {
-        if (_micRecorder && _micRecorder.state !== 'inactive') {
-          try { _micRecorder.stop(); } catch(e) { dbgWarn('MIC', 'recorder.stop() retry threw:', e.message); }
-        } else {
-          // Give up and release — nothing to transcribe
-          _micRelease(); _setMicState('idle'); setMemStatus('idle', '');
-        }
-      }, 150);
-    }
-    // _micRelease() called in onstop after blob is assembled
+    _setMicState('transcribing'); // spinner while MicManager final onChunk fires
+    // MicManager.flush(true) is called via onChunk isFinal path in startMemMic;
+    // stopping the recorder triggers the final onstop → MicManager calls onChunk(isFinal=true).
+    MicManager.stop();
+    // _micRelease() called from onChunk(isFinal=true) handler
   }
 
   function toggleMemMic() {
@@ -9526,6 +9669,9 @@
     recVideos = [];
     renderUnifiedMediaStrip();
     if (memMicActive) stopMemMic();
+    _stagedVoiceArchives = []; // APP-55 Phase 4: discard staged turns on reset — never commit a discarded entry's recordings
+    _turnSegments        = [];
+    _micPreRecordLength  = 0;
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recActive = false;
@@ -17585,6 +17731,61 @@
       const wcLabel = wc < 50 ? '🔴' : wc < 150 ? '🟡' : '🟢';
       const wcBadge = wc > 0 ? `<span style="font-size:0.72rem;color:var(--text-light);margin-left:auto;padding-right:6px" title="${wc} words">${wcLabel} ${wc}w</span>` : '';
 
+      // APP-55 Phase 6: Voice archive conversation thread
+      // Rows are already loaded into _voiceArchiveCache per entry.
+      // Sort by turn_index so a concurrent commit race never scrambles the order.
+      // Single turn: no thread chrome — just the header + play button.
+      // Multi-turn: question text per turn followed by its play button.
+      var entryVoiceArchives = (_voiceArchiveCache && _voiceArchiveCache[e.id]) || [];
+      entryVoiceArchives = entryVoiceArchives.slice().sort(function(a, b) {
+        return (a.turn_index || 0) - (b.turn_index || 0);
+      });
+      var voiceArchiveStripHtml = '';
+      if (!_selectMode && !isStoryMode && entryVoiceArchives.length) {
+        var headerRow = entryVoiceArchives[0];
+        var headerLabel = escHtml(headerRow.label || 'Voice recording');
+        var safeEId = escHtml(e.id || '');
+        var isThread = entryVoiceArchives.length > 1;
+        var turnsHtml = entryVoiceArchives.map(function(va) {
+          var safeVaId  = escHtml(va.id || '');
+          var safePath  = escHtml(va.storage_path || '');
+          var questionHtml = (va.question && va.question.trim())
+            ? '<div style="font-size:0.76rem;color:var(--text-light);font-style:italic;margin-bottom:5px;line-height:1.35">'
+                + '\uD83E\uDD16 ' + escHtml(va.question) // 🤖
+              + '</div>'
+            : '';
+          return (isThread ? '<div style="padding:6px 0 6px 10px;border-left:2px solid var(--gold-dim)">' : '') +
+            questionHtml +
+            '<div id="va-player-' + safeVaId + '">' +
+              '<button data-action="play-voice-archive" data-va-id="' + safeVaId + '" data-va-path="' + safePath + '"' +
+                ' style="font-size:0.78rem;padding:4px 12px;border-radius:6px;background:none;border:1px solid var(--gold-dim);color:var(--gold-dark);cursor:pointer;font-family:Lato,sans-serif">' +
+                '&#9654; Play' +
+              '</button>' +
+            '</div>' +
+            (isThread ? '</div>' : '');
+        }).join(isThread ? '<div style="height:8px"></div>' : '');
+
+        voiceArchiveStripHtml =
+          '<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--gold-dim)">' +
+            // Header row — label (editable) + mic icon
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (isThread ? '10' : '8') + 'px">' +
+              '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDF99\uFE0F</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<span id="va-label-' + safeEId + '" style="font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block">'
+                  + headerLabel +
+                '</span>' +
+              '</div>' +
+              // Rename button — only for owner, not in select/story mode
+              '<button data-action="rename-voice-archive" data-entry-id="' + safeEId + '" data-va-id="' + escHtml(headerRow.id || '') + '"' +
+                ' title="Rename" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;flex-shrink:0;font-family:Lato,sans-serif">' +
+                'Rename' +
+              '</button>' +
+            '</div>' +
+            // Turns
+            turnsHtml +
+          '</div>';
+      }
+
       const hasAudio = entryAudios.length > 0;
 
       // Community feedback replies — only imported share feedback (title starts "From ").
@@ -17701,6 +17902,7 @@
         '</div>' +
         (!_selectMode && !isStoryMode ? photoStripHtml : '') +
         (!_selectMode && !isStoryMode ? audioStripHtml : '') +
+        (!_selectMode && !isStoryMode ? voiceArchiveStripHtml : '') +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + escHtml(e.title) + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
         '<p class="entry-text"' + ((_selectMode || isStoryMode) ? ' style="pointer-events:none"' : '') + '>' + renderEntryAnswer(e.answer) + '</p>' +
@@ -17749,6 +17951,15 @@
 
     // Load share link indicators for all visible entries (fire-and-forget)
     setTimeout(loadAllShareIndicators, 0);
+    // APP-55 Phase 2: load voice archives for visible entries (fire-and-forget, re-renders after fetch)
+    var _vaEntryIds = filtered.filter(function(e) { return e.id; }).map(function(e) { return e.id; });
+    if (_vaEntryIds.length) {
+      _loadVoiceArchivesForEntries(_vaEntryIds).then(function() {
+        // Re-render only if any new archives were found for visible entries
+        var hasNew = _vaEntryIds.some(function(id) { return (_voiceArchiveCache[id] || []).length > 0; });
+        if (hasNew) renderReview();
+      }).catch(function(){});
+    }
   }
 
   // Unified AI Review for any saved entry
@@ -21817,8 +22028,8 @@
   // Platform note: logs UA at mic-start to help debug future device-specific issues.
 
   // State
-  var _agpMicStream       = null;
-  var _agpMicRecorder     = null;
+  // (removed v7.19 — now internal to MicManager)
+  // (removed v7.19 — now internal to MicManager)
   var _agpMicChunks       = [];
   var _agpMicMime         = '';
   var _agpMicRecordStart  = null;
@@ -21859,8 +22070,8 @@
   AGP_HALLUCINATIONS.test = function(t) { return AGP_HALLUCINATIONS(t); };
 
   // AnalyserNode (isolated AudioContext — no sharing with TTS or mem mic)
-  var _agpAnalyserCtx = null;
-  var _agpAnalyser    = null;
+  // (removed v7.19 — now internal to MicManager)
+  // (removed v7.19 — now internal to MicManager)
 
   function _agpSetBtn(state) {
     var btn = document.getElementById('agpMicBtn');
@@ -21875,18 +22086,15 @@
   }
 
   function _agpMicRelease() {
-    if (_agpMicSilenceRAF) { cancelAnimationFrame(_agpMicSilenceRAF); _agpMicSilenceRAF = null; }
+    // AGP-specific timers and state
     if (_agpChunkInterval) { clearInterval(_agpChunkInterval); _agpChunkInterval = null; }
-    if (_agpAnalyserCtx)   { try { _agpAnalyserCtx.close(); } catch(e) {} _agpAnalyserCtx = null; }
-    _agpAnalyser        = null;
     _agpMicSilenceStart = null;
-    if (_agpMicStream) { _agpMicStream.getTracks().forEach(function(t){ t.stop(); }); _agpMicStream = null; }
-    _agpMicRecorder     = null;
-    _agpMicChunks       = [];
-    _agpMicRecentBytes  = [];
     _agpMicTranscribing = false;
     _agpMicActive       = false;
     _agpHadVoice        = false;
+    _agpLiveText        = '';
+    // Stream/recorder/analyser teardown delegated to MicManager
+    MicManager.release();
   }
 
   // Silence detection loop — fires _agpFlushAndSend after AGP_SILENCE_MS of sustained silence.
@@ -21965,7 +22173,7 @@
     _agpMicRecordStart = Date.now();
     _agpHadVoice       = false;
     try {
-      var newRec = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
+      var newRec = new MediaRecorder(MicManager.stream, _agpMicMime ? { mimeType: _agpMicMime } : {});
       newRec.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) {
           _agpMicChunks.push(e.data);
@@ -22069,7 +22277,7 @@
 
     // Snapshot before _agpMicRelease() clears everything
     var hadVoice       = _agpHadVoice;
-    var analyserWasOn  = !!_agpAnalyserCtx; // true = analyser was running during recording
+    var analyserWasOn  = _agpHadVoice || MicManager.active; // true = real audio session was running
 
     _agpMicRelease();
     _agpSetBtn(doSend ? 'transcribing' : 'idle');
@@ -22171,93 +22379,64 @@
       return toast(_mediaUnsupportedMessage());
     }
 
-    // Log platform to help debug future device-specific issues
-    dbg('AGP_MIC', 'Starting mic — UA: ' + navigator.userAgent.slice(0, 120));
+    dbg('AGP_MIC', 'Starting mic via MicManager — UA: ' + navigator.userAgent.slice(0, 80));
 
-    try {
-      _agpMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (permErr) {
-      if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+    _agpMicSilenceStart = null;
+    _agpMicRecordStart  = Date.now();
+    _agpMicTranscribing = false;
+    _agpHadVoice        = false;
+    _agpLiveText        = '';
+
+    var err = await MicManager.start({
+      onChunk: async function(blob, mime, ext, isFinal) {
+        // AGP uses _agpFlushAndSend for sending — onChunk just signals MicManager is done.
+        // The actual send/transcription path is managed by _agpFlushAndSend and _agpFlushChunk.
+        if (isFinal) {
+          // Final stop triggered from _agpStopMic — _agpFlushAndSend handles transcript+send.
+          dbg('AGP_MIC', 'MicManager final onChunk — size=' + blob.size);
+        }
+        // Interim chunks: _agpFlushChunk polls MicManager.chunks directly.
+      },
+      onVolume: function(vol) {
+        // AGP silence detection — shorter threshold than dictation (chat turns are brief)
+        if (!_agpMicActive) return;
+        var now     = Date.now();
+        var recAge  = now - (_agpMicRecordStart || now);
+        var isSilent = (vol < AGP_SPEECH_THRESHOLD);
+        if (isSilent) {
+          if (_agpMicSilenceStart === null) _agpMicSilenceStart = now;
+          var silenceAge = now - _agpMicSilenceStart;
+          if (silenceAge >= AGP_SILENCE_MS && recAge >= AGP_MIN_REC_MS && !_agpMicTranscribing) {
+            dbg('AGP_MIC', 'Silence (' + AGP_SILENCE_MS + 'ms) — auto-send');
+            _agpFlushAndSend(true);
+          }
+        } else {
+          _agpMicSilenceStart = null;
+          _agpHadVoice = true;
+        }
+      },
+      onError: function(e) {
+        dbgErr('AGP_MIC', 'MediaRecorder error:', e);
+        _agpMicRelease(); _agpSetBtn('idle');
+        toast('Recording error — tap mic to try again');
+      },
+    });
+
+    if (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         return toast('Microphone access denied — please allow mic in your browser settings');
       }
-      return toast('Could not access microphone — ' + permErr.message);
+      return toast('Could not access microphone — ' + err.message);
     }
 
-    // Pick MIME type — same priority as mem mic (ogg/opus preferred, mp4 fallback for Safari)
-    _agpMicMime = '';
-    var candidates = ['audio/ogg;codecs=opus', 'audio/mp4', ''];
-    for (var i = 0; i < candidates.length; i++) {
-      if (!candidates[i] || MediaRecorder.isTypeSupported(candidates[i])) {
-        _agpMicMime = candidates[i]; break;
-      }
-    }
-
-    _agpMicChunks       = [];
-    _agpMicRecentBytes  = [];
-    _agpMicActive       = true;
-    _agpMicTranscribing = false;
-    _agpLiveText        = '';
-    _agpMicRecordStart  = Date.now();
-    _agpMicSilenceStart = null;
-    _agpHadVoice        = false;
+    _agpMicMime    = MicManager.mime;
+    _agpMicActive  = true;
     _agpSetBtn('recording');
-    dbg('AGP_MIC', 'MediaRecorder start — mimeType: ' + (_agpMicMime || 'default'));
+    dbg('AGP_MIC', 'Started — mime=' + MicManager.mime);
 
-    try {
-      _agpMicRecorder = new MediaRecorder(_agpMicStream, _agpMicMime ? { mimeType: _agpMicMime } : {});
-    } catch(e) {
-      _agpMicRelease(); _agpSetBtn('idle');
-      return toast('Could not start recorder — ' + e.message);
-    }
-
-    _agpMicRecorder.ondataavailable = function(e) {
-      if (e.data && e.data.size > 0) {
-        _agpMicChunks.push(e.data);
-        _agpMicRecentBytes.push(e.data.size);
-        if (_agpMicRecentBytes.length > AGP_CHUNK_RATE_WINDOW) _agpMicRecentBytes.shift();
-      }
-    };
-
-    // onstop: only handle if this is still the active recorder (not replaced by _agpFlushAndSend)
-    (function(thisRecorder) {
-      thisRecorder.onstop = function() {
-        if (_agpMicRecorder !== null) {
-          dbg('AGP_MIC', 'Recorder onstop — ignoring (replaced or mid-flush)');
-        }
-        // _agpFlushAndSend handles everything; no action needed here.
-      };
-    })(_agpMicRecorder);
-
-    _agpMicRecorder.onerror = function(e) {
-      dbgErr('AGP_MIC', 'MediaRecorder error:', e.error);
-      _agpMicRelease(); _agpSetBtn('idle');
-      toast('Recording error — tap mic to try again');
-    };
-
-    _agpMicRecorder.start(100);
-
-    // Attach AnalyserNode for silence detection
-    try {
-      _agpAnalyserCtx = new (window.AudioContext || window.webkitAudioContext)();
-      // Resume immediately — on some browsers (particularly after non-gesture creation)
-      // the context starts suspended; without this the analyser always reads silence.
-      if (_agpAnalyserCtx.state === 'suspended') {
-        _agpAnalyserCtx.resume().catch(function(){});
-      }
-      var src = _agpAnalyserCtx.createMediaStreamSource(_agpMicStream);
-      _agpAnalyser = _agpAnalyserCtx.createAnalyser();
-      _agpAnalyser.fftSize = 512;
-      src.connect(_agpAnalyser);
-      dbg('AGP_MIC', 'Silence detector started (AnalyserNode, ctx state=' + _agpAnalyserCtx.state + ')');
-    } catch(acErr) {
-      dbgWarn('AGP_MIC', 'AudioContext failed — falling back to chunk-rate heuristic:', acErr.message);
-      _agpAnalyserCtx = null; _agpAnalyser = null;
-    }
-    _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
-    // Chunk interval: every AGP_FLUSH_MS, flush accumulated speech to Whisper
+    // Periodic chunk flush (rolling transcription for longer AGP turns)
     _agpChunkInterval = setInterval(_agpFlushChunk, AGP_FLUSH_MS);
   }
-
   function _agpStopMic(doSend) {
     // Compatibility shim — called by closeAskGethro, gethroNewChat, focus-loss handler.
     // For panel-close and new-chat we don't want to send; for all other paths, send.
@@ -27035,6 +27214,67 @@
         case 'agp-accept-raw':       agpAcceptConsolidated(true);                          break;
         // ── PRV-09 Build C: entry card tap in select/story modes ──
         case 'toggle-entry-card':    if (id) entriesToggleCard(id);                        break;
+        case 'play-voice-archive': {
+          var _vaId   = btn.dataset.vaId   || '';
+          var _vaPath = btn.dataset.vaPath || '';
+          if (_vaId && _vaPath) _playVoiceArchive(_vaId, _vaPath, 'va-player-' + _vaId);
+          break;
+        }
+        // APP-55 Phase 6: rename the voice archive label (turn_index=0 row only).
+        // Replaces the label span with an inline text input; on blur/Enter PATCHes
+        // life_voice_archives.label and updates the local cache + DOM in-place.
+        case 'rename-voice-archive': {
+          var _rEntryId = btn.dataset.entryId || '';
+          var _rVaId    = btn.dataset.vaId    || '';
+          var _labelEl  = _rEntryId ? document.getElementById('va-label-' + _rEntryId) : null;
+          if (!_labelEl || !_rVaId) break;
+          var _curLabel = _labelEl.textContent || '';
+          var _inp = document.createElement('input');
+          _inp.type = 'text';
+          _inp.value = _curLabel;
+          _inp.style.cssText = 'font-size:0.78rem;padding:2px 6px;border-radius:5px;border:1px solid var(--gold-dim);background:var(--surface);color:var(--text);font-family:Lato,sans-serif;width:100%;box-sizing:border-box;outline:none';
+          _labelEl.replaceWith(_inp);
+          _inp.focus(); _inp.select();
+          var _rDone = false;
+          var _rCommit = async function() {
+            if (_rDone) return; _rDone = true;
+            var newLabel = _inp.value.trim() || _curLabel;
+            // Restore span immediately (optimistic) so UI never stays in edit state
+            var _newSpan = document.createElement('span');
+            _newSpan.id = 'va-label-' + _rEntryId;
+            _newSpan.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block';
+            _newSpan.textContent = newLabel;
+            _inp.replaceWith(_newSpan);
+            if (newLabel === _curLabel) return; // nothing changed
+            try {
+              var session = (await sb.auth.getSession()).data.session;
+              if (!session) throw new Error('Not authenticated');
+              var pRes = await fetch(SUPABASE_URL + '/rest/v1/life_voice_archives?id=eq.' + encodeURIComponent(_rVaId) + '&user_id=eq.' + encodeURIComponent(currentUser.id), {
+                method: 'PATCH',
+                headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+                body: JSON.stringify({ label: newLabel })
+              });
+              if (!pRes.ok) throw new Error('PATCH failed: ' + pRes.status);
+              // Update local cache
+              var _cached = (_voiceArchiveCache[_rEntryId] || []).find(function(r) { return r.id === _rVaId; });
+              if (_cached) _cached.label = newLabel;
+              logActivity('voice_archive_renamed', 'va=' + _rVaId, 'info', 'VA');
+            } catch(e) {
+              dbgErr('VA', 'Rename failed:', e.message);
+              // Restore original label on failure
+              _newSpan.textContent = _curLabel;
+              if ((_voiceArchiveCache[_rEntryId] || []).find(function(r) { return r.id === _rVaId; })) {
+                (_voiceArchiveCache[_rEntryId] || []).find(function(r) { return r.id === _rVaId; }).label = _curLabel;
+              }
+            }
+          };
+          _inp.addEventListener('blur', _rCommit);
+          _inp.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter')  { ev.preventDefault(); _rCommit(); }
+            if (ev.key === 'Escape') { _rDone = true; var _s = document.createElement('span'); _s.id = 'va-label-' + _rEntryId; _s.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block'; _s.textContent = _curLabel; _inp.replaceWith(_s); }
+          });
+          break;
+        }
         case 'story-toggle-entry': {
           var ts = btn.dataset.timestamp || '';
           if (ts) _entriesStoryToggle(ts);
