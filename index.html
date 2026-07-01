@@ -2546,6 +2546,8 @@
         <div id="shareEntryVideo" style="margin-bottom:14px"></div>
         <div id="shareEntryText" style="font-size:0.95rem;color:var(--text);line-height:1.8;white-space:pre-wrap"></div>
         <div id="shareEntryMeta" style="margin-top:14px;font-size:0.78rem;color:var(--text-light);display:flex;gap:12px;flex-wrap:wrap"></div>
+        <!-- APP-55 Phase 6: Voice archive conversation thread (populated by loadSharePage) -->
+        <div id="shareEntryVoice" style="margin-top:16px;display:none"></div>
       </div>
 
       <!-- Feedback form (hidden for story piece shares — read-only) -->
@@ -5188,8 +5190,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.28';
-  const DEPLOY_NOTES = APP_VERSION + ' — [APP-55 Phase 6] Conversation thread playback UI. voiceArchiveStripHtml rebuilt: grouped under single header, sorted by turn_index, per-turn Gethro question + play button, inline Rename (blur/Enter PATCH, Escape revert, optimistic UI). _loadVoiceArchivesForEntries SELECT extended to include question + turn_index, ORDER BY turn_index. Single-turn entries unchanged in appearance. REQUIRES VA-M01b migration + GETHRO_PROXY v6.19 deployed.';
+  const APP_VERSION  = 'v7.29';
+  const DEPLOY_NOTES = APP_VERSION + ' — [APP-55 Phase 6 share] Wire voiceArchives[] into share page render. shareEntryCard gains #shareEntryVoice div. loadSharePage renders same conversation thread view as in-app: gold-dim left border, mic header, per-turn Gethro question + inline <audio controls> (signed URLs from proxy — no client-side signing needed). No Rename button for share visitors. Empty array hides the block.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -5372,7 +5374,7 @@
     };
     fetch(NOTIFY_PROXY_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON },
       body: JSON.stringify(payload)
     }).catch(function(){}); // truly fire-and-forget
   }
@@ -6073,6 +6075,38 @@
       metaEl.innerHTML = metaParts.map(function(m) {
         return '<span style="background:var(--surface2);padding:3px 8px;border-radius:10px">' + m + '</span>';
       }).join('');
+
+      // APP-55 Phase 6: Voice archive conversation thread
+      // voiceArchives[] is already sorted by turn_index and signed by the proxy.
+      // No signing needed client-side — render audio controls directly from signedUrl.
+      var voiceEl = document.getElementById('shareEntryVoice');
+      var vaList = (data.voiceArchives && data.voiceArchives.length) ? data.voiceArchives : [];
+      if (vaList.length && voiceEl) {
+        var vaIsThread = vaList.length > 1;
+        var vaLabel = escHtml((vaList[0] && vaList[0].label) ? vaList[0].label : 'Voice recording');
+        var vaTurnsHtml = vaList.map(function(va) {
+          var vaQHtml = (va.question && va.question.trim())
+            ? '<div style="font-size:0.76rem;color:var(--text-light);font-style:italic;margin-bottom:5px;line-height:1.35">'
+                + '\uD83E\uDD16 ' + escHtml(va.question)
+              + '</div>'
+            : '';
+          var vaAudio = '<audio src="' + escHtml(va.signedUrl) + '" controls style="width:100%;height:36px;margin-top:4px;display:block"></audio>';
+          return (vaIsThread ? '<div style="padding:6px 0 6px 10px;border-left:2px solid var(--gold-dim)">' : '')
+            + vaQHtml + vaAudio
+            + (vaIsThread ? '</div>' : '');
+        }).join(vaIsThread ? '<div style="height:8px"></div>' : '');
+        voiceEl.innerHTML =
+          '<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;border-left:3px solid var(--gold-dim)">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (vaIsThread ? '10' : '8') + 'px">'
+              + '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDF99\uFE0F</span>'
+              + '<span style="font-size:0.78rem;color:var(--text-light)">' + vaLabel + '</span>'
+            + '</div>'
+            + vaTurnsHtml
+          + '</div>';
+        voiceEl.style.display = 'block';
+      } else if (voiceEl) {
+        voiceEl.style.display = 'none';
+      }
 
       // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
