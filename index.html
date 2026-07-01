@@ -5190,8 +5190,9 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.34';
-  const DEPLOY_NOTES = APP_VERSION + ' — Archive staging fix: MicManager.flush(true) was early-returning when _chunks was empty (common when the periodic timer had already flushed all chunks and restarted the recorder). This meant onChunk(isFinal=true) never fired, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed empty, and commit_voice_turn/apply_voice_transcript were never reached — the root cause of archive refinement never working. Fixed by splitting the early-return guard: isFinal=true now only checks !_recorder; non-final flushes still no-op on empty chunks.';
+  const APP_VERSION  = 'v7.35';
+  const DEPLOY_NOTES = APP_VERSION + ' — renderReview null-guard: getElementById calls for reviewTotalStats, chapterGrid and reviewFilterCat were crashing with TypeError when renderReview fired before the review panel was mounted in the DOM (e.g. on load while dashboard tab was active). Added null checks — bail early if chapterGrid is absent.';
+  const _PREV_DEPLOY_NOTES = 'v7.34 — Archive staging fix: MicManager.flush(true) was early-returning when _chunks was empty (common when the periodic timer had already flushed all chunks and restarted the recorder). This meant onChunk(isFinal=true) never fired, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed empty, and commit_voice_turn/apply_voice_transcript were never reached — the root cause of archive refinement never working. Fixed by splitting the early-return guard: isFinal=true now only checks !_recorder; non-final flushes still no-op on empty chunks.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -17171,10 +17172,13 @@
     });
 
     const totalWords = real.reduce((s, e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-    document.getElementById('reviewTotalStats').textContent =
+    // v7.34: null-guard — renderReview can be called before the review panel is in the DOM
+    const reviewTotalStats = document.getElementById('reviewTotalStats');
+    if (reviewTotalStats) reviewTotalStats.textContent =
       real.length + ' entries · ~' + totalWords.toLocaleString() + ' words';
 
     const grid = document.getElementById('chapterGrid');
+    if (!grid) return; // panel not mounted yet — bail rather than crash
     if (!Object.keys(byChapter).length) {
       grid.innerHTML = '<p style="color:var(--text-light);font-size:0.9rem">You haven\'t told me anything yet — head to Memories to start.</p>';
     } else {
@@ -17206,6 +17210,7 @@
     // ── Section 2: Entry filter dropdown ─────────────────────────
     const chapters = [...new Set(real.map(e => e.chapter || e.category || 'Uncategorised'))].sort();
     const sel = document.getElementById('reviewFilterCat');
+    if (!sel) return; // panel not mounted yet
     const curVal = sel.value;
     sel.innerHTML = '<option value="">All chapters</option>' +
       chapters.map(c => `<option${curVal===c?' selected':''}>${c}</option>`).join('');
