@@ -5190,7 +5190,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.30';
+  const APP_VERSION  = 'v7.31';
   const DEPLOY_NOTES = APP_VERSION + ' — [APP-55 Phase 6 share] Wire voiceArchives[] into share page render. shareEntryCard gains #shareEntryVoice div. loadSharePage renders same conversation thread view as in-app: gold-dim left border, mic header, per-turn Gethro question + inline <audio controls> (signed URLs from proxy — no client-side signing needed). No Rename button for share visitors. Empty array hides the block.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
@@ -9483,7 +9483,7 @@
         form.append('action', 'transcribe');
         form.append('audio', blob, (isFinal ? 'dictation.' : 'chunk.') + ext);
         var _txAbort = new AbortController();
-        var _txTimeout = setTimeout(function() { _txAbort.abort(); }, 30000); // 30s max — hangs otherwise
+        var _txTimeout = setTimeout(function() { _txAbort.abort(); }, 10000); // 10s max — background final chunk, UI already idle
         var res;
         try {
           res  = await fetch(GETHRO_PROXY_URL, {
@@ -9564,21 +9564,23 @@
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
-          _setMicState('transcribing');
-          setMemStatus('listening', '\u23F3 Transcribing\u2026');
-        } else {
-          _micTranscribing = true;
-          setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
-        }
-        await _transcribeBlob(blob, ext, isFinal);
-        _micTranscribing = false;
-        if (isFinal) {
-          _stageCurrentTurn(); // APP-55 Phase 4: stage AFTER chunk transcription has appended its text — baselineSnapshot reflects the chunk-transcribed answer, ready to be improved by Phase 5
+          // Go idle immediately on stop — final chunk transcribes in background (10s timeout).
+          // Archive re-transcription handles quality. User never waits on orange screen.
+          _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-        } else if (_micState === 'recording') {
-          setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+          _transcribeBlob(blob, ext, true).catch(function(e) {
+            dbgErr('MIC', 'Background final transcription failed:', e.message);
+          });
+        } else {
+          _micTranscribing = true;
+          setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
+          await _transcribeBlob(blob, ext, isFinal);
+          _micTranscribing = false;
+          if (_micState === 'recording') {
+            setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+          }
         }
       },
 
@@ -9649,11 +9651,11 @@
   function stopMemMic() {
     if (_micState !== 'recording') return;
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
-    _setMicState('transcribing'); // spinner while MicManager final onChunk fires
-    // MicManager.flush(true) is called via onChunk isFinal path in startMemMic;
-    // stopping the recorder triggers the final onstop → MicManager calls onChunk(isFinal=true).
+    // Go idle immediately — final chunk fires in background from onChunk(isFinal=true).
+    // Never hold the orange screen after user taps stop.
+    _setMicState('idle');
+    setMemStatus('idle', '');
     MicManager.stop();
-    // _micRelease() called from onChunk(isFinal=true) handler
   }
 
   function toggleMemMic() {
