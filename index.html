@@ -5190,9 +5190,8 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.35';
-  const DEPLOY_NOTES = APP_VERSION + ' — renderReview null-guard: getElementById calls for reviewTotalStats, chapterGrid and reviewFilterCat were crashing with TypeError when renderReview fired before the review panel was mounted in the DOM (e.g. on load while dashboard tab was active). Added null checks — bail early if chapterGrid is absent.';
-  const _PREV_DEPLOY_NOTES = 'v7.34 — Archive staging fix: MicManager.flush(true) was early-returning when _chunks was empty (common when the periodic timer had already flushed all chunks and restarted the recorder). This meant onChunk(isFinal=true) never fired, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed empty, and commit_voice_turn/apply_voice_transcript were never reached — the root cause of archive refinement never working. Fixed by splitting the early-return guard: isFinal=true now only checks !_recorder; non-final flushes still no-op on empty chunks.';
+  const APP_VERSION  = 'v7.36';
+  const DEPLOY_NOTES = APP_VERSION + ' — Pre-save transcript refinement (v7.36): archive refinement now happens at mic-stop, not post-save. _refineTranscriptInPlace() fires immediately when user stops recording — sends full assembled blob as fullPass=true, gets better transcript, patches textarea in place before Save. Clobber guard: if user has edited the textarea since mic-stop, discard (protect their changes). On Save, _commitVoiceTurnOnly() uploads blob to storage only — apply_voice_transcript post-save patching removed. Fixes the race where silent post-save patch would overwrite user corrections.';
   // ── Line number offset for debugging ────────────────────────────────
   // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
   // Browser console line numbers are from the stripped file.
@@ -8954,19 +8953,13 @@
     }
   }
 
-  // ── APP-55 Phase 4/5 (moat-protected): commit a staged voice turn + apply ───
-  // Called fire-and-forget from memDone(), once per staged turn, after a
-  // successful save. Two network calls per turn:
-  //   1. commit_voice_turn (multipart) — server generates label/path/turn_index,
-  //      uploads the blob, inserts the row. Client supplies offset and
-  //      baselineSnapshot (inherently client-known — only the client knows
-  //      where the textarea was at mic-open) but nothing else.
-  //   2. apply_voice_transcript (JSON, { turnId }) — server re-transcribes the
-  //      blob it just stored, runs the offset-safe patch decision against its
-  //      own row, and writes the result directly. Client never sees offset,
-  //      baseline, or the transcript text — only applied: true/false.
-  // Never blocks the save UX. Silent on failure (logs to activity log).
-  async function _commitAndApplyVoiceTurn(entryId, turn) {
+  // ── APP-55 Phase 4 (moat-protected): commit a staged voice turn to storage ───
+  // v7.36: renamed from _commitAndApplyVoiceTurn. The apply_voice_transcript
+  // step is removed — refinement now happens pre-save via _refineTranscriptInPlace()
+  // which fires at mic-stop and patches the textarea directly before Save.
+  // This function is now purely a storage upload + DB row insert (archive/playback).
+  // Called fire-and-forget from memDone() after a successful save.
+  async function _commitVoiceTurnOnly(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
     var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
@@ -8998,7 +8991,7 @@
     }
     dbg('VA', 'Turn committed — entry=' + entryId + ' turn_index=' + committed.turn_index + ' id=' + committed.id);
     logActivity('voice_archive_saved', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'VA');
-    // Update local cache immediately so the playback pill (Phase 2/6) works without a re-fetch.
+    // Update local cache immediately so the playback pill works without a re-fetch.
     if (!_voiceArchiveCache[entryId]) _voiceArchiveCache[entryId] = [];
     _voiceArchiveCache[entryId].push({
       id: committed.id,
@@ -9009,48 +9002,9 @@
       turn_index: committed.turn_index,
       question: turn.question || null
     });
-
-    // ── Phase 5: fire the quality pass — independent of any other turn ──────
-    try {
-      var session2 = (await sb.auth.getSession()).data.session;
-      if (!session2) throw new Error('Not authenticated');
-      var applyRes = await fetch(GETHRO_PROXY_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + session2.access_token,
-          'apikey': SUPABASE_ANON,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ action: 'apply_voice_transcript', turnId: committed.id })
-      });
-      var applyData = await applyRes.json();
-      if (!applyRes.ok || !applyData.ok) throw new Error(applyData.error || 'Apply failed ' + applyRes.status);
-      if (applyData.applied) {
-        dbg('VA', 'Transcript improved — entry=' + entryId + ' turn=' + committed.turn_index + ' +' + (applyData.charsAdded || 0) + ' chars');
-        logActivity('voice_retranscript', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'GROQ');
-        // Server already patched the DB row — refresh the local cache so any
-        // open view reflects the improved text without a manual reload.
-        var cached = (entries || []).find(function(e) { return e.id === entryId; });
-        if (cached) {
-          try {
-            var refreshRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id + '&select=answer', {
-              headers: getAuthHeaders()
-            });
-            if (refreshRes.ok) {
-              var rows = await refreshRes.json();
-              if (rows && rows[0] && typeof rows[0].answer === 'string') cached.answer = rows[0].answer;
-            }
-          } catch(e2) { dbgErr('VA', 'Post-apply cache refresh failed:', e2.message); }
-        }
-        toast('✨ Transcript improved from your recording', 3000);
-      } else {
-        dbg('VA', 'Transcript not applied — reason=' + applyData.reason);
-        // Silent by design — 'edited', 'empty_transcript', 'unchanged' etc. are all expected, non-error outcomes.
-      }
-    } catch(e) {
-      dbgErr('VA', 'apply_voice_transcript failed:', e.message);
-      logActivity('voice_retranscript_error', 'entry=' + entryId + ' err=' + e.message, 'error', 'GROQ');
-    }
+    // v7.36: apply_voice_transcript removed — refinement now happens pre-save
+    // via _refineTranscriptInPlace() at mic-stop. Nothing more to do here.
+    dbg('VA', 'Voice archive commit complete — entry=' + entryId + ' turn=' + committed.turn_index);
   }
 
   async function memDone() {
@@ -9083,15 +9037,17 @@
     if (!_titleBeforeSave.trim() && _answerBeforeSave.trim() && savedId && savedId !== 'offline') {
       _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
     }
-    // ── APP-55 Phase 4/5 (moat-protected): commit + apply each staged voice turn ──
-    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below. Each turn
-    // commits and applies independently — one slow/failed turn never blocks
-    // or breaks the others, and none of this blocks the save UX.
+    // ── APP-55 Phase 4 (moat-protected): commit each staged voice turn to storage ──
+    // v7.36: apply_voice_transcript removed from this flow — refinement now happens
+    // pre-save via _refineTranscriptInPlace() (fires at mic-stop). On Save we only
+    // upload the blob to storage for archive/playback. This prevents the race where
+    // a post-save patch would silently clobber text the user typed as a correction.
+    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives.
     if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
       var _turnsToCommit = _stagedVoiceArchives.slice();
       _turnsToCommit.forEach(function(turn) {
-        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
-          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
+        _commitVoiceTurnOnly(savedId, turn).catch(function(e) {
+          dbgErr('VA', 'Voice turn commit threw:', e.message);
         });
       });
     }
@@ -9544,14 +9500,96 @@
       _turnSegments = [];
       if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
       var answerEl = document.getElementById('memAnswer');
-      _stagedVoiceArchives.push({
+      // v7.36: snapshot the textarea NOW — this is the text that was present
+      // at mic-stop, including the live (chunked) transcript just appended.
+      // _refineTranscriptInPlace will use this as its clobber guard.
+      var snapshotAtStop = answerEl ? answerEl.value : '';
+      var turn = {
         blob: turnBlob,
         mime: turnMime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
-        baselineSnapshot: (answerEl ? answerEl.value : '')
-      });
+        baselineSnapshot: snapshotAtStop
+      };
+      _stagedVoiceArchives.push(turn);
       dbg('VA', 'Phase 4: turn staged — ' + turnBlob.size + ' bytes, offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
+      // v7.36: kick off pre-save in-place refinement immediately — fire-and-forget.
+      // Better transcript replaces the live version in the textarea before the user
+      // saves, so Save captures the improved text directly. No post-save DB patching.
+      _refineTranscriptInPlace(turn).catch(function(e) {
+        dbgErr('VA', 'Pre-save refinement failed (non-blocking):', e.message);
+      });
+    }
+
+    // v7.36: Pre-save in-place transcript refinement.
+    // Sends the full assembled turn blob to the proxy as fullPass=true, gets back
+    // a higher-quality transcript, then patches the textarea in place — but ONLY
+    // if the user hasn't edited the text since mic-stop (clobber guard).
+    // This runs client-side so it's instant-feedback; no post-save DB patching needed.
+    async function _refineTranscriptInPlace(turn) {
+      if (!turn || !turn.blob || turn.blob.size === 0) return;
+      var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
+              : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
+      var session;
+      try {
+        var sr = await sb.auth.getSession();
+        session = sr.data && sr.data.session ? sr.data.session : null;
+      } catch(e) { return; }
+      if (!session) return;
+
+      var form = new FormData();
+      form.append('action', 'transcribe');
+      form.append('fullPass', 'true');
+      form.append('audio', turn.blob, 'fullpass.' + ext);
+      var abortCtrl = new AbortController();
+      var timeout = setTimeout(function() { abortCtrl.abort(); }, 20000); // 20s — full blob, slightly longer budget
+      var res, data;
+      try {
+        res  = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+          body: form,
+          signal: abortCtrl.signal
+        });
+        data = await res.json();
+      } catch(e) {
+        dbg('VA', 'Pre-save refinement fetch failed (non-blocking):', e.message);
+        return;
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!res.ok || !data.ok) {
+        dbg('VA', 'Pre-save refinement proxy error:', data && data.error ? data.error : res.status);
+        return;
+      }
+      var refined = data.result && data.result.transcript ? data.result.transcript.trim() : '';
+      if (!refined || HALLUCINATIONS.test(refined)) {
+        dbg('VA', 'Pre-save refinement: empty or hallucination — discarding');
+        return;
+      }
+      // Clobber guard: only patch if the user hasn't edited the textarea since mic-stop.
+      // Compare the prefix up to this turn's offset (text before this turn) plus whatever
+      // was appended — if ANYTHING changed, the user has typed and we leave it alone.
+      var answerEl = document.getElementById('memAnswer');
+      if (!answerEl) return;
+      var liveNow = answerEl.value;
+      if (liveNow !== turn.baselineSnapshot) {
+        dbg('VA', 'Pre-save refinement: user edited since mic-stop — discarding to protect their changes');
+        return;
+      }
+      // Build the replacement: text before this turn + refined transcript
+      var prefix = liveNow.slice(0, turn.offset);
+      var sep    = (prefix && !prefix.endsWith('\n') && !prefix.endsWith(' ')) ? ' ' : '';
+      var replacement = prefix + sep + refined;
+      if (replacement === liveNow) {
+        dbg('VA', 'Pre-save refinement: unchanged — no update needed');
+        return;
+      }
+      answerEl.value = replacement;
+      _userHasTyped = true;
+      memCheckButtons();
+      dbg('VA', 'Pre-save refinement applied — ' + liveNow.length + ' → ' + replacement.length + ' chars');
+      logActivity('voice_retranscript_presave', 'chars_before=' + liveNow.length + ' chars_after=' + replacement.length, 'info', 'VA');
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
