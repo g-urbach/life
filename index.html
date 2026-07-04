@@ -2599,7 +2599,6 @@
             I understand my name and response will be stored and shared with the person who invited me.
           </label>
 
-          <!-- SEC-06: Honeypot field — hidden from real users via CSS; bots fill it in -->
           <!-- aria-hidden so screen readers ignore it; autocomplete=off so browsers don't prefill -->
           <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
             <label for="shareHoneypot">Leave this blank</label>
@@ -5190,22 +5189,29 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.36';
-  const DEPLOY_NOTES = APP_VERSION + ' — Pre-save transcript refinement (v7.36): archive refinement now happens at mic-stop, not post-save. _refineTranscriptInPlace() fires immediately when user stops recording — sends full assembled blob as fullPass=true, gets better transcript, patches textarea in place before Save. Clobber guard: if user has edited the textarea since mic-stop, discard (protect their changes). On Save, _commitVoiceTurnOnly() uploads blob to storage only — apply_voice_transcript post-save patching removed. Fixes the race where silent post-save patch would overwrite user corrections.';
-  // ── Line number offset for debugging ────────────────────────────────
-  // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
-  // Browser console line numbers are from the stripped file.
-  // src_line_dev = src_line + _LOG_LINE_OFFSET ≈ line in THIS annotated source file.
-  // Update this value if the project memory block grows or shrinks significantly.
-  // Current project memory block: ~820 lines (lines 2–~830 of annotated file).
-  const _LOG_LINE_OFFSET = 820;
+  const APP_VERSION  = 'v7.35';
+  // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
+  // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
+  // file for the full explanation. Short version: single flat offset broke
+  // once DEVX-01 added scattered DEVONLY spans; this table + resolver
+  // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":706,"offset":7123},{"maxLine":1878,"offset":7124},{"maxLine":2601,"offset":7125},{"maxLine":2653,"offset":7128},{"maxLine":2693,"offset":7129},{"maxLine":2706,"offset":7130},{"maxLine":3074,"offset":7131},{"maxLine":3254,"offset":7132},{"maxLine":5192,"offset":7133},{"maxLine":5397,"offset":7141},{"maxLine":6113,"offset":7151},{"maxLine":6395,"offset":7152},{"maxLine":6746,"offset":7153},{"maxLine":7727,"offset":7154},{"maxLine":9119,"offset":7155},{"maxLine":9660,"offset":7156},{"maxLine":10375,"offset":7157},{"maxLine":10393,"offset":7159},{"maxLine":12278,"offset":7161},{"maxLine":13073,"offset":7162},{"maxLine":13075,"offset":7163},{"maxLine":13771,"offset":7164},{"maxLine":14642,"offset":7165},{"maxLine":16432,"offset":7168},{"maxLine":16746,"offset":7169},{"maxLine":17013,"offset":7170},{"maxLine":17628,"offset":7171},{"maxLine":17803,"offset":7172},{"maxLine":17938,"offset":7173},{"maxLine":18060,"offset":7174},{"maxLine":18336,"offset":7175},{"maxLine":18586,"offset":7176},{"maxLine":18755,"offset":7177},{"maxLine":18797,"offset":7178},{"maxLine":18932,"offset":7179},{"maxLine":20822,"offset":7180},{"maxLine":21112,"offset":7181},{"maxLine":24181,"offset":7507},{"maxLine":25914,"offset":7509},{"maxLine":null,"offset":7510}];
+  // Static — never needs to change; the deployer only ever rewrites the table above.
+  function _resolveLogLineOffset(rawLine) {
+    if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
+    for (var i = 0; i < _LOG_LINE_OFFSET_TABLE.length; i++) {
+      var maxLine = _LOG_LINE_OFFSET_TABLE[i].maxLine;
+      if (maxLine === null || rawLine <= maxLine) return _LOG_LINE_OFFSET_TABLE[i].offset;
+    }
+    return _LOG_LINE_OFFSET_TABLE[_LOG_LINE_OFFSET_TABLE.length - 1].offset;
+  }
 
   const SUPABASE_URL  = 'https://lsnbfsxlmqokbxnforpv.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzbmJmc3hsbXFva2J4bmZvcnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTczOTQsImV4cCI6MjA5NDA3MzM5NH0.DVhDVYDkKDsnoJNI-HDm-8f1GlxND-S59aB3Mq06Gbs';
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
-  const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY'; // dev error alerts
+  const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY';
   const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld)
   // GETHRO_VOICE constant removed v6.38 — was stale OpenAI 'onyx' placeholder; Inworld voice is set server-side via INWORLD_VOICE env var. Phase 3 (APP-53) will add voice_id selection from life_settings.
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
@@ -5358,7 +5364,7 @@
     var entryCount = (typeof entries !== 'undefined' && Array.isArray(entries)) ? entries.length : '?';
     // Line number offset: browser reports stripped-file line; add offset to get dev-file line
     var rawLine  = srcLine ? Number(srcLine) : null;
-    var devLine  = rawLine ? rawLine + (typeof _LOG_LINE_OFFSET !== 'undefined' ? _LOG_LINE_OFFSET : 820) : null;
+    var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
     var payload = {
       level:        level,
       area:         area,
@@ -5389,14 +5395,6 @@
   //   level   — 'info' | 'warn' | 'error' (default 'info')
   //   area    — uppercase area tag e.g. 'AUTH','AI','RENDER' (default 'APP')
   //   srcLine — raw browser line number (optional, from window.onerror col 4)
-  // ⚠️  Schema migration required for v3.33 — see project memory DB section.
-  // ⚠️  RLS + schema migration required for unauthenticated share-page logging (v3.38):
-  //     Step 1: ALTER TABLE life_activity_log ALTER COLUMN user_id DROP NOT NULL;
-  //     Step 2: DROP POLICY IF EXISTS "users insert own rows only" ON life_activity_log;
-  //             CREATE POLICY "insert own or anon" ON life_activity_log FOR INSERT WITH CHECK (
-  //               user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL)
-  //             );
-  //     See project memory for full SQL. deploy-v18 live test 8 confirms when done.
   // Parses navigator.userAgent into a short "OS/Browser" tag, e.g. "iOS 17/Safari",
   // "Android/Chrome", "Windows/Chrome". Best-effort — UA strings are messy and this
   // doesn't need to be perfect, just far more useful than a bare "mobile" bucket.
@@ -5440,7 +5438,7 @@
       ? (/iPad|tablet/i.test(ua) ? 'tablet' : 'mobile')
       : 'desktop';
     var rawLine  = srcLine ? Number(srcLine) : null;
-    var devLine  = rawLine ? rawLine + (typeof _LOG_LINE_OFFSET !== 'undefined' ? _LOG_LINE_OFFSET : 820) : null;
+    var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
     var payload = {
       user_id:      currentUser ? currentUser.id    : null,
       email:        currentUser ? (currentUser.email || null) : null,
@@ -6305,7 +6303,7 @@
     var errEl = document.getElementById('shareFeedbackError');
     errEl.style.display = 'none';
 
-    // SEC-06: Honeypot check — bots fill this hidden field; real users don't
+    // Spam prevention
     var honeypot = (document.getElementById('shareHoneypot')?.value || '').trim();
     if (honeypot) {
       // Silently fail — don't tell the bot it was caught
@@ -6364,7 +6362,7 @@
         // Never functioned: these used to send the literal string '(pending)'
         // with no actual file upload behind it. Text-only until a server-side
         // upload action exists on SHARE_PROXY_URL.
-        _hp:           document.getElementById('shareHoneypot')?.value || '', // SEC-06: server-side honeypot check
+        _hp:           document.getElementById('shareHoneypot')?.value || '', // Spam prevention
       };
 
       var res = await fetch(SHARE_PROXY_URL, {
@@ -8926,9 +8924,12 @@
     if (!entryId || !answerText || typeof callGethro !== 'function') return;
     try {
       var snippet = answerText.trim().slice(0, 400);
-      var parsed = await callGethro('chat', {
-        systemPrompt: 'You generate short, evocative memoir entry titles. Given the text of a memory, respond ONLY with valid JSON: {"title":"Your Title Here"}. The title should be 3-8 words, specific to the content, warm but not sentimental. No punctuation at the end. No quotes around the title inside the JSON string.',
-        history: [{ role: 'user', content: 'Generate a title for this memory:\n\n' + snippet }],
+      // EDGE-02: was reusing the chat action with a second client-supplied
+      // systemPrompt (same injection class as EDGE-01, lower stakes). Now its
+      // own action — GETHRO_PROXY holds the title prompt server-side, client
+      // sends only the memory snippet. Requires GETHRO_PROXY v6.20+.
+      var parsed = await callGethro('generate_title', {
+        snippet: snippet,
       });
       var generatedTitle = (parsed && parsed.title) ? parsed.title.trim() : '';
       if (!generatedTitle && parsed && parsed.reply) {
@@ -8953,13 +8954,19 @@
     }
   }
 
-  // ── APP-55 Phase 4 (moat-protected): commit a staged voice turn to storage ───
-  // v7.36: renamed from _commitAndApplyVoiceTurn. The apply_voice_transcript
-  // step is removed — refinement now happens pre-save via _refineTranscriptInPlace()
-  // which fires at mic-stop and patches the textarea directly before Save.
-  // This function is now purely a storage upload + DB row insert (archive/playback).
-  // Called fire-and-forget from memDone() after a successful save.
-  async function _commitVoiceTurnOnly(entryId, turn) {
+  // ── APP-55 Phase 4/5 (moat-protected): commit a staged voice turn + apply ───
+  // Called fire-and-forget from memDone(), once per staged turn, after a
+  // successful save. Two network calls per turn:
+  //   1. commit_voice_turn (multipart) — server generates label/path/turn_index,
+  //      uploads the blob, inserts the row. Client supplies offset and
+  //      baselineSnapshot (inherently client-known — only the client knows
+  //      where the textarea was at mic-open) but nothing else.
+  //   2. apply_voice_transcript (JSON, { turnId }) — server re-transcribes the
+  //      blob it just stored, runs the offset-safe patch decision against its
+  //      own row, and writes the result directly. Client never sees offset,
+  //      baseline, or the transcript text — only applied: true/false.
+  // Never blocks the save UX. Silent on failure (logs to activity log).
+  async function _commitAndApplyVoiceTurn(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
     var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
@@ -8991,7 +8998,7 @@
     }
     dbg('VA', 'Turn committed — entry=' + entryId + ' turn_index=' + committed.turn_index + ' id=' + committed.id);
     logActivity('voice_archive_saved', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'VA');
-    // Update local cache immediately so the playback pill works without a re-fetch.
+    // Update local cache immediately so the playback pill (Phase 2/6) works without a re-fetch.
     if (!_voiceArchiveCache[entryId]) _voiceArchiveCache[entryId] = [];
     _voiceArchiveCache[entryId].push({
       id: committed.id,
@@ -9002,9 +9009,48 @@
       turn_index: committed.turn_index,
       question: turn.question || null
     });
-    // v7.36: apply_voice_transcript removed — refinement now happens pre-save
-    // via _refineTranscriptInPlace() at mic-stop. Nothing more to do here.
-    dbg('VA', 'Voice archive commit complete — entry=' + entryId + ' turn=' + committed.turn_index);
+
+    // ── Phase 5: fire the quality pass — independent of any other turn ──────
+    try {
+      var session2 = (await sb.auth.getSession()).data.session;
+      if (!session2) throw new Error('Not authenticated');
+      var applyRes = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session2.access_token,
+          'apikey': SUPABASE_ANON,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ action: 'apply_voice_transcript', turnId: committed.id })
+      });
+      var applyData = await applyRes.json();
+      if (!applyRes.ok || !applyData.ok) throw new Error(applyData.error || 'Apply failed ' + applyRes.status);
+      if (applyData.applied) {
+        dbg('VA', 'Transcript improved — entry=' + entryId + ' turn=' + committed.turn_index + ' +' + (applyData.charsAdded || 0) + ' chars');
+        logActivity('voice_retranscript', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'GROQ');
+        // Server already patched the DB row — refresh the local cache so any
+        // open view reflects the improved text without a manual reload.
+        var cached = (entries || []).find(function(e) { return e.id === entryId; });
+        if (cached) {
+          try {
+            var refreshRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id + '&select=answer', {
+              headers: getAuthHeaders()
+            });
+            if (refreshRes.ok) {
+              var rows = await refreshRes.json();
+              if (rows && rows[0] && typeof rows[0].answer === 'string') cached.answer = rows[0].answer;
+            }
+          } catch(e2) { dbgErr('VA', 'Post-apply cache refresh failed:', e2.message); }
+        }
+        toast('✨ Transcript improved from your recording', 3000);
+      } else {
+        dbg('VA', 'Transcript not applied — reason=' + applyData.reason);
+        // Silent by design — 'edited', 'empty_transcript', 'unchanged' etc. are all expected, non-error outcomes.
+      }
+    } catch(e) {
+      dbgErr('VA', 'apply_voice_transcript failed:', e.message);
+      logActivity('voice_retranscript_error', 'entry=' + entryId + ' err=' + e.message, 'error', 'GROQ');
+    }
   }
 
   async function memDone() {
@@ -9037,17 +9083,15 @@
     if (!_titleBeforeSave.trim() && _answerBeforeSave.trim() && savedId && savedId !== 'offline') {
       _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
     }
-    // ── APP-55 Phase 4 (moat-protected): commit each staged voice turn to storage ──
-    // v7.36: apply_voice_transcript removed from this flow — refinement now happens
-    // pre-save via _refineTranscriptInPlace() (fires at mic-stop). On Save we only
-    // upload the blob to storage for archive/playback. This prevents the race where
-    // a post-save patch would silently clobber text the user typed as a correction.
-    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives.
+    // ── APP-55 Phase 4/5 (moat-protected): commit + apply each staged voice turn ──
+    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below. Each turn
+    // commits and applies independently — one slow/failed turn never blocks
+    // or breaks the others, and none of this blocks the save UX.
     if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
       var _turnsToCommit = _stagedVoiceArchives.slice();
       _turnsToCommit.forEach(function(turn) {
-        _commitVoiceTurnOnly(savedId, turn).catch(function(e) {
-          dbgErr('VA', 'Voice turn commit threw:', e.message);
+        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
+          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
         });
       });
     }
@@ -9500,96 +9544,14 @@
       _turnSegments = [];
       if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
       var answerEl = document.getElementById('memAnswer');
-      // v7.36: snapshot the textarea NOW — this is the text that was present
-      // at mic-stop, including the live (chunked) transcript just appended.
-      // _refineTranscriptInPlace will use this as its clobber guard.
-      var snapshotAtStop = answerEl ? answerEl.value : '';
-      var turn = {
+      _stagedVoiceArchives.push({
         blob: turnBlob,
         mime: turnMime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
-        baselineSnapshot: snapshotAtStop
-      };
-      _stagedVoiceArchives.push(turn);
-      dbg('VA', 'Phase 4: turn staged — ' + turnBlob.size + ' bytes, offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
-      // v7.36: kick off pre-save in-place refinement immediately — fire-and-forget.
-      // Better transcript replaces the live version in the textarea before the user
-      // saves, so Save captures the improved text directly. No post-save DB patching.
-      _refineTranscriptInPlace(turn).catch(function(e) {
-        dbgErr('VA', 'Pre-save refinement failed (non-blocking):', e.message);
+        baselineSnapshot: (answerEl ? answerEl.value : '')
       });
-    }
-
-    // v7.36: Pre-save in-place transcript refinement.
-    // Sends the full assembled turn blob to the proxy as fullPass=true, gets back
-    // a higher-quality transcript, then patches the textarea in place — but ONLY
-    // if the user hasn't edited the text since mic-stop (clobber guard).
-    // This runs client-side so it's instant-feedback; no post-save DB patching needed.
-    async function _refineTranscriptInPlace(turn) {
-      if (!turn || !turn.blob || turn.blob.size === 0) return;
-      var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
-              : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
-      var session;
-      try {
-        var sr = await sb.auth.getSession();
-        session = sr.data && sr.data.session ? sr.data.session : null;
-      } catch(e) { return; }
-      if (!session) return;
-
-      var form = new FormData();
-      form.append('action', 'transcribe');
-      form.append('fullPass', 'true');
-      form.append('audio', turn.blob, 'fullpass.' + ext);
-      var abortCtrl = new AbortController();
-      var timeout = setTimeout(function() { abortCtrl.abort(); }, 20000); // 20s — full blob, slightly longer budget
-      var res, data;
-      try {
-        res  = await fetch(GETHRO_PROXY_URL, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-          body: form,
-          signal: abortCtrl.signal
-        });
-        data = await res.json();
-      } catch(e) {
-        dbg('VA', 'Pre-save refinement fetch failed (non-blocking):', e.message);
-        return;
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (!res.ok || !data.ok) {
-        dbg('VA', 'Pre-save refinement proxy error:', data && data.error ? data.error : res.status);
-        return;
-      }
-      var refined = data.result && data.result.transcript ? data.result.transcript.trim() : '';
-      if (!refined || HALLUCINATIONS.test(refined)) {
-        dbg('VA', 'Pre-save refinement: empty or hallucination — discarding');
-        return;
-      }
-      // Clobber guard: only patch if the user hasn't edited the textarea since mic-stop.
-      // Compare the prefix up to this turn's offset (text before this turn) plus whatever
-      // was appended — if ANYTHING changed, the user has typed and we leave it alone.
-      var answerEl = document.getElementById('memAnswer');
-      if (!answerEl) return;
-      var liveNow = answerEl.value;
-      if (liveNow !== turn.baselineSnapshot) {
-        dbg('VA', 'Pre-save refinement: user edited since mic-stop — discarding to protect their changes');
-        return;
-      }
-      // Build the replacement: text before this turn + refined transcript
-      var prefix = liveNow.slice(0, turn.offset);
-      var sep    = (prefix && !prefix.endsWith('\n') && !prefix.endsWith(' ')) ? ' ' : '';
-      var replacement = prefix + sep + refined;
-      if (replacement === liveNow) {
-        dbg('VA', 'Pre-save refinement: unchanged — no update needed');
-        return;
-      }
-      answerEl.value = replacement;
-      _userHasTyped = true;
-      memCheckButtons();
-      dbg('VA', 'Pre-save refinement applied — ' + liveNow.length + ' → ' + replacement.length + ' chars');
-      logActivity('voice_retranscript_presave', 'chars_before=' + liveNow.length + ' chars_after=' + replacement.length, 'info', 'VA');
+      dbg('VA', 'Phase 4: turn staged — ' + turnBlob.size + ' bytes, offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
@@ -10844,11 +10806,18 @@
       reader.onload = async (e) => {
         const base64 = e.target.result.split(',')[1];
         try {
+          // EDGE-05 (edge-function-audit-v7_36 Finding 6): prompt text moved
+          // server-side (AI_PROXY v2.5+, AI_PROXY_PHOTO_DESCRIPTION_PROMPT) —
+          // was previously sent here in full on every photo upload, readable
+          // in DevTools. Deploy order still matters one direction: AI_PROXY
+          // v2.5+ tolerates the OLD client fine (falls through to its
+          // unchanged prompt-required branch), but this new client sends no
+          // prompt field at all, so it will 400 against an AI_PROXY older
+          // than v2.5. Proxy-first, same as every other EDGE item.
           const res = await fetch(AI_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON },
-            body: JSON.stringify({ vision: true, imageBase64: base64, imageMediaType: file.type || 'image/jpeg',
-              prompt: 'Describe this photo in rich, vivid detail for use in a personal memoir. Note the people, setting, mood, era, clothing, expressions, and any details that tell a story. Be warm and observational. 3-5 sentences.' })
+            body: JSON.stringify({ action: 'describe_photo', vision: true, imageBase64: base64, imageMediaType: file.type || 'image/jpeg' })
           });
           const data = await res.json();
           // RL-03: previously any non-ok response (including 429) silently resolved
@@ -21817,70 +21786,35 @@
       .filter(function(c) { return _agpGapChapters.indexOf(c) === -1; })
       .join(', ');
 
-    var systemPrompt =
-      'You are Gethro, a sharp and curious personal story guide inside LifeTold, a memoir app.\n' +
-      'You speak in first person: direct, curious, focused on uncovering the facts of a story.\n' +
-      'Your style is investigative journalist, not counsellor — you dig for specifics: names, dates, places, events, sequences, what actually happened. You care less about how things felt and more about what exactly occurred. When you ask a question, make it concrete and fact-seeking — not "how did that make you feel?" but "who was there?", "what year was that?", "what happened next?", "where exactly were you?".\n' +
-      'IMPORTANT: You DO speak aloud — your voice is played via text-to-speech when you reply. Never say you are text-only or have no voice.\n\n' +
-      'USER: ' + userName + ' | Entries: ' + real.length + ' | Words: ' + totalWords + '\n' +
-      (userProfile.subjectMode === 'other' && userProfile.subjectName
-        ? 'SUBJECT: This story is about ' + userProfile.subjectName + (userProfile.relationship ? ' (' + userName + '\u2019s ' + userProfile.relationship + ')' : '') + ' — NOT about ' + userName + '. ' + userName + ' is writing on ' + userProfile.subjectName + '\u2019s behalf, as the author/narrator. Ask your questions about ' + userProfile.subjectName + '\u2019s life and experiences ("what did ' + userProfile.subjectName + ' do next?", "tell me about ' + userProfile.subjectName + '\u2019s childhood") rather than ' + userName + '\u2019s own life, unless ' + userName + ' is recalling a memory they shared together.\n'
-        : '') +
-      (userProfile.memoirGoal ? 'MEMOIR PURPOSE: ' + userProfile.memoirGoal + ' — use this to shape your questions and encouragement; connect what the user is writing back to this stated purpose.\n' : '') +
-      (userProfile.goalEra || userProfile.goalAudience || userProfile.goalTone
-        ? 'MEMOIR GOALS: ' +
-          (userProfile.goalEra      ? 'Focus era: ' + userProfile.goalEra + '. '      : '') +
-          (userProfile.goalAudience ? 'Writing for: ' + userProfile.goalAudience + '. ' : '') +
-          (userProfile.goalTone     ? 'Tone: ' + userProfile.goalTone + '.'             : '') +
-          ' Use these to steer your questions toward the right era and to match the desired voice.\n'
-        : '') +
-      currentScreenNote + '\n' +
-      (_agpGapMode
-        ? 'GAP-FINDING MODE: You have now asked ' + _agpBlankSeedCount + ' opening questions. ' +
-          'Shift your focus to finding GAPS in the memoir. ' +
-          'Chapters already covered: ' + _agpCoveredChapters + '. ' +
-          'Life areas with NO memories yet: ' + (_agpMissingChapters || 'none — great coverage!') + '. ' +
-          'Your next question should gently steer the user toward one of the uncovered life areas above. ' +
-          'Do NOT keep digging into the same memory — open a new chapter.\n'
-        : '') +
-      entriesContext + '\n\n' +
-      'APP ACTIONS YOU CAN TRIGGER (include in your JSON response when appropriate):\n' +
-      '  navigate_memories   — open the Memories (write) tab\n' +
-      '  navigate_entries    — open the Entries tab\n' +
-      '  navigate_story      — open the My Story tab\n' +
-      '  navigate_dashboard  — open the Dashboard\n' +
-      '  navigate_my_people  — open the My People / Family Tree overlay\n' +
-      '  navigate_book_organiser — open the Organise My Book overlay (set chapters, dates, drag to reorder memories)\n' +
-      '  filter_person       — filter Entries by person. params: { person: "name" }\n' +
-      '  filter_chapter      — filter Entries by chapter. params: { chapter: "name" }\n' +
-      '  filter_location     — filter Entries by location. params: { location: "name" }\n' +
-      '  filter_text         — free-text search across all entries. params: { query: "word or phrase" }. Use this when user asks about a topic (e.g. "show me stories about my cat" → filter_text with query="cat").\n' +
-      '  new_memory          — start a new memory. params: { title?: "...", chapter?: "..." }\n' +
-      '  generate_story      — generate story. params: { mode: "blurb|short|extended|chapters|journal" }\n' +
-      '  review_entry        — review / spell-check the current entry (runs the AI Review tool on whatever is in the Memories tab)\n  capture_feedback    — user wants to suggest a feature. params: { feedback: "their words" }\n\n' +
-      'RESPOND WITH VALID JSON ONLY — no markdown, no prose outside JSON:\n' +
-      '{\n' +
-      '  "reply": "Your in-character response to the user (always present)",\n' +
-      '  "action": { "type": "action_name", "params": {} },\n' +
-      '  "memory_conversation": true,\n' +
-      '  "observation": "optional: one friction point or feature idea you noticed"\n' +
-      '}\n' +
-      'If no action is needed, omit the action field entirely.\n' +
-      'If no observation, omit the observation field.\n' +
-      'Set "memory_conversation": true whenever the user shares or describes a personal memory, life experience, or family story — regardless of which tab they are on. Even one answer about a real life event qualifies. Do NOT set it for: navigation requests, app-feature questions, notification responses, or any exchange that is purely about using the app.\n' +
-      'Keep reply under 60 words — direct and specific, not rambling.\n' +
-      'ALWAYS end your reply with one specific fact-seeking question — who, what, where, when, or what happened next. Not "how did that feel?"\n' +
-      'When discussing a memory, stay anchored to THAT specific memory and its details (people, place, events, sequence). Do not drift to adjacent topics.\n' +
-      'CRITICAL — never repeat yourself: read the full conversation history before asking a question. Never ask about something the user has already answered or that is already established in the conversation.\n' +
-      'SPEECH-TO-TEXT ERRORS: The user speaks to you via voice. Names and words may be misheard. If a name or reference seems odd, treat it as a speech-to-text error and move on — never dwell on it or ask about it.\n' +
-      'SINGLE-WORD OR PUNCTUATION-ONLY INPUTS (e.g. "you", ".", ",", a single letter): These are speech-to-text artefacts from a natural pause or mic noise — NOT a real reply. Do NOT acknowledge the word, do NOT say there was an error or a pause, do NOT apologise. Simply ask your PREVIOUS question again in a slightly different way, as if continuing the same conversation naturally.\n' +
-      'CRITICAL: If ENTRIES MATCHING THIS QUESTION are provided above, USE that content in your reply — never say the user has not written about a topic when matched entries exist.';
-
-    // systemPrompt is passed as-is; server wraps it with Gethro persona and returns parsed JSON.
+    // EDGE-01 (edge-function-audit-v7_36 Finding 1): the persona used to be built
+    // here and sent as systemPrompt — an open prompt-injection path, since
+    // GETHRO_PROXY passed it through unchanged, and the single biggest IP
+    // exposure in the app (readable in DevTools). The persona (investigative-
+    // journalist style, JSON schema, action list) now lives server-side in
+    // GETHRO_PERSONA_HEAD/TAIL (GETHRO_PROXY v6.20+). Only the genuinely
+    // per-request data goes over the wire now — plain fields, not instruction
+    // text. REQUIRES GETHRO_PROXY v6.20+ deployed first — see SPRINT EDGE
+    // SEQUENCING note in the backlog above; this client change and that proxy
+    // change ship together, proxy first.
     try {
       var parsed = await callGethro('chat', {
-        systemPrompt: systemPrompt,
         history: historyToSend,
+        userName: userName,
+        entryCount: real.length,
+        totalWords: totalWords,
+        subjectMode: userProfile.subjectMode || 'self',
+        subjectName: userProfile.subjectName || '',
+        relationship: userProfile.relationship || '',
+        memoirGoal: userProfile.memoirGoal || '',
+        goalEra: userProfile.goalEra || '',
+        goalAudience: userProfile.goalAudience || '',
+        goalTone: userProfile.goalTone || '',
+        currentScreenNote: currentScreenNote,
+        agpGapMode: _agpGapMode,
+        agpBlankSeedCount: _agpBlankSeedCount,
+        agpCoveredChapters: _agpCoveredChapters,
+        agpMissingChapters: _agpMissingChapters,
+        entriesContext: entriesContext,
       });
 
       var reply = (parsed.reply || 'I had trouble with that — could you try again?').trim();
