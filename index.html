@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.43';
+  const APP_VERSION = 'v7.44';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5206,8 +5206,8 @@
     return _LOG_LINE_OFFSET_TABLE[_LOG_LINE_OFFSET_TABLE.length - 1].offset;
   }
 
-  const SUPABASE_URL  = 'https://lsnbfsxlmqokbxnforpv.supabase.co';
-  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzbmJmc3hsbXFva2J4bmZvcnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTczOTQsImV4cCI6MjA5NDA3MzM5NH0.DVhDVYDkKDsnoJNI-HDm-8f1GlxND-S59aB3Mq06Gbs';
+  const SUPABASE_URL  = 'https://kjxbcbrfvyvvzwtvlspo.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqeGJjYnJmdnl2dnp3dHZsc3BvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2MjM4NTEsImV4cCI6MjA5ODE5OTg1MX0.0itDev7i6FLQPT5wzq4GCs4GSNDb-k1guT6X-4Dlp2c';
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
@@ -12054,64 +12054,16 @@
     if (timeEst) timeEst.style.display = (length === 'standard' || length === 'book') ? 'block' : 'none';
 
     try {
-      // ── Build profile context ─────────────────────────────────────────────
-      let profileContext = '';
-      if (userProfile.name || userProfile.dob || userProfile.sex) {
-        profileContext = 'ABOUT THIS PERSON:\n';
-        if (userProfile.name) profileContext += '- Name: ' + userProfile.name + '\n';
-        if (userProfile.sex)  profileContext += '- Sex: ' + userProfile.sex + '\n';
-        if (userProfile.dob) {
-          const dobRaw    = userProfile.dob;
-          const yearMatch = dobRaw.match(/\b(18|19|20)\d{2}\b/);
-          const year      = yearMatch ? parseInt(yearMatch[0]) : (isNaN(new Date(dobRaw).getFullYear()) ? null : new Date(dobRaw).getFullYear());
-          if (year && !isNaN(year)) {
-            const age = new Date().getFullYear() - year;
-            profileContext += '- Date of birth: ' + dobRaw + ' (age approx. ' + age + ')\\n';
-            profileContext += '- Birth year: ' + year + ' — weave in world events, music, fashion of that era.\\n';
-          } else {
-            profileContext += '- Date of birth: ' + dobRaw + '\\n';
-          }
-        }
-        profileContext += '\n';
-      }
-
+      // EDGE-04 (edge-function-audit-v7_36 Finding 3): profileContext /
+      // entriesText / chapterText used to be built here and sent to
+      // GETHRO_PROXY as pre-formatted strings — the exact prompt-engineering
+      // (per-field caps, <entry> XML delimiters, the DOB "weave in world
+      // events" instruction) was readable in the Network tab. That assembly
+      // now happens server-side (handleGenerateStory / buildProfileContext /
+      // buildEntriesText / buildChapterText, GETHRO_PROXY v6.21) — this
+      // function just sends the raw ingredients. No user-visible change: the
+      // proxy reproduces the old formatting byte-for-byte.
       const photoEntries = realEntries.filter(e => e.photo_url);
-      const entriesText  = realEntries.map((e, i) => {
-        // SEC-10: sanitise all user-supplied fields before including in AI prompt
-        let line = (i+1) + '. [' + sanitiseForPrompt(e.category, 80) + ']';
-        if (e.title)    line += ' [Title: '    + sanitiseForPrompt(e.title,    120) + ']';
-        if (e.era)      line += ' [Era: '      + sanitiseForPrompt(e.era,       40) + ']';
-        if (e.location) line += ' [Location: ' + sanitiseForPrompt(e.location, 120) + ']';
-        if (e.people)   line += ' [People: '   + sanitiseForPrompt(e.people,   200) + ']';
-        if (e.chapter)  line += ' [Chapter: '  + sanitiseForPrompt(e.chapter,   80) + ']';
-        if (e.photo_url) {
-          line += ' [PHOTO';
-          if (e.photo_ai_description) line += ' — AI sees: ' + sanitiseForPrompt(e.photo_ai_description, 200);
-          line += ']';
-        }
-        if (e.question && e.question !== 'Tell me about this photo') line += ' Q: ' + cleanQuestion(e.question) + ' —';
-        line += ' <entry>' + sanitiseForPrompt(e.answer, 3000) + '</entry>';
-        return line;
-      }).join('\n');
-
-      // Group by chapter for chapter-length mode
-      const byChapter = {};
-      realEntries.forEach(e => {
-        const ch = e.chapter || e.category || 'Unspecified';
-        if (!byChapter[ch]) byChapter[ch] = [];
-        byChapter[ch].push(e);
-      });
-      const chapterText = Object.entries(byChapter).map(([ch, ents]) =>
-        '=== ' + sanitiseForPrompt(ch, 80).toUpperCase() + ' ===\n' +
-        ents.map((e, i) => {
-          let line = (i+1) + '.';
-          if (e.title) line += ' [' + sanitiseForPrompt(e.title, 120) + ']';
-          if (e.question && e.question !== 'Tell me about this photo') line += ' Q: ' + cleanQuestion(e.question) + ' —';
-          line += ' <entry>' + sanitiseForPrompt(e.answer, 3000) + '</entry>';
-          return line;
-        }).join('\n')
-      ).join('\n\n');
-
       const wordCount = realEntries.reduce((s, e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
 
       // ── In My Own Words — no AI, render entries as written ───────────────
@@ -12203,6 +12155,29 @@
       const iSongStyle       = (format === 'song')   ? (songStyle  || '')          : null;
       const iSongLength      = (format === 'song')   ? (songLength || 'full')      : null;
 
+      // EDGE-04: raw entries + profile — proxy assembles the prompt strings.
+      // hasPhoto is a boolean, not the signed photo_url itself: the prompt
+      // only ever needed to know a photo was attached (plus its AI
+      // description), never the URL, so the URL no longer leaves the client
+      // for this action.
+      const storyEntries = realEntries.map(e => ({
+        category: e.category,
+        title: e.title,
+        era: e.era,
+        location: e.location,
+        people: e.people,
+        chapter: e.chapter,
+        hasPhoto: !!e.photo_url,
+        photo_ai_description: e.photo_ai_description,
+        question: e.question,
+        answer: e.answer,
+      }));
+      const storyProfile = {
+        name: userProfile.name,
+        sex:  userProfile.sex,
+        dob:  userProfile.dob,
+      };
+
       const storyRes = await callGethro('generate_story', {
         format,
         scope,
@@ -12214,10 +12189,8 @@
         songStyle:       iSongStyle,
         songLength:      iSongLength,
         theme:           (theme && format !== 'mywords') ? String(theme).slice(0, 100) : null,  // APP-47
-        profileContext,
-        entriesText,
-        chapterText,
-        wordCount,
+        entries:         storyEntries,
+        profile:         storyProfile,
       });
       const story = storyRes.story;
 
