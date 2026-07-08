@@ -15595,20 +15595,23 @@
     return q.replace(/\s*\[tags: .+?\]/, '').trim() || null;
   }
 
-  // SEC-10: sanitise user-supplied text before including it in AI prompts.
-  // Strips common prompt-injection patterns: "ignore above/below", "system:",
-  // triple backticks used as instruction fences, and role-switching phrases.
-  // Also enforces a per-field character cap so oversized inputs can't bloat prompts.
-  // Does NOT alter the stored entry — only the copy sent to the AI.
+  // EDGE-03 (edge-function-audit-v7_36 Finding 2, SPRINT EDGE): the
+  // injection-pattern regex list that used to live here (ignore-previous-
+  // instructions phrasing, system: prefix, backtick fences, [INST] tags) was
+  // fully readable in shipped JS — publishing a "filter" is really
+  // publishing a bypass map, since anyone can read exactly which phrasings
+  // to avoid. GETHRO_PROXY's own sanitiseForPrompt() (server-side, identical
+  // patterns, GETHRO_PROXY.ts) is the real filter and does not depend on the
+  // client having pre-filtered anything — confirmed this session by reading
+  // every call site: handleGenerateStory, handleSuggestThemes, and every
+  // other action that touches user text all run their own server-side
+  // sanitiseForPrompt() independently of what the client sends. This
+  // function is now a length-only truncation; every existing call site
+  // keeps working unchanged (SEC-10 protection is unchanged, just no longer
+  // duplicated — and no longer exposed — client-side).
   function sanitiseForPrompt(text, maxChars) {
     if (!text) return '';
     var s = String(text);
-    // Strip injection trigger phrases (case-insensitive)
-    s = s.replace(/ignore\s+(the\s+)?(above|below|previous|prior|all\s+previous)\s+(instructions?|prompts?|text|context)/gi, '[…]');
-    s = s.replace(/^system\s*:/gim, '[…]:');
-    s = s.replace(/```+/g, '');
-    s = s.replace(/\[INST\]|\[\/INST\]|<\|im_start\|>|<\|im_end\|>/g, '');
-    // Truncate to cap (default 3000 chars per field — enough for any memoir entry)
     var cap = (typeof maxChars === 'number' && maxChars > 0) ? maxChars : 3000;
     if (s.length > cap) s = s.substring(0, cap) + '…';
     return s;
