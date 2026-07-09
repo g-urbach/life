@@ -5189,17 +5189,25 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION  = 'v7.35';
-  // ── Line number offset for debugging ────────────────────────────────
-  // The deployed file has the PROJECT MEMORY HTML comment block stripped (~820 lines).
-  // Browser console line numbers are from the stripped file.
-  // src_line_dev = src_line + _LOG_LINE_OFFSET ≈ line in THIS annotated source file.
-  // Update this value if the project memory block grows or shrinks significantly.
-  // Current project memory block: ~820 lines (lines 2–~830 of annotated file).
-  const _LOG_LINE_OFFSET = 820;
+  const APP_VERSION = 'v7.43';
+  // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
+  // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
+  // file for the full explanation. Short version: single flat offset broke
+  // once DEVX-01 added scattered DEVONLY spans; this table + resolver
+  // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":706,"offset":7123},{"maxLine":1878,"offset":7124},{"maxLine":2601,"offset":7125},{"maxLine":2653,"offset":7128},{"maxLine":2693,"offset":7129},{"maxLine":2706,"offset":7130},{"maxLine":3074,"offset":7131},{"maxLine":3254,"offset":7132},{"maxLine":5192,"offset":7133},{"maxLine":5397,"offset":7141},{"maxLine":6113,"offset":7151},{"maxLine":6395,"offset":7152},{"maxLine":6746,"offset":7153},{"maxLine":7727,"offset":7154},{"maxLine":9119,"offset":7155},{"maxLine":9660,"offset":7156},{"maxLine":10375,"offset":7157},{"maxLine":10393,"offset":7159},{"maxLine":12278,"offset":7161},{"maxLine":13073,"offset":7162},{"maxLine":13075,"offset":7163},{"maxLine":13771,"offset":7164},{"maxLine":14642,"offset":7165},{"maxLine":16432,"offset":7168},{"maxLine":16746,"offset":7169},{"maxLine":17013,"offset":7170},{"maxLine":17628,"offset":7171},{"maxLine":17803,"offset":7172},{"maxLine":17938,"offset":7173},{"maxLine":18060,"offset":7174},{"maxLine":18336,"offset":7175},{"maxLine":18586,"offset":7176},{"maxLine":18755,"offset":7177},{"maxLine":18797,"offset":7178},{"maxLine":18932,"offset":7179},{"maxLine":20822,"offset":7180},{"maxLine":21112,"offset":7181},{"maxLine":24181,"offset":7507},{"maxLine":25914,"offset":7509},{"maxLine":null,"offset":7510}];
+  // Static — never needs to change; the deployer only ever rewrites the table above.
+  function _resolveLogLineOffset(rawLine) {
+    if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
+    for (var i = 0; i < _LOG_LINE_OFFSET_TABLE.length; i++) {
+      var maxLine = _LOG_LINE_OFFSET_TABLE[i].maxLine;
+      if (maxLine === null || rawLine <= maxLine) return _LOG_LINE_OFFSET_TABLE[i].offset;
+    }
+    return _LOG_LINE_OFFSET_TABLE[_LOG_LINE_OFFSET_TABLE.length - 1].offset;
+  }
 
   const SUPABASE_URL  = 'https://lsnbfsxlmqokbxnforpv.supabase.co';
-  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzbmJmc3hsbXFva2J4bmZvcnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTczOTQsImV4cCI6MjA5NDA3MzM5NH0.DVhDVYDkKDsnoJNI-HDm-8f1GlxND-S59aB3Mq06Gbs';
+  const SUPABASE_ANON = 'sb_publishable_r9dS2qSUTedOEoJYnaAM8A_M5HIgSXk';
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
@@ -5356,7 +5364,7 @@
     var entryCount = (typeof entries !== 'undefined' && Array.isArray(entries)) ? entries.length : '?';
     // Line number offset: browser reports stripped-file line; add offset to get dev-file line
     var rawLine  = srcLine ? Number(srcLine) : null;
-    var devLine  = rawLine ? rawLine + (typeof _LOG_LINE_OFFSET !== 'undefined' ? _LOG_LINE_OFFSET : 820) : null;
+    var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
     var payload = {
       level:        level,
       area:         area,
@@ -5430,7 +5438,7 @@
       ? (/iPad|tablet/i.test(ua) ? 'tablet' : 'mobile')
       : 'desktop';
     var rawLine  = srcLine ? Number(srcLine) : null;
-    var devLine  = rawLine ? rawLine + (typeof _LOG_LINE_OFFSET !== 'undefined' ? _LOG_LINE_OFFSET : 820) : null;
+    var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
     var payload = {
       user_id:      currentUser ? currentUser.id    : null,
       email:        currentUser ? (currentUser.email || null) : null,
@@ -10798,11 +10806,18 @@
       reader.onload = async (e) => {
         const base64 = e.target.result.split(',')[1];
         try {
+          // EDGE-05 (edge-function-audit-v7_36 Finding 6): prompt text moved
+          // server-side (AI_PROXY v2.5+, AI_PROXY_PHOTO_DESCRIPTION_PROMPT) —
+          // was previously sent here in full on every photo upload, readable
+          // in DevTools. Deploy order still matters one direction: AI_PROXY
+          // v2.5+ tolerates the OLD client fine (falls through to its
+          // unchanged prompt-required branch), but this new client sends no
+          // prompt field at all, so it will 400 against an AI_PROXY older
+          // than v2.5. Proxy-first, same as every other EDGE item.
           const res = await fetch(AI_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON },
-            body: JSON.stringify({ vision: true, imageBase64: base64, imageMediaType: file.type || 'image/jpeg',
-              prompt: 'Describe this photo in rich, vivid detail for use in a personal memoir. Note the people, setting, mood, era, clothing, expressions, and any details that tell a story. Be warm and observational. 3-5 sentences.' })
+            body: JSON.stringify({ action: 'describe_photo', vision: true, imageBase64: base64, imageMediaType: file.type || 'image/jpeg' })
           });
           const data = await res.json();
           // RL-03: previously any non-ok response (including 429) silently resolved
@@ -12039,64 +12054,16 @@
     if (timeEst) timeEst.style.display = (length === 'standard' || length === 'book') ? 'block' : 'none';
 
     try {
-      // ── Build profile context ─────────────────────────────────────────────
-      let profileContext = '';
-      if (userProfile.name || userProfile.dob || userProfile.sex) {
-        profileContext = 'ABOUT THIS PERSON:\n';
-        if (userProfile.name) profileContext += '- Name: ' + userProfile.name + '\n';
-        if (userProfile.sex)  profileContext += '- Sex: ' + userProfile.sex + '\n';
-        if (userProfile.dob) {
-          const dobRaw    = userProfile.dob;
-          const yearMatch = dobRaw.match(/\b(18|19|20)\d{2}\b/);
-          const year      = yearMatch ? parseInt(yearMatch[0]) : (isNaN(new Date(dobRaw).getFullYear()) ? null : new Date(dobRaw).getFullYear());
-          if (year && !isNaN(year)) {
-            const age = new Date().getFullYear() - year;
-            profileContext += '- Date of birth: ' + dobRaw + ' (age approx. ' + age + ')\\n';
-            profileContext += '- Birth year: ' + year + ' — weave in world events, music, fashion of that era.\\n';
-          } else {
-            profileContext += '- Date of birth: ' + dobRaw + '\\n';
-          }
-        }
-        profileContext += '\n';
-      }
-
+      // EDGE-04 (edge-function-audit-v7_36 Finding 3): profileContext /
+      // entriesText / chapterText used to be built here and sent to
+      // GETHRO_PROXY as pre-formatted strings — the exact prompt-engineering
+      // (per-field caps, <entry> XML delimiters, the DOB "weave in world
+      // events" instruction) was readable in the Network tab. That assembly
+      // now happens server-side (handleGenerateStory / buildProfileContext /
+      // buildEntriesText / buildChapterText, GETHRO_PROXY v6.21) — this
+      // function just sends the raw ingredients. No user-visible change: the
+      // proxy reproduces the old formatting byte-for-byte.
       const photoEntries = realEntries.filter(e => e.photo_url);
-      const entriesText  = realEntries.map((e, i) => {
-        // SEC-10: sanitise all user-supplied fields before including in AI prompt
-        let line = (i+1) + '. [' + sanitiseForPrompt(e.category, 80) + ']';
-        if (e.title)    line += ' [Title: '    + sanitiseForPrompt(e.title,    120) + ']';
-        if (e.era)      line += ' [Era: '      + sanitiseForPrompt(e.era,       40) + ']';
-        if (e.location) line += ' [Location: ' + sanitiseForPrompt(e.location, 120) + ']';
-        if (e.people)   line += ' [People: '   + sanitiseForPrompt(e.people,   200) + ']';
-        if (e.chapter)  line += ' [Chapter: '  + sanitiseForPrompt(e.chapter,   80) + ']';
-        if (e.photo_url) {
-          line += ' [PHOTO';
-          if (e.photo_ai_description) line += ' — AI sees: ' + sanitiseForPrompt(e.photo_ai_description, 200);
-          line += ']';
-        }
-        if (e.question && e.question !== 'Tell me about this photo') line += ' Q: ' + cleanQuestion(e.question) + ' —';
-        line += ' <entry>' + sanitiseForPrompt(e.answer, 3000) + '</entry>';
-        return line;
-      }).join('\n');
-
-      // Group by chapter for chapter-length mode
-      const byChapter = {};
-      realEntries.forEach(e => {
-        const ch = e.chapter || e.category || 'Unspecified';
-        if (!byChapter[ch]) byChapter[ch] = [];
-        byChapter[ch].push(e);
-      });
-      const chapterText = Object.entries(byChapter).map(([ch, ents]) =>
-        '=== ' + sanitiseForPrompt(ch, 80).toUpperCase() + ' ===\n' +
-        ents.map((e, i) => {
-          let line = (i+1) + '.';
-          if (e.title) line += ' [' + sanitiseForPrompt(e.title, 120) + ']';
-          if (e.question && e.question !== 'Tell me about this photo') line += ' Q: ' + cleanQuestion(e.question) + ' —';
-          line += ' <entry>' + sanitiseForPrompt(e.answer, 3000) + '</entry>';
-          return line;
-        }).join('\n')
-      ).join('\n\n');
-
       const wordCount = realEntries.reduce((s, e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
 
       // ── In My Own Words — no AI, render entries as written ───────────────
@@ -12188,6 +12155,29 @@
       const iSongStyle       = (format === 'song')   ? (songStyle  || '')          : null;
       const iSongLength      = (format === 'song')   ? (songLength || 'full')      : null;
 
+      // EDGE-04: raw entries + profile — proxy assembles the prompt strings.
+      // hasPhoto is a boolean, not the signed photo_url itself: the prompt
+      // only ever needed to know a photo was attached (plus its AI
+      // description), never the URL, so the URL no longer leaves the client
+      // for this action.
+      const storyEntries = realEntries.map(e => ({
+        category: e.category,
+        title: e.title,
+        era: e.era,
+        location: e.location,
+        people: e.people,
+        chapter: e.chapter,
+        hasPhoto: !!e.photo_url,
+        photo_ai_description: e.photo_ai_description,
+        question: e.question,
+        answer: e.answer,
+      }));
+      const storyProfile = {
+        name: userProfile.name,
+        sex:  userProfile.sex,
+        dob:  userProfile.dob,
+      };
+
       const storyRes = await callGethro('generate_story', {
         format,
         scope,
@@ -12199,10 +12189,8 @@
         songStyle:       iSongStyle,
         songLength:      iSongLength,
         theme:           (theme && format !== 'mywords') ? String(theme).slice(0, 100) : null,  // APP-47
-        profileContext,
-        entriesText,
-        chapterText,
-        wordCount,
+        entries:         storyEntries,
+        profile:         storyProfile,
       });
       const story = storyRes.story;
 
@@ -15607,20 +15595,23 @@
     return q.replace(/\s*\[tags: .+?\]/, '').trim() || null;
   }
 
-  // SEC-10: sanitise user-supplied text before including it in AI prompts.
-  // Strips common prompt-injection patterns: "ignore above/below", "system:",
-  // triple backticks used as instruction fences, and role-switching phrases.
-  // Also enforces a per-field character cap so oversized inputs can't bloat prompts.
-  // Does NOT alter the stored entry — only the copy sent to the AI.
+  // EDGE-03 (edge-function-audit-v7_36 Finding 2, SPRINT EDGE): the
+  // injection-pattern regex list that used to live here (ignore-previous-
+  // instructions phrasing, system: prefix, backtick fences, [INST] tags) was
+  // fully readable in shipped JS — publishing a "filter" is really
+  // publishing a bypass map, since anyone can read exactly which phrasings
+  // to avoid. GETHRO_PROXY's own sanitiseForPrompt() (server-side, identical
+  // patterns, GETHRO_PROXY.ts) is the real filter and does not depend on the
+  // client having pre-filtered anything — confirmed this session by reading
+  // every call site: handleGenerateStory, handleSuggestThemes, and every
+  // other action that touches user text all run their own server-side
+  // sanitiseForPrompt() independently of what the client sends. This
+  // function is now a length-only truncation; every existing call site
+  // keeps working unchanged (SEC-10 protection is unchanged, just no longer
+  // duplicated — and no longer exposed — client-side).
   function sanitiseForPrompt(text, maxChars) {
     if (!text) return '';
     var s = String(text);
-    // Strip injection trigger phrases (case-insensitive)
-    s = s.replace(/ignore\s+(the\s+)?(above|below|previous|prior|all\s+previous)\s+(instructions?|prompts?|text|context)/gi, '[…]');
-    s = s.replace(/^system\s*:/gim, '[…]:');
-    s = s.replace(/```+/g, '');
-    s = s.replace(/\[INST\]|\[\/INST\]|<\|im_start\|>|<\|im_end\|>/g, '');
-    // Truncate to cap (default 3000 chars per field — enough for any memoir entry)
     var cap = (typeof maxChars === 'number' && maxChars > 0) ? maxChars : 3000;
     if (s.length > cap) s = s.substring(0, cap) + '…';
     return s;
