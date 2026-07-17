@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.43';
+  const APP_VERSION = 'v7.84';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5206,8 +5206,73 @@
     return _LOG_LINE_OFFSET_TABLE[_LOG_LINE_OFFSET_TABLE.length - 1].offset;
   }
 
-  const SUPABASE_URL  = 'https://lsnbfsxlmqokbxnforpv.supabase.co';
-  const SUPABASE_ANON = 'sb_publishable_r9dS2qSUTedOEoJYnaAM8A_M5HIgSXk';
+  // ── CRED-08: runtime environment self-detection ─────────────────────
+  // Replaces deploy-time SUPABASE_URL/SUPABASE_ANON injection. Root cause this
+  // fixes: deployProduction() computed a per-env project ref (targetSbRef) but
+  // never applied it anywhere — no deploy path has ever actually swapped these
+  // constants, on either the UAT or prod branch. That's why this file shipped
+  // with prod's project baked in regardless of which environment it landed on.
+  // Self-detection removes the swap step entirely: one build, both projects'
+  // PUBLIC keys shipped inside it (anon/publishable keys are meant to be
+  // public — no exposure from this), correct one picked by matching
+  // location.hostname against the known UAT/prod URLs. This also makes
+  // "promote UAT to prod" a true promotion — identical tested bytes go live,
+  // no rebuild-with-different-constants step to silently skip (the exact bug
+  // CRED-08 found in deployToProd()'s raw git-merge promotion path).
+  //
+  // Deliberately FAILS CLOSED: an unrecognised hostname (local file://, a
+  // stray preview-branch URL, etc.) does not fall back to prod. It stops the
+  // app with a visible error instead of ever risking a dev/test session
+  // silently reading or writing real user data.
+  const ENV_CONFIG = {
+    'uat.life-b44.pages.dev': {
+      label: 'UAT',
+      SUPABASE_URL:  'https://kjxbcbrfvyvvzwtvlspo.supabase.co',
+      SUPABASE_ANON: 'sb_publishable_uCfbKJ4Ht9IMPLvg3OPI6Q_aXtBl14L',
+    },
+    'lifetold.app': {
+      label: 'PROD',
+      SUPABASE_URL:  'https://lsnbfsxlmqokbxnforpv.supabase.co',
+      SUPABASE_ANON: 'sb_publishable_r9dS2qSUTedOEoJYnaAM8A_M5HIgSXk',
+    },
+    'www.lifetold.app': {
+      label: 'PROD',
+      SUPABASE_URL:  'https://lsnbfsxlmqokbxnforpv.supabase.co',
+      SUPABASE_ANON: 'sb_publishable_r9dS2qSUTedOEoJYnaAM8A_M5HIgSXk',
+    },
+  };
+  const _envEntry = ENV_CONFIG[location.hostname];
+  if (!_envEntry) {
+    document.write(
+      '<div style="font-family:sans-serif;max-width:520px;margin:80px auto;padding:24px;' +
+      'border:2px solid #c0392b;border-radius:8px;color:#c0392b;text-align:center">' +
+      '<h2 style="margin-top:0">Unrecognised environment</h2>' +
+      '<p>This build does not know which Supabase project to use for host <code>' +
+      location.hostname + '</code>, so it has stopped rather than guessing (see CRED-08). ' +
+      'Add this host to ENV_CONFIG if it is a real deploy target.</p></div>'
+    );
+    throw new Error('CRED-08: unrecognised host ' + location.hostname + ' — refusing to guess an environment');
+  }
+  const APP_ENV        = _envEntry.label; // 'UAT' | 'PROD' — drives the visible banner below
+  const SUPABASE_URL   = _envEntry.SUPABASE_URL;
+  const SUPABASE_ANON  = _envEntry.SUPABASE_ANON;
+
+  // Visible UAT indicator (developer requirement: environment must be obvious
+  // to a human, not just correct under the hood). Fixed, always-on-top, can't
+  // be dismissed or scrolled away — a UAT session should never *look* like
+  // prod. Deliberately does nothing on PROD (no banner = normal state).
+  if (APP_ENV === 'UAT') {
+    document.addEventListener('DOMContentLoaded', function() {
+      var b = document.createElement('div');
+      b.textContent = '⚠ UAT — test environment, not production data';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;' +
+        'background:#c0392b;color:#fff;text-align:center;font:600 13px sans-serif;' +
+        'padding:6px 8px;letter-spacing:.3px;pointer-events:none';
+      document.body.appendChild(b);
+      document.body.style.paddingTop = (document.body.style.paddingTop ? document.body.style.paddingTop : '0px');
+      document.documentElement.style.setProperty('--uat-banner-offset', '28px');
+    });
+  }
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
@@ -5258,7 +5323,7 @@
   // KNOWLEDGE_GENERATED_AT: updated every 10 builds when a generation build refreshes
   // the full GETHRO_APP_KNOWLEDGE array and the deployer pushes it to life_config.
   // Phase 2: knowledge fetched and injected server-side by GETHRO_PROXY (not client).
-  const KNOWLEDGE_GENERATED_AT = 'v7.11';
+  const KNOWLEDGE_GENERATED_AT = 'v7.77';
 
   // ── Theme ────────────────────────────────────────────────────────
   function initTheme() {
