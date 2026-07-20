@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.88';
+  const APP_VERSION = 'v7.87';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9239,6 +9239,186 @@
     var _active      = false;
     var _mime        = '';
     var _callbacks   = {};
+    // v7.87c: raw-PCM tap, piggybacked on _analyserCtx/its MediaStreamSource
+    // (see start()). Primary source for Azure WAV — see _drainPcmToWav below.
+    var _pcmProcessor   = null;
+    var _pcmGain        = null;
+    var _pcmSamples     = [];  // array of Float32Array chunks since last drain
+    var _pcmSampleRate  = 0;
+
+    // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
+    // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
+    // 16kHz mono, or genuine OGG-container Opus — and does zero transcoding
+    // itself (that's an SDK+GStreamer-only feature, not available to the REST
+    // endpoint). No browser's MediaRecorder reliably produces either: Chrome
+    // emits audio/webm;codecs=opus (Opus codec, WRONG container), Safari
+    // emits audio/mp4 (AAC, unsupported entirely). Relabeling the
+    // Content-Type header server-side can't fix a container mismatch — Azure
+    // parses the actual bytes. So instead we decode whatever the browser gave
+    // us (decodeAudioData handles webm/opus and mp4/aac natively — both are
+    // standard playback codecs every modern browser can decode) and manually
+    // re-encode as a real WAV file. This is the same blob for every browser,
+    // so Azure gets a format it actually accepts for the first time.
+    // Falls back to the original (untranscoded) blob on any failure — the
+    // server already treats unrecognised mimeTypes as "skip Azure, use Groq",
+    // so a WAV-encode failure just means this one chunk goes Groq-only
+    // instead of crashing the turn.
+    // v7.87b: shared decode AudioContext, created lazily once and reused for
+    // every chunk. Creating+closing a fresh AudioContext on every single
+    // silence-triggered flush (potentially every few seconds) is unreliable
+    // on Safari specifically — rapid context churn is a known source of
+    // decodeAudioData flakiness there, separate from the fragmented-mp4
+    // decode issue itself. One long-lived context removes that variable.
+    var _sharedDecodeCtx = null;
+    function _getSharedDecodeCtx() {
+      if (_sharedDecodeCtx) return _sharedDecodeCtx;
+      var AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxCls) throw new Error('no AudioContext support');
+      _sharedDecodeCtx = new AudioCtxCls();
+      return _sharedDecodeCtx;
+    }
+
+    async function _blobToWav16kMono(blob) {
+      const decodeCtx = _getSharedDecodeCtx();
+      const arrayBuf = await blob.arrayBuffer();
+      // Promise form (Safari 14.1+, all current Chrome/Firefox). No legacy
+      // callback-form fallback — if this rejects, the caller's catch handles
+      // it by falling back to the original blob. Do NOT close decodeCtx —
+      // it's shared and reused across calls (see _getSharedDecodeCtx).
+      const audioBuffer = await decodeCtx.decodeAudioData(arrayBuf.slice(0));
+      // v7.87b: diagnostic — if decoded duration looks implausibly short
+      // relative to the source blob, that's the known WebKit fragmented-mp4
+      // decodeAudioData issue (decode silently truncates), not a bug in the
+      // resample/WAV-encode step below. Logged so a recurrence is traceable.
+      dbg('MIC_MGR', 'decodeAudioData: srcBytes=' + blob.size + ' decodedDuration=' + audioBuffer.duration.toFixed(3) + 's channels=' + audioBuffer.numberOfChannels + ' sampleRate=' + audioBuffer.sampleRate);
+      const targetRate = 16000;
+      const frameCount = Math.max(1, Math.ceil(audioBuffer.duration * targetRate));
+      // Mono output channel count = 1 — OfflineAudioContext downmixes any
+      // stereo/multi-channel source automatically when connected to a
+      // 1-channel destination, and resamples to targetRate in the same pass.
+      const offlineCtx = new OfflineAudioContext(1, frameCount, targetRate);
+      const src = offlineCtx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(offlineCtx.destination);
+      src.start(0);
+      const rendered = await offlineCtx.startRendering();
+      const pcm = rendered.getChannelData(0); // Float32Array, range -1..1
+
+      const numSamples = pcm.length;
+      const buf = new ArrayBuffer(44 + numSamples * 2);
+      const view = new DataView(buf);
+      function writeStr(offset, str) {
+        for (var i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + numSamples * 2, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);              // PCM fmt chunk size
+      view.setUint16(20, 1, true);                // audio format = 1 (PCM)
+      view.setUint16(22, 1, true);                // channels = 1 (mono)
+      view.setUint32(24, targetRate, true);       // sample rate
+      view.setUint32(28, targetRate * 2, true);   // byte rate = rate * blockAlign
+      view.setUint16(32, 2, true);                // block align = channels * bytesPerSample
+      view.setUint16(34, 16, true);               // bits per sample
+      writeStr(36, 'data');
+      view.setUint32(40, numSamples * 2, true);
+      var offset = 44;
+      for (var i = 0; i < numSamples; i++, offset += 2) {
+        var s = Math.max(-1, Math.min(1, pcm[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    // v7.87c: primary path — builds a WAV directly from raw PCM samples
+    // tapped straight off the mic's Web Audio graph (see start()). No
+    // MediaRecorder container, no decodeAudioData involved at any point, so
+    // none of the WebKit fragmented-mp4 decode flakiness (intermittent
+    // failures, and — worse — occasional silent truncation to a fraction of
+    // a second, which is what caused the empty Azure transcript) can affect
+    // this path. Drains and clears the buffer, so each call returns only the
+    // audio captured since the previous call — same segmenting behaviour the
+    // MediaRecorder-based _chunks array already has for the archive path.
+    // Returns null (not a Blob) if no PCM tap is available or nothing was
+    // captured, so callers can fall back cleanly.
+    function _drainPcmToWav() {
+      if (!_pcmSampleRate || !_pcmSamples.length) return null;
+      var chunks = _pcmSamples;
+      _pcmSamples = [];
+      var totalLen = 0;
+      for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
+      if (totalLen === 0) return null;
+      var merged = new Float32Array(totalLen);
+      var off = 0;
+      for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], off); off += chunks[i].length; }
+
+      var srcRate = _pcmSampleRate;
+      var targetRate = 16000;
+      var ratio = srcRate / targetRate;
+      var outLen = Math.max(1, Math.floor(merged.length / ratio));
+      var resampled = new Float32Array(outLen);
+      // Linear-interpolation resample — plenty for speech-to-text (neither
+      // Azure nor Whisper need audiophile-grade resampling quality).
+      for (var j = 0; j < outLen; j++) {
+        var srcPos = j * ratio;
+        var i0 = Math.floor(srcPos);
+        var i1 = Math.min(i0 + 1, merged.length - 1);
+        var frac = srcPos - i0;
+        resampled[j] = merged[i0] * (1 - frac) + merged[i1] * frac;
+      }
+
+      var numSamples = resampled.length;
+      var buf = new ArrayBuffer(44 + numSamples * 2);
+      var view = new DataView(buf);
+      function writeStr(offset, str) {
+        for (var k = 0; k < str.length; k++) view.setUint8(offset + k, str.charCodeAt(k));
+      }
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + numSamples * 2, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, targetRate, true);
+      view.setUint32(28, targetRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, 'data');
+      view.setUint32(40, numSamples * 2, true);
+      var offset = 44;
+      for (var m = 0; m < numSamples; m++, offset += 2) {
+        var s = Math.max(-1, Math.min(1, resampled[m]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      dbg('MIC_MGR', 'PCM tap -> WAV: srcSamples=' + merged.length + ' srcRate=' + srcRate + ' outSamples=' + numSamples + ' durationSec=' + (numSamples / targetRate).toFixed(3));
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    // Wraps _blobToWav16kMono with the fallback-on-failure behaviour used by
+    // both flush() branches below. Returns { blob, mime, ext }.
+    async function _tryTranscodeToWav(blob, fallbackMime) {
+      try {
+        var wavBlob = await _blobToWav16kMono(blob);
+        return { blob: wavBlob, mime: 'audio/wav', ext: 'wav' };
+      } catch (e) {
+        dbgErr('MIC_MGR', 'WAV transcode failed (srcBytes=' + blob.size + ', mime=' + fallbackMime + ') — sending original blob (Azure will be skipped server-side, Groq still works):', e);
+        return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
+      }
+    }
+
+    // Top-level chooser for each flush(): raw PCM tap first (most reliable —
+    // see _drainPcmToWav), then decode-based transcode as a second attempt,
+    // then the original untranscoded blob as the last resort (server skips
+    // Azure for that and uses Groq, same as today — unchanged, Groq is not
+    // touched by any of this).
+    async function _getWavForSegment(fallbackBlob, fallbackMime) {
+      var pcmWav = _drainPcmToWav();
+      if (pcmWav) return { blob: pcmWav, mime: 'audio/wav', ext: 'wav' };
+      dbg('MIC_MGR', 'No raw PCM captured for this segment — falling back to container decode');
+      return _tryTranscodeToWav(fallbackBlob, fallbackMime);
+    }
 
     // Pick best MIME type: ogg/opus preferred (Chrome, Firefox); mp4 fallback (Safari).
     // Deliberately excludes audio/webm — Inworld STT rejects it; Whisper handles ogg/mp4.
@@ -9302,7 +9482,15 @@
         var tail = _chunks.slice(snap.length);
         var blob = new Blob(snap.concat(tail), { type: mime || 'audio/ogg' });
         _chunks = [];
-        if (callbacks.onChunk) await callbacks.onChunk(blob, mime, _ext(mime), true);
+        // v7.87: transcode to real 16kHz mono WAV so Azure gets a format it
+        // actually accepts. Passed as EXTRA args (wavBlob/wavMime/wavExt) —
+        // the original blob/mime/ext still flow through unchanged for
+        // _turnSegments/_stageCurrentTurn archiving, since concatenating
+        // multiple standalone WAV files (each with its own RIFF header)
+        // would corrupt that assembled blob. Only the live per-chunk
+        // transcription call should use the WAV version.
+        var out = await _getWavForSegment(blob, mime);
+        if (callbacks.onChunk) await callbacks.onChunk(blob, mime, _ext(mime), true, out.blob, out.mime, out.ext);
       } else {
         // Restart strategy: stop old recorder, collect its chunks, start new one.
         // Each segment is a standalone valid container with its own header.
@@ -9324,7 +9512,11 @@
         var newRec  = _makeRecorder(_stream, mime, callbacks);
         if (newRec) { newRec.start(100); _recorder = newRec; }
 
-        if (callbacks.onChunk) await callbacks.onChunk(blob2, mime, _ext(mime), false);
+        // v7.87: transcode to real 16kHz mono WAV so Azure gets a format it
+        // actually accepts. Extra args (wavBlob/wavMime/wavExt) — original
+        // blob2/mime/ext unchanged, same reasoning as the final branch above.
+        var out2 = await _getWavForSegment(blob2, mime);
+        if (callbacks.onChunk) await callbacks.onChunk(blob2, mime, _ext(mime), false, out2.blob, out2.mime, out2.ext);
       }
     }
 
@@ -9369,9 +9561,39 @@
         _analyser.fftSize = 512;
         src.connect(_analyser);
         dbg('MIC_MGR', 'AnalyserNode ready — ctx state=' + _analyserCtx.state);
+
+        // v7.87c: raw-PCM tap on the SAME context/source, so Azure gets a
+        // real WAV built directly from PCM samples instead of relying on
+        // MediaRecorder-container decode (see _drainPcmToWav for why).
+        // ScriptProcessorNode is deprecated but universally supported
+        // (including Safari/iOS) and needs no separate AudioWorklet module
+        // file — simplest reliable option for this. Routed through a
+        // gain=0 node before destination: ScriptProcessorNode requires a
+        // destination connection to fire 'audioprocess' reliably in most
+        // implementations, but we don't want the mic audibly looped back.
+        try {
+          _pcmSampleRate = _analyserCtx.sampleRate;
+          _pcmSamples = [];
+          _pcmProcessor = _analyserCtx.createScriptProcessor(4096, 1, 1);
+          _pcmProcessor.onaudioprocess = function(ev) {
+            // Must copy — inputBuffer's backing data is reused/invalidated
+            // once this callback returns.
+            _pcmSamples.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+          };
+          _pcmGain = _analyserCtx.createGain();
+          _pcmGain.gain.value = 0;
+          src.connect(_pcmProcessor);
+          _pcmProcessor.connect(_pcmGain);
+          _pcmGain.connect(_analyserCtx.destination);
+          dbg('MIC_MGR', 'PCM tap ready — sampleRate=' + _pcmSampleRate);
+        } catch (pcmErr) {
+          dbgWarn('MIC_MGR', 'PCM tap setup failed — will fall back to container decode for WAV:', pcmErr.message);
+          _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
+        }
       } catch(acErr) {
         dbgWarn('MIC_MGR', 'AudioContext failed — onVolume will not fire:', acErr.message);
         _analyserCtx = null; _analyser = null;
+        _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
       }
       _silenceRAF = requestAnimationFrame(_silenceLoop);
       dbg('MIC_MGR', 'Started — mime=' + (_mime || 'default'));
@@ -9388,6 +9610,13 @@
 
     function release() {
       if (_silenceRAF) { cancelAnimationFrame(_silenceRAF); _silenceRAF = null; }
+      // v7.87c: tear down the PCM tap before closing _analyserCtx (it lives
+      // on that same context).
+      try {
+        if (_pcmProcessor) { _pcmProcessor.disconnect(); _pcmProcessor.onaudioprocess = null; }
+        if (_pcmGain) _pcmGain.disconnect();
+      } catch (e) {}
+      _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
       if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
@@ -9409,6 +9638,11 @@
       flush:   flush,
       stop:    stop,
       release: release,
+      // v7.87: exported so the separate AGP mic implementation (_agpFlushChunk /
+      // _agpFlushAndSend — has its own MediaRecorder, doesn't go through
+      // flush()/onChunk above) can transcode its blobs to Azure-compatible WAV
+      // too, without duplicating the decode/resample/encode logic.
+      toWav16kMono: _tryTranscodeToWav,
     };
   })();
 
@@ -9621,9 +9855,18 @@
 
     // ── Start MicManager ────────────────────────────────────────────────────
     var err = await MicManager.start({
-      onChunk: async function(blob, mime, ext, isFinal) {
+      onChunk: async function(blob, mime, ext, isFinal, wavBlob, wavMime, wavExt) {
         // isFinal=false: chunk flush (silence or periodic timer)
         // isFinal=true:  user tapped stop or max time reached
+        // v7.87: wavBlob/wavExt are the transcoded 16kHz mono WAV version of
+        // this same segment (falls back to the original blob/ext if the
+        // client-side transcode failed — see _tryTranscodeToWav). Only used
+        // for the live transcription call below; _turnSegments intentionally
+        // keeps accumulating the ORIGINAL blob so _stageCurrentTurn()'s later
+        // concatenation into one archive blob stays valid (concatenating
+        // several standalone WAV files would corrupt that assembled blob).
+        var xcribeBlob = wavBlob || blob;
+        var xcribeExt  = wavExt || ext;
         // APP-55 Phase 4: accumulate into THIS turn's segment array regardless of
         // size (even tiny chunks contribute valid audio; Whisper's min-size check
         // below is about live transcription quality, not archive completeness)
@@ -9645,13 +9888,13 @@
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          _transcribeBlob(blob, ext, true).catch(function(e) {
+          _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
             dbgErr('MIC', 'Background final transcription failed:', e.message);
           });
         } else {
           _micTranscribing = true;
           setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
-          await _transcribeBlob(blob, ext, isFinal);
+          await _transcribeBlob(xcribeBlob, xcribeExt, isFinal);
           _micTranscribing = false;
           if (_micState === 'recording') {
             setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
@@ -22291,8 +22534,12 @@
       if (!session) throw new Error('Not authenticated');
       var form = new FormData();
       form.append('action', 'transcribe');
-      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'ogg';
-      form.append('audio', blob, 'agp_chunk.' + ext);
+      // v7.87: transcode to real 16kHz mono WAV so Azure gets a format it
+      // actually accepts (mp4/webm never worked — see MicManager for why).
+      // Falls back to the original blob/ext on transcode failure.
+      var agpOut = await MicManager.toWav16kMono(blob, mime);
+      var ext = agpOut.ext;
+      form.append('audio', agpOut.blob, 'agp_chunk.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
@@ -22413,8 +22660,10 @@
       if (!session) throw new Error('Not authenticated');
       var form = new FormData();
       form.append('action', 'transcribe');
-      var ext = (_agpMicMime && _agpMicMime.includes('mp4')) ? 'm4a' : 'ogg';
-      form.append('audio', blob, 'agp_chat.' + ext);
+      // v7.87: same WAV transcode as _agpFlushChunk — see comment there.
+      var agpFinalOut = await MicManager.toWav16kMono(blob, _agpMicMime || 'audio/ogg');
+      var ext = agpFinalOut.ext;
+      form.append('audio', agpFinalOut.blob, 'agp_chat.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
