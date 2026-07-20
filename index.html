@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.84';
+  const APP_VERSION = 'v7.83';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -22104,7 +22104,22 @@
   // Platform note: logs UA at mic-start to help debug future device-specific issues.
 
   // State
-  // (removed v7.19 — now internal to MicManager)
+  // APP-XX FIX: _agpMicRecorder was mistakenly removed here in the v7.19 Phase 0
+  // MicManager refactor. Unlike the sibling variable that WAS fully superseded
+  // (removed v7.19 comment below, correctly), this one is still live: AGP layers
+  // its own short-lived chunk-boundary MediaRecorder instances on top of
+  // MicManager.stream (see _agpFlushChunk/_agpFlushAndSend) — that's intentional
+  // architecture, independent of MicManager's own internal recorder. Without this
+  // declaration, every read in _agpFlushChunk/_agpFlushAndSend threw
+  // "ReferenceError: _agpMicRecorder is not defined" on the very first silence-
+  // triggered flush, so AGP dictation recorded audio but never actually
+  // transcribed or sent anything — looked exactly like "the mic isn't listening"
+  // with zero user-facing error (the throw was only ever caught by the global
+  // unhandledrejection logger, never shown as a toast). Confirmed via
+  // life_activity_log: repeated unhandled_rejection entries, area=UNHANDLED,
+  // platform=Android/Chrome, at _agpFlushAndSend/_agpFlushChunk via _silenceLoop's
+  // onVolume callback.
+  var _agpMicRecorder     = null;
   // (removed v7.19 — now internal to MicManager)
   var _agpMicChunks       = [];
   var _agpMicMime         = '';
