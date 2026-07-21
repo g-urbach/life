@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.94';
+  const APP_VERSION = 'v7.93';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9535,6 +9535,21 @@
       return _pcmFloat32ToWavBlob(merged, _turnPcmSampleRate, 'PCM tap -> WAV (whole turn)');
     }
 
+    // v7.94: non-destructive counterpart to _drainTurnPcmToWav — reads a
+    // snapshot of whatever PCM has been captured so far THIS turn without
+    // clearing the buffer, so it can be called repeatedly while the mic is
+    // still recording (progressive mid-turn correction — see
+    // _runProgressiveCorrection in startMemMic). Copies the chunk array
+    // reference before merging so concurrent pushes from the still-running
+    // analyser tap can't mutate the array out from under us mid-merge.
+    function _peekTurnPcmToWav() {
+      if (!_turnPcmSampleRate || !_turnPcmSamples.length) return null;
+      var chunks = _turnPcmSamples.slice(); // snapshot only — original buffer keeps accumulating
+      var merged = _mergeFloat32Chunks(chunks);
+      if (!merged) return null;
+      return _pcmFloat32ToWavBlob(merged, _turnPcmSampleRate, 'PCM tap -> WAV (turn peek)');
+    }
+
     function _resetTurnPcm() {
       _turnPcmSamples = [];
     }
@@ -9801,6 +9816,8 @@
       // _stageCurrentTurn). Fixes the fullPass/"context correction" regression.
       resetTurnPcm: _resetTurnPcm,
       drainTurnPcmToWav: _drainTurnPcmToWav,
+      // v7.94: non-destructive peek, used for progressive mid-recording correction.
+      peekTurnPcmToWav: _peekTurnPcmToWav,
     };
   })();
 
@@ -9843,9 +9860,22 @@
   let _micPreRecordLength  = 0;  // APP-55 Phase 4: textarea length at mic-start — doubles as this turn's offset (_turnOffset)
   let _turnSegments        = []; // APP-55 Phase 4: chunks for the CURRENT mic session only — reset each mic-open, assembled into one blob at mic-stop
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
-  let _autoApplyTimer      = null;  // v7.93: fires _autoApplyVoiceTurns() ~10s after mic stops — no Save required
+  let _autoApplyTimer      = null;  // v7.93: fires _autoApplyVoiceTurns() ~10s after mic stops — no Save required. v7.94: this is now purely the ARCHIVAL pass (permanent voice-archive row + DB correction) — see _autoApplyVoiceTurns below. Live in-progress correction is handled separately by the progressive-correction debounce.
   let _autoApplyEntryId    = null;  // v7.93: entry ID pre-saved by auto-apply; memDone() PATCHes this instead of inserting a new row
   let _autoApplyTurnCount  = 0;     // v7.93: number of staged turns already committed by auto-apply (so memDone skips them)
+  // v7.94: progressive mid-recording correction — replaces the old "wait for
+  // mic to stop" model. The mic is routinely left open for minutes with the
+  // user pausing and resuming, so a stop-triggered timer could sit unfired
+  // for a long time. Instead, every successful live chunk re-arms a short
+  // debounce; once ~5s pass with no new chunk (i.e. a natural pause), a
+  // fuller-context re-transcription of the whole turn-so-far runs and patches
+  // the textarea in place. Purely client-side (no DB write, no storage
+  // upload — see _runProgressiveCorrection), so it's cheap to run repeatedly
+  // through a long recording. Unrelated to _autoApplyTimer above, which only
+  // fires once per turn at true mic-stop for the permanent archive record.
+  let _correctionDebounceTimer = null;
+  let _correctionInFlight      = false;
+  const CORRECTION_DEBOUNCE_MS = 5000;
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
@@ -9976,6 +10006,12 @@
           _userHasTyped = true;
           memCheckButtons();
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcript appended — ' + transcript.length + ' chars');
+          // v7.94: every live chunk (mid-recording) re-arms the progressive
+          // correction debounce — a natural pause is what should trigger the
+          // fuller-context pass, not a mic-stop event that may be minutes away.
+          // The final chunk skips this: mic-stop already runs the archival
+          // correction pass (_autoApplyVoiceTurns) which supersedes it.
+          if (!isFinal) _scheduleProgressiveCorrection();
         } else if (transcript) {
           dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
         } else if (isFinal) {
@@ -9991,6 +10027,90 @@
         } else {
           toast('Transcription unavailable — ' + err.message, 6000);
         }
+      }
+    }
+
+    // ── v7.94: progressive mid-recording correction ─────────────────────────
+    // Fires ~5s after the last live chunk landed (debounced — resets on every
+    // new chunk, so a continuously-talking user never triggers it mid-thought).
+    // Peeks the whole-turn PCM tap (non-destructive — recording keeps going),
+    // sends it through the existing `transcribe` action with fullPass=true
+    // (same "fuller context, straight to Groq Whisper, no 10 MB/Azure limits"
+    // path the archive correction uses — just without requiring an
+    // already-committed voice_archive row, so it's safe to call repeatedly
+    // with no storage/DB cost). If the result differs from what a fragmented
+    // live-chunk transcript produced, patches the textarea from this turn's
+    // offset onward.
+    //
+    // Clobber guard: purely client-side equivalent of the server-side
+    // baseline check in handleApplyVoiceTranscript — if the textarea has
+    // changed at all (user edited, or a newer chunk/correction landed) since
+    // this pass started, discard silently. The next debounce cycle will
+    // supersede it with a more complete pass anyway.
+    function _scheduleProgressiveCorrection() {
+      if (_correctionDebounceTimer) clearTimeout(_correctionDebounceTimer);
+      _correctionDebounceTimer = setTimeout(_runProgressiveCorrection, CORRECTION_DEBOUNCE_MS);
+      dbg('VA', 'Progressive correction debounce (re)armed — ' + (CORRECTION_DEBOUNCE_MS / 1000) + 's');
+    }
+
+    async function _runProgressiveCorrection() {
+      _correctionDebounceTimer = null;
+      if (_correctionInFlight) {
+        dbg('VA', 'Progressive correction: previous pass still in flight — skipping this cycle');
+        return;
+      }
+      var answerEl = document.getElementById('memAnswer');
+      if (!answerEl) return;
+      var baseline = answerEl.value;
+      if (baseline.length <= _micPreRecordLength) {
+        dbg('VA', 'Progressive correction: nothing transcribed yet this turn — skipping');
+        return;
+      }
+      var turnWav = MicManager.peekTurnPcmToWav();
+      if (!turnWav || turnWav.size === 0) {
+        dbg('VA', 'Progressive correction: no PCM captured yet — skipping');
+        return;
+      }
+      _correctionInFlight = true;
+      try {
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        form.append('action', 'transcribe');
+        form.append('fullPass', 'true');
+        form.append('audio', turnWav, 'turn.wav');
+        var res = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+          body: form,
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Correction transcribe failed ' + res.status);
+        var improved = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+        if (!improved) {
+          dbg('VA', 'Progressive correction: empty transcript — skipping');
+          return;
+        }
+        var nowVal = answerEl.value;
+        if (nowVal !== baseline) {
+          dbg('VA', 'Progressive correction: textarea changed since pass started — discarding');
+          return;
+        }
+        var prefix = nowVal.slice(0, _micPreRecordLength);
+        var sep = (prefix && !prefix.endsWith('\n') && !prefix.endsWith(' ')) ? ' ' : '';
+        var patched = prefix + sep + improved;
+        if (patched === nowVal) {
+          dbg('VA', 'Progressive correction: no change — skipping');
+          return;
+        }
+        answerEl.value = patched;
+        _userHasTyped = true;
+        memCheckButtons();
+        dbg('VA', 'Progressive correction: patched turn text — ' + improved.length + ' chars');
+      } catch(e) {
+        dbgErr('VA', 'Progressive correction failed:', e.message);
+      } finally {
+        _correctionInFlight = false;
       }
     }
 
@@ -10052,6 +10172,9 @@
         if (blob.size < MIC_MIN_CHUNK_BYTES) {
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
           if (isFinal) {
+            // v7.94: mic has genuinely stopped — the archival pass below takes
+            // over from here, so cancel any pending progressive-correction debounce.
+            if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
             _stageCurrentTurn();
             _micRelease(); // v7.32: release stream tracks so browser tab red indicator clears (was missing from this early-return path)
             _setMicState('idle'); setMemStatus('idle', '');
@@ -10064,6 +10187,10 @@
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
+          // v7.94: mic has genuinely stopped — cancel any pending progressive-
+          // correction debounce; the archival pass (_autoApplyVoiceTurns) below
+          // now owns getting the final text right.
+          if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
           // Go idle immediately on stop — final chunk transcribes in background (10s timeout).
           // Archive re-transcription handles quality. User never waits on orange screen.
           _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
@@ -10231,6 +10358,10 @@
     if (_autoApplyTimer) { clearTimeout(_autoApplyTimer); _autoApplyTimer = null; }
     _autoApplyEntryId   = null;
     _autoApplyTurnCount = 0;
+    // v7.94: cancel any pending progressive-correction debounce too — a discard
+    // must never patch the textarea of a form that's about to be wiped.
+    if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
+    _correctionInFlight = false;
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recActive = false;
