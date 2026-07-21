@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.87';
+  const APP_VERSION = 'v7.88';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9034,7 +9034,8 @@
   async function _commitAndApplyVoiceTurn(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
-    var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
+    var ext = (turn.mime || '').includes('wav') ? 'wav'
+            : (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
             : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
 
     var committed;
@@ -9245,6 +9246,11 @@
     var _pcmGain        = null;
     var _pcmSamples     = [];  // array of Float32Array chunks since last drain
     var _pcmSampleRate  = 0;
+    // v7.87d: whole-turn accumulation — NOT cleared by release()/restart, only
+    // by resetTurnPcm() (turn start) or draining (turn staged). See
+    // _drainTurnPcmToWav() below for why this exists.
+    var _turnPcmSamples     = [];
+    var _turnPcmSampleRate  = 0;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -9342,18 +9348,11 @@
     // MediaRecorder-based _chunks array already has for the archive path.
     // Returns null (not a Blob) if no PCM tap is available or nothing was
     // captured, so callers can fall back cleanly.
-    function _drainPcmToWav() {
-      if (!_pcmSampleRate || !_pcmSamples.length) return null;
-      var chunks = _pcmSamples;
-      _pcmSamples = [];
-      var totalLen = 0;
-      for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-      if (totalLen === 0) return null;
-      var merged = new Float32Array(totalLen);
-      var off = 0;
-      for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], off); off += chunks[i].length; }
-
-      var srcRate = _pcmSampleRate;
+    // v7.87d: shared resample+encode core, extracted so both the per-chunk
+    // drain (_drainPcmToWav) and the whole-turn drain (_drainTurnPcmToWav,
+    // used to fix the archive/fullPass regression — see turn-scoped buffer
+    // below) build WAV bytes the same way instead of duplicating this logic.
+    function _pcmFloat32ToWavBlob(merged, srcRate, logLabel) {
       var targetRate = 16000;
       var ratio = srcRate / targetRate;
       var outLen = Math.max(1, Math.floor(merged.length / ratio));
@@ -9392,8 +9391,54 @@
         var s = Math.max(-1, Math.min(1, resampled[m]));
         view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
       }
-      dbg('MIC_MGR', 'PCM tap -> WAV: srcSamples=' + merged.length + ' srcRate=' + srcRate + ' outSamples=' + numSamples + ' durationSec=' + (numSamples / targetRate).toFixed(3));
+      dbg('MIC_MGR', (logLabel || 'PCM tap -> WAV') + ': srcSamples=' + merged.length + ' srcRate=' + srcRate + ' outSamples=' + numSamples + ' durationSec=' + (numSamples / targetRate).toFixed(3));
       return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    function _mergeFloat32Chunks(chunks) {
+      var totalLen = 0;
+      for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
+      if (totalLen === 0) return null;
+      var merged = new Float32Array(totalLen);
+      var off = 0;
+      for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], off); off += chunks[i].length; }
+      return merged;
+    }
+
+    function _drainPcmToWav() {
+      if (!_pcmSampleRate || !_pcmSamples.length) return null;
+      var chunks = _pcmSamples;
+      _pcmSamples = [];
+      var merged = _mergeFloat32Chunks(chunks);
+      if (!merged) return null;
+      return _pcmFloat32ToWavBlob(merged, _pcmSampleRate, 'PCM tap -> WAV (chunk)');
+    }
+
+    // v7.87d: whole-TURN raw-PCM buffer. Separate from _pcmSamples (which is
+    // drained — cleared — on every live-transcription flush) so the full
+    // turn's audio survives across multiple chunk flushes AND across the
+    // mid-turn MicManager restart the recorder does after each flush. Only
+    // cleared by resetTurnPcm() (called at turn start) or by draining here
+    // (called once, when the turn is staged/archived).
+    //
+    // This is what the archive/fullPass "quality correction" path
+    // (_stageCurrentTurn → handleApplyVoiceTranscript, server-side) was
+    // missing: without it, the archived turn blob was still built by
+    // concatenating the raw MediaRecorder segments (webm/mp4/ogg containers),
+    // which Azure's REST endpoint can't parse — so the correction pass fell
+    // through to Groq exactly like live transcription used to, and failed
+    // outright wherever no Groq key is configured (e.g. this UAT project).
+    function _drainTurnPcmToWav() {
+      if (!_turnPcmSampleRate || !_turnPcmSamples.length) return null;
+      var chunks = _turnPcmSamples;
+      _turnPcmSamples = [];
+      var merged = _mergeFloat32Chunks(chunks);
+      if (!merged) return null;
+      return _pcmFloat32ToWavBlob(merged, _turnPcmSampleRate, 'PCM tap -> WAV (whole turn)');
+    }
+
+    function _resetTurnPcm() {
+      _turnPcmSamples = [];
     }
 
     // Wraps _blobToWav16kMono with the fallback-on-failure behaviour used by
@@ -9574,11 +9619,19 @@
         try {
           _pcmSampleRate = _analyserCtx.sampleRate;
           _pcmSamples = [];
+          // v7.87d: turn-scoped rate is set here too (not just at turn start)
+          // because a mid-turn restart tears down and recreates the PCM tap;
+          // the samples pushed after a restart still belong to the same turn
+          // and must resample at whatever rate this particular tap runs at.
+          _turnPcmSampleRate = _analyserCtx.sampleRate;
           _pcmProcessor = _analyserCtx.createScriptProcessor(4096, 1, 1);
           _pcmProcessor.onaudioprocess = function(ev) {
             // Must copy — inputBuffer's backing data is reused/invalidated
-            // once this callback returns.
-            _pcmSamples.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+            // once this callback returns. Same copy is safe to push into both
+            // arrays since neither array mutates the Float32Array it holds.
+            var copy = new Float32Array(ev.inputBuffer.getChannelData(0));
+            _pcmSamples.push(copy);
+            _turnPcmSamples.push(copy);
           };
           _pcmGain = _analyserCtx.createGain();
           _pcmGain.gain.value = 0;
@@ -9589,11 +9642,13 @@
         } catch (pcmErr) {
           dbgWarn('MIC_MGR', 'PCM tap setup failed — will fall back to container decode for WAV:', pcmErr.message);
           _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
+          _turnPcmSampleRate = 0;
         }
       } catch(acErr) {
         dbgWarn('MIC_MGR', 'AudioContext failed — onVolume will not fire:', acErr.message);
         _analyserCtx = null; _analyser = null;
         _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
+        _turnPcmSampleRate = 0;
       }
       _silenceRAF = requestAnimationFrame(_silenceLoop);
       dbg('MIC_MGR', 'Started — mime=' + (_mime || 'default'));
@@ -9643,6 +9698,11 @@
       // flush()/onChunk above) can transcode its blobs to Azure-compatible WAV
       // too, without duplicating the decode/resample/encode logic.
       toWav16kMono: _tryTranscodeToWav,
+      // v7.87d: whole-turn archive fix — resetTurnPcm() called at turn start,
+      // drainTurnPcmToWav() called once when the turn is staged (see
+      // _stageCurrentTurn). Fixes the fullPass/"context correction" regression.
+      resetTurnPcm: _resetTurnPcm,
+      drainTurnPcmToWav: _drainTurnPcmToWav,
     };
   })();
 
@@ -9779,6 +9839,7 @@
     _micSilenceStart     = null;
     _micTranscribing     = false;
     _turnSegments        = []; // APP-55 Phase 4: fresh accumulation for THIS turn only
+    MicManager.resetTurnPcm(); // v7.87d: fresh whole-turn PCM buffer for THIS turn only (archive/fullPass WAV)
     _micPreRecordLength  = (document.getElementById('memAnswer') || {}).value?.length || 0; // APP-55 Phase 4: this turn's offset
 
     // ── Shared transcription helper (used by both chunk and final paths) ────
@@ -9838,8 +9899,24 @@
       if (!_turnSegments.length) return; // nothing recorded this turn (e.g. instant tap-stop)
       var turnMime = MicManager.mime || _micChunkMimeType || 'audio/ogg';
       var turnBlob;
-      try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
-      catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
+      // v7.87d: prefer a real WAV built from the whole turn's raw PCM tap —
+      // this is what handleApplyVoiceTranscript's fullPass re-transcription
+      // (the "fix based on fuller context" feature) needs to reach Azure
+      // successfully; the old container-concatenation approach below never
+      // produced an Azure-acceptable format (and could corrupt across a
+      // mid-turn recorder restart). Falls back to the original approach only
+      // if the PCM tap wasn't available for this turn (e.g. AudioContext
+      // failed to init) — server still handles that gracefully via Groq.
+      var turnWav = MicManager.drainTurnPcmToWav();
+      if (turnWav) {
+        turnBlob = turnWav;
+        turnMime = 'audio/wav';
+        dbg('VA', 'Phase 4: turn archived from whole-turn PCM tap — ' + turnBlob.size + ' bytes (audio/wav)');
+      } else {
+        try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
+        catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
+        dbg('VA', 'Phase 4: no PCM tap available — archived via container concatenation (' + turnMime + ')');
+      }
       _turnSegments = [];
       if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
       var answerEl = document.getElementById('memAnswer');
