@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.89';
+  const APP_VERSION = 'v7.88';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9352,7 +9352,29 @@
     // drain (_drainPcmToWav) and the whole-turn drain (_drainTurnPcmToWav,
     // used to fix the archive/fullPass regression — see turn-scoped buffer
     // below) build WAV bytes the same way instead of duplicating this logic.
+    // v7.87f: log peak/RMS amplitude of the raw captured samples. Azure logs
+    // show RecognitionStatus=Success with Confidence:0 and empty Lexical (not
+    // just empty Display) on most chunks — meaning Azure processed the full
+    // audio duration and found nothing recognisable, not a timeout or format
+    // rejection. Occasional 2-3 char fragments getting through is consistent
+    // with a signal-level problem (only the loudest moments clear whatever
+    // threshold Azure needs) rather than a container/encoding bug — but that's
+    // a theory, not a fact yet. This logs the actual numbers so the next test
+    // confirms or rules it out instead of guessing.
+    function _logAmplitude(samples, label) {
+      var peak = 0, sumSq = 0;
+      for (var p = 0; p < samples.length; p++) {
+        var v = samples[p];
+        var a = v < 0 ? -v : v;
+        if (a > peak) peak = a;
+        sumSq += v * v;
+      }
+      var rms = Math.sqrt(sumSq / samples.length);
+      dbg('MIC_MGR', label + ' amplitude: peak=' + peak.toFixed(4) + ' (' + (peak * 100).toFixed(1) + '% of full scale) rms=' + rms.toFixed(4) + ' (' + (rms * 100).toFixed(1) + '% of full scale)');
+    }
+
     function _pcmFloat32ToWavBlob(merged, srcRate, logLabel) {
+      _logAmplitude(merged, logLabel || 'PCM tap -> WAV');
       var targetRate = 16000;
       var ratio = srcRate / targetRate;
       var outLen = Math.max(1, Math.floor(merged.length / ratio));
