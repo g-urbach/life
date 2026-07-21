@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.92';
+  const APP_VERSION = 'v7.93';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9031,6 +9031,76 @@
   //      own row, and writes the result directly. Client never sees offset,
   //      baseline, or the transcript text — only applied: true/false.
   // Never blocks the save UX. Silent on failure (logs to activity log).
+  // v7.93: Auto-correction pass — fires ~10 seconds after the mic stops (or
+  // more precisely, after the final chunk's background transcription completes
+  // and _stageCurrentTurn() has run). No user action required.
+  //
+  // Strategy: save the entry to the DB now (same as memDone() would), stash
+  // the resulting ID in _autoApplyEntryId, commit + apply every staged turn,
+  // then set _memEditEntryId so that when the user eventually presses Save the
+  // form does a PATCH instead of another INSERT — the correction is already in
+  // DB and Save just keeps whatever the user may have edited since.
+  //
+  // Guards:
+  //   • Only fires if there are staged turns and a non-empty answer to save.
+  //   • If _autoApplyEntryId is already set (e.g. mic started/stopped twice
+  //     before Save), the entry already exists — skip the INSERT and just
+  //     commit any newly staged turns that haven't been committed yet.
+  //   • Timer is cancelled and zeroed in memResetForm() so a discard never
+  //     triggers a dangling save.
+  async function _autoApplyVoiceTurns() {
+    _autoApplyTimer = null; // timer has fired — clear the handle
+    if (!currentUser) return;
+    if (!_stagedVoiceArchives.length) {
+      dbg('VA', 'Auto-apply: no staged turns — nothing to do');
+      return;
+    }
+    var answerEl = document.getElementById('memAnswer');
+    var answer = answerEl ? answerEl.value.trim() : '';
+    if (!answer) {
+      dbg('VA', 'Auto-apply: answer empty — deferring until user writes something');
+      return;
+    }
+
+    try {
+      var entryId = _autoApplyEntryId;
+
+      if (!entryId) {
+        // First auto-apply for this recording session — save the entry now.
+        dbg('VA', 'Auto-apply: pre-saving entry to DB…');
+        entryId = await memSaveCurrentEntry();
+        if (!entryId || entryId === 'offline') {
+          dbg('VA', 'Auto-apply: pre-save returned ' + entryId + ' — skipping correction pass');
+          return;
+        }
+        _autoApplyEntryId = entryId;
+        // Flip to edit mode so the user's eventual Save press becomes a PATCH,
+        // not a second INSERT that would create a duplicate entry.
+        _memEditEntryId = entryId;
+        dbg('VA', 'Auto-apply: entry pre-saved, id=' + entryId + ' — correction pass starting');
+      } else {
+        dbg('VA', 'Auto-apply: entry already exists (' + entryId + ') — committing new turns only');
+      }
+
+      // Only commit turns that weren't already processed in a prior auto-apply
+      // cycle (handles the case where mic was stopped/started multiple times).
+      var turnsToCommit = _stagedVoiceArchives.slice(_autoApplyTurnCount);
+      if (!turnsToCommit.length) {
+        dbg('VA', 'Auto-apply: no new turns to commit');
+        return;
+      }
+      _autoApplyTurnCount = _stagedVoiceArchives.length; // advance watermark
+
+      turnsToCommit.forEach(function(turn) {
+        _commitAndApplyVoiceTurn(entryId, turn).catch(function(e) {
+          dbgErr('VA', 'Auto-apply voice turn commit/apply threw:', e.message);
+        });
+      });
+    } catch(e) {
+      dbgErr('VA', 'Auto-apply threw:', e.message);
+    }
+  }
+
   async function _commitAndApplyVoiceTurn(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
@@ -9150,16 +9220,22 @@
       _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
     }
     // ── APP-55 Phase 4/5 (moat-protected): commit + apply each staged voice turn ──
-    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below. Each turn
-    // commits and applies independently — one slow/failed turn never blocks
-    // or breaks the others, and none of this blocks the save UX.
+    // v7.93: Auto-apply may have already committed some (or all) turns in the
+    // background ~10s after the mic stopped. Only commit turns beyond the
+    // watermark (_autoApplyTurnCount) that weren't yet processed.
+    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below.
     if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
-      var _turnsToCommit = _stagedVoiceArchives.slice();
-      _turnsToCommit.forEach(function(turn) {
-        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
-          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
+      var _turnsToCommit = _stagedVoiceArchives.slice(_autoApplyTurnCount);
+      if (_turnsToCommit.length) {
+        dbg('VA', 'memDone: committing ' + _turnsToCommit.length + ' turn(s) not yet auto-applied');
+        _turnsToCommit.forEach(function(turn) {
+          _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
+            dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
+          });
         });
-      });
+      } else {
+        dbg('VA', 'memDone: all ' + _stagedVoiceArchives.length + ' turn(s) already committed by auto-apply — nothing to do');
+      }
     }
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles everything: title/answer, accordion, tags, media, mic, _memEditEntryId
@@ -9767,6 +9843,9 @@
   let _micPreRecordLength  = 0;  // APP-55 Phase 4: textarea length at mic-start — doubles as this turn's offset (_turnOffset)
   let _turnSegments        = []; // APP-55 Phase 4: chunks for the CURRENT mic session only — reset each mic-open, assembled into one blob at mic-stop
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
+  let _autoApplyTimer      = null;  // v7.93: fires _autoApplyVoiceTurns() ~10s after mic stops — no Save required
+  let _autoApplyEntryId    = null;  // v7.93: entry ID pre-saved by auto-apply; memDone() PATCHes this instead of inserting a new row
+  let _autoApplyTurnCount  = 0;     // v7.93: number of staged turns already committed by auto-apply (so memDone skips them)
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
@@ -9976,6 +10055,10 @@
             _stageCurrentTurn();
             _micRelease(); // v7.32: release stream tracks so browser tab red indicator clears (was missing from this early-return path)
             _setMicState('idle'); setMemStatus('idle', '');
+            // v7.93: schedule auto-correction pass — fires whether or not the user presses Save
+            if (_autoApplyTimer) clearTimeout(_autoApplyTimer);
+            _autoApplyTimer = setTimeout(_autoApplyVoiceTurns, 10000);
+            dbg('VA', 'Auto-apply timer armed (10s, small-blob path)');
           }
           return;
         }
@@ -9987,6 +10070,12 @@
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
+          // v7.93: schedule auto-correction pass ~10s after mic stop, giving the
+          // background final-chunk transcription (10s timeout) time to land first.
+          // Fires regardless of whether the user presses Save — no user action needed.
+          if (_autoApplyTimer) clearTimeout(_autoApplyTimer);
+          _autoApplyTimer = setTimeout(_autoApplyVoiceTurns, 10000);
+          dbg('VA', 'Auto-apply timer armed (10s)');
           _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
             dbgErr('MIC', 'Background final transcription failed:', e.message);
           });
@@ -10138,6 +10227,10 @@
     _stagedVoiceArchives = []; // APP-55 Phase 4: discard staged turns on reset — never commit a discarded entry's recordings
     _turnSegments        = [];
     _micPreRecordLength  = 0;
+    // v7.93: cancel any pending auto-apply and clear its state
+    if (_autoApplyTimer) { clearTimeout(_autoApplyTimer); _autoApplyTimer = null; }
+    _autoApplyEntryId   = null;
+    _autoApplyTurnCount = 0;
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recActive = false;
