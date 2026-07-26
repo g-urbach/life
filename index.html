@@ -5189,7 +5189,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.93';
+  const APP_VERSION = 'v7.88';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5430,10 +5430,21 @@
     // Line number offset: browser reports stripped-file line; add offset to get dev-file line
     var rawLine  = srcLine ? Number(srcLine) : null;
     var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
+    // OBS-03: neutralise URL-shaped substrings before this reaches Telegram.
+    // Stack traces routinely contain "https://lifetold.app/:12345:67" style
+    // frames — Telegram's own link-unfurler will try to fetch these as real
+    // URLs, generating a bogus inbound request back at the app (confirmed via
+    // Cloudflare logs, 2026-07-23, source IP in Telegram's own infra range).
+    // A zero-width space right after "://" breaks the contiguous URL pattern
+    // for Telegram's (and most other) auto-linkers while staying human-
+    // readable — the message still reads correctly in the Telegram app.
+    // logActivity()'s copy of the same detail (DB-bound) is NOT sanitised —
+    // this only affects the Telegram-bound payload built below.
+    var telegramSafeDetail = String(detail).replace(/(https?:\/\/)/gi, '$1\u200b');
     var payload = {
       level:        level,
       area:         area,
-      detail:       detail,
+      detail:       telegramSafeDetail,
       user:         user,
       ts:           new Date().toISOString(),
       version:      appVersion,
@@ -6886,7 +6897,7 @@
         var questionHtml = questionDisplay
           ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 6px">\u201c' + escHtml(questionDisplay) + '\u201d</p>'
           : '';
-        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
 
         // Piece comments get a "Dismiss" action (no memory to attach to).
         // Memory feedback gets "Accept feedback" which imports to entries.
@@ -7986,7 +7997,7 @@
   //               shareConsentOverlay, this just documents it in the policy itself)
   const PRIVACY_CHANGELOG_SUMMARY = 'Updated AI processor disclosures and added a new section on shared memory links.';
   const DB_PRIVACY_URL      = SUPABASE_URL + '/rest/v1/life_privacy_versions';
-  const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/rest/v1/life_activity_log'; // usage tracking
+  const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/functions/v1/LOG_PROXY'; // usage tracking — routed via LOG_PROXY for server-side IP capture (was: /rest/v1/life_activity_log direct)
   const DB_PEOPLE_URL       = SUPABASE_URL + '/rest/v1/life_people';                // Family tree nodes
   const DB_PEOPLE_REL_URL   = SUPABASE_URL + '/rest/v1/life_people_relationships';  // Family tree edges
   const DB_ENTRY_PEOPLE_URL = SUPABASE_URL + '/rest/v1/life_entry_people';          // Entry→person join table
@@ -9031,81 +9042,10 @@
   //      own row, and writes the result directly. Client never sees offset,
   //      baseline, or the transcript text — only applied: true/false.
   // Never blocks the save UX. Silent on failure (logs to activity log).
-  // v7.93: Auto-correction pass — fires ~10 seconds after the mic stops (or
-  // more precisely, after the final chunk's background transcription completes
-  // and _stageCurrentTurn() has run). No user action required.
-  //
-  // Strategy: save the entry to the DB now (same as memDone() would), stash
-  // the resulting ID in _autoApplyEntryId, commit + apply every staged turn,
-  // then set _memEditEntryId so that when the user eventually presses Save the
-  // form does a PATCH instead of another INSERT — the correction is already in
-  // DB and Save just keeps whatever the user may have edited since.
-  //
-  // Guards:
-  //   • Only fires if there are staged turns and a non-empty answer to save.
-  //   • If _autoApplyEntryId is already set (e.g. mic started/stopped twice
-  //     before Save), the entry already exists — skip the INSERT and just
-  //     commit any newly staged turns that haven't been committed yet.
-  //   • Timer is cancelled and zeroed in memResetForm() so a discard never
-  //     triggers a dangling save.
-  async function _autoApplyVoiceTurns() {
-    _autoApplyTimer = null; // timer has fired — clear the handle
-    if (!currentUser) return;
-    if (!_stagedVoiceArchives.length) {
-      dbg('VA', 'Auto-apply: no staged turns — nothing to do');
-      return;
-    }
-    var answerEl = document.getElementById('memAnswer');
-    var answer = answerEl ? answerEl.value.trim() : '';
-    if (!answer) {
-      dbg('VA', 'Auto-apply: answer empty — deferring until user writes something');
-      return;
-    }
-
-    try {
-      var entryId = _autoApplyEntryId;
-
-      if (!entryId) {
-        // First auto-apply for this recording session — save the entry now.
-        dbg('VA', 'Auto-apply: pre-saving entry to DB…');
-        entryId = await memSaveCurrentEntry();
-        if (!entryId || entryId === 'offline') {
-          dbg('VA', 'Auto-apply: pre-save returned ' + entryId + ' — skipping correction pass');
-          return;
-        }
-        _autoApplyEntryId = entryId;
-        // Flip to edit mode so the user's eventual Save press becomes a PATCH,
-        // not a second INSERT that would create a duplicate entry.
-        _memEditEntryId = entryId;
-        dbg('VA', 'Auto-apply: entry pre-saved, id=' + entryId + ' — correction pass starting');
-      } else {
-        dbg('VA', 'Auto-apply: entry already exists (' + entryId + ') — committing new turns only');
-      }
-
-      // Only commit turns that weren't already processed in a prior auto-apply
-      // cycle (handles the case where mic was stopped/started multiple times).
-      var turnsToCommit = _stagedVoiceArchives.slice(_autoApplyTurnCount);
-      if (!turnsToCommit.length) {
-        dbg('VA', 'Auto-apply: no new turns to commit');
-        return;
-      }
-      _autoApplyTurnCount = _stagedVoiceArchives.length; // advance watermark
-
-      turnsToCommit.forEach(function(turn) {
-        _commitAndApplyVoiceTurn(entryId, turn).catch(function(e) {
-          dbgErr('VA', 'Auto-apply voice turn commit/apply threw:', e.message);
-        });
-      });
-    } catch(e) {
-      dbgErr('VA', 'Auto-apply threw:', e.message);
-    }
-  }
-
   async function _commitAndApplyVoiceTurn(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
-    var ext = (turn.mime || '').includes('wav') ? 'wav'
-            : (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
+    var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
             : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
 
     var committed;
@@ -9220,22 +9160,16 @@
       _autoGenerateTitle(savedId, _answerBeforeSave).catch(function(){});
     }
     // ── APP-55 Phase 4/5 (moat-protected): commit + apply each staged voice turn ──
-    // v7.93: Auto-apply may have already committed some (or all) turns in the
-    // background ~10s after the mic stopped. Only commit turns beyond the
-    // watermark (_autoApplyTurnCount) that weren't yet processed.
-    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below.
+    // Snapshot BEFORE memResetForm() wipes _stagedVoiceArchives below. Each turn
+    // commits and applies independently — one slow/failed turn never blocks
+    // or breaks the others, and none of this blocks the save UX.
     if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
-      var _turnsToCommit = _stagedVoiceArchives.slice(_autoApplyTurnCount);
-      if (_turnsToCommit.length) {
-        dbg('VA', 'memDone: committing ' + _turnsToCommit.length + ' turn(s) not yet auto-applied');
-        _turnsToCommit.forEach(function(turn) {
-          _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
-            dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
-          });
+      var _turnsToCommit = _stagedVoiceArchives.slice();
+      _turnsToCommit.forEach(function(turn) {
+        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
+          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
         });
-      } else {
-        dbg('VA', 'memDone: all ' + _stagedVoiceArchives.length + ' turn(s) already committed by auto-apply — nothing to do');
-      }
+      });
     }
     // ── Success: clear form ───────────────────────────────────────────
     // memResetForm handles everything: title/answer, accordion, tags, media, mic, _memEditEntryId
@@ -9316,17 +9250,6 @@
     var _active      = false;
     var _mime        = '';
     var _callbacks   = {};
-    // v7.87c: raw-PCM tap, piggybacked on _analyserCtx/its MediaStreamSource
-    // (see start()). Primary source for Azure WAV — see _drainPcmToWav below.
-    var _pcmProcessor   = null;
-    var _pcmGain        = null;
-    var _pcmSamples     = [];  // array of Float32Array chunks since last drain
-    var _pcmSampleRate  = 0;
-    // v7.87d: whole-turn accumulation — NOT cleared by release()/restart, only
-    // by resetTurnPcm() (turn start) or draining (turn staged). See
-    // _drainTurnPcmToWav() below for why this exists.
-    var _turnPcmSamples     = [];
-    var _turnPcmSampleRate  = 0;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -9345,34 +9268,20 @@
     // server already treats unrecognised mimeTypes as "skip Azure, use Groq",
     // so a WAV-encode failure just means this one chunk goes Groq-only
     // instead of crashing the turn.
-    // v7.87b: shared decode AudioContext, created lazily once and reused for
-    // every chunk. Creating+closing a fresh AudioContext on every single
-    // silence-triggered flush (potentially every few seconds) is unreliable
-    // on Safari specifically — rapid context churn is a known source of
-    // decodeAudioData flakiness there, separate from the fragmented-mp4
-    // decode issue itself. One long-lived context removes that variable.
-    var _sharedDecodeCtx = null;
-    function _getSharedDecodeCtx() {
-      if (_sharedDecodeCtx) return _sharedDecodeCtx;
-      var AudioCtxCls = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtxCls) throw new Error('no AudioContext support');
-      _sharedDecodeCtx = new AudioCtxCls();
-      return _sharedDecodeCtx;
-    }
-
     async function _blobToWav16kMono(blob) {
-      const decodeCtx = _getSharedDecodeCtx();
+      const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxCls) throw new Error('no AudioContext support');
       const arrayBuf = await blob.arrayBuffer();
-      // Promise form (Safari 14.1+, all current Chrome/Firefox). No legacy
-      // callback-form fallback — if this rejects, the caller's catch handles
-      // it by falling back to the original blob. Do NOT close decodeCtx —
-      // it's shared and reused across calls (see _getSharedDecodeCtx).
-      const audioBuffer = await decodeCtx.decodeAudioData(arrayBuf.slice(0));
-      // v7.87b: diagnostic — if decoded duration looks implausibly short
-      // relative to the source blob, that's the known WebKit fragmented-mp4
-      // decodeAudioData issue (decode silently truncates), not a bug in the
-      // resample/WAV-encode step below. Logged so a recurrence is traceable.
-      dbg('MIC_MGR', 'decodeAudioData: srcBytes=' + blob.size + ' decodedDuration=' + audioBuffer.duration.toFixed(3) + 's channels=' + audioBuffer.numberOfChannels + ' sampleRate=' + audioBuffer.sampleRate);
+      const decodeCtx = new AudioCtxCls();
+      let audioBuffer;
+      try {
+        // Promise form (Safari 14.1+, all current Chrome/Firefox). No legacy
+        // callback-form fallback — if this rejects, the caller's catch
+        // handles it by falling back to the original blob.
+        audioBuffer = await decodeCtx.decodeAudioData(arrayBuf.slice(0));
+      } finally {
+        decodeCtx.close().catch(function(){});
+      }
       const targetRate = 16000;
       const frameCount = Math.max(1, Math.ceil(audioBuffer.duration * targetRate));
       // Mono output channel count = 1 — OfflineAudioContext downmixes any
@@ -9413,147 +9322,6 @@
       return new Blob([buf], { type: 'audio/wav' });
     }
 
-    // v7.87c: primary path — builds a WAV directly from raw PCM samples
-    // tapped straight off the mic's Web Audio graph (see start()). No
-    // MediaRecorder container, no decodeAudioData involved at any point, so
-    // none of the WebKit fragmented-mp4 decode flakiness (intermittent
-    // failures, and — worse — occasional silent truncation to a fraction of
-    // a second, which is what caused the empty Azure transcript) can affect
-    // this path. Drains and clears the buffer, so each call returns only the
-    // audio captured since the previous call — same segmenting behaviour the
-    // MediaRecorder-based _chunks array already has for the archive path.
-    // Returns null (not a Blob) if no PCM tap is available or nothing was
-    // captured, so callers can fall back cleanly.
-    // v7.87d: shared resample+encode core, extracted so both the per-chunk
-    // drain (_drainPcmToWav) and the whole-turn drain (_drainTurnPcmToWav,
-    // used to fix the archive/fullPass regression — see turn-scoped buffer
-    // below) build WAV bytes the same way instead of duplicating this logic.
-    // v7.87f: log peak/RMS amplitude of the raw captured samples. Azure logs
-    // show RecognitionStatus=Success with Confidence:0 and empty Lexical (not
-    // just empty Display) on most chunks — meaning Azure processed the full
-    // audio duration and found nothing recognisable, not a timeout or format
-    // rejection. Occasional 2-3 char fragments getting through is consistent
-    // with a signal-level problem (only the loudest moments clear whatever
-    // threshold Azure needs) rather than a container/encoding bug — but that's
-    // a theory, not a fact yet. This logs the actual numbers so the next test
-    // confirms or rules it out instead of guessing.
-    function _logAmplitude(samples, label) {
-      var peak = 0, sumSq = 0;
-      for (var p = 0; p < samples.length; p++) {
-        var v = samples[p];
-        var a = v < 0 ? -v : v;
-        if (a > peak) peak = a;
-        sumSq += v * v;
-      }
-      var rms = Math.sqrt(sumSq / samples.length);
-      dbg('MIC_MGR', label + ' amplitude: peak=' + peak.toFixed(4) + ' (' + (peak * 100).toFixed(1) + '% of full scale) rms=' + rms.toFixed(4) + ' (' + (rms * 100).toFixed(1) + '% of full scale)');
-    }
-
-    function _pcmFloat32ToWavBlob(merged, srcRate, logLabel) {
-      _logAmplitude(merged, logLabel || 'PCM tap -> WAV');
-      var targetRate = 16000;
-      var ratio = srcRate / targetRate;
-      var outLen = Math.max(1, Math.floor(merged.length / ratio));
-      var resampled = new Float32Array(outLen);
-      // Linear-interpolation resample — plenty for speech-to-text (neither
-      // Azure nor Whisper need audiophile-grade resampling quality).
-      for (var j = 0; j < outLen; j++) {
-        var srcPos = j * ratio;
-        var i0 = Math.floor(srcPos);
-        var i1 = Math.min(i0 + 1, merged.length - 1);
-        var frac = srcPos - i0;
-        resampled[j] = merged[i0] * (1 - frac) + merged[i1] * frac;
-      }
-
-      var numSamples = resampled.length;
-      var buf = new ArrayBuffer(44 + numSamples * 2);
-      var view = new DataView(buf);
-      function writeStr(offset, str) {
-        for (var k = 0; k < str.length; k++) view.setUint8(offset + k, str.charCodeAt(k));
-      }
-      writeStr(0, 'RIFF');
-      view.setUint32(4, 36 + numSamples * 2, true);
-      writeStr(8, 'WAVE');
-      writeStr(12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, targetRate, true);
-      view.setUint32(28, targetRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeStr(36, 'data');
-      view.setUint32(40, numSamples * 2, true);
-      var offset = 44;
-      for (var m = 0; m < numSamples; m++, offset += 2) {
-        var s = Math.max(-1, Math.min(1, resampled[m]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      }
-      dbg('MIC_MGR', (logLabel || 'PCM tap -> WAV') + ': srcSamples=' + merged.length + ' srcRate=' + srcRate + ' outSamples=' + numSamples + ' durationSec=' + (numSamples / targetRate).toFixed(3));
-      return new Blob([buf], { type: 'audio/wav' });
-    }
-
-    function _mergeFloat32Chunks(chunks) {
-      var totalLen = 0;
-      for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-      if (totalLen === 0) return null;
-      var merged = new Float32Array(totalLen);
-      var off = 0;
-      for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], off); off += chunks[i].length; }
-      return merged;
-    }
-
-    function _drainPcmToWav() {
-      if (!_pcmSampleRate || !_pcmSamples.length) return null;
-      var chunks = _pcmSamples;
-      _pcmSamples = [];
-      var merged = _mergeFloat32Chunks(chunks);
-      if (!merged) return null;
-      return _pcmFloat32ToWavBlob(merged, _pcmSampleRate, 'PCM tap -> WAV (chunk)');
-    }
-
-    // v7.87d: whole-TURN raw-PCM buffer. Separate from _pcmSamples (which is
-    // drained — cleared — on every live-transcription flush) so the full
-    // turn's audio survives across multiple chunk flushes AND across the
-    // mid-turn MicManager restart the recorder does after each flush. Only
-    // cleared by resetTurnPcm() (called at turn start) or by draining here
-    // (called once, when the turn is staged/archived).
-    //
-    // This is what the archive/fullPass "quality correction" path
-    // (_stageCurrentTurn → handleApplyVoiceTranscript, server-side) was
-    // missing: without it, the archived turn blob was still built by
-    // concatenating the raw MediaRecorder segments (webm/mp4/ogg containers),
-    // which Azure's REST endpoint can't parse — so the correction pass fell
-    // through to Groq exactly like live transcription used to, and failed
-    // outright wherever no Groq key is configured (e.g. this UAT project).
-    function _drainTurnPcmToWav() {
-      if (!_turnPcmSampleRate || !_turnPcmSamples.length) return null;
-      var chunks = _turnPcmSamples;
-      _turnPcmSamples = [];
-      var merged = _mergeFloat32Chunks(chunks);
-      if (!merged) return null;
-      return _pcmFloat32ToWavBlob(merged, _turnPcmSampleRate, 'PCM tap -> WAV (whole turn)');
-    }
-
-    // v7.94: non-destructive counterpart to _drainTurnPcmToWav — reads a
-    // snapshot of whatever PCM has been captured so far THIS turn without
-    // clearing the buffer, so it can be called repeatedly while the mic is
-    // still recording (progressive mid-turn correction — see
-    // _runProgressiveCorrection in startMemMic). Copies the chunk array
-    // reference before merging so concurrent pushes from the still-running
-    // analyser tap can't mutate the array out from under us mid-merge.
-    function _peekTurnPcmToWav() {
-      if (!_turnPcmSampleRate || !_turnPcmSamples.length) return null;
-      var chunks = _turnPcmSamples.slice(); // snapshot only — original buffer keeps accumulating
-      var merged = _mergeFloat32Chunks(chunks);
-      if (!merged) return null;
-      return _pcmFloat32ToWavBlob(merged, _turnPcmSampleRate, 'PCM tap -> WAV (turn peek)');
-    }
-
-    function _resetTurnPcm() {
-      _turnPcmSamples = [];
-    }
-
     // Wraps _blobToWav16kMono with the fallback-on-failure behaviour used by
     // both flush() branches below. Returns { blob, mime, ext }.
     async function _tryTranscodeToWav(blob, fallbackMime) {
@@ -9561,21 +9329,9 @@
         var wavBlob = await _blobToWav16kMono(blob);
         return { blob: wavBlob, mime: 'audio/wav', ext: 'wav' };
       } catch (e) {
-        dbgErr('MIC_MGR', 'WAV transcode failed (srcBytes=' + blob.size + ', mime=' + fallbackMime + ') — sending original blob (Azure will be skipped server-side, Groq still works):', e);
+        dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (Azure will be skipped server-side, Groq still works):', e);
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
       }
-    }
-
-    // Top-level chooser for each flush(): raw PCM tap first (most reliable —
-    // see _drainPcmToWav), then decode-based transcode as a second attempt,
-    // then the original untranscoded blob as the last resort (server skips
-    // Azure for that and uses Groq, same as today — unchanged, Groq is not
-    // touched by any of this).
-    async function _getWavForSegment(fallbackBlob, fallbackMime) {
-      var pcmWav = _drainPcmToWav();
-      if (pcmWav) return { blob: pcmWav, mime: 'audio/wav', ext: 'wav' };
-      dbg('MIC_MGR', 'No raw PCM captured for this segment — falling back to container decode');
-      return _tryTranscodeToWav(fallbackBlob, fallbackMime);
     }
 
     // Pick best MIME type: ogg/opus preferred (Chrome, Firefox); mp4 fallback (Safari).
@@ -9647,7 +9403,7 @@
         // multiple standalone WAV files (each with its own RIFF header)
         // would corrupt that assembled blob. Only the live per-chunk
         // transcription call should use the WAV version.
-        var out = await _getWavForSegment(blob, mime);
+        var out = await _tryTranscodeToWav(blob, mime);
         if (callbacks.onChunk) await callbacks.onChunk(blob, mime, _ext(mime), true, out.blob, out.mime, out.ext);
       } else {
         // Restart strategy: stop old recorder, collect its chunks, start new one.
@@ -9673,7 +9429,7 @@
         // v7.87: transcode to real 16kHz mono WAV so Azure gets a format it
         // actually accepts. Extra args (wavBlob/wavMime/wavExt) — original
         // blob2/mime/ext unchanged, same reasoning as the final branch above.
-        var out2 = await _getWavForSegment(blob2, mime);
+        var out2 = await _tryTranscodeToWav(blob2, mime);
         if (callbacks.onChunk) await callbacks.onChunk(blob2, mime, _ext(mime), false, out2.blob, out2.mime, out2.ext);
       }
     }
@@ -9719,49 +9475,9 @@
         _analyser.fftSize = 512;
         src.connect(_analyser);
         dbg('MIC_MGR', 'AnalyserNode ready — ctx state=' + _analyserCtx.state);
-
-        // v7.87c: raw-PCM tap on the SAME context/source, so Azure gets a
-        // real WAV built directly from PCM samples instead of relying on
-        // MediaRecorder-container decode (see _drainPcmToWav for why).
-        // ScriptProcessorNode is deprecated but universally supported
-        // (including Safari/iOS) and needs no separate AudioWorklet module
-        // file — simplest reliable option for this. Routed through a
-        // gain=0 node before destination: ScriptProcessorNode requires a
-        // destination connection to fire 'audioprocess' reliably in most
-        // implementations, but we don't want the mic audibly looped back.
-        try {
-          _pcmSampleRate = _analyserCtx.sampleRate;
-          _pcmSamples = [];
-          // v7.87d: turn-scoped rate is set here too (not just at turn start)
-          // because a mid-turn restart tears down and recreates the PCM tap;
-          // the samples pushed after a restart still belong to the same turn
-          // and must resample at whatever rate this particular tap runs at.
-          _turnPcmSampleRate = _analyserCtx.sampleRate;
-          _pcmProcessor = _analyserCtx.createScriptProcessor(4096, 1, 1);
-          _pcmProcessor.onaudioprocess = function(ev) {
-            // Must copy — inputBuffer's backing data is reused/invalidated
-            // once this callback returns. Same copy is safe to push into both
-            // arrays since neither array mutates the Float32Array it holds.
-            var copy = new Float32Array(ev.inputBuffer.getChannelData(0));
-            _pcmSamples.push(copy);
-            _turnPcmSamples.push(copy);
-          };
-          _pcmGain = _analyserCtx.createGain();
-          _pcmGain.gain.value = 0;
-          src.connect(_pcmProcessor);
-          _pcmProcessor.connect(_pcmGain);
-          _pcmGain.connect(_analyserCtx.destination);
-          dbg('MIC_MGR', 'PCM tap ready — sampleRate=' + _pcmSampleRate);
-        } catch (pcmErr) {
-          dbgWarn('MIC_MGR', 'PCM tap setup failed — will fall back to container decode for WAV:', pcmErr.message);
-          _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
-          _turnPcmSampleRate = 0;
-        }
       } catch(acErr) {
         dbgWarn('MIC_MGR', 'AudioContext failed — onVolume will not fire:', acErr.message);
         _analyserCtx = null; _analyser = null;
-        _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
-        _turnPcmSampleRate = 0;
       }
       _silenceRAF = requestAnimationFrame(_silenceLoop);
       dbg('MIC_MGR', 'Started — mime=' + (_mime || 'default'));
@@ -9778,13 +9494,6 @@
 
     function release() {
       if (_silenceRAF) { cancelAnimationFrame(_silenceRAF); _silenceRAF = null; }
-      // v7.87c: tear down the PCM tap before closing _analyserCtx (it lives
-      // on that same context).
-      try {
-        if (_pcmProcessor) { _pcmProcessor.disconnect(); _pcmProcessor.onaudioprocess = null; }
-        if (_pcmGain) _pcmGain.disconnect();
-      } catch (e) {}
-      _pcmProcessor = null; _pcmGain = null; _pcmSampleRate = 0; _pcmSamples = [];
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
       if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
@@ -9811,13 +9520,6 @@
       // flush()/onChunk above) can transcode its blobs to Azure-compatible WAV
       // too, without duplicating the decode/resample/encode logic.
       toWav16kMono: _tryTranscodeToWav,
-      // v7.87d: whole-turn archive fix — resetTurnPcm() called at turn start,
-      // drainTurnPcmToWav() called once when the turn is staged (see
-      // _stageCurrentTurn). Fixes the fullPass/"context correction" regression.
-      resetTurnPcm: _resetTurnPcm,
-      drainTurnPcmToWav: _drainTurnPcmToWav,
-      // v7.94: non-destructive peek, used for progressive mid-recording correction.
-      peekTurnPcmToWav: _peekTurnPcmToWav,
     };
   })();
 
@@ -9860,22 +9562,6 @@
   let _micPreRecordLength  = 0;  // APP-55 Phase 4: textarea length at mic-start — doubles as this turn's offset (_turnOffset)
   let _turnSegments        = []; // APP-55 Phase 4: chunks for the CURRENT mic session only — reset each mic-open, assembled into one blob at mic-stop
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
-  let _autoApplyTimer      = null;  // v7.93: fires _autoApplyVoiceTurns() ~10s after mic stops — no Save required. v7.94: this is now purely the ARCHIVAL pass (permanent voice-archive row + DB correction) — see _autoApplyVoiceTurns below. Live in-progress correction is handled separately by the progressive-correction debounce.
-  let _autoApplyEntryId    = null;  // v7.93: entry ID pre-saved by auto-apply; memDone() PATCHes this instead of inserting a new row
-  let _autoApplyTurnCount  = 0;     // v7.93: number of staged turns already committed by auto-apply (so memDone skips them)
-  // v7.94: progressive mid-recording correction — replaces the old "wait for
-  // mic to stop" model. The mic is routinely left open for minutes with the
-  // user pausing and resuming, so a stop-triggered timer could sit unfired
-  // for a long time. Instead, every successful live chunk re-arms a short
-  // debounce; once ~5s pass with no new chunk (i.e. a natural pause), a
-  // fuller-context re-transcription of the whole turn-so-far runs and patches
-  // the textarea in place. Purely client-side (no DB write, no storage
-  // upload — see _runProgressiveCorrection), so it's cheap to run repeatedly
-  // through a long recording. Unrelated to _autoApplyTimer above, which only
-  // fires once per turn at true mic-stop for the permanent archive record.
-  let _correctionDebounceTimer = null;
-  let _correctionInFlight      = false;
-  const CORRECTION_DEBOUNCE_MS = 5000;
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
 
@@ -9970,7 +9656,6 @@
     _micSilenceStart     = null;
     _micTranscribing     = false;
     _turnSegments        = []; // APP-55 Phase 4: fresh accumulation for THIS turn only
-    MicManager.resetTurnPcm(); // v7.87d: fresh whole-turn PCM buffer for THIS turn only (archive/fullPass WAV)
     _micPreRecordLength  = (document.getElementById('memAnswer') || {}).value?.length || 0; // APP-55 Phase 4: this turn's offset
 
     // ── Shared transcription helper (used by both chunk and final paths) ────
@@ -10006,12 +9691,6 @@
           _userHasTyped = true;
           memCheckButtons();
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcript appended — ' + transcript.length + ' chars');
-          // v7.94: every live chunk (mid-recording) re-arms the progressive
-          // correction debounce — a natural pause is what should trigger the
-          // fuller-context pass, not a mic-stop event that may be minutes away.
-          // The final chunk skips this: mic-stop already runs the archival
-          // correction pass (_autoApplyVoiceTurns) which supersedes it.
-          if (!isFinal) _scheduleProgressiveCorrection();
         } else if (transcript) {
           dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
         } else if (isFinal) {
@@ -10030,114 +9709,14 @@
       }
     }
 
-    // ── v7.94: progressive mid-recording correction ─────────────────────────
-    // Fires ~5s after the last live chunk landed (debounced — resets on every
-    // new chunk, so a continuously-talking user never triggers it mid-thought).
-    // Peeks the whole-turn PCM tap (non-destructive — recording keeps going),
-    // sends it through the existing `transcribe` action with fullPass=true
-    // (same "fuller context, straight to Groq Whisper, no 10 MB/Azure limits"
-    // path the archive correction uses — just without requiring an
-    // already-committed voice_archive row, so it's safe to call repeatedly
-    // with no storage/DB cost). If the result differs from what a fragmented
-    // live-chunk transcript produced, patches the textarea from this turn's
-    // offset onward.
-    //
-    // Clobber guard: purely client-side equivalent of the server-side
-    // baseline check in handleApplyVoiceTranscript — if the textarea has
-    // changed at all (user edited, or a newer chunk/correction landed) since
-    // this pass started, discard silently. The next debounce cycle will
-    // supersede it with a more complete pass anyway.
-    function _scheduleProgressiveCorrection() {
-      if (_correctionDebounceTimer) clearTimeout(_correctionDebounceTimer);
-      _correctionDebounceTimer = setTimeout(_runProgressiveCorrection, CORRECTION_DEBOUNCE_MS);
-      dbg('VA', 'Progressive correction debounce (re)armed — ' + (CORRECTION_DEBOUNCE_MS / 1000) + 's');
-    }
-
-    async function _runProgressiveCorrection() {
-      _correctionDebounceTimer = null;
-      if (_correctionInFlight) {
-        dbg('VA', 'Progressive correction: previous pass still in flight — skipping this cycle');
-        return;
-      }
-      var answerEl = document.getElementById('memAnswer');
-      if (!answerEl) return;
-      var baseline = answerEl.value;
-      if (baseline.length <= _micPreRecordLength) {
-        dbg('VA', 'Progressive correction: nothing transcribed yet this turn — skipping');
-        return;
-      }
-      var turnWav = MicManager.peekTurnPcmToWav();
-      if (!turnWav || turnWav.size === 0) {
-        dbg('VA', 'Progressive correction: no PCM captured yet — skipping');
-        return;
-      }
-      _correctionInFlight = true;
-      try {
-        var session = (await sb.auth.getSession()).data.session;
-        if (!session) throw new Error('Not authenticated');
-        var form = new FormData();
-        form.append('action', 'transcribe');
-        form.append('fullPass', 'true');
-        form.append('audio', turnWav, 'turn.wav');
-        var res = await fetch(GETHRO_PROXY_URL, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-          body: form,
-        });
-        var data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || 'Correction transcribe failed ' + res.status);
-        var improved = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
-        if (!improved) {
-          dbg('VA', 'Progressive correction: empty transcript — skipping');
-          return;
-        }
-        var nowVal = answerEl.value;
-        if (nowVal !== baseline) {
-          dbg('VA', 'Progressive correction: textarea changed since pass started — discarding');
-          return;
-        }
-        var prefix = nowVal.slice(0, _micPreRecordLength);
-        var sep = (prefix && !prefix.endsWith('\n') && !prefix.endsWith(' ')) ? ' ' : '';
-        var patched = prefix + sep + improved;
-        if (patched === nowVal) {
-          dbg('VA', 'Progressive correction: no change — skipping');
-          return;
-        }
-        answerEl.value = patched;
-        _userHasTyped = true;
-        memCheckButtons();
-        dbg('VA', 'Progressive correction: patched turn text — ' + improved.length + ' chars');
-      } catch(e) {
-        dbgErr('VA', 'Progressive correction failed:', e.message);
-      } finally {
-        _correctionInFlight = false;
-      }
-    }
-
     // ── APP-55 Phase 4: stage the current turn into memory (no network call here —
     // commit_voice_turn fires later, from memDone(), only if the user saves) ────
     function _stageCurrentTurn() {
       if (!_turnSegments.length) return; // nothing recorded this turn (e.g. instant tap-stop)
       var turnMime = MicManager.mime || _micChunkMimeType || 'audio/ogg';
       var turnBlob;
-      // v7.87d: prefer a real WAV built from the whole turn's raw PCM tap —
-      // this is what handleApplyVoiceTranscript's fullPass re-transcription
-      // (the "fix based on fuller context" feature) needs to reach Azure
-      // successfully; the old container-concatenation approach below never
-      // produced an Azure-acceptable format (and could corrupt across a
-      // mid-turn recorder restart). Falls back to the original approach only
-      // if the PCM tap wasn't available for this turn (e.g. AudioContext
-      // failed to init) — server still handles that gracefully via Groq.
-      var turnWav = MicManager.drainTurnPcmToWav();
-      if (turnWav) {
-        turnBlob = turnWav;
-        turnMime = 'audio/wav';
-        dbg('VA', 'Phase 4: turn archived from whole-turn PCM tap — ' + turnBlob.size + ' bytes (audio/wav)');
-      } else {
-        try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
-        catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
-        dbg('VA', 'Phase 4: no PCM tap available — archived via container concatenation (' + turnMime + ')');
-      }
+      try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
+      catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
       _turnSegments = [];
       if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
       var answerEl = document.getElementById('memAnswer');
@@ -10172,37 +9751,20 @@
         if (blob.size < MIC_MIN_CHUNK_BYTES) {
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
           if (isFinal) {
-            // v7.94: mic has genuinely stopped — the archival pass below takes
-            // over from here, so cancel any pending progressive-correction debounce.
-            if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
             _stageCurrentTurn();
             _micRelease(); // v7.32: release stream tracks so browser tab red indicator clears (was missing from this early-return path)
             _setMicState('idle'); setMemStatus('idle', '');
-            // v7.93: schedule auto-correction pass — fires whether or not the user presses Save
-            if (_autoApplyTimer) clearTimeout(_autoApplyTimer);
-            _autoApplyTimer = setTimeout(_autoApplyVoiceTurns, 10000);
-            dbg('VA', 'Auto-apply timer armed (10s, small-blob path)');
           }
           return;
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
-          // v7.94: mic has genuinely stopped — cancel any pending progressive-
-          // correction debounce; the archival pass (_autoApplyVoiceTurns) below
-          // now owns getting the final text right.
-          if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
           // Go idle immediately on stop — final chunk transcribes in background (10s timeout).
           // Archive re-transcription handles quality. User never waits on orange screen.
           _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          // v7.93: schedule auto-correction pass ~10s after mic stop, giving the
-          // background final-chunk transcription (10s timeout) time to land first.
-          // Fires regardless of whether the user presses Save — no user action needed.
-          if (_autoApplyTimer) clearTimeout(_autoApplyTimer);
-          _autoApplyTimer = setTimeout(_autoApplyVoiceTurns, 10000);
-          dbg('VA', 'Auto-apply timer armed (10s)');
           _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
             dbgErr('MIC', 'Background final transcription failed:', e.message);
           });
@@ -10354,14 +9916,6 @@
     _stagedVoiceArchives = []; // APP-55 Phase 4: discard staged turns on reset — never commit a discarded entry's recordings
     _turnSegments        = [];
     _micPreRecordLength  = 0;
-    // v7.93: cancel any pending auto-apply and clear its state
-    if (_autoApplyTimer) { clearTimeout(_autoApplyTimer); _autoApplyTimer = null; }
-    _autoApplyEntryId   = null;
-    _autoApplyTurnCount = 0;
-    // v7.94: cancel any pending progressive-correction debounce too — a discard
-    // must never patch the textarea of a form that's about to be wiped.
-    if (_correctionDebounceTimer) { clearTimeout(_correctionDebounceTimer); _correctionDebounceTimer = null; }
-    _correctionInFlight = false;
     setMemStatus('idle', '');
     recCurQuestion  = '';
     recActive = false;
@@ -12151,7 +11705,7 @@
             themeHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
             _scThemeSuggestions.forEach(function(s) {
               var sel = (_scTheme === s.theme && _scThemeMode === 'chip');
-              var safeTheme = s.theme.replace(/'/g, "\\'");
+              var safeTheme = s.theme.replace(/'/g, "\'");
               themeHtml += '<button data-action="sc-theme-chip" data-value="' + escHtml(s.theme) + '" title="' + escHtml(s.note) + '" ' +
                 'style="padding:5px 12px;border:2px solid ' + (sel ? 'var(--rose)' : 'var(--rose)') + ';border-radius:20px;' +
                 'background:' + (sel ? 'rgba(180,60,60,0.12)' : 'rgba(180,60,60,0.06)') + ';' +
@@ -13215,7 +12769,7 @@
         row.id = 'response-row-' + f.id;
         row.style.cssText = 'background:var(--surface2);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)';
 
-        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+        var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
         var fbDate = new Date(f.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
         var mediaNote = (f.photo_url ? ' \uD83D\uDDBC\uFE0F' : '') + (f.audio_url ? ' \uD83C\uDFB5' : '') + (f.video_url ? ' \uD83C\uDF9E\uFE0F' : '');
 
@@ -16856,7 +16410,7 @@
       } else {
         peopleGrid.innerHTML = peopleSorted.map(([name, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\\'")}');event.stopPropagation()"
+          return `<button\'")}');event.stopPropagation()"
             class="dash-person-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             👤 ${name}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -16876,7 +16430,7 @@
         const score = scoreChapter(ces);
         const colour = score >= 65 ? 'var(--sage)' : score >= 30 ? 'var(--gold)' : 'var(--rose)';
         const label  = score >= 65 ? 'Good coverage' : score >= 30 ? 'Needs more depth' : 'Just getting started';
-        return `<div\\'")}');event.stopPropagation()"
+        return `<div\'")}');event.stopPropagation()"
           class="dash-chapter-card" style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${colour};border-radius:8px;padding:10px 12px;cursor:pointer;transition:box-shadow 0.15s">
           <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:2px">${ch}</div>
           <div style="font-size:0.7rem;color:var(--text-light)">${ces.length} entr${ces.length===1?'y':'ies'} · ${words.toLocaleString()} words</div>
@@ -16912,7 +16466,7 @@
       } else {
         locGrid.innerHTML = locationSorted.map(([loc, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\\'")}');event.stopPropagation()"
+          return `<button\'")}');event.stopPropagation()"
             class="dash-location-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             📍 ${loc}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -17804,7 +17358,7 @@
         const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
         // Register this chapter's entries for drill-down
         _chapterRegistry[ch] = ents;
-        return `<div class="chapter-card"\\'")}')">
+        return `<div class="chapter-card"\'")}')">
           <div class="ch-name">
             <span class="traffic-light ${tl}"></span>
             ${ch}
@@ -17815,7 +17369,7 @@
           </div>
           <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
             <span style="font-size:0.72rem;color:var(--gold-dark);border:1px solid var(--border);border-radius:6px;padding:2px 8px">View entries →</span>
-            <button class="ch-ask-btn" style="width:auto"\\'")}')">💬 Ask AI</button>
+            <button class="ch-ask-btn" style="width:auto"\'")}')">💬 Ask AI</button>
           </div>
         </div>`;
       }).join('');
@@ -18010,7 +17564,7 @@
           pendingFb.forEach(function(f) {
             var safeId   = f.id  ? "'" + f.id  + "'" : 'null';
             var safeEid  = entryId ? "'" + entryId + "'" : 'null';
-            var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+            var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
             pfHtml += '<div id="response-row-' + f.id + '" style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
@@ -18516,7 +18070,7 @@
             pendingFb.map(function(f) {
               var safeId   = f.id ? "'" + f.id + "'" : 'null';
               var safeEid  = e.id ? "'" + e.id + "'" : 'null';
-              var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\\'");
+              var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
               var fbDate   = new Date(f.created_at).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
               var mediaNote = (f.photo_url ? ' \uD83D\uDDBC\uFE0F' : '') + (f.audio_url ? ' \uD83C\uDFB5' : '') + (f.video_url ? ' \uD83C\uDF9E\uFE0F' : '');
               return '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
