@@ -5278,6 +5278,12 @@
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY';
   const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/azure-tts-proxy'; // Gethro voice (Azure, AZ-02 — was inworld-tts-proxy)
+  // AZ-06 (2026-07-27): inworld-tts-proxy stays deployed indefinitely, specifically
+  // for cloned voices — Azure has no cloning equivalent (see AZ-05), so any call
+  // using a cloned voice_id MUST route here instead of TTS_PROXY_URL/azure-tts-proxy,
+  // which would reject an Inworld voice_id as invalid. See _isCustomVoiceId() and
+  // its call sites in gethroSpeak() / _abSpeak() / _previewVoice().
+  const INWORLD_TTS_PROXY_URL = SUPABASE_URL + '/functions/v1/inworld-tts-proxy';
   // GETHRO_VOICE constant removed v6.38 — was stale OpenAI 'onyx' placeholder; Inworld voice is set server-side via INWORLD_VOICE env var. Phase 3 (APP-53) will add voice_id selection from life_settings.
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
@@ -8454,7 +8460,7 @@
         // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
         var ttsBody = { text: text };
         if (_cachedGethroVoiceId) ttsBody.voice_id = _cachedGethroVoiceId; // APP-53 Phase 3
-        var res = await fetch(TTS_PROXY_URL, {
+        var res = await fetch(_ttsUrlFor(_cachedGethroVoiceId), { // AZ-06: cloned voices route to Inworld
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
           body: JSON.stringify(ttsBody)
@@ -14204,7 +14210,7 @@
         // JWT verification ON — token sent as Authorization header (PRV-20: never in URL params).
         var abBody = { text: text };
         if (_cachedStoryReaderVoiceId) abBody.voice_id = _cachedStoryReaderVoiceId; // APP-53 Phase 3
-        return fetch(TTS_PROXY_URL, {
+        return fetch(_ttsUrlFor(_cachedStoryReaderVoiceId), { // AZ-06: cloned voices route to Inworld
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
           body: JSON.stringify(abBody),
@@ -24757,6 +24763,19 @@
   // In-memory list of user's custom voices (from life_custom_voices)
   var _customVoices = [];
 
+  // AZ-06 (2026-07-27): routes a TTS call to the right proxy based on whether
+  // voiceId is a cloned voice (Inworld-only, must use inworld-tts-proxy) or a
+  // stock/default voice (Azure, uses TTS_PROXY_URL/azure-tts-proxy). Cloned
+  // voice_ids would be rejected outright by Azure as an invalid voice name —
+  // this is what actually prevents that, not just a cosmetic routing choice.
+  function _isCustomVoiceId(voiceId) {
+    if (!voiceId) return false;
+    return _customVoices.some(function(cv) { return cv.voice_id === voiceId; });
+  }
+  function _ttsUrlFor(voiceId) {
+    return _isCustomVoiceId(voiceId) ? INWORLD_TTS_PROXY_URL : TTS_PROXY_URL;
+  }
+
   // Load voice preferences from life_settings and custom voices from DB
   async function loadVoicePrefs() {
     if (!currentUser) return;
@@ -24878,7 +24897,7 @@
       } catch(e) {}
       var body = { text: _voicePreviewText() };
       if (voiceId) body.voice_id = voiceId;
-      var res = await fetch(TTS_PROXY_URL, {
+      var res = await fetch(_ttsUrlFor(voiceId), { // AZ-06: cloned voices route to Inworld
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + freshToken },
         body: JSON.stringify(body)
