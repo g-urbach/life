@@ -5277,7 +5277,7 @@
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
   const NOTIFY_PROXY_URL = SUPABASE_URL + '/functions/v1/NOTIFY_PROXY';
-  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/inworld-tts-proxy'; // Gethro voice (Inworld)
+  const TTS_PROXY_URL    = SUPABASE_URL + '/functions/v1/azure-tts-proxy'; // Gethro voice (Azure, AZ-02 — was inworld-tts-proxy)
   // GETHRO_VOICE constant removed v6.38 — was stale OpenAI 'onyx' placeholder; Inworld voice is set server-side via INWORLD_VOICE env var. Phase 3 (APP-53) will add voice_id selection from life_settings.
   const STORAGE_URL        = SUPABASE_URL + '/storage/v1/object/life-photos';
   const AUDIO_STORAGE_URL  = SUPABASE_URL + '/storage/v1/object/life-audio';
@@ -24716,20 +24716,31 @@
 
   // SUB-31: Render the "Your Privacy" section in Settings (shown to ALL users)
   // ── APP-53 Phase 2: Voices settings ─────────────────────────────────────────
-  // Stock voices available to all users. voice_id matches Inworld voice identifiers.
+  // Stock voices available to all users. voice_id matches Azure Neural voice
+  // identifiers as of AZ-02 (2026-07-27) — was Inworld voice identifiers before.
   // Preview each via the ▶ button — plays a fixed sample sentence through TTS proxy.
   // Selections saved to life_settings (gethro_voice_id / story_reader_voice_id).
   // Phase 3 will wire gethroSpeak() and _abSpeak() to read these at login.
   // Recording flow (+ Record a voice) added in Phase 3.
 
+  // AZ-02 (2026-07-27): replaced Inworld voice names (Dennis/Sarah/Clive/
+  // Hana/Olivia/Hank) with real Azure Neural voice names. Deliberately NOT
+  // claiming a tonal character match ("warm", "gruff", etc.) for any of
+  // these — none have been auditioned against the old descriptions, and
+  // guessing character-to-voice sight-unseen risks a wrong claim in the UI.
+  // Picked for gender/region variety only; developer decision (2026-07-27):
+  // "pick your best guess for default and a bunch of favourites — no need
+  // to match them, people can try them and land on what they like."
+  // 'id' must be the exact Azure voice name — passed straight through as
+  // voice_id to azure-tts-proxy, which sends it directly to Azure's API.
   var _STOCK_VOICES = [
-    { id: 'default',  label: 'Default',  desc: 'Current server default'  },
-    { id: 'Dennis',   label: 'Dennis',   desc: 'Warm, measured male'     },
-    { id: 'Sarah',    label: 'Sarah',    desc: 'Clear, warm female'      },
-    { id: 'Clive',    label: 'Clive',    desc: 'Deep, authoritative male'},
-    { id: 'Hana',     label: 'Hana',     desc: 'Gentle, thoughtful female'},
-    { id: 'Olivia',   label: 'Olivia',   desc: 'Bright, expressive female'},
-    { id: 'Hank',     label: 'Hank',     desc: 'Gruff, character-rich male'},
+    { id: 'default',            label: 'Default',        desc: 'Current server default (William, AU male)' },
+    { id: 'en-US-JennyNeural',   label: 'Jenny',   desc: 'US female' },
+    { id: 'en-GB-RyanNeural',    label: 'Ryan',    desc: 'UK male' },
+    { id: 'en-GB-SoniaNeural',   label: 'Sonia',   desc: 'UK female' },
+    { id: 'en-US-GuyNeural',     label: 'Guy',     desc: 'US male' },
+    { id: 'en-AU-NatashaNeural', label: 'Natasha', desc: 'AU female' },
+    { id: 'en-US-DavisNeural',   label: 'Davis',   desc: 'US male' },
   ];
 
   function _voicePreviewText() {
