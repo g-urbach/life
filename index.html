@@ -4619,7 +4619,6 @@
           autocomplete="bday" inputmode="text"
 >
         <button class="ob-btn" id="obStep3Btn">Next &#8594;</button>
-        <button class="ob-skip" id="obStep3Skip">Skip &#8594;</button>
       </div>
     </div>
 
@@ -4660,7 +4659,6 @@
           <button class="ob-goal-card" id="obGoalExploring">&#127774;<span>Just for fun</span></button>
         </div>
         <button class="ob-btn" id="obStep4Btn">Next &#8594;</button>
-        <button class="ob-skip" id="obStep4Skip">Skip &#8594;</button>
       </div>
     </div>
 
@@ -5151,7 +5149,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.102';
+  const APP_VERSION = 'v7.104';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8851,6 +8849,7 @@
   }
 
   async function memDone() {
+    stopMemMic(); // stop any in-progress recording before saving
     memClearSaveError(); // clear any prior banner before attempting
     let savedId;
     // Capture title/answer before saving (form may be reset after)
@@ -8904,6 +8903,7 @@
 
   // ── New entry: warn if unsaved content, then clear ───────────────
   function memNewEntry() {
+    stopMemMic(); // stop any in-progress recording before starting a new entry
     var title  = (document.getElementById('memTitle')  || {}).value  || '';
     var answer = (document.getElementById('memAnswer') || {}).value  || '';
     // Only warn if the user has personally typed/spoken (not just AI-appended questions)
@@ -9923,6 +9923,7 @@
   }
 
   async function spellCheckMemory() {
+    stopMemMic(); // stop any in-progress recording before reviewing
     const el    = document.getElementById('memAnswer');
     const text  = el?.value.trim();
     const panel = document.getElementById('memSpellPanel');
@@ -22408,6 +22409,19 @@
   });
   window.addEventListener('blur', _agpHandleFocusLoss);
 
+  // ── Stop Add Memory dictation mic on tab/window losing focus ──────
+  // Mirrors _agpHandleFocusLoss above, for the main memMicBtn dictation mic.
+  function _memHandleFocusLoss() {
+    if (_micState === 'recording') {
+      dbg('MIC', 'Focus lost — stopping recording');
+      stopMemMic();
+    }
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) _memHandleFocusLoss();
+  });
+  window.addEventListener('blur', _memHandleFocusLoss);
+
   // ── Offline / online detection ───────────────────────────────────
   function updateOnlineStatus() {
     const banner = document.getElementById('offlineBanner');
@@ -26963,14 +26977,12 @@
     on('obStep3Back','click', function() { obGoStep(2); });
     on('obDobInput', 'keydown', function(e) { if(e.key==='Enter') obSaveDobAndGoStep4(); });
     on('obStep3Btn', 'click', obSaveDobAndGoStep4);
-    on('obStep3Skip','click', function() { obGoStep(4); });
     on('obGoalFamily',   'click', function() { obSelectGoal(this, 'For my family — I want them to know who I really was'); });
     on('obGoalSelf',     'click', function() { obSelectGoal(this, 'To understand myself \u2014 I want to reflect on where I\'ve come from'); });
     on('obGoalStory',    'click', function() { obSelectGoal(this, 'A specific story \u2014 there\'s something I need to capture'); });
     on('obGoalExploring','click', function() { obSelectGoal(this, 'Just exploring \u2014 I\'m not sure yet'); });
     on('obStep4Back','click', function() { obGoStep(3); });
     on('obStep4Btn', 'click', obSaveGoalAndGoStep5);
-    on('obStep4Skip','click', function() { obGoStep(5); });
     on('obStep5Back','click', function() { obGoStep(4); });
     on('obStep5Btn', 'click', function() { obGoStep(6); });
     on('obStep6Back','click', function() { obGoStep(5); });
