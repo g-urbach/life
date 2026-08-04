@@ -5149,7 +5149,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.107';
+  const APP_VERSION = 'v7.108';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -24348,14 +24348,17 @@
   }
 
   // SUB-05: Start Stripe checkout — redirect to hosted checkout page
-  async function startUpgradeCheckout() {
+  // LP0-02: accepts optional plan ('monthly' | 'annual'); defaults to monthly
+  // so every existing caller (rate-limit modal, dashboard tiles, etc.) keeps working unchanged.
+  async function startUpgradeCheckout(plan) {
     if (!currentUser) return;
+    var chosenPlan = (plan === 'annual') ? 'annual' : 'monthly';
     try {
       toast('Opening checkout…');
       var res = await fetch(STRIPE_CHECKOUT_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create_checkout' })
+        body: JSON.stringify({ action: 'create_checkout', plan: chosenPlan })
       });
       var data = await res.json();
       if (data.url) {
@@ -24410,6 +24413,10 @@
     }
   }
 
+  // LP0-02: which plan is selected in the Settings upgrade toggle. Module-level
+  // so it survives re-renders of renderPremiumSettingsSection() (e.g. after refreshPremiumGates()).
+  var _upgradeSelectedPlan = 'monthly';
+
   // SUB-05: Render the premium section in Settings based on current tier
   function renderPremiumSettingsSection() {
     var el = document.getElementById('settingsPremiumSection');
@@ -24431,19 +24438,34 @@
           'Manage billing →' +
         '</a>';
     } else {
+      var isAnnual = _upgradeSelectedPlan === 'annual';
+      var ctaLabel = isAnnual ? '✨ Upgrade to Premium — A$90/yr' : '✨ Upgrade to Premium — A$9/mo';
+      var subLabel = isAnnual ? 'Save 15% vs monthly. Cancel anytime.' : 'Cancel anytime. No lock-in.';
+      var pillBase = 'flex:1;padding:8px;border-radius:8px;cursor:pointer;text-align:center;' +
+        'font-family:Lato,sans-serif;font-size:0.82rem;font-weight:700;border:1px solid var(--border);';
+      var monthlyPillStyle = pillBase + (isAnnual
+        ? 'background:var(--surface);color:var(--text-light);'
+        : 'background:var(--gold);color:#3a2a0a;border-color:var(--gold);');
+      var annualPillStyle = pillBase + (isAnnual
+        ? 'background:var(--gold);color:#3a2a0a;border-color:var(--gold);'
+        : 'background:var(--surface);color:var(--text-light);');
       el.innerHTML =
         '<p style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin-bottom:16px">' +
           'Unlock Claude \u2014 Anthropic\u2019s most thoughtful AI \u2014 for richer, more beautiful story writing. ' +
           'Plus full-resolution photos and more to come.' +
         '</p>' +
-        '<button data-action="upgrade-checkout" ' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+          '<div data-action="select-plan" data-plan="monthly" style="' + monthlyPillStyle + '">Monthly</div>' +
+          '<div data-action="select-plan" data-plan="annual" style="' + annualPillStyle + '">Annual · Save 15%</div>' +
+        '</div>' +
+        '<button data-action="upgrade-checkout" data-plan="' + _upgradeSelectedPlan + '" ' +
           'style="width:100%;padding:12px;border-radius:10px;border:none;cursor:pointer;' +
           'background:var(--gold);color:#3a2a0a;font-family:Lato,sans-serif;font-size:0.95rem;' +
           'font-weight:700;letter-spacing:0.02em">' +
-          '✨ Upgrade to Premium — A$9/mo' +
+          ctaLabel +
         '</button>' +
         '<p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;text-align:center">' +
-          'Cancel anytime. No lock-in.' +
+          subLabel +
         '</p>' +
         '';
     }
@@ -27069,11 +27091,17 @@
       if (btn) _a48Open();
     });
 
-    // Settings premium section — upgrade checkout button
+    // Settings premium section — plan toggle + upgrade checkout button (LP0-02)
     var _premiumSectionEl = document.getElementById('settingsPremiumSection');
     if (_premiumSectionEl) _premiumSectionEl.addEventListener('click', function(e) {
+      var planBtn = e.target.closest('[data-action="select-plan"]');
+      if (planBtn) {
+        _upgradeSelectedPlan = planBtn.dataset.plan === 'annual' ? 'annual' : 'monthly';
+        renderPremiumSettingsSection();
+        return;
+      }
       var btn = e.target.closest('[data-action="upgrade-checkout"]');
-      if (btn) startUpgradeCheckout();
+      if (btn) startUpgradeCheckout(btn.dataset.plan);
     });
     // Final-edit AI panel rate-limit message — upgrade checkout button (PRV-09 regression fix, v6.84)
     var _feAIPanelEl = document.getElementById('feAIPanel');
