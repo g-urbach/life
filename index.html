@@ -6748,17 +6748,41 @@
     try {
       var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
+      dbg('DBG-PLAY', 'requesting signed URL for storagePath=' + storagePath);
       var signRes = await fetch(VOICE_ARCHIVE_SIGN + '/' + storagePath, {
         method:  'POST',
         headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON, 'Content-Type': 'application/json' },
         body:    JSON.stringify({ expiresIn: 3600 })
       });
+      dbg('DBG-PLAY', 'sign response status=' + signRes.status);
       if (!signRes.ok) throw new Error('Sign failed: ' + signRes.status);
       var signData = await signRes.json();
+      dbg('DBG-PLAY', 'sign response body=' + JSON.stringify(signData));
       var signedUrl = signData.signedURL || signData.signedUrl || '';
       if (!signedUrl) throw new Error('No signed URL in response');
+      // If the sign function returned a bare path (common Supabase Storage shape:
+      // "/object/sign/<bucket>/<path>?token=...") rather than an absolute URL, the
+      // <audio> tag's relative resolution would point at our own app origin instead
+      // of Supabase Storage, producing a 404 the browser reports only as a silent
+      // stall at 0:00 — never surfacing as a JS error since <audio> failures don't throw.
+      var isAbsolute = /^https?:\/\//i.test(signedUrl);
+      var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
+      dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
       container.innerHTML =
-        '<audio src="' + escHtml(signedUrl) + '" controls style="width:100%;height:32px"></audio>';
+        '<audio src="' + escHtml(resolvedUrl) + '" controls preload="metadata" style="width:100%;height:32px"></audio>';
+      var audioEl = container.querySelector('audio');
+      if (audioEl) {
+        audioEl.addEventListener('loadedmetadata', function() {
+          dbg('DBG-PLAY', 'loadedmetadata OK — duration=' + audioEl.duration + 's readyState=' + audioEl.readyState);
+        });
+        audioEl.addEventListener('error', function() {
+          var err = audioEl.error;
+          // MediaError codes: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
+          dbgErr('DBG-PLAY', 'audio element ERROR — code=' + (err && err.code) + ' message=' + (err && err.message) + ' | src=' + audioEl.currentSrc);
+        });
+        audioEl.addEventListener('stalled', function() { dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState); });
+        audioEl.addEventListener('play', function() { dbg('DBG-PLAY', 'audio play event fired'); });
+      }
     } catch(e) {
       dbgErr('VA', '_playVoiceArchive failed:', e.message);
       container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">Could not load audio — ' + escHtml(e.message) + '</span>';
