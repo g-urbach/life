@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.115';
+  const APP_VERSION = 'v7.117';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9105,7 +9105,9 @@
     }
 
     function _ext(mime) {
-      return (mime && mime.includes('mp4')) ? 'm4a' : 'ogg';
+      if (mime && mime.includes('mp4'))  return 'm4a';
+      if (mime && mime.includes('webm')) return 'webm';
+      return 'ogg';
     }
 
     function _makeRecorder(stream, mime, callbacks) {
@@ -9116,6 +9118,16 @@
         callbacks.onError && callbacks.onError(e);
         return null;
       }
+      // v7.116: rec.mimeType is the browser's ACTUAL chosen codec/container,
+      // which can differ from the requested `mime` — most commonly on Chrome,
+      // where _pickMime's candidates (audio/ogg, audio/mp4) are both
+      // unsupported for recording, so mime='' here and the constructor falls
+      // through to Chrome's real default of audio/webm;codecs=opus. Every
+      // downstream read of MicManager.mime (turnMime, blob type, the
+      // Content-Type sent to the server) must see that real value, not the
+      // pre-flight guess — otherwise webm bytes get labeled/stored as
+      // ogg or m4a and playback fails with a container mismatch.
+      if (rec.mimeType) _mime = rec.mimeType;
       rec.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) _chunks.push(e.data);
       };
