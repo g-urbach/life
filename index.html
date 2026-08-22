@@ -7904,6 +7904,7 @@
       parent_entry_id:      parentEntryId  || null
     };
     entries.push(newEntry); _invalidateSortCache();
+    dbg('DBG-ADDENTRY', 'optimistic push, timestamp=' + newEntry.timestamp + ' id=<none yet> panel-entries active=' + !!document.getElementById('panel-entries')?.classList.contains('active'));
 
     try {
       const res = await fetch(DB_URL, {
@@ -7922,13 +7923,16 @@
         const idx = entries.findIndex(e => e.timestamp === newEntry.timestamp && !e.id);
         if (idx > -1) { entries[idx].id = saved[0].id; entries[idx].parent_entry_id = saved[0].parent_entry_id; }
         dbg('DB', 'Entry saved, id:', saved[0].id);
+        dbg('DBG-ADDENTRY', 'id patch: idx=' + idx + ' patchedId=' + saved[0].id + ' entries[idx].id-after=' + (idx > -1 ? entries[idx].id : 'N/A'));
         // BUGFIX [ENTRY-ID-RACE]: the entry above may already have been painted into
         // #reviewEntryList by a renderReviewEntries() call that fired between the
         // optimistic push (above) and this id patch — that card's buttons would carry
         // data-id="" baked in forever, since nothing previously told the DOM to repaint
         // once the real id arrived. Force a re-render now if the Entries tab is visible
         // so any such card gets redrawn with working button ids.
-        if (document.getElementById('panel-entries')?.classList.contains('active')) renderReviewEntries();
+        const entriesPanelActive = document.getElementById('panel-entries')?.classList.contains('active');
+        dbg('DBG-ADDENTRY', 'post-patch re-render check: panel-entries active=' + entriesPanelActive + ' -> ' + (entriesPanelActive ? 'calling renderReviewEntries() now' : 'SKIPPED (not on Entries tab yet)'));
+        if (entriesPanelActive) renderReviewEntries();
         return saved[0].id;
       }
     } catch(err) {
@@ -17516,7 +17520,12 @@
     await consolidateDraft(selectedEntries);
   }
 
+  var _reviewRenderGen = 0; // BUGFIX [ENTRY-ID-RACE v2]: monotonic token — see renderReviewEntries()
+
   async function renderReviewEntries() {
+    const _dbgCaller = (new Error()).stack.split('\n')[2]?.trim() || 'unknown caller';
+    const _myGen = ++_reviewRenderGen;
+    dbg('DBG-RENDER', 'renderReviewEntries() START gen=' + _myGen + ' called from:', _dbgCaller, '| entries with archives:', Object.keys(_voiceArchiveCache || {}).length);
     const filter = document.getElementById('reviewFilterCat').value;
     const search = (document.getElementById('reviewSearch')?.value || '').toLowerCase().trim();
     const clearBtn = document.getElementById('reviewSearchClear');
@@ -17528,6 +17537,10 @@
     // duplicate (same timestamp, id not yet patched in) never gets rendered — such a
     // card would carry data-id="" and every button on it would silently no-op.
     const timestampsWithId = new Set(entries.filter(e => e.id).map(e => e.timestamp));
+    const _idlessSurvivors = entries.filter(e => !e.id && !timestampsWithId.has(e.timestamp));
+    if (_idlessSurvivors.length) {
+      dbg('DBG-RENDER', 'WARNING: ' + _idlessSurvivors.length + ' id-less entr' + (_idlessSurvivors.length === 1 ? 'y' : 'ies') + ' about to render with empty data-id:', _idlessSurvivors.map(e => ({ timestamp: e.timestamp, category: e.category, answer: (e.answer || '').slice(0, 40) })));
+    }
     const real = [...entries]
       .filter(e => {
         if (e.id && seenIds.has(e.id)) return false;
@@ -17600,6 +17613,7 @@
 
     const list = document.getElementById('reviewEntryList');
     if (!filtered.length) {
+      if (_myGen !== _reviewRenderGen) { dbg('DBG-RENDER', 'gen=' + _myGen + ' ABORTED before empty-state write — a newer render (gen=' + _reviewRenderGen + ') has since started'); return; }
       list.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>Nothing here yet. Head to Memories to tell me your first story.</p></div>';
       return;
     }
@@ -17639,7 +17653,7 @@
       }
     } catch(fbFetchErr) { /* non-fatal — cards still render without feedback */ }
 
-    list.innerHTML = filtered.map(e => {
+    const _reviewHtml = filtered.map(e => {
       try {
         const tags    = getEntryTags(e);
         const hasTags = Object.keys(tags).length > 0;
@@ -17910,6 +17924,13 @@
       }
     }).join('');
 
+    if (_myGen !== _reviewRenderGen) {
+      dbg('DBG-RENDER', 'gen=' + _myGen + ' ABORTED before final DOM write — a newer render (gen=' + _reviewRenderGen + ') has since started; discarding this stale HTML to avoid clobbering the newer card list');
+      return;
+    }
+    list.innerHTML = _reviewHtml;
+    dbg('DBG-RENDER', 'gen=' + _myGen + ' WROTE DOM (this was the winning/current render)');
+
     // Register tags and populate dropdowns
     filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
@@ -17922,7 +17943,11 @@
       _loadVoiceArchivesForEntries(_vaEntryIds).then(function() {
         // Re-render only if any new archives were found for visible entries
         var hasNew = _vaEntryIds.some(function(id) { return (_voiceArchiveCache[id] || []).length > 0; });
-        if (hasNew) renderReview();
+        // BUGFIX [WRONG-FN]: this was calling renderReview() — the unrelated Dashboard
+        // chapter-coverage stats function — instead of renderReviewEntries(), the actual
+        // Entries list renderer. That meant a newly-loaded voice archive never actually
+        // triggered the Entries list to refresh via this path.
+        if (hasNew) renderReviewEntries();
       }).catch(function(){});
     }
   }
@@ -27139,14 +27164,27 @@
       var fbId    = btn.dataset.fbId    || null;
       var entryId = btn.dataset.entryId || null;
       var name    = btn.dataset.name    || '';
+      // DBG-CLICK: full picture of what this click actually resolved to, straight from
+      // the live DOM element — vs. whether the in-memory `entries` array currently has
+      // a matching id. If `id` is null/empty here but a same-card entry with a real id
+      // exists in `entries`, the DOM is stale relative to app state (a superseded render
+      // is still sitting on screen) — that's the render-race bug, not a delegate bug.
+      var _cardEl = btn.closest('.entry-card');
+      var _cardDomId = _cardEl ? _cardEl.id : '(no .entry-card ancestor)';
+      var _liveMatch = id ? entries.find(function(en){ return en.id === id; }) : null;
+      dbg('DBG-CLICK', 'action=' + action, '| id=' + id, '| entryId=' + entryId, '| fbId=' + fbId,
+        '| card DOM id=' + _cardDomId,
+        '| btn outerHTML=' + btn.outerHTML.substring(0, 200),
+        '| id found in live entries[]?', !!_liveMatch,
+        '| current _reviewRenderGen=' + _reviewRenderGen);
       switch (action) {
-        case 'delete-entry':         if (id) deleteEntry(id);                              break;
+        case 'delete-entry':         if (id) deleteEntry(id); else dbgWarn('DBG-CLICK', 'delete-entry: id was falsy, call SKIPPED'); break;
         case 'improve-entry':        if (id) improveEntry(id);                             break;
         case 'improve-entry-detail': if (id) improveEntryInDetail(id);                    break;
         case 'cancel-review':        if (id) { var p = document.getElementById('improve-' + id); if (p) p.style.display = 'none'; var c = document.getElementById('cancel-review-' + id); if (c) c.style.display = 'none'; } break;
         case 'edit-tags':            if (id) toggleEditTags(id, btn.dataset.inReview === 'true'); break;
         case 'edit-tags-detail':     if (id) toggleEditTagsInDetail(id);                  break;
-        case 'edit-text':            if (id) editEntryText(id);                            break;
+        case 'edit-text':            if (id) editEntryText(id); else dbgWarn('DBG-CLICK', 'edit-text: id was falsy, call SKIPPED'); break;
         case 'save-entry-text':      if (id) saveEntryText(id);                            break;
         case 'cancel-edit-text':     if (id) editEntryText(id);                            break;
         case 'edit-with-gethro':     if (id) openEntryInMemories(id);                     break;
