@@ -6709,19 +6709,19 @@
   // APP-55 Phase 6: Fetch voice archives for a batch of entries, populate _voiceArchiveCache.
   // select now includes question + turn_index (added by VA-M01b migration) for thread render.
   async function _loadVoiceArchivesForEntries(entryIds) {
-    if (!entryIds || !entryIds.length || !currentUser) return;
+    if (!entryIds || !entryIds.length || !currentUser) return [];
     var needed = entryIds.filter(function(id) { return !_voiceArchiveCache[id]; });
-    if (!needed.length) return;
+    if (!needed.length) return [];
     try {
       var session = (await sb.auth.getSession()).data.session;
-      if (!session) return;
+      if (!session) return [];
       var ids = needed.map(function(id) { return 'entry_id.eq.' + id; }).join(',');
       var res = await fetch(
         SUPABASE_URL + '/rest/v1/life_voice_archives?user_id=eq.' + currentUser.id +
         '&or=(' + ids + ')&order=turn_index.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index',
         { headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON } }
       );
-      if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return; }
+      if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return []; }
       var rows = await res.json();
       needed.forEach(function(id) { if (!_voiceArchiveCache[id]) _voiceArchiveCache[id] = []; });
       rows.forEach(function(row) {
@@ -6729,8 +6729,14 @@
         _voiceArchiveCache[row.entry_id].push(row);
       });
       dbg('VA', 'Loaded ' + rows.length + ' archive(s) for ' + needed.length + ' entries');
+      // BUGFIX [INFINITE-RENDER-LOOP]: return exactly which ids this call actually
+      // queried for, so the caller can tell "genuinely new this call" apart from
+      // "has data at all" — the latter is permanently true once an entry has ever
+      // had an archive, which was causing an infinite render loop (see caller).
+      return needed;
     } catch(e) {
       dbgErr('VA', '_loadVoiceArchivesForEntries threw:', e.message);
+      return [];
     }
   }
 
@@ -17940,14 +17946,22 @@
     // APP-55 Phase 2: load voice archives for visible entries (fire-and-forget, re-renders after fetch)
     var _vaEntryIds = filtered.filter(function(e) { return e.id; }).map(function(e) { return e.id; });
     if (_vaEntryIds.length) {
-      _loadVoiceArchivesForEntries(_vaEntryIds).then(function() {
-        // Re-render only if any new archives were found for visible entries
-        var hasNew = _vaEntryIds.some(function(id) { return (_voiceArchiveCache[id] || []).length > 0; });
+      _loadVoiceArchivesForEntries(_vaEntryIds).then(function(fetchedIds) {
+        // BUGFIX [INFINITE-RENDER-LOOP]: previously checked
+        // "_vaEntryIds.some(id => (_voiceArchiveCache[id]||[]).length > 0)" — i.e. "does any
+        // visible entry have archive data at all". Once any entry has a real archive, that's
+        // permanently true, so combined with the WRONG-FN fix below (which made this actually
+        // call the real list-renderer instead of a no-op unrelated function), this triggered
+        // an infinite loop: render → fetch (no-ops, already cached) → "hasNew" always true →
+        // render → fetch → ... hundreds of times a second, continuously wiping the DOM out
+        // from under any click. Now _loadVoiceArchivesForEntries() returns exactly which ids
+        // it queried THIS call — empty array means nothing new, so we stop dead here.
+        dbg('DBG-RENDER', 'voice archive load callback: fetchedIds=' + JSON.stringify(fetchedIds));
         // BUGFIX [WRONG-FN]: this was calling renderReview() — the unrelated Dashboard
         // chapter-coverage stats function — instead of renderReviewEntries(), the actual
         // Entries list renderer. That meant a newly-loaded voice archive never actually
         // triggered the Entries list to refresh via this path.
-        if (hasNew) renderReviewEntries();
+        if (fetchedIds && fetchedIds.length) renderReviewEntries();
       }).catch(function(){});
     }
   }
