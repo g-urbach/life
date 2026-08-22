@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.119';
+  const APP_VERSION = 'v7.121';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9339,7 +9339,17 @@
         dbgErr('VA_ARCHIVE', 'MediaRecorder error:', e.error);
       };
       try {
-        _rec.start(100);
+        // APP-59 Phase 1 fix: no timeslice argument. With start(100), Safari/
+        // WebKit's MP4 MediaRecorder fragments internally on its own schedule
+        // regardless of whether we ever call stop()/restart — each periodic
+        // ondataavailable chunk is its own self-contained fragment, so
+        // concatenating them still produces a multi-header file (same bug,
+        // different mechanism than the original restart-based one). Calling
+        // start() with no interval means ondataavailable fires exactly once,
+        // at stop(), with the whole turn as one atomic single-header blob.
+        // MicManager's own recorder (live STT) keeps its timeslice/restart
+        // behavior untouched — that's a separate recorder on the same stream.
+        _rec.start();
       } catch(e) {
         dbgErr('VA_ARCHIVE', 'start() threw:', e.message);
         _rec = null;
