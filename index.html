@@ -4229,7 +4229,7 @@
 
   <!-- ENTRIES panel -->
   <div class="panel" id="panel-entries">
-    <h2 class="section-title">My Entries</h2>
+    <h2 class="section-title">My Memories</h2>
     <p class="section-sub">Browse, search and improve all your memories.</p>
 
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:20px">
@@ -5149,7 +5149,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.112';
+  const APP_VERSION = 'v7.113';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -7922,6 +7922,13 @@
         const idx = entries.findIndex(e => e.timestamp === newEntry.timestamp && !e.id);
         if (idx > -1) { entries[idx].id = saved[0].id; entries[idx].parent_entry_id = saved[0].parent_entry_id; }
         dbg('DB', 'Entry saved, id:', saved[0].id);
+        // BUGFIX [ENTRY-ID-RACE]: the entry above may already have been painted into
+        // #reviewEntryList by a renderReviewEntries() call that fired between the
+        // optimistic push (above) and this id patch — that card's buttons would carry
+        // data-id="" baked in forever, since nothing previously told the DOM to repaint
+        // once the real id arrived. Force a re-render now if the Entries tab is visible
+        // so any such card gets redrawn with working button ids.
+        if (document.getElementById('panel-entries')?.classList.contains('active')) renderReviewEntries();
         return saved[0].id;
       }
     } catch(err) {
@@ -16132,7 +16139,7 @@
       } else {
         peopleGrid.innerHTML = peopleSorted.map(([name, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\'")}');event.stopPropagation()"
+          return `<button
             class="dash-person-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             👤 ${name}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -16152,7 +16159,7 @@
         const score = scoreChapter(ces);
         const colour = score >= 65 ? 'var(--sage)' : score >= 30 ? 'var(--gold)' : 'var(--rose)';
         const label  = score >= 65 ? 'Good coverage' : score >= 30 ? 'Needs more depth' : 'Just getting started';
-        return `<div\'")}');event.stopPropagation()"
+        return `<div
           class="dash-chapter-card" style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${colour};border-radius:8px;padding:10px 12px;cursor:pointer;transition:box-shadow 0.15s">
           <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:2px">${ch}</div>
           <div style="font-size:0.7rem;color:var(--text-light)">${ces.length} entr${ces.length===1?'y':'ies'} · ${words.toLocaleString()} words</div>
@@ -16188,7 +16195,7 @@
       } else {
         locGrid.innerHTML = locationSorted.map(([loc, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\'")}');event.stopPropagation()"
+          return `<button
             class="dash-location-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             📍 ${loc}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -17517,10 +17524,15 @@
 
     // Deduplicate by id — guards against double-push in entries array (e.g. stale optimistic push)
     const seenIds = new Set();
+    // Also collect timestamps of id-bearing entries so a leftover id-less optimistic
+    // duplicate (same timestamp, id not yet patched in) never gets rendered — such a
+    // card would carry data-id="" and every button on it would silently no-op.
+    const timestampsWithId = new Set(entries.filter(e => e.id).map(e => e.timestamp));
     const real = [...entries]
       .filter(e => {
         if (e.id && seenIds.has(e.id)) return false;
         if (e.id) seenIds.add(e.id);
+        if (!e.id && timestampsWithId.has(e.timestamp)) return false;
         return !e.category.startsWith('_profile') && !e.category.startsWith('_essentials');
       })
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
