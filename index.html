@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.123';
+  const APP_VERSION = 'v7.125';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9093,11 +9093,50 @@
       }
     }
 
-    // Pick best MIME type: ogg/opus preferred (Chrome, Firefox); mp4 fallback (Safari).
-    // Deliberately excludes audio/webm — Inworld STT rejects it; Whisper handles ogg/mp4.
+    // Pick best MIME type for both recording AND native <audio>/<video>
+    // playback — these are NOT the same requirement, and conflating them is
+    // what caused the APP-59 "Opus-in-MP4" bug (Aug 2026): MediaRecorder.
+    // isTypeSupported('audio/mp4') only confirms the browser CAN mux an mp4
+    // container, not which codec it puts inside. On Chrome, an unqualified
+    // 'audio/mp4' request muxes with Opus (Chrome's only readily available
+    // live audio encoder) rather than AAC — a combination that satisfies
+    // decodeAudioData/ffmpeg/MSE-based players, but is NOT supported by a
+    // plain <audio src="..."> element in ANY current browser, including the
+    // one that recorded it. Root-caused via ffprobe on a real broken archive:
+    // stsd fourCC 'Opus' + 'dOps' box inside an ISO-BMFF/fragmented-mp4
+    // container, not the 'mp4a' (AAC) box a real .m4a is expected to carry.
+    //
+    // Fix, in priority order, each chosen for guaranteed plain-<audio>-src
+    // playback (not just decodability) on the browser that recorded it:
+    //   1. audio/webm;codecs=opus — native on Chrome, Firefox, Edge, and
+    //      Safari 18.4+; the best-supported, best-tested combination there
+    //      is, and (per APP-59 Phase 1 round 3) fully accepted by our Azure
+    //      Fast Transcription / Groq STT paths, so there's no STT downside.
+    //      NOTE: previously excluded here on the belief that Inworld STT
+    //      rejected webm — confirmed (Aug 2026) that Inworld is TTS-only in
+    //      this app and was never in the STT path, so that exclusion was
+    //      based on stale/incorrect documentation. This is the actual root
+    //      cause of the whole "voice archive won't play" saga: removing it
+    //      restores the well-supported format instead of falling through to
+    //      the risky one below.
+    //   2. audio/ogg;codecs=opus — Firefox-only in practice (Chrome/Safari
+    //      have never muxed Ogg via MediaRecorder), kept as a genuine
+    //      alternate rather than a redundant one.
+    //   3. audio/mp4;codecs=mp4a.40.2 — explicit AAC-LC codec string, NOT
+    //      bare 'audio/mp4'. This is the deliberate hardening: requesting
+    //      the codec explicitly means we get real AAC (playable natively
+    //      everywhere mp4 is, including every Safari version) or a clean
+    //      isTypeSupported()===false to fall through — never a silent
+    //      non-AAC codec smuggled into an mp4 container again, even if some
+    //      other browser adds its own new default-codec-for-mp4 behavior
+    //      later the way Chrome just did.
+    // If none of these match, returning '' lets MediaRecorder pick its own
+    // unconstrained default — historically Chrome/Firefox's own default is
+    // webm/Opus, which is safe; this is a deliberate final fallback, not an
+    // oversight.
     function _pickMime(preferred) {
       if (preferred && MediaRecorder.isTypeSupported(preferred)) return preferred;
-      var candidates = ['audio/ogg;codecs=opus', 'audio/mp4'];
+      var candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a.40.2'];
       for (var i = 0; i < candidates.length; i++) {
         if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
       }
