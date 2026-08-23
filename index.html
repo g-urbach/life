@@ -3393,16 +3393,13 @@
       </div>
     </div>
 
-    <!-- Peecho Button script — must be on page so it can process the hidden <a> tag
-         below and navigate to the configurator with a valid publicationId.
-         The script reads data-src + other data-* attrs, registers the PDF with Peecho,
-         then navigates to peecho.com/configurator?publicationId=xxx. -->
-  <script type="text/javascript">
-    var p=document.createElement("script");p.type="text/javascript";p.async=true;
-    var h=("https:"==document.location.protocol?"https://":"http://");
-    p.src=h+"d3aln0nj58oevo.cloudfront.net/button/script/177345578807966651.js";
-    var s=document.getElementsByTagName("script")[0];s.parentNode.insertBefore(p,s);
-  </script>
+    <!-- Peecho Button script REMOVED (PRV-25/PEECHO_ENABLED=false — Peecho is stubbed
+         off, see APP_VERSION block). This unconditional loader fired on every page load
+         regardless of the flag, pulling from d3aln0nj58oevo.cloudfront.net with no
+         matching CSP hash in _headers — that was CSP violation #1 in the console log.
+         printBook() already guards window.peecho.attach() behind a truthiness check,
+         so removing the loader is safe: the button simply never attaches, same net
+         effect as PEECHO_ENABLED=false elsewhere. Re-add if Peecho is re-enabled. -->
     <!-- Peecho anchor — hidden until printBook() finishes preparing the PDF.
          The Peecho Button script requires a real user gesture to navigate.
          Programmatic .click() is ignored (v1.81 lesson: synthetic clicks don't trigger
@@ -4229,7 +4226,7 @@
 
   <!-- ENTRIES panel -->
   <div class="panel" id="panel-entries">
-    <h2 class="section-title">My Entries</h2>
+    <h2 class="section-title">My Memories</h2>
     <p class="section-sub">Browse, search and improve all your memories.</p>
 
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:20px">
@@ -5149,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.109';
+  const APP_VERSION = 'v7.126';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6709,19 +6706,19 @@
   // APP-55 Phase 6: Fetch voice archives for a batch of entries, populate _voiceArchiveCache.
   // select now includes question + turn_index (added by VA-M01b migration) for thread render.
   async function _loadVoiceArchivesForEntries(entryIds) {
-    if (!entryIds || !entryIds.length || !currentUser) return;
+    if (!entryIds || !entryIds.length || !currentUser) return [];
     var needed = entryIds.filter(function(id) { return !_voiceArchiveCache[id]; });
-    if (!needed.length) return;
+    if (!needed.length) return [];
     try {
       var session = (await sb.auth.getSession()).data.session;
-      if (!session) return;
+      if (!session) return [];
       var ids = needed.map(function(id) { return 'entry_id.eq.' + id; }).join(',');
       var res = await fetch(
         SUPABASE_URL + '/rest/v1/life_voice_archives?user_id=eq.' + currentUser.id +
         '&or=(' + ids + ')&order=turn_index.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index',
         { headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON } }
       );
-      if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return; }
+      if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return []; }
       var rows = await res.json();
       needed.forEach(function(id) { if (!_voiceArchiveCache[id]) _voiceArchiveCache[id] = []; });
       rows.forEach(function(row) {
@@ -6729,8 +6726,14 @@
         _voiceArchiveCache[row.entry_id].push(row);
       });
       dbg('VA', 'Loaded ' + rows.length + ' archive(s) for ' + needed.length + ' entries');
+      // BUGFIX [INFINITE-RENDER-LOOP]: return exactly which ids this call actually
+      // queried for, so the caller can tell "genuinely new this call" apart from
+      // "has data at all" — the latter is permanently true once an entry has ever
+      // had an archive, which was causing an infinite render loop (see caller).
+      return needed;
     } catch(e) {
       dbgErr('VA', '_loadVoiceArchivesForEntries threw:', e.message);
+      return [];
     }
   }
 
@@ -6742,17 +6745,52 @@
     try {
       var session = (await sb.auth.getSession()).data.session;
       if (!session) throw new Error('Not authenticated');
+      dbg('DBG-PLAY', 'requesting signed URL for storagePath=' + storagePath);
       var signRes = await fetch(VOICE_ARCHIVE_SIGN + '/' + storagePath, {
         method:  'POST',
         headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON, 'Content-Type': 'application/json' },
         body:    JSON.stringify({ expiresIn: 3600 })
       });
+      dbg('DBG-PLAY', 'sign response status=' + signRes.status);
       if (!signRes.ok) throw new Error('Sign failed: ' + signRes.status);
       var signData = await signRes.json();
+      dbg('DBG-PLAY', 'sign response body=' + JSON.stringify(signData));
       var signedUrl = signData.signedURL || signData.signedUrl || '';
       if (!signedUrl) throw new Error('No signed URL in response');
+      // ROOT CAUSE, confirmed 23 Aug 2026 via ffprobe (proved the file itself
+      // is byte-perfect) + a real DevTools Network capture (showed a 404, not
+      // a format/CORS error, on the browser's actual media GET). Supabase's
+      // POST /storage/v1/object/sign/{bucket}/{path} returns a signedURL that
+      // is a RELATIVE path — e.g. "/object/sign/<bucket>/<path>?token=..." —
+      // meant to be resolved against SUPABASE_URL + '/storage/v1', per
+      // Supabase's own documented Storage API shape. The previous code here
+      // prepended SUPABASE_URL alone, silently dropping the required
+      // '/storage/v1' segment, producing a URL with no matching route at all
+      // (hence 404, not an auth/permission rejection) — e.g.
+      // https://<project>.supabase.co/object/sign/<bucket>/<path> instead of
+      // https://<project>.supabase.co/storage/v1/object/sign/<bucket>/<path>.
+      // This affected every playback attempt during the whole APP-59 voice
+      // archive investigation, independent of and unrelated to the separate,
+      // also-real Opus-in-container codec bug fixed earlier the same day —
+      // both had to be fixed for playback to actually work.
+      var isAbsolute = /^https?:\/\//i.test(signedUrl);
+      var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
+      dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
       container.innerHTML =
-        '<audio src="' + escHtml(signedUrl) + '" controls style="width:100%;height:32px"></audio>';
+        '<audio src="' + escHtml(resolvedUrl) + '" controls preload="metadata" style="width:100%;height:32px"></audio>';
+      var audioEl = container.querySelector('audio');
+      if (audioEl) {
+        audioEl.addEventListener('loadedmetadata', function() {
+          dbg('DBG-PLAY', 'loadedmetadata OK — duration=' + audioEl.duration + 's readyState=' + audioEl.readyState);
+        });
+        audioEl.addEventListener('error', function() {
+          var err = audioEl.error;
+          // MediaError codes: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
+          dbgErr('DBG-PLAY', 'audio element ERROR — code=' + (err && err.code) + ' message=' + (err && err.message) + ' | src=' + audioEl.currentSrc);
+        });
+        audioEl.addEventListener('stalled', function() { dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState); });
+        audioEl.addEventListener('play', function() { dbg('DBG-PLAY', 'audio play event fired'); });
+      }
     } catch(e) {
       dbgErr('VA', '_playVoiceArchive failed:', e.message);
       container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">Could not load audio — ' + escHtml(e.message) + '</span>';
@@ -7904,6 +7942,7 @@
       parent_entry_id:      parentEntryId  || null
     };
     entries.push(newEntry); _invalidateSortCache();
+    dbg('DBG-ADDENTRY', 'optimistic push, timestamp=' + newEntry.timestamp + ' id=<none yet> panel-entries active=' + !!document.getElementById('panel-entries')?.classList.contains('active'));
 
     try {
       const res = await fetch(DB_URL, {
@@ -7922,6 +7961,16 @@
         const idx = entries.findIndex(e => e.timestamp === newEntry.timestamp && !e.id);
         if (idx > -1) { entries[idx].id = saved[0].id; entries[idx].parent_entry_id = saved[0].parent_entry_id; }
         dbg('DB', 'Entry saved, id:', saved[0].id);
+        dbg('DBG-ADDENTRY', 'id patch: idx=' + idx + ' patchedId=' + saved[0].id + ' entries[idx].id-after=' + (idx > -1 ? entries[idx].id : 'N/A'));
+        // BUGFIX [ENTRY-ID-RACE]: the entry above may already have been painted into
+        // #reviewEntryList by a renderReviewEntries() call that fired between the
+        // optimistic push (above) and this id patch — that card's buttons would carry
+        // data-id="" baked in forever, since nothing previously told the DOM to repaint
+        // once the real id arrived. Force a re-render now if the Entries tab is visible
+        // so any such card gets redrawn with working button ids.
+        const entriesPanelActive = document.getElementById('panel-entries')?.classList.contains('active');
+        dbg('DBG-ADDENTRY', 'post-patch re-render check: panel-entries active=' + entriesPanelActive + ' -> ' + (entriesPanelActive ? 'calling renderReviewEntries() now' : 'SKIPPED (not on Entries tab yet)'));
+        if (entriesPanelActive) renderReviewEntries();
         return saved[0].id;
       }
     } catch(err) {
@@ -8026,7 +8075,15 @@
       });
       if (!res.ok) return null;
       var data = await res.json();
-      return data.signedURL || data.signedUrl || null;
+      // Same fix as _playVoiceArchive (23 Aug 2026): Supabase's signedURL is
+      // relative to SUPABASE_URL + '/storage/v1', not to SUPABASE_URL alone —
+      // returning it bare here produced the identical 404-on-playback bug for
+      // this feature's audio (shared-feedback attachments), just undiscovered
+      // until now because it wasn't the one under active investigation.
+      var signedUrl = data.signedURL || data.signedUrl || null;
+      if (!signedUrl) return null;
+      if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
+      return SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl;
     } catch(e) { return null; }
   }
 
@@ -9055,11 +9112,50 @@
       }
     }
 
-    // Pick best MIME type: ogg/opus preferred (Chrome, Firefox); mp4 fallback (Safari).
-    // Deliberately excludes audio/webm — Inworld STT rejects it; Whisper handles ogg/mp4.
+    // Pick best MIME type for both recording AND native <audio>/<video>
+    // playback — these are NOT the same requirement, and conflating them is
+    // what caused the APP-59 "Opus-in-MP4" bug (Aug 2026): MediaRecorder.
+    // isTypeSupported('audio/mp4') only confirms the browser CAN mux an mp4
+    // container, not which codec it puts inside. On Chrome, an unqualified
+    // 'audio/mp4' request muxes with Opus (Chrome's only readily available
+    // live audio encoder) rather than AAC — a combination that satisfies
+    // decodeAudioData/ffmpeg/MSE-based players, but is NOT supported by a
+    // plain <audio src="..."> element in ANY current browser, including the
+    // one that recorded it. Root-caused via ffprobe on a real broken archive:
+    // stsd fourCC 'Opus' + 'dOps' box inside an ISO-BMFF/fragmented-mp4
+    // container, not the 'mp4a' (AAC) box a real .m4a is expected to carry.
+    //
+    // Fix, in priority order, each chosen for guaranteed plain-<audio>-src
+    // playback (not just decodability) on the browser that recorded it:
+    //   1. audio/webm;codecs=opus — native on Chrome, Firefox, Edge, and
+    //      Safari 18.4+; the best-supported, best-tested combination there
+    //      is, and (per APP-59 Phase 1 round 3) fully accepted by our Azure
+    //      Fast Transcription / Groq STT paths, so there's no STT downside.
+    //      NOTE: previously excluded here on the belief that Inworld STT
+    //      rejected webm — confirmed (Aug 2026) that Inworld is TTS-only in
+    //      this app and was never in the STT path, so that exclusion was
+    //      based on stale/incorrect documentation. This is the actual root
+    //      cause of the whole "voice archive won't play" saga: removing it
+    //      restores the well-supported format instead of falling through to
+    //      the risky one below.
+    //   2. audio/ogg;codecs=opus — Firefox-only in practice (Chrome/Safari
+    //      have never muxed Ogg via MediaRecorder), kept as a genuine
+    //      alternate rather than a redundant one.
+    //   3. audio/mp4;codecs=mp4a.40.2 — explicit AAC-LC codec string, NOT
+    //      bare 'audio/mp4'. This is the deliberate hardening: requesting
+    //      the codec explicitly means we get real AAC (playable natively
+    //      everywhere mp4 is, including every Safari version) or a clean
+    //      isTypeSupported()===false to fall through — never a silent
+    //      non-AAC codec smuggled into an mp4 container again, even if some
+    //      other browser adds its own new default-codec-for-mp4 behavior
+    //      later the way Chrome just did.
+    // If none of these match, returning '' lets MediaRecorder pick its own
+    // unconstrained default — historically Chrome/Firefox's own default is
+    // webm/Opus, which is safe; this is a deliberate final fallback, not an
+    // oversight.
     function _pickMime(preferred) {
       if (preferred && MediaRecorder.isTypeSupported(preferred)) return preferred;
-      var candidates = ['audio/ogg;codecs=opus', 'audio/mp4'];
+      var candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a.40.2'];
       for (var i = 0; i < candidates.length; i++) {
         if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
       }
@@ -9067,7 +9163,9 @@
     }
 
     function _ext(mime) {
-      return (mime && mime.includes('mp4')) ? 'm4a' : 'ogg';
+      if (mime && mime.includes('mp4'))  return 'm4a';
+      if (mime && mime.includes('webm')) return 'webm';
+      return 'ogg';
     }
 
     function _makeRecorder(stream, mime, callbacks) {
@@ -9078,6 +9176,16 @@
         callbacks.onError && callbacks.onError(e);
         return null;
       }
+      // v7.116: rec.mimeType is the browser's ACTUAL chosen codec/container,
+      // which can differ from the requested `mime` — most commonly on Chrome,
+      // where _pickMime's candidates (audio/ogg, audio/mp4) are both
+      // unsupported for recording, so mime='' here and the constructor falls
+      // through to Chrome's real default of audio/webm;codecs=opus. Every
+      // downstream read of MicManager.mime (turnMime, blob type, the
+      // Content-Type sent to the server) must see that real value, not the
+      // pre-flight guess — otherwise webm bytes get labeled/stored as
+      // ogg or m4a and playback fails with a container mismatch.
+      if (rec.mimeType) _mime = rec.mimeType;
       rec.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) _chunks.push(e.data);
       };
@@ -9244,6 +9352,110 @@
     };
   })();
 
+  // ── APP-59 Phase 1: ArchiveRecorder — parallel, never-restarted MediaRecorder ──
+  // Fixes BACKGROUND bug (b): MicManager's own recorder is intentionally
+  // restarted on every flush() so each segment is independently decodable for
+  // live chunk STT (see MicManager.flush comments above) — but that means
+  // every restart writes its own container header, and concatenating those
+  // standalone files with `new Blob([...])` (the old _stageCurrentTurn
+  // approach) does NOT produce one valid file. ArchiveRecorder runs a SECOND,
+  // independent MediaRecorder on the SAME getUserMedia stream (MicManager.stream),
+  // started once per turn and stopped once at turn end — never restarted —
+  // so the archived/playable file this produces is always a single container
+  // with exactly one header. It does nothing but accumulate chunks and hand
+  // back one blob; MicManager's restart-based recorder is completely
+  // untouched and keeps driving live STT exactly as before. The two
+  // recorders are independent consumers of the same stream.
+  const ArchiveRecorder = (function() {
+    var _rec    = null;
+    var _chunks = [];
+    var _mime   = '';
+
+    // Starts recording the whole turn. Call once per turn (at mic-open),
+    // after MicManager.start() has succeeded and a stream exists.
+    // Returns true on success; false if MediaRecorder could not be created
+    // (caller should treat the turn as archive-less but still let live STT
+    // proceed via MicManager — a missing archive is not worse than today).
+    function start(stream, mime) {
+      _chunks = [];
+      _mime   = mime || '';
+      if (!stream) { dbgWarn('VA_ARCHIVE', 'start() called with no stream'); return false; }
+      try {
+        _rec = new MediaRecorder(stream, _mime ? { mimeType: _mime } : {});
+      } catch(e) {
+        dbgErr('VA_ARCHIVE', 'MediaRecorder construction failed:', e.message);
+        _rec = null;
+        return false;
+      }
+      // Same real-codec sync as MicManager._makeRecorder — rec.mimeType is
+      // the browser's actual chosen codec, which can differ from requested.
+      if (_rec.mimeType) _mime = _rec.mimeType;
+      _rec.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) _chunks.push(e.data);
+      };
+      _rec.onerror = function(e) {
+        dbgErr('VA_ARCHIVE', 'MediaRecorder error:', e.error);
+      };
+      try {
+        // APP-59 Phase 1 fix: no timeslice argument. With start(100), Safari/
+        // WebKit's MP4 MediaRecorder fragments internally on its own schedule
+        // regardless of whether we ever call stop()/restart — each periodic
+        // ondataavailable chunk is its own self-contained fragment, so
+        // concatenating them still produces a multi-header file (same bug,
+        // different mechanism than the original restart-based one). Calling
+        // start() with no interval means ondataavailable fires exactly once,
+        // at stop(), with the whole turn as one atomic single-header blob.
+        // MicManager's own recorder (live STT) keeps its timeslice/restart
+        // behavior untouched — that's a separate recorder on the same stream.
+        _rec.start();
+      } catch(e) {
+        dbgErr('VA_ARCHIVE', 'start() threw:', e.message);
+        _rec = null;
+        return false;
+      }
+      return true;
+    }
+
+    // Stops the recorder and resolves with { blob, mime } — a single-header,
+    // fully valid file spanning the whole turn — or null if start() was
+    // never called, failed, or nothing was captured (e.g. instant tap-stop).
+    function stop() {
+      if (!_rec) return Promise.resolve(null);
+      var rec  = _rec;
+      var mime = _mime;
+      _rec = null;
+      return new Promise(function(resolve) {
+        rec.addEventListener('stop', function() {
+          var blob = new Blob(_chunks, { type: mime || 'audio/ogg' });
+          _chunks = [];
+          resolve(blob.size > 0 ? { blob: blob, mime: mime } : null);
+        }, { once: true });
+        try {
+          if (rec.state !== 'inactive') rec.stop();
+          else resolve(null);
+        } catch(e) { resolve(null); }
+      });
+    }
+
+    // Turn abandoned before a real stop (e.g. error path) — stop without
+    // using the result, so the recorder doesn't keep running against a
+    // stream that's about to be released.
+    function discard() {
+      if (!_rec) return;
+      var rec = _rec;
+      _rec = null;
+      _chunks = [];
+      try { if (rec.state !== 'inactive') rec.stop(); } catch(e) {}
+    }
+
+    return {
+      start:   start,
+      stop:    stop,
+      discard: discard,
+      get active() { return !!_rec; },
+    };
+  })();
+
   // ── APP-52 Phase 2: MediaRecorder + Whisper mic dictation ────────────────────
   // Replaces SpeechRecognition entirely for the Add Memory mic button.
   // State enum: 'idle' | 'recording' | 'transcribing' | 'error'
@@ -9281,7 +9493,10 @@
   let _micFlushCooldown     = false; // true for MIC_COOLDOWN_MS after a failed chunk POST
   let _micArchiveSegments  = []; // RETIRED — Phase 1 design superseded by per-turn staging below. No longer pushed to; kept declared only so any stray reference doesn't throw. Safe to delete once a full regression pass confirms nothing reads it.
   let _micPreRecordLength  = 0;  // APP-55 Phase 4: textarea length at mic-start — doubles as this turn's offset (_turnOffset)
-  let _turnSegments        = []; // APP-55 Phase 4: chunks for the CURRENT mic session only — reset each mic-open, assembled into one blob at mic-stop
+  // _turnSegments removed APP-59 Phase 1 — archive assembly now comes from
+  // ArchiveRecorder (single continuous recorder), not from concatenating
+  // per-flush chunks here. See ArchiveRecorder comment block for why the old
+  // concatenation approach produced broken multi-header files.
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
@@ -9376,7 +9591,6 @@
     _micFlushCooldown    = false;
     _micSilenceStart     = null;
     _micTranscribing     = false;
-    _turnSegments        = []; // APP-55 Phase 4: fresh accumulation for THIS turn only
     _micPreRecordLength  = (document.getElementById('memAnswer') || {}).value?.length || 0; // APP-55 Phase 4: this turn's offset
 
     // ── Shared transcription helper (used by both chunk and final paths) ────
@@ -9430,25 +9644,53 @@
       }
     }
 
-    // ── APP-55 Phase 4: stage the current turn into memory (no network call here —
-    // commit_voice_turn fires later, from memDone(), only if the user saves) ────
-    function _stageCurrentTurn() {
-      if (!_turnSegments.length) return; // nothing recorded this turn (e.g. instant tap-stop)
-      var turnMime = MicManager.mime || _micChunkMimeType || 'audio/ogg';
-      var turnBlob;
-      try { turnBlob = new Blob(_turnSegments, { type: turnMime }); }
-      catch(e) { dbgErr('VA', 'Turn blob assembly failed:', e.message); _turnSegments = []; return; }
-      _turnSegments = [];
-      if (turnBlob.size === 0) { dbg('VA', 'Phase 4: empty turn blob — skipping stage'); return; }
+    // ── APP-59 Phase 1: integrity gate — attempt a real decode of the
+    // archived turn blob before staging it. decodeAudioData is the browser's
+    // own strict demuxer, the same class of check that fails on playback
+    // later (see BACKGROUND (b)) — running it now catches a broken file at
+    // record time instead of weeks later when someone taps play. Returns
+    // true if decoding isn't verifiable at all (no AudioContext support) —
+    // this is a safety net, not a gate that should block saving on browsers
+    // that can't run the check.
+    async function _canDecodeAudio(blob) {
+      var AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxCls) return true;
+      var ctx;
+      try {
+        var buf = await blob.arrayBuffer();
+        ctx = new AudioCtxCls();
+        await ctx.decodeAudioData(buf.slice(0));
+        return true;
+      } catch(e) {
+        dbgWarn('VA', 'Phase 1 integrity check: archive blob failed to decode —', e.message);
+        return false;
+      } finally {
+        if (ctx) ctx.close().catch(function(){});
+      }
+    }
+
+    // ── APP-55 Phase 4 / APP-59 Phase 1: stage the current turn into memory
+    // (no network call here — commit_voice_turn fires later, from memDone(),
+    // only if the user saves). The archive blob now comes from ArchiveRecorder
+    // (single continuous recorder, one header) instead of concatenating
+    // _turnSegments (which produced multi-header files — see BACKGROUND (b)).
+    async function _stageCurrentTurn() {
+      var archived = await ArchiveRecorder.stop();
+      if (!archived) { dbg('VA', 'Phase 1: no archive recorder output — skipping stage (e.g. instant tap-stop)'); return; }
+      if (!(await _canDecodeAudio(archived.blob))) {
+        logActivity && logActivity('voice_archive_error', 'integrity check failed at stage time — turn discarded before upload', 'error', 'VA');
+        toast('That recording could not be saved cleanly — please try recording this turn again', 4500);
+        return;
+      }
       var answerEl = document.getElementById('memAnswer');
       _stagedVoiceArchives.push({
-        blob: turnBlob,
-        mime: turnMime,
+        blob: archived.blob,
+        mime: archived.mime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
         baselineSnapshot: (answerEl ? answerEl.value : '')
       });
-      dbg('VA', 'Phase 4: turn staged — ' + turnBlob.size + ' bytes, offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
+      dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
@@ -9459,20 +9701,16 @@
         // v7.87: wavBlob/wavExt are the transcoded 16kHz mono WAV version of
         // this same segment (falls back to the original blob/ext if the
         // client-side transcode failed — see _tryTranscodeToWav). Only used
-        // for the live transcription call below; _turnSegments intentionally
-        // keeps accumulating the ORIGINAL blob so _stageCurrentTurn()'s later
-        // concatenation into one archive blob stays valid (concatenating
-        // several standalone WAV files would corrupt that assembled blob).
+        // for the live transcription call below. APP-59 Phase 1: the archive
+        // copy of this audio is captured independently by ArchiveRecorder
+        // (started in startMemMic, stopped in _stageCurrentTurn) — this
+        // callback no longer needs to accumulate blobs for archiving.
         var xcribeBlob = wavBlob || blob;
         var xcribeExt  = wavExt || ext;
-        // APP-55 Phase 4: accumulate into THIS turn's segment array regardless of
-        // size (even tiny chunks contribute valid audio; Whisper's min-size check
-        // below is about live transcription quality, not archive completeness)
-        if (blob && blob.size > 0) _turnSegments.push(blob);
         if (blob.size < MIC_MIN_CHUNK_BYTES) {
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
           if (isFinal) {
-            _stageCurrentTurn();
+            await _stageCurrentTurn();
             _micRelease(); // v7.32: release stream tracks so browser tab red indicator clears (was missing from this early-return path)
             _setMicState('idle'); setMemStatus('idle', '');
           }
@@ -9482,7 +9720,7 @@
         if (isFinal) {
           // Go idle immediately on stop — final chunk transcribes in background (10s timeout).
           // Archive re-transcription handles quality. User never waits on orange screen.
-          _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
+          await _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
@@ -9521,6 +9759,7 @@
 
       onError: function(e) {
         dbgErr('MIC', 'MediaRecorder error:', e);
+        ArchiveRecorder.discard(); // APP-59 Phase 1: this error path never reaches _stageCurrentTurn()
         _micRelease(); _setMicState('error'); setMemStatus('idle', '');
         toast('Recording error — tap mic to try again');
       },
@@ -9542,6 +9781,16 @@
     _setMicState('recording');
     setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
     dbg('MIC', 'Started via MicManager — mime=' + MicManager.mime);
+
+    // ── APP-59 Phase 1: start the parallel archive recorder for THIS turn —
+    // same stream, same mime, never restarted. See ArchiveRecorder comment
+    // block above for why this replaces _turnSegments concatenation. If it
+    // fails to start, live STT (MicManager) is completely unaffected — the
+    // turn just won't have a playable archive, same as if this feature
+    // didn't exist, rather than blocking dictation.
+    if (!ArchiveRecorder.start(MicManager.stream, MicManager.mime)) {
+      dbgWarn('VA_ARCHIVE', 'Failed to start — this turn will have no voice archive');
+    }
 
     // Periodic flush timer (safety net + reassurance)
     _micChunkTimer = setInterval(function() {
@@ -9633,9 +9882,9 @@
     recVideos = [];
     renderUnifiedMediaStrip();
     if (memMicActive) stopMemMic();
+    ArchiveRecorder.discard(); // APP-59 Phase 1: safety net — no-op if already stopped via _stageCurrentTurn()
     _setMicState('idle'); // force idle — covers 'transcribing' state when user saves mid-transcription
     _stagedVoiceArchives = []; // APP-55 Phase 4: discard staged turns on reset — never commit a discarded entry's recordings
-    _turnSegments        = [];
     _micPreRecordLength  = 0;
     setMemStatus('idle', '');
     recCurQuestion  = '';
@@ -16132,7 +16381,7 @@
       } else {
         peopleGrid.innerHTML = peopleSorted.map(([name, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\'")}');event.stopPropagation()"
+          return `<button
             class="dash-person-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             👤 ${name}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -16152,7 +16401,7 @@
         const score = scoreChapter(ces);
         const colour = score >= 65 ? 'var(--sage)' : score >= 30 ? 'var(--gold)' : 'var(--rose)';
         const label  = score >= 65 ? 'Good coverage' : score >= 30 ? 'Needs more depth' : 'Just getting started';
-        return `<div\'")}');event.stopPropagation()"
+        return `<div
           class="dash-chapter-card" style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${colour};border-radius:8px;padding:10px 12px;cursor:pointer;transition:box-shadow 0.15s">
           <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:2px">${ch}</div>
           <div style="font-size:0.7rem;color:var(--text-light)">${ces.length} entr${ces.length===1?'y':'ies'} · ${words.toLocaleString()} words</div>
@@ -16188,7 +16437,7 @@
       } else {
         locGrid.innerHTML = locationSorted.map(([loc, count]) => {
           const entryWord = count === 1 ? 'entry' : 'entries';
-          return `<button\'")}');event.stopPropagation()"
+          return `<button
             class="dash-location-pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text);transition:all 0.15s">
             📍 ${loc}
             <span style="font-size:0.7rem;color:var(--text-light);background:var(--surface2);border-radius:10px;padding:1px 7px">${count} ${entryWord}</span>
@@ -17509,7 +17758,12 @@
     await consolidateDraft(selectedEntries);
   }
 
+  var _reviewRenderGen = 0; // BUGFIX [ENTRY-ID-RACE v2]: monotonic token — see renderReviewEntries()
+
   async function renderReviewEntries() {
+    const _dbgCaller = (new Error()).stack.split('\n')[2]?.trim() || 'unknown caller';
+    const _myGen = ++_reviewRenderGen;
+    dbg('DBG-RENDER', 'renderReviewEntries() START gen=' + _myGen + ' called from:', _dbgCaller, '| entries with archives:', Object.keys(_voiceArchiveCache || {}).length);
     const filter = document.getElementById('reviewFilterCat').value;
     const search = (document.getElementById('reviewSearch')?.value || '').toLowerCase().trim();
     const clearBtn = document.getElementById('reviewSearchClear');
@@ -17517,10 +17771,19 @@
 
     // Deduplicate by id — guards against double-push in entries array (e.g. stale optimistic push)
     const seenIds = new Set();
+    // Also collect timestamps of id-bearing entries so a leftover id-less optimistic
+    // duplicate (same timestamp, id not yet patched in) never gets rendered — such a
+    // card would carry data-id="" and every button on it would silently no-op.
+    const timestampsWithId = new Set(entries.filter(e => e.id).map(e => e.timestamp));
+    const _idlessSurvivors = entries.filter(e => !e.id && !timestampsWithId.has(e.timestamp));
+    if (_idlessSurvivors.length) {
+      dbg('DBG-RENDER', 'WARNING: ' + _idlessSurvivors.length + ' id-less entr' + (_idlessSurvivors.length === 1 ? 'y' : 'ies') + ' about to render with empty data-id:', _idlessSurvivors.map(e => ({ timestamp: e.timestamp, category: e.category, answer: (e.answer || '').slice(0, 40) })));
+    }
     const real = [...entries]
       .filter(e => {
         if (e.id && seenIds.has(e.id)) return false;
         if (e.id) seenIds.add(e.id);
+        if (!e.id && timestampsWithId.has(e.timestamp)) return false;
         return !e.category.startsWith('_profile') && !e.category.startsWith('_essentials');
       })
       .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -17588,6 +17851,7 @@
 
     const list = document.getElementById('reviewEntryList');
     if (!filtered.length) {
+      if (_myGen !== _reviewRenderGen) { dbg('DBG-RENDER', 'gen=' + _myGen + ' ABORTED before empty-state write — a newer render (gen=' + _reviewRenderGen + ') has since started'); return; }
       list.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>Nothing here yet. Head to Memories to tell me your first story.</p></div>';
       return;
     }
@@ -17627,7 +17891,7 @@
       }
     } catch(fbFetchErr) { /* non-fatal — cards still render without feedback */ }
 
-    list.innerHTML = filtered.map(e => {
+    const _reviewHtml = filtered.map(e => {
       try {
         const tags    = getEntryTags(e);
         const hasTags = Object.keys(tags).length > 0;
@@ -17898,6 +18162,13 @@
       }
     }).join('');
 
+    if (_myGen !== _reviewRenderGen) {
+      dbg('DBG-RENDER', 'gen=' + _myGen + ' ABORTED before final DOM write — a newer render (gen=' + _reviewRenderGen + ') has since started; discarding this stale HTML to avoid clobbering the newer card list');
+      return;
+    }
+    list.innerHTML = _reviewHtml;
+    dbg('DBG-RENDER', 'gen=' + _myGen + ' WROTE DOM (this was the winning/current render)');
+
     // Register tags and populate dropdowns
     filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
@@ -17907,10 +18178,22 @@
     // APP-55 Phase 2: load voice archives for visible entries (fire-and-forget, re-renders after fetch)
     var _vaEntryIds = filtered.filter(function(e) { return e.id; }).map(function(e) { return e.id; });
     if (_vaEntryIds.length) {
-      _loadVoiceArchivesForEntries(_vaEntryIds).then(function() {
-        // Re-render only if any new archives were found for visible entries
-        var hasNew = _vaEntryIds.some(function(id) { return (_voiceArchiveCache[id] || []).length > 0; });
-        if (hasNew) renderReview();
+      _loadVoiceArchivesForEntries(_vaEntryIds).then(function(fetchedIds) {
+        // BUGFIX [INFINITE-RENDER-LOOP]: previously checked
+        // "_vaEntryIds.some(id => (_voiceArchiveCache[id]||[]).length > 0)" — i.e. "does any
+        // visible entry have archive data at all". Once any entry has a real archive, that's
+        // permanently true, so combined with the WRONG-FN fix below (which made this actually
+        // call the real list-renderer instead of a no-op unrelated function), this triggered
+        // an infinite loop: render → fetch (no-ops, already cached) → "hasNew" always true →
+        // render → fetch → ... hundreds of times a second, continuously wiping the DOM out
+        // from under any click. Now _loadVoiceArchivesForEntries() returns exactly which ids
+        // it queried THIS call — empty array means nothing new, so we stop dead here.
+        dbg('DBG-RENDER', 'voice archive load callback: fetchedIds=' + JSON.stringify(fetchedIds));
+        // BUGFIX [WRONG-FN]: this was calling renderReview() — the unrelated Dashboard
+        // chapter-coverage stats function — instead of renderReviewEntries(), the actual
+        // Entries list renderer. That meant a newly-loaded voice archive never actually
+        // triggered the Entries list to refresh via this path.
+        if (fetchedIds && fetchedIds.length) renderReviewEntries();
       }).catch(function(){});
     }
   }
@@ -27127,14 +27410,27 @@
       var fbId    = btn.dataset.fbId    || null;
       var entryId = btn.dataset.entryId || null;
       var name    = btn.dataset.name    || '';
+      // DBG-CLICK: full picture of what this click actually resolved to, straight from
+      // the live DOM element — vs. whether the in-memory `entries` array currently has
+      // a matching id. If `id` is null/empty here but a same-card entry with a real id
+      // exists in `entries`, the DOM is stale relative to app state (a superseded render
+      // is still sitting on screen) — that's the render-race bug, not a delegate bug.
+      var _cardEl = btn.closest('.entry-card');
+      var _cardDomId = _cardEl ? _cardEl.id : '(no .entry-card ancestor)';
+      var _liveMatch = id ? entries.find(function(en){ return en.id === id; }) : null;
+      dbg('DBG-CLICK', 'action=' + action, '| id=' + id, '| entryId=' + entryId, '| fbId=' + fbId,
+        '| card DOM id=' + _cardDomId,
+        '| btn outerHTML=' + btn.outerHTML.substring(0, 200),
+        '| id found in live entries[]?', !!_liveMatch,
+        '| current _reviewRenderGen=' + _reviewRenderGen);
       switch (action) {
-        case 'delete-entry':         if (id) deleteEntry(id);                              break;
+        case 'delete-entry':         if (id) deleteEntry(id); else dbgWarn('DBG-CLICK', 'delete-entry: id was falsy, call SKIPPED'); break;
         case 'improve-entry':        if (id) improveEntry(id);                             break;
         case 'improve-entry-detail': if (id) improveEntryInDetail(id);                    break;
         case 'cancel-review':        if (id) { var p = document.getElementById('improve-' + id); if (p) p.style.display = 'none'; var c = document.getElementById('cancel-review-' + id); if (c) c.style.display = 'none'; } break;
         case 'edit-tags':            if (id) toggleEditTags(id, btn.dataset.inReview === 'true'); break;
         case 'edit-tags-detail':     if (id) toggleEditTagsInDetail(id);                  break;
-        case 'edit-text':            if (id) editEntryText(id);                            break;
+        case 'edit-text':            if (id) editEntryText(id); else dbgWarn('DBG-CLICK', 'edit-text: id was falsy, call SKIPPED'); break;
         case 'save-entry-text':      if (id) saveEntryText(id);                            break;
         case 'cancel-edit-text':     if (id) editEntryText(id);                            break;
         case 'edit-with-gethro':     if (id) openEntryInMemories(id);                     break;
