@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.125';
+  const APP_VERSION = 'v7.126';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6757,13 +6757,24 @@
       dbg('DBG-PLAY', 'sign response body=' + JSON.stringify(signData));
       var signedUrl = signData.signedURL || signData.signedUrl || '';
       if (!signedUrl) throw new Error('No signed URL in response');
-      // If the sign function returned a bare path (common Supabase Storage shape:
-      // "/object/sign/<bucket>/<path>?token=...") rather than an absolute URL, the
-      // <audio> tag's relative resolution would point at our own app origin instead
-      // of Supabase Storage, producing a 404 the browser reports only as a silent
-      // stall at 0:00 — never surfacing as a JS error since <audio> failures don't throw.
+      // ROOT CAUSE, confirmed 23 Aug 2026 via ffprobe (proved the file itself
+      // is byte-perfect) + a real DevTools Network capture (showed a 404, not
+      // a format/CORS error, on the browser's actual media GET). Supabase's
+      // POST /storage/v1/object/sign/{bucket}/{path} returns a signedURL that
+      // is a RELATIVE path — e.g. "/object/sign/<bucket>/<path>?token=..." —
+      // meant to be resolved against SUPABASE_URL + '/storage/v1', per
+      // Supabase's own documented Storage API shape. The previous code here
+      // prepended SUPABASE_URL alone, silently dropping the required
+      // '/storage/v1' segment, producing a URL with no matching route at all
+      // (hence 404, not an auth/permission rejection) — e.g.
+      // https://<project>.supabase.co/object/sign/<bucket>/<path> instead of
+      // https://<project>.supabase.co/storage/v1/object/sign/<bucket>/<path>.
+      // This affected every playback attempt during the whole APP-59 voice
+      // archive investigation, independent of and unrelated to the separate,
+      // also-real Opus-in-container codec bug fixed earlier the same day —
+      // both had to be fixed for playback to actually work.
       var isAbsolute = /^https?:\/\//i.test(signedUrl);
-      var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
+      var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
       dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
       container.innerHTML =
         '<audio src="' + escHtml(resolvedUrl) + '" controls preload="metadata" style="width:100%;height:32px"></audio>';
@@ -8064,7 +8075,15 @@
       });
       if (!res.ok) return null;
       var data = await res.json();
-      return data.signedURL || data.signedUrl || null;
+      // Same fix as _playVoiceArchive (23 Aug 2026): Supabase's signedURL is
+      // relative to SUPABASE_URL + '/storage/v1', not to SUPABASE_URL alone —
+      // returning it bare here produced the identical 404-on-playback bug for
+      // this feature's audio (shared-feedback attachments), just undiscovered
+      // until now because it wasn't the one under active investigation.
+      var signedUrl = data.signedURL || data.signedUrl || null;
+      if (!signedUrl) return null;
+      if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
+      return SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl;
     } catch(e) { return null; }
   }
 
