@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.126';
+  const APP_VERSION = 'v7.128';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8056,9 +8056,16 @@
     else if (file.type.includes('wav') || file.name?.endsWith('.wav')) ext = 'wav';
     else if (file.type.includes('ogg') || file.name?.endsWith('.ogg')) ext = 'ogg';
     var path = currentUser.id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.' + ext;
+    // APP-59 Phase 1 round 6: same fix as the server-side commit_voice_turn
+    // upload — Supabase Storage rejects a parameterized Content-Type (e.g.
+    // "audio/webm;codecs=opus") outright, confirmed in prod 23 Aug 2026.
+    // This upload hits Supabase's storage REST endpoint directly rather
+    // than going through our own edge function, so it needed the identical
+    // fix applied separately here rather than inheriting the server-side one.
+    var uploadContentType = (file.type || 'audio/webm').split(';')[0].trim() || 'application/octet-stream';
     var res = await fetch(AUDIO_STORAGE_URL + '/' + path, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': file.type || 'audio/webm', 'x-upsert': 'true' },
+      headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': uploadContentType, 'x-upsert': 'true' },
       body: file
     });
     if (!res.ok) { dbgErr('AUDIO', 'Upload failed:', res.status); return null; }
