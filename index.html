@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.130';
+  const APP_VERSION = 'v7.131';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5409,11 +5409,19 @@
     // logActivity()'s copy of the same detail (DB-bound) is NOT sanitised —
     // this only affects the Telegram-bound payload built below.
     var telegramSafeDetail = String(detail).replace(/(https?:\/\/)/gi, '$1\u200b');
+    // VIP-01: flag premium users so real issues for paying users don't get lost
+    // in the noise — isPremium() is a function declaration (hoisted), safe to
+    // call here even though it's defined later in the file. Reflects _subscriptionTier
+    // as of the last loadSubscriptionTier() call (on login + on tier-change detection),
+    // not a live per-event DB read — see SUB-05 for cache semantics/staleness window.
+    var _tier = isPremium() ? 'premium' : 'free';
+    if (_tier === 'premium') telegramSafeDetail = '⭐ PREMIUM — ' + telegramSafeDetail;
     var payload = {
       level:        level,
       area:         area,
       detail:       telegramSafeDetail,
       user:         user,
+      tier:         _tier,
       ts:           new Date().toISOString(),
       version:      appVersion,
       panel:        activePanel,
@@ -5493,6 +5501,7 @@
       platform:     platform,
       platform_detail: _parseUaDetail(ua), // e.g. "iOS 17/Safari" — fills the gap where "mobile" alone wasn't enough
       user_agent:   ua,
+      tier:         isPremium() ? 'premium' : 'free', // VIP-01: mirrors notifyDev's Telegram tag, now on every row too
       version:      (typeof APP_VERSION === 'string') ? APP_VERSION : null,
       ts:           new Date().toISOString(),
       src_line:     rawLine,
@@ -7299,9 +7308,12 @@
         currentUser  = initSession.user;
         sessionToken = initSession.access_token;
       }
-      // Flag that this SIGNED_IN event is a page-load restore, not a fresh login.
-      // onAuthStateChange will clear this after the first event fires.
-      _initSessionRestored = true;
+      // NOTE (OBS-08): this used to also set _initSessionRestored = true here as a
+      // "this SIGNED_IN is a page-load restore" flag. Removed — see OBS-08 comment
+      // at the onAuthStateChange SIGNED_IN handler below for why that signal was
+      // unreliable (it also fired true on the OAuth-redirect landing page itself,
+      // misclassifying real logins as restores). fresh-login detection is now done
+      // there via session.user.last_sign_in_at instead.
     }
 
     sb.auth.onAuthStateChange(async (event, session) => {
@@ -7334,9 +7346,30 @@
 
       // Notify on sign-in and new account confirmation so every login is visible
       // in Telegram. SIGNED_IN fires on both fresh login and session restore on
-      // page load — we suppress the page-load case by checking _initSessionRestored.
+      // page load.
+      //
+      // OBS-08 (found 2026-08-26): _initSessionRestored (the old signal for "this
+      // is a page-load restore, not a fresh login") is a CLIENT-SIDE TIMING flag —
+      // it's set true if sb.auth.getSession(), called right after createClient(),
+      // already returns a session. That's correct for an ordinary reload with a
+      // cached session, but WRONG for the OAuth-redirect landing page itself:
+      // supabase-js's detectSessionInUrl processing runs inside getSession()'s
+      // own initialisation promise, so on the very page load that completes an
+      // OAuth login, getSession() already resolves with the brand-new session —
+      // _initSessionRestored gets set true, and the real login below was silently
+      // reclassified as 'session_resumed' (Supabase-only, no Telegram). Root cause
+      // of "logged out and back in with Google, got no Telegram alert" — this is
+      // NOT rare, it's the normal timing on every OAuth redirect completion.
+      // FIX: use a server-set signal instead of a client-timing one. Supabase sets
+      // last_sign_in_at at the moment auth actually happens, server-side — if it's
+      // within the last few seconds, this IS a fresh login, full stop, regardless
+      // of when our own getSession() call happened to resolve. Same trusted-timestamp
+      // pattern already used just below to detect new-user sign-up.
       if (event === 'SIGNED_IN' && session) {
-        if (!_initSessionRestored) {
+        var _u2 = session.user;
+        var _signInAgeMs = _u2.last_sign_in_at ? (Date.now() - new Date(_u2.last_sign_in_at).getTime()) : Infinity;
+        var _isFreshLogin = _signInAgeMs < 15000; // signed in server-side within the last 15s
+        if (_isFreshLogin) {
           // OBS-07: with email/password removed, signUp() (which used to fire the
           // "New user signed up" notification directly) no longer exists — every
           // OAuth login, first-time or returning, arrives here as a plain SIGNED_IN
@@ -7345,16 +7378,15 @@
           // (set server-side at account creation and each login respectively) — if
           // they're within a few seconds of each other, this IS the account-creation
           // moment, regardless of which provider (Google/Apple/Facebook) was used.
-          var _u = session.user;
-          var _isNewUser = _u.created_at && _u.last_sign_in_at &&
-            Math.abs(new Date(_u.last_sign_in_at) - new Date(_u.created_at)) < 5000;
+          var _isNewUser = _u2.created_at && _u2.last_sign_in_at &&
+            Math.abs(new Date(_u2.last_sign_in_at) - new Date(_u2.created_at)) < 5000;
           if (_isNewUser) {
-            notifyAdmin(_u.email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
-            notifyDev('warn', 'AUTH', 'New user signed up: ' + _u.email);
-            logActivity('sign_up', 'New user: ' + _u.email, 'warn', 'AUTH');
+            notifyAdmin(_u2.email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
+            notifyDev('warn', 'AUTH', 'New user signed up: ' + _u2.email);
+            logActivity('sign_up', 'New user: ' + _u2.email, 'warn', 'AUTH');
           } else {
-            notifyDev('warn', 'AUTH', 'Sign-in: ' + _u.email);
-            logActivity('sign_in', 'Sign-in: ' + _u.email, 'warn', 'AUTH');
+            notifyDev('warn', 'AUTH', 'Sign-in: ' + _u2.email);
+            logActivity('sign_in', 'Sign-in: ' + _u2.email, 'warn', 'AUTH');
           }
         } else {
           // ANALYTICS-02 (4): page-load restore — a cached session, not a fresh login.
@@ -7362,7 +7394,6 @@
           // (only reachable once _appFullyLoaded/_appInitInProgress is true).
           logActivity('session_resumed', 'via=page_load: ' + session.user.email, 'info', 'AUTH');
         }
-        _initSessionRestored = false;
       }
       if (event === 'SIGNED_OUT') {
         _appFullyLoaded = false; // reset so next sign-in runs full init
@@ -7768,7 +7799,6 @@
   // Called after any fetch — if we get a 401 and are supposedly signed in,
   // show a clear "session expired" toast and prompt the user to sign out/in.
   var _authExpiredShown = false;
-  var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
   var _appFullyLoaded    = false;    // true once the full init sequence (loadEntries + renderDashboard) has completed — prevents alt-tab SIGNED_IN from re-running it
   var _appInitInProgress = false;    // true while init is running — prevents re-entrant SIGNED_IN during slow loads from re-running init and navigating to dashboard
 
