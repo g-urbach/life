@@ -5146,7 +5146,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.128';
+  const APP_VERSION = 'v7.129';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -15387,6 +15387,17 @@
     _entryTagsRegistry[entryId] = tags || {};
   }
 
+  // UX-VA01 2026-08-25: collapsed-by-default voice archive panel, toggled
+  // from the action row. Data is already loaded into _voiceArchiveCache by
+  // render time (loadVoiceArchivesForEntries, fire-and-forget on the initial
+  // render) — this is a pure show/hide, no fetch needed, same as
+  // improveEntry()'s panel toggle.
+  function toggleVoiceArchives(entryId) {
+    const panel = document.getElementById('va-panel-' + entryId);
+    if (!panel) return;
+    panel.style.display = (panel.style.display === 'none' || !panel.style.display) ? 'block' : 'none';
+  }
+
   function toggleEditTags(entryId, inReview) {
     const panelId  = inReview ? 'redit-' + entryId : 'edit-' + entryId;
     const shortPfx = inReview ? 'redit' : 'edit';
@@ -17960,11 +17971,20 @@
       // Sort by turn_index so a concurrent commit race never scrambles the order.
       // Single turn: no thread chrome — just the header + play button.
       // Multi-turn: question text per turn followed by its play button.
+      // UX-VA01 2026-08-25: archive content moved off the top of the card
+      // into a collapsed-by-default panel, toggled via a compact button in
+      // the action row — same interaction pattern as "Edit tags & photos"
+      // (toggleEditTags/buildEditPanel below), not shown inline by default
+      // any more. Multiple archives per entry (record → come back → record
+      // again) still fully supported: all turns render inside the one
+      // panel, each independently playable/rename-able, exactly as before —
+      // only the default visibility changed, not the underlying data model.
       var entryVoiceArchives = (_voiceArchiveCache && _voiceArchiveCache[e.id]) || [];
       entryVoiceArchives = entryVoiceArchives.slice().sort(function(a, b) {
         return (a.turn_index || 0) - (b.turn_index || 0);
       });
-      var voiceArchiveStripHtml = '';
+      var vaButtonHtml = '';
+      var vaPanelHtml = '';
       if (!_selectMode && !isStoryMode && entryVoiceArchives.length) {
         var headerRow = entryVoiceArchives[0];
         var headerLabel = escHtml(headerRow.label || 'Voice recording');
@@ -17989,8 +18009,17 @@
             (isThread ? '</div>' : '');
         }).join(isThread ? '<div style="height:8px"></div>' : '');
 
-        voiceArchiveStripHtml =
-          '<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--gold-dim)">' +
+        // Compact toggle button — sits in the action row alongside "Edit
+        // tags & photos", not above the entry text. Count shown so it's
+        // clear there's something here without opening it.
+        vaButtonHtml =
+          '<button data-action="toggle-voice-archives" data-id="' + safeEId + '"' +
+            ' style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' +
+            '\uD83C\uDF99\uFE0F Listen to audio archive' + (isThread ? 's (' + entryVoiceArchives.length + ')' : '') +
+          '</button>';
+
+        vaPanelHtml =
+          '<div id="va-panel-' + safeEId + '" style="display:none;margin-top:10px;background:var(--surface2);border-radius:10px;padding:10px 12px;border-left:3px solid var(--gold-dim)">' +
             // Header row — label (editable) + mic icon
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (isThread ? '10' : '8') + 'px">' +
               '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDF99\uFE0F</span>' +
@@ -18126,7 +18155,6 @@
         '</div>' +
         (!_selectMode && !isStoryMode ? photoStripHtml : '') +
         (!_selectMode && !isStoryMode ? audioStripHtml : '') +
-        (!_selectMode && !isStoryMode ? voiceArchiveStripHtml : '') +
         (e.title ? '<p style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">🏷️ ' + escHtml(e.title) + '</p>' : '') +
         (cleanQ && cleanQ !== 'Tell me about this photo' ? '<p class="entry-q">"' + cleanQ + '"</p>' : '') +
         '<p class="entry-text"' + ((_selectMode || isStoryMode) ? ' style="pointer-events:none"' : '') + '>' + renderEntryAnswer(e.answer) + '</p>' +
@@ -18135,10 +18163,12 @@
           '<button class="improve-btn" data-action="improve-entry" data-id="' + escHtml(e.id) + '">🔍 AI Review</button>' +
           '<button id="cancel-review-' + e.id + '" data-action="cancel-review" data-id="' + escHtml(e.id) + '" style="display:none;font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✕ Cancel</button>' +
           '<button data-action="edit-tags" data-id="' + escHtml(e.id) + '" data-in-review="true" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (hasTags?'✏️ Edit tags & photos':'＋ Add tags & photos') + '</button>' +
+          vaButtonHtml +
           '<button data-action="edit-text" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>' +
           '<button data-action="edit-with-gethro" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>' +
           '<button data-action="share-entry" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (isPremium() ? '🔗 Share' : '🔒 Share (Premium)') + '</button>' +
         '</div>' : '') +
+        (!_selectMode && !isStoryMode ? vaPanelHtml : '') +
         '<div id="sharelinks-indicator-' + e.id + '"></div>' +
         (!_selectMode && !isStoryMode ? '<div id="sharelinks-panel-' + e.id + '" style="display:none"></div>' : '') +
         (!_selectMode && !isStoryMode ? '<div id="textedit-' + e.id + '" style="display:none;margin-top:10px">' +
@@ -27436,6 +27466,7 @@
         case 'improve-entry-detail': if (id) improveEntryInDetail(id);                    break;
         case 'cancel-review':        if (id) { var p = document.getElementById('improve-' + id); if (p) p.style.display = 'none'; var c = document.getElementById('cancel-review-' + id); if (c) c.style.display = 'none'; } break;
         case 'edit-tags':            if (id) toggleEditTags(id, btn.dataset.inReview === 'true'); break;
+        case 'toggle-voice-archives': if (id) toggleVoiceArchives(id);                            break;
         case 'edit-tags-detail':     if (id) toggleEditTagsInDetail(id);                  break;
         case 'edit-text':            if (id) editEntryText(id); else dbgWarn('DBG-CLICK', 'edit-text: id was falsy, call SKIPPED'); break;
         case 'save-entry-text':      if (id) saveEntryText(id);                            break;
