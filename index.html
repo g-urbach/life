@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.131';
+  const APP_VERSION = 'v7.132';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -7334,6 +7334,11 @@
       if (event === 'SIGNED_IN' && session && (_appFullyLoaded || _appInitInProgress)) {
         sessionToken = session.access_token;
         dbg('AUTH', 'SIGNED_IN while app ' + (_appFullyLoaded ? 'fully loaded' : 'init in progress') + ' — token updated, no reload');
+        // PRELAUNCH-01: also pinged to Telegram, not just logged to Supabase —
+        // deliberately verbose while user count is tiny and every bit of activity
+        // is worth seeing. Wind this back to DB-only (drop the notifyDev call,
+        // keep logActivity) once real user volume makes focus-return pings noisy.
+        notifyDev('info', 'AUTH', 'Session resumed (focus_return): ' + session.user.email);
         logActivity('session_resumed', 'via=focus_return: ' + session.user.email, 'info', 'AUTH'); // ANALYTICS-02 (4)
         return;
       }
@@ -7392,6 +7397,9 @@
           // ANALYTICS-02 (4): page-load restore — a cached session, not a fresh login.
           // Distinct from the focus_return case above, which short-circuits earlier
           // (only reachable once _appFullyLoaded/_appInitInProgress is true).
+          // PRELAUNCH-01: also pinged to Telegram — see matching comment on the
+          // focus_return case above for why, and when to wind it back.
+          notifyDev('info', 'AUTH', 'Session resumed (page_load): ' + session.user.email);
           logActivity('session_resumed', 'via=page_load: ' + session.user.email, 'info', 'AUTH');
         }
       }
