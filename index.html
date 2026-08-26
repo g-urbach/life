@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.132';
+  const APP_VERSION = 'v7.133';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8909,7 +8909,22 @@
       label: committed.label,
       size_bytes: committed.size_bytes,
       turn_index: committed.turn_index,
-      question: turn.question || null
+      question: turn.question || null,
+      // UX-VA02 2026-08-26: server only ever generates a real "Voice: <date>
+      // <time>" label for turn_index 0 (see handleCommitVoiceTurn) — every
+      // later turn on the same entry gets label=null by design. Client has
+      // no other source of a real per-turn timestamp for turns it didn't
+      // just record itself, so capture one HERE, at the moment this turn's
+      // commit actually succeeds, for display fallback purposes only (see
+      // buildVoiceArchiveDefaultName below). Turns loaded via the batch
+      // fetch on a later page load won't have this — they fall back to a
+      // sequence-based name instead, since there's no real timestamp
+      // available for them client-side either. This is a display-only
+      // patch, not a substitute for fixing label generation server-side
+      // (index.ts) to always produce a real timestamp label — see
+      // CONSOLIDATED BACKLOG UX-VA02 for the full explanation and the
+      // proper server-side fix this should eventually get.
+      client_committed_at: Date.now()
     });
 
     // ── Phase 5: fire the quality pass — independent of any other turn ──────
@@ -18022,6 +18037,26 @@
       // again) still fully supported: all turns render inside the one
       // panel, each independently playable/rename-able, exactly as before —
       // only the default visibility changed, not the underlying data model.
+      // UX-VA02 2026-08-26: default name for a turn with no real server-set
+      // label (every turn after turn_index 0 — see the client_committed_at
+      // comment above for why). Prefers a real date/time when we actually
+      // have one (this session's own newly-recorded turns); falls back to
+      // a plain sequence label ("Recording 2") for turns loaded from a
+      // previous session, since there's no trustworthy per-turn timestamp
+      // available for those without a server-side change (flagged in the
+      // backlog, not done this build).
+      function _vaDefaultName(va, position) {
+        if (va.label) return va.label;
+        if (va.client_committed_at) {
+          try {
+            return 'Voice: ' + new Date(va.client_committed_at).toLocaleString('en-AU', {
+              day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+            });
+          } catch (e) { /* fall through to sequence label below */ }
+        }
+        return 'Recording ' + (position + 1);
+      }
+
       var entryVoiceArchives = (_voiceArchiveCache && _voiceArchiveCache[e.id]) || [];
       entryVoiceArchives = entryVoiceArchives.slice().sort(function(a, b) {
         return (a.turn_index || 0) - (b.turn_index || 0);
@@ -18029,19 +18064,35 @@
       var vaButtonHtml = '';
       var vaPanelHtml = '';
       if (!_selectMode && !isStoryMode && entryVoiceArchives.length) {
-        var headerRow = entryVoiceArchives[0];
-        var headerLabel = escHtml(headerRow.label || 'Voice recording');
         var safeEId = escHtml(e.id || '');
         var isThread = entryVoiceArchives.length > 1;
-        var turnsHtml = entryVoiceArchives.map(function(va) {
+        // UX-VA02 2026-08-26: label + rename are now PER TURN, not just on
+        // the panel header. Previously only turn_index 0 had a label/rename
+        // control at all — every other take in a multi-take thread had no
+        // name and no way to get one, despite the surrounding code comment
+        // claiming otherwise. Each turn now gets its own <span id="va-label-
+        // {va.id}"> and its own rename button targeting that exact id, so
+        // the existing rename-voice-archive handler (already generic, keyed
+        // by va-id) works per-take with no handler changes needed.
+        var turnsHtml = entryVoiceArchives.map(function(va, i) {
           var safeVaId  = escHtml(va.id || '');
           var safePath  = escHtml(va.storage_path || '');
+          var displayName = escHtml(_vaDefaultName(va, i));
           var questionHtml = (va.question && va.question.trim())
             ? '<div style="font-size:0.76rem;color:var(--text-light);font-style:italic;margin-bottom:5px;line-height:1.35">'
                 + '\uD83E\uDD16 ' + escHtml(va.question) // 🤖
               + '</div>'
             : '';
           return (isThread ? '<div style="padding:6px 0 6px 10px;border-left:2px solid var(--gold-dim)">' : '') +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+              '<span id="va-label-' + safeVaId + '" style="font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0">' +
+                displayName +
+              '</span>' +
+              '<button data-action="rename-voice-archive" data-entry-id="' + safeEId + '" data-va-id="' + safeVaId + '"' +
+                ' title="Rename" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;flex-shrink:0;font-family:Lato,sans-serif">' +
+                'Rename' +
+              '</button>' +
+            '</div>' +
             questionHtml +
             '<div id="va-player-' + safeVaId + '">' +
               '<button data-action="play-voice-archive" data-va-id="' + safeVaId + '" data-va-path="' + safePath + '"' +
@@ -18063,21 +18114,6 @@
 
         vaPanelHtml =
           '<div id="va-panel-' + safeEId + '" style="display:none;margin-top:10px;background:var(--surface2);border-radius:10px;padding:10px 12px;border-left:3px solid var(--gold-dim)">' +
-            // Header row — label (editable) + mic icon
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (isThread ? '10' : '8') + 'px">' +
-              '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDF99\uFE0F</span>' +
-              '<div style="flex:1;min-width:0">' +
-                '<span id="va-label-' + safeEId + '" style="font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block">'
-                  + headerLabel +
-                '</span>' +
-              '</div>' +
-              // Rename button — only for owner, not in select/story mode
-              '<button data-action="rename-voice-archive" data-entry-id="' + safeEId + '" data-va-id="' + escHtml(headerRow.id || '') + '"' +
-                ' title="Rename" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;flex-shrink:0;font-family:Lato,sans-serif">' +
-                'Rename' +
-              '</button>' +
-            '</div>' +
-            // Turns
             turnsHtml +
           '</div>';
       }
@@ -27629,7 +27665,11 @@
         case 'rename-voice-archive': {
           var _rEntryId = btn.dataset.entryId || '';
           var _rVaId    = btn.dataset.vaId    || '';
-          var _labelEl  = _rEntryId ? document.getElementById('va-label-' + _rEntryId) : null;
+          // UX-VA02 2026-08-26: label element is now keyed by va-id, not
+          // entry-id — each turn in a multi-take thread has its own
+          // independently-renameable label. entryId is still needed below,
+          // just for the local cache lookup, not for finding the DOM node.
+          var _labelEl  = _rVaId ? document.getElementById('va-label-' + _rVaId) : null;
           if (!_labelEl || !_rVaId) break;
           var _curLabel = _labelEl.textContent || '';
           var _inp = document.createElement('input');
@@ -27644,8 +27684,8 @@
             var newLabel = _inp.value.trim() || _curLabel;
             // Restore span immediately (optimistic) so UI never stays in edit state
             var _newSpan = document.createElement('span');
-            _newSpan.id = 'va-label-' + _rEntryId;
-            _newSpan.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block';
+            _newSpan.id = 'va-label-' + _rVaId;
+            _newSpan.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0';
             _newSpan.textContent = newLabel;
             _inp.replaceWith(_newSpan);
             if (newLabel === _curLabel) return; // nothing changed
@@ -27674,7 +27714,7 @@
           _inp.addEventListener('blur', _rCommit);
           _inp.addEventListener('keydown', function(ev) {
             if (ev.key === 'Enter')  { ev.preventDefault(); _rCommit(); }
-            if (ev.key === 'Escape') { _rDone = true; var _s = document.createElement('span'); _s.id = 'va-label-' + _rEntryId; _s.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block'; _s.textContent = _curLabel; _inp.replaceWith(_s); }
+            if (ev.key === 'Escape') { _rDone = true; var _s = document.createElement('span'); _s.id = 'va-label-' + _rVaId; _s.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0'; _s.textContent = _curLabel; _inp.replaceWith(_s); }
           });
           break;
         }
