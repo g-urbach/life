@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.134';
+  const APP_VERSION = 'v7.135';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9556,6 +9556,24 @@
   let _micWarnTimer = null;
   let _micMaxTimer  = null;
 
+  // ── APP-59 Phase 2 (2026-08-27): auto-segment the ARCHIVE recorder on long
+  // recordings, entirely separate from the live-STT timers above. This is a
+  // pure workaround for Azure Fast Transcription's 10MB request-body ceiling
+  // on the quality-pass retranscription call (transcribeAudioBytes) — one
+  // giant archive blob for a 15+ minute recording can exceed it, especially
+  // on Safari's AAC output (see CONSOLIDATED BACKLOG APP-59 PHASE 2 sizing
+  // note). Reuses the EXACT same staging/commit/apply machinery already
+  // used for a manual pause-and-resume multi-take entry — this is not a new
+  // data shape, just triggering that same shape automatically on a timer
+  // instead of only on a user tap to stop. MicManager's own live-STT
+  // recorder is completely untouched by this; only ArchiveRecorder segments
+  // itself. 8 min chosen per the backlog sizing note (comfortably under
+  // 10MB even for Safari's AAC output at typical voice bitrates) — TBD
+  // against real Safari numbers once real device testing happens (still an
+  // open gap, see APP-59 status).
+  const ARCHIVE_SEGMENT_MS = 8 * 60 * 1000;
+  let _archiveSegmentTimer = null;
+
   // ── APP-52 Phase 3 (restored v6.03): AnalyserNode silence detection ─────────────────────
   // Original approach restored — mute button (not AudioContext) was causing vol=0 readings.
   // Fallback: if AudioContext fails or vol stays 0, chunk data-rate heuristic kicks in
@@ -9625,6 +9643,7 @@
     if (_micWarnTimer)  { clearTimeout(_micWarnTimer);   _micWarnTimer  = null; }
     if (_micMaxTimer)   { clearTimeout(_micMaxTimer);    _micMaxTimer   = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
+    if (_archiveSegmentTimer) { clearInterval(_archiveSegmentTimer); _archiveSegmentTimer = null; } // APP-59 Phase 2
     _micSilenceStart     = null;
     _micRecordStart      = null;
     _micTranscribing     = false;
@@ -9750,13 +9769,19 @@
     // only if the user saves). The archive blob now comes from ArchiveRecorder
     // (single continuous recorder, one header) instead of concatenating
     // _turnSegments (which produced multi-header files — see BACKGROUND (b)).
-    async function _stageCurrentTurn() {
-      var archived = await ArchiveRecorder.stop();
-      if (!archived) { dbg('VA', 'Phase 1: no archive recorder output — skipping stage (e.g. instant tap-stop)'); return; }
+    // ── APP-59 Phase 1/UX-VA03/Phase 2 shared helper: validate a stopped
+    // ArchiveRecorder segment and push it into _stagedVoiceArchives. Used by
+    // BOTH a normal end-of-turn stop (_stageCurrentTurn, below) and a
+    // Phase 2 auto-segment mid-recording (_autoSegmentArchiveIfDue, below) —
+    // same data shape either way, just triggered by a tap vs a timer.
+    // Returns true if a turn was actually staged, false otherwise (no
+    // archive output, or it failed the integrity check).
+    async function _finalizeAndStageArchive(archived) {
+      if (!archived) { dbg('VA', 'Phase 1: no archive recorder output — skipping stage (e.g. instant tap-stop)'); return false; }
       if (!(await _canDecodeAudio(archived.blob))) {
         logActivity && logActivity('voice_archive_error', 'integrity check failed at stage time — turn discarded before upload', 'error', 'VA');
         toast('That recording could not be saved cleanly — please try recording this turn again', 4500);
-        return;
+        return false;
       }
       var answerEl = document.getElementById('memAnswer');
       _stagedVoiceArchives.push({
@@ -9777,6 +9802,51 @@
         recordedAt: new Date().toISOString()
       });
       dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', recordedAt=' + _stagedVoiceArchives[_stagedVoiceArchives.length - 1].recordedAt + ', staged count=' + _stagedVoiceArchives.length);
+      // APP-59 Phase 2: advance the offset baseline for whatever comes
+      // next — a Phase 2 auto-segment, or simply another manual take later
+      // in the same session. Each turn's offset should point to where ITS
+      // OWN text begins, not the whole session's start. Harmless for the
+      // normal single-take/final-stop case too: this value gets overwritten
+      // either by memResetForm (reset to 0) or fresh startMemMic() math the
+      // next time a mic session opens, so updating it here never leaks into
+      // an unrelated later session.
+      if (answerEl) _micPreRecordLength = answerEl.value.length;
+      return true;
+    }
+
+    async function _stageCurrentTurn() {
+      var archived = await ArchiveRecorder.stop();
+      await _finalizeAndStageArchive(archived);
+    }
+
+    // ── APP-59 Phase 2: fired on a timer (ARCHIVE_SEGMENT_MS) while
+    // recording continues past the threshold. Stops the current archive
+    // segment, stages it exactly like a manual tap-to-stop would, then
+    // immediately starts a fresh ArchiveRecorder on the SAME stream so
+    // archiving continues seamlessly — invisible to the user, live
+    // dictation (MicManager) is never touched or interrupted.
+    // NOTE on offset/baseline semantics: because live dictation keeps
+    // appending text under EARLIER segments while a later segment is still
+    // being recorded, an earlier auto-segment's baselineSnapshot will
+    // almost always be stale by the time apply_voice_transcript's exact-
+    // match guard checks it after Save — meaning the background quality-
+    // pass retranscription realistically only ever lands for the LAST
+    // segment of a long recording. This is a known, accepted trade-off
+    // (not a bug introduced here — see CONSOLIDATED BACKLOG APP-59 PHASE 2
+    // note), not something this function tries to work around.
+    async function _autoSegmentArchiveIfDue() {
+      if (_micState !== 'recording' || !ArchiveRecorder.active) return;
+      dbg('VA_ARCHIVE', 'Phase 2: auto-segmenting archive at ' + Math.round(ARCHIVE_SEGMENT_MS / 1000) + 's — stopping current segment and starting a fresh one');
+      var archived = await ArchiveRecorder.stop();
+      await _finalizeAndStageArchive(archived);
+      // Restart regardless of whether staging succeeded above, so a failed
+      // integrity check on one segment doesn't also silently kill archiving
+      // for the remainder of a still-ongoing session.
+      if (_micState === 'recording' && MicManager.stream) {
+        if (!ArchiveRecorder.start(MicManager.stream, MicManager.mime)) {
+          dbgWarn('VA_ARCHIVE', 'Phase 2: failed to restart archive recorder after auto-segment — remainder of this session will have no archive');
+        }
+      }
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
@@ -9897,6 +9967,14 @@
     _micMaxTimer = setTimeout(function() {
       if (_micState === 'recording') { stopMemMic(); toast('Recording stopped \u2014 maximum length reached. Your words are being transcribed.', 5000); }
     }, MIC_MAX_MS);
+
+    // APP-59 Phase 2: auto-segment the archive recorder every ARCHIVE_SEGMENT_MS
+    // while recording continues — see _autoSegmentArchiveIfDue for full detail.
+    _archiveSegmentTimer = setInterval(function() {
+      _autoSegmentArchiveIfDue().catch(function(e) {
+        dbgErr('VA_ARCHIVE', 'Phase 2: auto-segment failed:', e.message);
+      });
+    }, ARCHIVE_SEGMENT_MS);
   }
 
   function stopMemMic() {
