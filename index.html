@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.133';
+  const APP_VERSION = 'v7.134';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6719,6 +6719,13 @@
 
   // APP-55 Phase 6: Fetch voice archives for a batch of entries, populate _voiceArchiveCache.
   // select now includes question + turn_index (added by VA-M01b migration) for thread render.
+  // UX-VA03 2026-08-27: select + order now also include recorded_at — the
+  // real per-take timestamp (added by the recorded_at migration). Ordering
+  // by turn_index alone could come out wrong because turn_index is assigned
+  // by a live COUNT query server-side that races when multiple takes commit
+  // simultaneously (every "record 2+ takes, Save once" case). recorded_at is
+  // captured client-side, sequentially, before any race can happen, so it's
+  // the trustworthy field for display order — see the render sort below.
   async function _loadVoiceArchivesForEntries(entryIds) {
     if (!entryIds || !entryIds.length || !currentUser) return [];
     var needed = entryIds.filter(function(id) { return !_voiceArchiveCache[id]; });
@@ -6729,7 +6736,7 @@
       var ids = needed.map(function(id) { return 'entry_id.eq.' + id; }).join(',');
       var res = await fetch(
         SUPABASE_URL + '/rest/v1/life_voice_archives?user_id=eq.' + currentUser.id +
-        '&or=(' + ids + ')&order=turn_index.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index',
+        '&or=(' + ids + ')&order=recorded_at.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index,recorded_at',
         { headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON } }
       );
       if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return []; }
@@ -8884,6 +8891,12 @@
       form.append('question', turn.question || '');
       form.append('offset', String(turn.offset));
       form.append('baselineSnapshot', turn.baselineSnapshot || '');
+      // UX-VA03 2026-08-27: real per-take timestamp, captured client-side at
+      // stage time (see _stageCurrentTurn) — sent through so the server can
+      // persist it in a new recorded_at column. This is what display order
+      // and default naming key off now, not turn_index (see render sort /
+      // _vaDefaultName below).
+      form.append('recordedAt', turn.recordedAt || '');
       form.append('audio', turn.blob, 'turn.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
         method: 'POST',
@@ -8910,20 +8923,18 @@
       size_bytes: committed.size_bytes,
       turn_index: committed.turn_index,
       question: turn.question || null,
-      // UX-VA02 2026-08-26: server only ever generates a real "Voice: <date>
-      // <time>" label for turn_index 0 (see handleCommitVoiceTurn) — every
-      // later turn on the same entry gets label=null by design. Client has
-      // no other source of a real per-turn timestamp for turns it didn't
-      // just record itself, so capture one HERE, at the moment this turn's
-      // commit actually succeeds, for display fallback purposes only (see
-      // buildVoiceArchiveDefaultName below). Turns loaded via the batch
-      // fetch on a later page load won't have this — they fall back to a
-      // sequence-based name instead, since there's no real timestamp
-      // available for them client-side either. This is a display-only
-      // patch, not a substitute for fixing label generation server-side
-      // (index.ts) to always produce a real timestamp label — see
-      // CONSOLIDATED BACKLOG UX-VA02 for the full explanation and the
-      // proper server-side fix this should eventually get.
+      // UX-VA03 2026-08-27: real, DB-backed timestamp — captured client-side
+      // at stage time, sent through commit_voice_turn, echoed back here by
+      // the server (see handleCommitVoiceTurn's response). This is now the
+      // primary field used for both ordering and default naming (see render
+      // sort / _vaDefaultName below) — works for every take, any session,
+      // regardless of the turn_index counting race.
+      recorded_at: committed.recorded_at || turn.recordedAt || null,
+      // UX-VA02 2026-08-26 (legacy stopgap): session-local fallback, kept
+      // only for turns committed by an older client build that predates
+      // recorded_at, or in the unlikely case the server didn't echo it back.
+      // Safe to remove once recorded_at has been live for a while — see
+      // _vaDefaultName's priority order below.
       client_committed_at: Date.now()
     });
 
@@ -9753,9 +9764,19 @@
         mime: archived.mime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
-        baselineSnapshot: (answerEl ? answerEl.value : '')
+        baselineSnapshot: (answerEl ? answerEl.value : ''),
+        // UX-VA03 2026-08-27: captured HERE, sequentially in the browser, the
+        // moment recording for this take actually stops — well before the
+        // eventual commit_voice_turn requests race each other over the
+        // network (see _commitAndApplyVoiceTurn / the Save handler's
+        // un-awaited forEach). This is the source of truth for both display
+        // order and default naming going forward — turn_index's live COUNT
+        // query server-side can still race and come out wrong, but display
+        // no longer depends on it once this is wired through. ISO string so
+        // it round-trips cleanly through FormData -> Postgres timestamptz.
+        recordedAt: new Date().toISOString()
       });
-      dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
+      dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', recordedAt=' + _stagedVoiceArchives[_stagedVoiceArchives.length - 1].recordedAt + ', staged count=' + _stagedVoiceArchives.length);
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
@@ -18037,19 +18058,22 @@
       // again) still fully supported: all turns render inside the one
       // panel, each independently playable/rename-able, exactly as before —
       // only the default visibility changed, not the underlying data model.
-      // UX-VA02 2026-08-26: default name for a turn with no real server-set
-      // label (every turn after turn_index 0 — see the client_committed_at
-      // comment above for why). Prefers a real date/time when we actually
-      // have one (this session's own newly-recorded turns); falls back to
-      // a plain sequence label ("Recording 2") for turns loaded from a
-      // previous session, since there's no trustworthy per-turn timestamp
-      // available for those without a server-side change (flagged in the
-      // backlog, not done this build).
+      // UX-VA03 2026-08-27: default name for a turn with no user-set label.
+      // Priority: label (user renamed it) -> recorded_at (real DB column,
+      // works for every take from any session, once the recorded_at
+      // migration is live) -> client_committed_at (legacy same-session-only
+      // stopgap, kept for turns committed by an older client build) ->
+      // plain sequence label as the last resort for pre-migration rows with
+      // neither. This closes the old gap where only turn_index 0 (and,
+      // after the previous round, only same-session later turns) ever got a
+      // real timestamp name — recorded_at now covers every take going
+      // forward, any session, any turn_index.
       function _vaDefaultName(va, position) {
         if (va.label) return va.label;
-        if (va.client_committed_at) {
+        var ts = va.recorded_at || va.client_committed_at;
+        if (ts) {
           try {
-            return 'Voice: ' + new Date(va.client_committed_at).toLocaleString('en-AU', {
+            return 'Voice: ' + new Date(ts).toLocaleString('en-AU', {
               day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
             });
           } catch (e) { /* fall through to sequence label below */ }
@@ -18058,8 +18082,23 @@
       }
 
       var entryVoiceArchives = (_voiceArchiveCache && _voiceArchiveCache[e.id]) || [];
+      // UX-VA03 2026-08-27: sort by recorded_at (real timestamp, captured
+      // client-side at stage time), not turn_index — turn_index is assigned
+      // by a server-side live COUNT that races whenever more than one take
+      // is staged before a single Save (the normal, every-time case for a
+      // multi-take entry), which could put takes in the wrong display order.
+      // recorded_at is generated sequentially in the browser before any
+      // network race can happen, so this is correct regardless of how the
+      // eventual commit requests land. Rows with no recorded_at (pre-
+      // migration, or the legacy client_committed_at-only stopgap) sort
+      // using whatever we have — see the fallback chain below; they won't
+      // have a trustworthy order relative to each other, but that's a
+      // pre-existing limitation of those old rows, not a regression.
       entryVoiceArchives = entryVoiceArchives.slice().sort(function(a, b) {
-        return (a.turn_index || 0) - (b.turn_index || 0);
+        var aT = a.recorded_at ? new Date(a.recorded_at).getTime() : (a.client_committed_at || 0);
+        var bT = b.recorded_at ? new Date(b.recorded_at).getTime() : (b.client_committed_at || 0);
+        if (aT !== bT) return aT - bT;
+        return (a.turn_index || 0) - (b.turn_index || 0); // last-resort tiebreak for legacy rows with no timestamp at all
       });
       var vaButtonHtml = '';
       var vaPanelHtml = '';
