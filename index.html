@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.135';
+  const APP_VERSION = 'v7.136';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9122,7 +9122,14 @@
     // server already treats unrecognised mimeTypes as "skip Azure, use Groq",
     // so a WAV-encode failure just means this one chunk goes Groq-only
     // instead of crashing the turn.
-    async function _blobToWav16kMono(blob) {
+    // 2026-08-27 (VA-LC Phase 0): split the original single-blob transcode
+    // into two reusable halves so a NEW multi-blob path (below) can share
+    // the exact same decode/resample logic instead of duplicating it —
+    // _decodeBlobToPcm16k does decode+resample only (returns raw Float32
+    // samples), _pcmToWav16kMonoBlob does only the RIFF/WAV header-writing.
+    // _blobToWav16kMono's own behaviour/return value is UNCHANGED by this
+    // refactor — same inputs produce the same output bytes as before.
+    async function _decodeBlobToPcm16k(blob) {
       const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtxCls) throw new Error('no AudioContext support');
       const arrayBuf = await blob.arrayBuffer();
@@ -9147,8 +9154,11 @@
       src.connect(offlineCtx.destination);
       src.start(0);
       const rendered = await offlineCtx.startRendering();
-      const pcm = rendered.getChannelData(0); // Float32Array, range -1..1
+      return rendered.getChannelData(0); // Float32Array, range -1..1, already 16kHz mono
+    }
 
+    function _pcmToWav16kMonoBlob(pcm) {
+      const targetRate = 16000;
       const numSamples = pcm.length;
       const buf = new ArrayBuffer(44 + numSamples * 2);
       const view = new DataView(buf);
@@ -9176,6 +9186,11 @@
       return new Blob([buf], { type: 'audio/wav' });
     }
 
+    async function _blobToWav16kMono(blob) {
+      const pcm = await _decodeBlobToPcm16k(blob);
+      return _pcmToWav16kMonoBlob(pcm);
+    }
+
     // Wraps _blobToWav16kMono with the fallback-on-failure behaviour used by
     // both flush() branches below. Returns { blob, mime, ext }.
     async function _tryTranscodeToWav(blob, fallbackMime) {
@@ -9185,6 +9200,56 @@
       } catch (e) {
         dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (Azure will be skipped server-side, Groq still works):', e);
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
+      }
+    }
+
+    // ── VA-LC Phase 0 (2026-08-27): trailing-window multi-blob WAV builder ──
+    // Verifies/implements the one open technical risk flagged in SPRINT VA-LC
+    // Phase 0 (CONSOLIDATED BACKLOG): can a bounded trailing correction
+    // window be built client-side from audio we already have, without
+    // touching ArchiveRecorder or its single-header invariant?
+    //
+    // Answer landed on: yes, and it doesn't need ArchiveRecorder at all.
+    // MicManager's own non-final flush() segments are ALREADY independent,
+    // fully self-contained, independently-decodable blobs — that's the
+    // whole reason live per-chunk transcription already works today (each
+    // flush blob goes through _tryTranscodeToWav/decodeAudioData
+    // successfully, every few seconds, in production, right now). So the
+    // "last ~2 sentences" trailing window is just "the last 1-2 flush
+    // segments", which the caller already has sitting in memory. No new
+    // recorder, no requestData()-on-ArchiveRecorder trick (which risks
+    // reintroducing the Safari multi-header bug ArchiveRecorder exists to
+    // avoid — see BACKGROUND (b) in CONSOLIDATED BACKLOG — since Safari's
+    // MP4 muxer emits a self-contained fragment on EVERY dataavailable,
+    // whether triggered by timeslice or a manual requestData() call).
+    //
+    // Decodes each blob separately (each is independently valid — never
+    // assumes a shared/contiguous container across blobs) via the exact
+    // same decode path _blobToWav16kMono already uses successfully in
+    // production, concatenates the resulting 16kHz mono PCM in order, and
+    // writes ONE combined WAV. Returns null (not a throw) on any failure —
+    // correction is a nice-to-have, never something that should be able to
+    // interrupt live dictation.
+    async function _multiBlobToWav16kMono(blobs) {
+      if (!blobs || !blobs.length) return null;
+      try {
+        var parts = [];
+        var total = 0;
+        for (var i = 0; i < blobs.length; i++) {
+          var pcm = await _decodeBlobToPcm16k(blobs[i]);
+          parts.push(pcm);
+          total += pcm.length;
+        }
+        var merged = new Float32Array(total);
+        var off = 0;
+        for (var j = 0; j < parts.length; j++) {
+          merged.set(parts[j], off);
+          off += parts[j].length;
+        }
+        return _pcmToWav16kMonoBlob(merged);
+      } catch (e) {
+        dbgErr('MIC_MGR', 'VA-LC Phase 0: trailing-window WAV build failed:', e);
+        return null;
       }
     }
 
@@ -9425,6 +9490,12 @@
       // flush()/onChunk above) can transcode its blobs to Azure-compatible WAV
       // too, without duplicating the decode/resample/encode logic.
       toWav16kMono: _tryTranscodeToWav,
+      // VA-LC Phase 0 (2026-08-27): builds one combined 16kHz mono WAV from
+      // several independently-decodable segment blobs, in order. Used to
+      // build a trailing "last ~2 flush segments" correction window without
+      // touching ArchiveRecorder. Returns a Blob, or null on failure/empty
+      // input — never throws.
+      buildTrailingWav: _multiBlobToWav16kMono,
     };
   })();
 
@@ -9594,6 +9665,30 @@
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
+  // VA-LC Phase 0 (2026-08-27): last 1-2 raw, pre-transcode non-final flush
+  // blobs for the CURRENT turn only, most-recent-last. Purely additive —
+  // does not feed the archive or live-STT paths, just gives the (not yet
+  // built) live-correction loop a trailing window to work from. Reset at
+  // mic-open and mic-release, same lifecycle as _micRecentChunkBytes.
+  // VA-LC Phase 0 (2026-08-27): superseded by _vaLcPrevRawBlob below once
+  // Phase 1 shipped — Phase 1 pairs exactly [previous, current] directly
+  // rather than tracking a rolling array, so the array form from Phase 0's
+  // initial (observation-only) cut was removed rather than left unused.
+  // VA-LC Phase 1 (2026-08-27): tracks the immediately-preceding segment so
+  // the NEXT segment's correction pass can use it as extra audio context.
+  // _vaLcPrevRawBlob: that segment's raw (pre-transcode) blob.
+  // _vaLcPrevTranscript: that segment's CURRENTLY-DISPLAYED text (post any
+  //   correction it already received) — used only as the baseline for the
+  //   shared-prefix match below, never mutated except when a new segment's
+  //   own correction settles.
+  // _vaLcTurnToken: bumped every mic-open/mic-release. A correction's
+  //   in-flight network round-trip captures this value at start and checks
+  //   it again before splicing — if a new take/turn has started in the
+  //   meantime, the stale correction is discarded rather than risking a
+  //   splice into text that no longer belongs to the segment it came from.
+  let _vaLcPrevRawBlob      = null;
+  let _vaLcPrevTranscript   = '';
+  let _vaLcTurnToken        = 0;
 
   const MIC_SILENCE_THRESHOLD  = 15;    // 0-127 AnalyserNode scale; below = silence. 8 was too low (treated quiet speech as silence). Typical: ambient 2-5, speech 20-60.
   const MIC_SILENCE_MS         = 800;   // ms of sustained silence → flush. 1500ms was too long — natural sentence pauses are 500-800ms.
@@ -9648,6 +9743,9 @@
     _micRecordStart      = null;
     _micTranscribing     = false;
     _micRecentChunkBytes = [];
+    _vaLcPrevRawBlob     = null;
+    _vaLcPrevTranscript  = '';
+    _vaLcTurnToken++; // VA-LC Phase 1: invalidate any in-flight correction from this turn
     memMicActive = false;
     MicManager.release();
   }
@@ -9683,6 +9781,9 @@
     _micTranscriptSoFar  = '';
     _micRecordStart      = Date.now();
     _micRecentChunkBytes = [];
+    _vaLcPrevRawBlob     = null;
+    _vaLcPrevTranscript  = '';
+    _vaLcTurnToken++; // VA-LC Phase 1: new turn — any correction from a prior turn is now stale
     _micFlushCooldown    = false;
     _micSilenceStart     = null;
     _micTranscribing     = false;
@@ -9690,6 +9791,42 @@
 
     // ── Shared transcription helper (used by both chunk and final paths) ────
     var HALLUCINATIONS = AGP_HALLUCINATIONS; // reuse AGP filter — catches multi-word fillers like 'Okay. Amen. Okay.' (≤8 filler tokens)
+
+    // VA-LC Phase 2 (2026-08-27): deterministic, self-authored punctuation
+    // at every segment boundary — replaces the old bare-space join. Written
+    // for Lexical mode, which returned zero punctuation from the provider by
+    // design. UPDATE 2026-08-28: transcribeAudioBytes now prefers
+    // NBest[0].Display (see index.ts), which already arrives punctuated, so
+    // this function is now mostly a SAFETY NET rather than the primary
+    // fix — it's a no-op whenever a segment already ends in ./!/? (the
+    // common case under Display), and only still does real work if Azure
+    // ever returns a segment with no terminal punctuation. Left in place
+    // rather than removed: harmless either way, and removing it isn't
+    // needed to test VA-LC Phase 1 correction, which is the current goal.
+    // Every pause is treated as a sentence
+    // boundary here, same accepted approximation as the rest of this sprint
+    // (no real NLP sentence-boundary detection — see CONSOLIDATED BACKLOG
+    // SPRINT VA-LC decision 2). Directly fixes "no full stops at all" and
+    // the mid-sentence-capital artifact together, as one join-time change —
+    // does not touch cleanTranscript itself (its whitespace-collapse
+    // behavior is unchanged) and does not touch VA-LC Phase 1's correction
+    // splice (that only ever replaces a segment's own raw-word span, never
+    // the separator before it, so the two phases don't interact).
+    function _vaLcJoinSeparator(cur) {
+      if (!cur) return ''; // nothing before this — no boundary to punctuate
+      var trimmed = cur.replace(/\s+$/, '');
+      if (!trimmed) return ''; // cur was pure whitespace
+      if (cur.endsWith('\n')) return ''; // manual paragraph break — leave it alone
+      var lastChar = trimmed.slice(-1);
+      if (/[.!?]/.test(lastChar)) {
+        // Already ends in terminal punctuation (e.g. the user typed it, or
+        // — not possible today, but harmless if it ever were — a provider
+        // emitted one) — don't stack a second one, just ensure one space.
+        return cur.endsWith(' ') ? '' : ' ';
+      }
+      return '. ';
+    }
+
     async function _transcribeBlob(blob, ext, isFinal) {
       try {
         var session = (await sb.auth.getSession()).data.session;
@@ -9716,11 +9853,13 @@
         if (transcript && !HALLUCINATIONS.test(transcript)) {
           var el  = document.getElementById('memAnswer');
           var cur = el.value;
-          var sep = (cur && !cur.endsWith('\n') && !cur.endsWith(' ')) ? ' ' : '';
+          var sep = _vaLcJoinSeparator(cur); // VA-LC Phase 2: was a bare space — now inserts "." at real segment boundaries
+          var appendStart = cur.length + sep.length; // VA-LC Phase 1: captured atomically, same instant as the mutation below — immune to any race with user typing during the network await above
           el.value = cur + sep + transcript;
           _userHasTyped = true;
           memCheckButtons();
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcript appended — ' + transcript.length + ' chars');
+          return { start: appendStart, end: el.value.length, text: transcript }; // VA-LC Phase 1: span of what was just appended, for the correction pass
         } else if (transcript) {
           dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
         } else if (isFinal) {
@@ -9736,6 +9875,132 @@
         } else {
           toast('Transcription unavailable — ' + err.message, 6000);
         }
+      }
+      return null; // nothing appended (filtered, empty, or errored)
+    }
+
+    // ── VA-LC Phase 1 (2026-08-27): live self-correction ────────────────────
+    // Fetches a plain (non-mutating) Lexical transcript for an arbitrary WAV
+    // blob — same 'transcribe' action/endpoint as _transcribeBlob, same
+    // Lexical-mode output (transcribeAudioBytes always reads NBest[0].Lexical
+    // server-side, regardless of caller — see index.ts), just without the
+    // textarea side effect, since the caller here decides what to do with
+    // the result itself.
+    async function _vaLcFetchTranscript(blob, ext) {
+      try {
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        form.append('action', 'transcribe');
+        form.append('audio', blob, 'correction.' + ext);
+        var _abort = new AbortController();
+        var _timeout = setTimeout(function() { _abort.abort(); }, 10000);
+        var res;
+        try {
+          res = await fetch(GETHRO_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+            body: form,
+            signal: _abort.signal,
+          });
+        } finally {
+          clearTimeout(_timeout);
+        }
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || ('Transcription error ' + res.status));
+        return (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      } catch (e) {
+        dbgWarn('VA_LC', 'Correction fetch failed:', e.message);
+        return null;
+      }
+    }
+
+    // Word-level longest-common-prefix match between the ALREADY-DISPLAYED
+    // previous segment's text and a fresh joint Lexical retranscription of
+    // [previous audio + current audio]. Returns the remainder of the joint
+    // transcript's words after that shared prefix — i.e. an approximation of
+    // "just the current segment's words, but produced with the benefit of
+    // the previous segment's audio as extra context". Returns null if the
+    // match is too weak to trust: this is a heuristic, not true forced
+    // alignment, and a weak match most likely means Lexical produced a
+    // meaningfully different result for the previous segment this time
+    // around — in which case declining to correct is far safer than
+    // guessing a split point and risking silently dropped or duplicated
+    // words. Deliberately conservative: correction is a nice-to-have, never
+    // something that should be able to corrupt what the user already said.
+    // VA-LC Phase 1, punctuation-mode update (2026-08-28): now that Azure
+    // returns Display/ITN text (see transcribeAudioBytes in index.ts), the
+    // SAME word can legitimately come back with different attached
+    // punctuation between the two calls being compared here — e.g. "day."
+    // in the already-displayed previous segment vs "day," in the joint
+    // retranscription, purely because Azure now sees more audio after it
+    // and chose a softer break. That's Azure re-punctuating, not a real
+    // disagreement about the word — but a raw string comparison would count
+    // it as a mismatch anyway, silently tanking the match count and making
+    // correction decline far more often than it should, for the wrong
+    // reason. Fix: strip leading/trailing punctuation ONLY for the purpose
+    // of deciding whether two words match. The words actually returned by
+    // this function (jointWords.slice(...)) are always taken verbatim from
+    // jointText — full punctuation intact, nothing here ever waters down or
+    // discards it from what gets shown to the user.
+    function _vaLcNormForMatch(w) {
+      return w.toLowerCase().replace(/^[^\w']+|[^\w']+$/g, '');
+    }
+    function _vaLcStripSharedPrefix(prevText, jointText) {
+      var prevWords = (prevText || '').trim().split(/\s+/).filter(Boolean);
+      var jointWords = (jointText || '').trim().split(/\s+/).filter(Boolean);
+      var matched = 0;
+      while (matched < prevWords.length && matched < jointWords.length &&
+             _vaLcNormForMatch(prevWords[matched]) === _vaLcNormForMatch(jointWords[matched])) {
+        matched++;
+      }
+      var minRequired = Math.ceil(prevWords.length * 0.6);
+      if (prevWords.length > 0 && matched < minRequired) return null; // low-confidence — decline rather than guess
+      return jointWords.slice(matched).join(' '); // verbatim from jointText — punctuation untouched
+    }
+
+    // Attempts to improve the segment that just landed at [curStart, curEnd)
+    // in the textarea, using its own audio plus the immediately-preceding
+    // segment's audio as context (see SPRINT VA-LC Phase 1, CONSOLIDATED
+    // BACKLOG). Fire-and-forget from the caller's point of view — never
+    // throws, never blocks dictation, and only ever touches the CURRENT
+    // segment's own span (never reaches back into the previous segment's
+    // already-settled text) so a bad heuristic split can, at worst, decline
+    // to improve a segment — it can never lose or corrupt one.
+    async function _vaLcTryCorrect(curStart, curEnd, curRawBlob, curLiveText) {
+      var prevRawBlob    = _vaLcPrevRawBlob;
+      var prevTranscript = _vaLcPrevTranscript;
+      var tokenAtStart   = _vaLcTurnToken;
+      // Always advance the "previous" pointers for the NEXT segment's pairing,
+      // regardless of whether THIS segment ends up corrected — the live text
+      // is a perfectly good baseline if correction is skipped or fails.
+      _vaLcPrevRawBlob    = curRawBlob;
+      _vaLcPrevTranscript = curLiveText;
+
+      if (!prevRawBlob) return; // first segment of the turn — nothing to pair with yet
+      try {
+        var wav = await MicManager.buildTrailingWav([prevRawBlob, curRawBlob]);
+        if (!wav) return; // Phase 0 build failed — already logged via VA_LC_P0
+        var jointText = await _vaLcFetchTranscript(wav, 'wav');
+        if (!jointText) return;
+        if (_vaLcTurnToken !== tokenAtStart) { dbg('VA_LC', 'Correction discarded — turn changed mid-flight'); return; }
+        var improved = _vaLcStripSharedPrefix(prevTranscript, jointText);
+        if (improved === null) { dbg('VA_LC', 'Correction declined — weak prefix match, not confident enough to split'); return; }
+        if (!improved || HALLUCINATIONS.test(improved)) { dbg('VA_LC', 'Correction declined — empty or hallucination-filtered result'); return; }
+        var el = document.getElementById('memAnswer');
+        if (!el) return;
+        if (el.value.slice(curStart, curEnd) !== curLiveText) { dbg('VA_LC', 'Correction discarded — span no longer matches (user likely edited it)'); return; }
+        el.value = el.value.slice(0, curStart) + improved + el.value.slice(curEnd);
+        _userHasTyped = true;
+        memCheckButtons();
+        // Keep the "previous" baseline in sync with what's now actually on
+        // screen for THIS segment, since a later segment may pair against it.
+        if (_vaLcTurnToken === tokenAtStart && _vaLcPrevRawBlob === curRawBlob) {
+          _vaLcPrevTranscript = improved;
+        }
+        dbg('VA_LC', 'Live correction applied — ' + curLiveText.length + ' → ' + improved.length + ' chars');
+      } catch (e) {
+        dbgWarn('VA_LC', 'Correction attempt failed:', e.message);
       }
     }
 
@@ -9886,10 +10151,20 @@
         } else {
           _micTranscribing = true;
           setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
-          await _transcribeBlob(xcribeBlob, xcribeExt, isFinal);
+          var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, isFinal);
           _micTranscribing = false;
           if (_micState === 'recording') {
             setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+          }
+          // VA-LC Phase 1 (2026-08-27): if this segment's live transcript
+          // actually landed in the textarea (not filtered/empty), try to
+          // improve it using this + the previous segment's audio together.
+          // Fire-and-forget — never blocks or delays dictation; splices in
+          // place if/when it resolves. See _vaLcTryCorrect for the safety
+          // guards (turn-token check, span-still-matches check, confidence
+          // threshold on the word-alignment heuristic).
+          if (_vaLcAppended) {
+            _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
           }
         }
       },
