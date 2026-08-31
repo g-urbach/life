@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.140';
+  const APP_VERSION = 'v7.141';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8962,6 +8962,20 @@
     if (_answerBeforeSave.trim()) _entryTypesBeforeSave.push('text');
     if (recPhotos.length)         _entryTypesBeforeSave.push('photo');
     if (recAudios.length)         _entryTypesBeforeSave.push('audio');
+    // VA-LC Phase 1 fix (2026-08-31): wait for the final-chunk live correction to
+    // finish splicing into the textarea before we read the form value for saving.
+    // Without this, memResetForm() would wipe the textarea before _vaLcTryCorrect
+    // resolved, and the correction was silently discarded every time.
+    // 6s safety timeout — a slow Whisper call should never block Save indefinitely.
+    if (_vaLcFinalCorrectionPromise) {
+      try {
+        await Promise.race([
+          _vaLcFinalCorrectionPromise,
+          new Promise(function(res) { setTimeout(res, 6000); })
+        ]);
+      } catch(e) { /* correction failure never blocks save */ }
+      _vaLcFinalCorrectionPromise = null;
+    }
     try {
       savedId = await memSaveCurrentEntry();
     } catch(err) {
@@ -9656,6 +9670,11 @@
   let _vaLcPrevRawBlob      = null;
   let _vaLcPrevTranscript   = '';
   let _vaLcTurnToken        = 0;
+  // VA-LC Phase 1 fix (2026-08-31): memDone awaits this before saving so the
+  // final-chunk correction can splice into the textarea while it's still live.
+  // Set by the isFinal onChunk path; reset to null on mic-open so a stale
+  // promise from a previous take is never awaited again.
+  let _vaLcFinalCorrectionPromise = null;
 
   const MIC_SILENCE_THRESHOLD  = 15;    // 0-127 AnalyserNode scale; below = silence. 8 was too low (treated quiet speech as silence). Typical: ambient 2-5, speech 20-60.
   const MIC_SILENCE_MS         = 800;   // ms of sustained silence → flush. 1500ms was too long — natural sentence pauses are 500-800ms.
@@ -9748,8 +9767,9 @@
     _micTranscriptSoFar  = '';
     _micRecordStart      = Date.now();
     _micRecentChunkBytes = [];
-    _vaLcPrevRawBlob     = null;
-    _vaLcPrevTranscript  = '';
+    _vaLcPrevRawBlob            = null;
+    _vaLcPrevTranscript         = '';
+    _vaLcFinalCorrectionPromise = null; // VA-LC fix: reset so memDone never awaits a stale prior-take promise
     _vaLcTurnToken++; // VA-LC Phase 1: new turn — any correction from a prior turn is now stale
     _micFlushCooldown    = false;
     _micSilenceStart     = null;
@@ -10112,20 +10132,19 @@
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          // VA-LC Phase 1 (2026-08-31): wire correction into the final-chunk path.
-          // Previously _vaLcTryCorrect only fired on non-final chunks (mid-recording
-          // pauses), so a single-take recording or the last chunk of any recording
-          // never got live correction — only the now-removed post-save patch did.
-          // Run _transcribeBlob first (awaited), then pass its span to _vaLcTryCorrect
-          // exactly as the non-final path does. Fire-and-forget from the caller's
-          // perspective — _setMicState('idle') is already done, UI is unblocked.
-          (async function() {
+          // VA-LC Phase 1 fix (2026-08-31): assign to _vaLcFinalCorrectionPromise so
+          // memDone can await it before wiping the textarea. Previously fire-and-forget,
+          // which meant _transcribeBlob resolved after memResetForm() cleared the textarea
+          // and the splice silently discarded. The mic is already idle — UI is unblocked.
+          // memDone awaits this with a 6s safety timeout so a slow/failed network call
+          // never blocks save indefinitely.
+          _vaLcFinalCorrectionPromise = (async function() {
             var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
               dbgErr('MIC', 'Background final transcription failed:', e.message);
               return null;
             });
             if (_vaLcAppended) {
-              _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
+              await _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
             }
           })();
         } else {
