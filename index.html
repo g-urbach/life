@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.139';
+  const APP_VERSION = 'v7.140';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8938,47 +8938,14 @@
       client_committed_at: Date.now()
     });
 
-    // ── Phase 5: fire the quality pass — independent of any other turn ──────
-    try {
-      var session2 = (await sb.auth.getSession()).data.session;
-      if (!session2) throw new Error('Not authenticated');
-      var applyRes = await fetch(GETHRO_PROXY_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + session2.access_token,
-          'apikey': SUPABASE_ANON,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ action: 'apply_voice_transcript', turnId: committed.id })
-      });
-      var applyData = await applyRes.json();
-      if (!applyRes.ok || !applyData.ok) throw new Error(applyData.error || 'Apply failed ' + applyRes.status);
-      if (applyData.applied) {
-        dbg('VA', 'Transcript improved — entry=' + entryId + ' turn=' + committed.turn_index + ' +' + (applyData.charsAdded || 0) + ' chars');
-        logActivity('voice_retranscript', 'entry=' + entryId + ' turn=' + committed.turn_index, 'info', 'GROQ');
-        // Server already patched the DB row — refresh the local cache so any
-        // open view reflects the improved text without a manual reload.
-        var cached = (entries || []).find(function(e) { return e.id === entryId; });
-        if (cached) {
-          try {
-            var refreshRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id + '&select=answer', {
-              headers: getAuthHeaders()
-            });
-            if (refreshRes.ok) {
-              var rows = await refreshRes.json();
-              if (rows && rows[0] && typeof rows[0].answer === 'string') cached.answer = rows[0].answer;
-            }
-          } catch(e2) { dbgErr('VA', 'Post-apply cache refresh failed:', e2.message); }
-        }
-        toast('✨ Transcript improved from your recording', 3000);
-      } else {
-        dbg('VA', 'Transcript not applied — reason=' + applyData.reason);
-        // Silent by design — 'edited', 'empty_transcript', 'unchanged' etc. are all expected, non-error outcomes.
-      }
-    } catch(e) {
-      dbgErr('VA', 'apply_voice_transcript failed:', e.message);
-      logActivity('voice_retranscript_error', 'entry=' + entryId + ' err=' + e.message, 'error', 'GROQ');
-    }
+    // ── VA-LC Phase 4 (2026-08-31): apply_voice_transcript post-save fire REMOVED ──
+    // VA-LC Phase 1 now handles live correction in the textarea before Save is
+    // ever reachable — the old post-save patch is redundant and was the source
+    // of the user-visible "text changes after Save" behaviour. The commit above
+    // (archive blob upload + DB row insert) still runs; only the quality-pass
+    // re-transcription fire is gone. handleApplyVoiceTranscript in index.ts is
+    // retained as a safety net for one build cycle per the VA-LC spec — do not
+    // call it from anywhere new; remove it once VA-LC is confirmed stable.
   }
 
   async function memDone() {
@@ -10139,15 +10106,28 @@
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
-          // Go idle immediately on stop — final chunk transcribes in background (10s timeout).
-          // Archive re-transcription handles quality. User never waits on orange screen.
+          // Go idle immediately on stop — final chunk transcribes + corrects in background.
+          // User never waits on orange screen.
           await _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
-            dbgErr('MIC', 'Background final transcription failed:', e.message);
-          });
+          // VA-LC Phase 1 (2026-08-31): wire correction into the final-chunk path.
+          // Previously _vaLcTryCorrect only fired on non-final chunks (mid-recording
+          // pauses), so a single-take recording or the last chunk of any recording
+          // never got live correction — only the now-removed post-save patch did.
+          // Run _transcribeBlob first (awaited), then pass its span to _vaLcTryCorrect
+          // exactly as the non-final path does. Fire-and-forget from the caller's
+          // perspective — _setMicState('idle') is already done, UI is unblocked.
+          (async function() {
+            var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
+              dbgErr('MIC', 'Background final transcription failed:', e.message);
+              return null;
+            });
+            if (_vaLcAppended) {
+              _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
+            }
+          })();
         } else {
           _micTranscribing = true;
           setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
