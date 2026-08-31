@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.130';
+  const APP_VERSION = 'v7.138';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5409,11 +5409,19 @@
     // logActivity()'s copy of the same detail (DB-bound) is NOT sanitised —
     // this only affects the Telegram-bound payload built below.
     var telegramSafeDetail = String(detail).replace(/(https?:\/\/)/gi, '$1\u200b');
+    // VIP-01: flag premium users so real issues for paying users don't get lost
+    // in the noise — isPremium() is a function declaration (hoisted), safe to
+    // call here even though it's defined later in the file. Reflects _subscriptionTier
+    // as of the last loadSubscriptionTier() call (on login + on tier-change detection),
+    // not a live per-event DB read — see SUB-05 for cache semantics/staleness window.
+    var _tier = isPremium() ? 'premium' : 'free';
+    if (_tier === 'premium') telegramSafeDetail = '⭐ PREMIUM — ' + telegramSafeDetail;
     var payload = {
       level:        level,
       area:         area,
       detail:       telegramSafeDetail,
       user:         user,
+      tier:         _tier,
       ts:           new Date().toISOString(),
       version:      appVersion,
       panel:        activePanel,
@@ -5493,6 +5501,7 @@
       platform:     platform,
       platform_detail: _parseUaDetail(ua), // e.g. "iOS 17/Safari" — fills the gap where "mobile" alone wasn't enough
       user_agent:   ua,
+      tier:         isPremium() ? 'premium' : 'free', // VIP-01: mirrors notifyDev's Telegram tag, now on every row too
       version:      (typeof APP_VERSION === 'string') ? APP_VERSION : null,
       ts:           new Date().toISOString(),
       src_line:     rawLine,
@@ -6710,6 +6719,13 @@
 
   // APP-55 Phase 6: Fetch voice archives for a batch of entries, populate _voiceArchiveCache.
   // select now includes question + turn_index (added by VA-M01b migration) for thread render.
+  // UX-VA03 2026-08-27: select + order now also include recorded_at — the
+  // real per-take timestamp (added by the recorded_at migration). Ordering
+  // by turn_index alone could come out wrong because turn_index is assigned
+  // by a live COUNT query server-side that races when multiple takes commit
+  // simultaneously (every "record 2+ takes, Save once" case). recorded_at is
+  // captured client-side, sequentially, before any race can happen, so it's
+  // the trustworthy field for display order — see the render sort below.
   async function _loadVoiceArchivesForEntries(entryIds) {
     if (!entryIds || !entryIds.length || !currentUser) return [];
     var needed = entryIds.filter(function(id) { return !_voiceArchiveCache[id]; });
@@ -6720,7 +6736,7 @@
       var ids = needed.map(function(id) { return 'entry_id.eq.' + id; }).join(',');
       var res = await fetch(
         SUPABASE_URL + '/rest/v1/life_voice_archives?user_id=eq.' + currentUser.id +
-        '&or=(' + ids + ')&order=turn_index.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index',
+        '&or=(' + ids + ')&order=recorded_at.asc&select=id,entry_id,storage_path,label,size_bytes,question,turn_index,recorded_at',
         { headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON } }
       );
       if (!res.ok) { dbgErr('VA', 'Load archives failed:', res.status); return []; }
@@ -7299,9 +7315,12 @@
         currentUser  = initSession.user;
         sessionToken = initSession.access_token;
       }
-      // Flag that this SIGNED_IN event is a page-load restore, not a fresh login.
-      // onAuthStateChange will clear this after the first event fires.
-      _initSessionRestored = true;
+      // NOTE (OBS-08): this used to also set _initSessionRestored = true here as a
+      // "this SIGNED_IN is a page-load restore" flag. Removed — see OBS-08 comment
+      // at the onAuthStateChange SIGNED_IN handler below for why that signal was
+      // unreliable (it also fired true on the OAuth-redirect landing page itself,
+      // misclassifying real logins as restores). fresh-login detection is now done
+      // there via session.user.last_sign_in_at instead.
     }
 
     sb.auth.onAuthStateChange(async (event, session) => {
@@ -7322,6 +7341,11 @@
       if (event === 'SIGNED_IN' && session && (_appFullyLoaded || _appInitInProgress)) {
         sessionToken = session.access_token;
         dbg('AUTH', 'SIGNED_IN while app ' + (_appFullyLoaded ? 'fully loaded' : 'init in progress') + ' — token updated, no reload');
+        // PRELAUNCH-01: also pinged to Telegram, not just logged to Supabase —
+        // deliberately verbose while user count is tiny and every bit of activity
+        // is worth seeing. Wind this back to DB-only (drop the notifyDev call,
+        // keep logActivity) once real user volume makes focus-return pings noisy.
+        notifyDev('info', 'AUTH', 'Session resumed (focus_return): ' + session.user.email);
         logActivity('session_resumed', 'via=focus_return: ' + session.user.email, 'info', 'AUTH'); // ANALYTICS-02 (4)
         return;
       }
@@ -7334,9 +7358,30 @@
 
       // Notify on sign-in and new account confirmation so every login is visible
       // in Telegram. SIGNED_IN fires on both fresh login and session restore on
-      // page load — we suppress the page-load case by checking _initSessionRestored.
+      // page load.
+      //
+      // OBS-08 (found 2026-08-26): _initSessionRestored (the old signal for "this
+      // is a page-load restore, not a fresh login") is a CLIENT-SIDE TIMING flag —
+      // it's set true if sb.auth.getSession(), called right after createClient(),
+      // already returns a session. That's correct for an ordinary reload with a
+      // cached session, but WRONG for the OAuth-redirect landing page itself:
+      // supabase-js's detectSessionInUrl processing runs inside getSession()'s
+      // own initialisation promise, so on the very page load that completes an
+      // OAuth login, getSession() already resolves with the brand-new session —
+      // _initSessionRestored gets set true, and the real login below was silently
+      // reclassified as 'session_resumed' (Supabase-only, no Telegram). Root cause
+      // of "logged out and back in with Google, got no Telegram alert" — this is
+      // NOT rare, it's the normal timing on every OAuth redirect completion.
+      // FIX: use a server-set signal instead of a client-timing one. Supabase sets
+      // last_sign_in_at at the moment auth actually happens, server-side — if it's
+      // within the last few seconds, this IS a fresh login, full stop, regardless
+      // of when our own getSession() call happened to resolve. Same trusted-timestamp
+      // pattern already used just below to detect new-user sign-up.
       if (event === 'SIGNED_IN' && session) {
-        if (!_initSessionRestored) {
+        var _u2 = session.user;
+        var _signInAgeMs = _u2.last_sign_in_at ? (Date.now() - new Date(_u2.last_sign_in_at).getTime()) : Infinity;
+        var _isFreshLogin = _signInAgeMs < 15000; // signed in server-side within the last 15s
+        if (_isFreshLogin) {
           // OBS-07: with email/password removed, signUp() (which used to fire the
           // "New user signed up" notification directly) no longer exists — every
           // OAuth login, first-time or returning, arrives here as a plain SIGNED_IN
@@ -7345,24 +7390,25 @@
           // (set server-side at account creation and each login respectively) — if
           // they're within a few seconds of each other, this IS the account-creation
           // moment, regardless of which provider (Google/Apple/Facebook) was used.
-          var _u = session.user;
-          var _isNewUser = _u.created_at && _u.last_sign_in_at &&
-            Math.abs(new Date(_u.last_sign_in_at) - new Date(_u.created_at)) < 5000;
+          var _isNewUser = _u2.created_at && _u2.last_sign_in_at &&
+            Math.abs(new Date(_u2.last_sign_in_at) - new Date(_u2.created_at)) < 5000;
           if (_isNewUser) {
-            notifyAdmin(_u.email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
-            notifyDev('warn', 'AUTH', 'New user signed up: ' + _u.email);
-            logActivity('sign_up', 'New user: ' + _u.email, 'warn', 'AUTH');
+            notifyAdmin(_u2.email).catch(e => dbgWarn('NOTIFY','Admin notify failed:', e.message));
+            notifyDev('warn', 'AUTH', 'New user signed up: ' + _u2.email);
+            logActivity('sign_up', 'New user: ' + _u2.email, 'warn', 'AUTH');
           } else {
-            notifyDev('warn', 'AUTH', 'Sign-in: ' + _u.email);
-            logActivity('sign_in', 'Sign-in: ' + _u.email, 'warn', 'AUTH');
+            notifyDev('warn', 'AUTH', 'Sign-in: ' + _u2.email);
+            logActivity('sign_in', 'Sign-in: ' + _u2.email, 'warn', 'AUTH');
           }
         } else {
           // ANALYTICS-02 (4): page-load restore — a cached session, not a fresh login.
           // Distinct from the focus_return case above, which short-circuits earlier
           // (only reachable once _appFullyLoaded/_appInitInProgress is true).
+          // PRELAUNCH-01: also pinged to Telegram — see matching comment on the
+          // focus_return case above for why, and when to wind it back.
+          notifyDev('info', 'AUTH', 'Session resumed (page_load): ' + session.user.email);
           logActivity('session_resumed', 'via=page_load: ' + session.user.email, 'info', 'AUTH');
         }
-        _initSessionRestored = false;
       }
       if (event === 'SIGNED_OUT') {
         _appFullyLoaded = false; // reset so next sign-in runs full init
@@ -7768,7 +7814,6 @@
   // Called after any fetch — if we get a 401 and are supposedly signed in,
   // show a clear "session expired" toast and prompt the user to sign out/in.
   var _authExpiredShown = false;
-  var _initSessionRestored = false; // true during page-load session restore — suppresses spurious SIGNED_IN notify
   var _appFullyLoaded    = false;    // true once the full init sequence (loadEntries + renderDashboard) has completed — prevents alt-tab SIGNED_IN from re-running it
   var _appInitInProgress = false;    // true while init is running — prevents re-entrant SIGNED_IN during slow loads from re-running init and navigating to dashboard
 
@@ -8846,6 +8891,12 @@
       form.append('question', turn.question || '');
       form.append('offset', String(turn.offset));
       form.append('baselineSnapshot', turn.baselineSnapshot || '');
+      // UX-VA03 2026-08-27: real per-take timestamp, captured client-side at
+      // stage time (see _stageCurrentTurn) — sent through so the server can
+      // persist it in a new recorded_at column. This is what display order
+      // and default naming key off now, not turn_index (see render sort /
+      // _vaDefaultName below).
+      form.append('recordedAt', turn.recordedAt || '');
       form.append('audio', turn.blob, 'turn.' + ext);
       var res = await fetch(GETHRO_PROXY_URL, {
         method: 'POST',
@@ -8871,7 +8922,20 @@
       label: committed.label,
       size_bytes: committed.size_bytes,
       turn_index: committed.turn_index,
-      question: turn.question || null
+      question: turn.question || null,
+      // UX-VA03 2026-08-27: real, DB-backed timestamp — captured client-side
+      // at stage time, sent through commit_voice_turn, echoed back here by
+      // the server (see handleCommitVoiceTurn's response). This is now the
+      // primary field used for both ordering and default naming (see render
+      // sort / _vaDefaultName below) — works for every take, any session,
+      // regardless of the turn_index counting race.
+      recorded_at: committed.recorded_at || turn.recordedAt || null,
+      // UX-VA02 2026-08-26 (legacy stopgap): session-local fallback, kept
+      // only for turns committed by an older client build that predates
+      // recorded_at, or in the unlikely case the server didn't echo it back.
+      // Safe to remove once recorded_at has been live for a while — see
+      // _vaDefaultName's priority order below.
+      client_committed_at: Date.now()
     });
 
     // ── Phase 5: fire the quality pass — independent of any other turn ──────
@@ -9058,7 +9122,14 @@
     // server already treats unrecognised mimeTypes as "skip Azure, use Groq",
     // so a WAV-encode failure just means this one chunk goes Groq-only
     // instead of crashing the turn.
-    async function _blobToWav16kMono(blob) {
+    // 2026-08-27 (VA-LC Phase 0): split the original single-blob transcode
+    // into two reusable halves so a NEW multi-blob path (below) can share
+    // the exact same decode/resample logic instead of duplicating it —
+    // _decodeBlobToPcm16k does decode+resample only (returns raw Float32
+    // samples), _pcmToWav16kMonoBlob does only the RIFF/WAV header-writing.
+    // _blobToWav16kMono's own behaviour/return value is UNCHANGED by this
+    // refactor — same inputs produce the same output bytes as before.
+    async function _decodeBlobToPcm16k(blob) {
       const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtxCls) throw new Error('no AudioContext support');
       const arrayBuf = await blob.arrayBuffer();
@@ -9083,8 +9154,11 @@
       src.connect(offlineCtx.destination);
       src.start(0);
       const rendered = await offlineCtx.startRendering();
-      const pcm = rendered.getChannelData(0); // Float32Array, range -1..1
+      return rendered.getChannelData(0); // Float32Array, range -1..1, already 16kHz mono
+    }
 
+    function _pcmToWav16kMonoBlob(pcm) {
+      const targetRate = 16000;
       const numSamples = pcm.length;
       const buf = new ArrayBuffer(44 + numSamples * 2);
       const view = new DataView(buf);
@@ -9112,6 +9186,11 @@
       return new Blob([buf], { type: 'audio/wav' });
     }
 
+    async function _blobToWav16kMono(blob) {
+      const pcm = await _decodeBlobToPcm16k(blob);
+      return _pcmToWav16kMonoBlob(pcm);
+    }
+
     // Wraps _blobToWav16kMono with the fallback-on-failure behaviour used by
     // both flush() branches below. Returns { blob, mime, ext }.
     async function _tryTranscodeToWav(blob, fallbackMime) {
@@ -9121,6 +9200,56 @@
       } catch (e) {
         dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (Azure will be skipped server-side, Groq still works):', e);
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
+      }
+    }
+
+    // ── VA-LC Phase 0 (2026-08-27): trailing-window multi-blob WAV builder ──
+    // Verifies/implements the one open technical risk flagged in SPRINT VA-LC
+    // Phase 0 (CONSOLIDATED BACKLOG): can a bounded trailing correction
+    // window be built client-side from audio we already have, without
+    // touching ArchiveRecorder or its single-header invariant?
+    //
+    // Answer landed on: yes, and it doesn't need ArchiveRecorder at all.
+    // MicManager's own non-final flush() segments are ALREADY independent,
+    // fully self-contained, independently-decodable blobs — that's the
+    // whole reason live per-chunk transcription already works today (each
+    // flush blob goes through _tryTranscodeToWav/decodeAudioData
+    // successfully, every few seconds, in production, right now). So the
+    // "last ~2 sentences" trailing window is just "the last 1-2 flush
+    // segments", which the caller already has sitting in memory. No new
+    // recorder, no requestData()-on-ArchiveRecorder trick (which risks
+    // reintroducing the Safari multi-header bug ArchiveRecorder exists to
+    // avoid — see BACKGROUND (b) in CONSOLIDATED BACKLOG — since Safari's
+    // MP4 muxer emits a self-contained fragment on EVERY dataavailable,
+    // whether triggered by timeslice or a manual requestData() call).
+    //
+    // Decodes each blob separately (each is independently valid — never
+    // assumes a shared/contiguous container across blobs) via the exact
+    // same decode path _blobToWav16kMono already uses successfully in
+    // production, concatenates the resulting 16kHz mono PCM in order, and
+    // writes ONE combined WAV. Returns null (not a throw) on any failure —
+    // correction is a nice-to-have, never something that should be able to
+    // interrupt live dictation.
+    async function _multiBlobToWav16kMono(blobs) {
+      if (!blobs || !blobs.length) return null;
+      try {
+        var parts = [];
+        var total = 0;
+        for (var i = 0; i < blobs.length; i++) {
+          var pcm = await _decodeBlobToPcm16k(blobs[i]);
+          parts.push(pcm);
+          total += pcm.length;
+        }
+        var merged = new Float32Array(total);
+        var off = 0;
+        for (var j = 0; j < parts.length; j++) {
+          merged.set(parts[j], off);
+          off += parts[j].length;
+        }
+        return _pcmToWav16kMonoBlob(merged);
+      } catch (e) {
+        dbgErr('MIC_MGR', 'VA-LC Phase 0: trailing-window WAV build failed:', e);
+        return null;
       }
     }
 
@@ -9361,6 +9490,12 @@
       // flush()/onChunk above) can transcode its blobs to Azure-compatible WAV
       // too, without duplicating the decode/resample/encode logic.
       toWav16kMono: _tryTranscodeToWav,
+      // VA-LC Phase 0 (2026-08-27): builds one combined 16kHz mono WAV from
+      // several independently-decodable segment blobs, in order. Used to
+      // build a trailing "last ~2 flush segments" correction window without
+      // touching ArchiveRecorder. Returns a Blob, or null on failure/empty
+      // input — never throws.
+      buildTrailingWav: _multiBlobToWav16kMono,
     };
   })();
 
@@ -9492,6 +9627,24 @@
   let _micWarnTimer = null;
   let _micMaxTimer  = null;
 
+  // ── APP-59 Phase 2 (2026-08-27): auto-segment the ARCHIVE recorder on long
+  // recordings, entirely separate from the live-STT timers above. This is a
+  // pure workaround for Azure Fast Transcription's 10MB request-body ceiling
+  // on the quality-pass retranscription call (transcribeAudioBytes) — one
+  // giant archive blob for a 15+ minute recording can exceed it, especially
+  // on Safari's AAC output (see CONSOLIDATED BACKLOG APP-59 PHASE 2 sizing
+  // note). Reuses the EXACT same staging/commit/apply machinery already
+  // used for a manual pause-and-resume multi-take entry — this is not a new
+  // data shape, just triggering that same shape automatically on a timer
+  // instead of only on a user tap to stop. MicManager's own live-STT
+  // recorder is completely untouched by this; only ArchiveRecorder segments
+  // itself. 8 min chosen per the backlog sizing note (comfortably under
+  // 10MB even for Safari's AAC output at typical voice bitrates) — TBD
+  // against real Safari numbers once real device testing happens (still an
+  // open gap, see APP-59 status).
+  const ARCHIVE_SEGMENT_MS = 8 * 60 * 1000;
+  let _archiveSegmentTimer = null;
+
   // ── APP-52 Phase 3 (restored v6.03): AnalyserNode silence detection ─────────────────────
   // Original approach restored — mute button (not AudioContext) was causing vol=0 readings.
   // Fallback: if AudioContext fails or vol stays 0, chunk data-rate heuristic kicks in
@@ -9512,6 +9665,30 @@
   let _stagedVoiceArchives = []; // APP-55 Phase 4: [{blob, mime, offset, question, baselineSnapshot}] — staged in memory per turn, committed (uploaded) only on Save, wiped on discard
   let _micRecentChunkBytes  = [];    // rolling window of last N ondataavailable chunk sizes
   let _micChunkTimer        = null;  // fallback 30s timer if silence detection unavailable
+  // VA-LC Phase 0 (2026-08-27): last 1-2 raw, pre-transcode non-final flush
+  // blobs for the CURRENT turn only, most-recent-last. Purely additive —
+  // does not feed the archive or live-STT paths, just gives the (not yet
+  // built) live-correction loop a trailing window to work from. Reset at
+  // mic-open and mic-release, same lifecycle as _micRecentChunkBytes.
+  // VA-LC Phase 0 (2026-08-27): superseded by _vaLcPrevRawBlob below once
+  // Phase 1 shipped — Phase 1 pairs exactly [previous, current] directly
+  // rather than tracking a rolling array, so the array form from Phase 0's
+  // initial (observation-only) cut was removed rather than left unused.
+  // VA-LC Phase 1 (2026-08-27): tracks the immediately-preceding segment so
+  // the NEXT segment's correction pass can use it as extra audio context.
+  // _vaLcPrevRawBlob: that segment's raw (pre-transcode) blob.
+  // _vaLcPrevTranscript: that segment's CURRENTLY-DISPLAYED text (post any
+  //   correction it already received) — used only as the baseline for the
+  //   shared-prefix match below, never mutated except when a new segment's
+  //   own correction settles.
+  // _vaLcTurnToken: bumped every mic-open/mic-release. A correction's
+  //   in-flight network round-trip captures this value at start and checks
+  //   it again before splicing — if a new take/turn has started in the
+  //   meantime, the stale correction is discarded rather than risking a
+  //   splice into text that no longer belongs to the segment it came from.
+  let _vaLcPrevRawBlob      = null;
+  let _vaLcPrevTranscript   = '';
+  let _vaLcTurnToken        = 0;
 
   const MIC_SILENCE_THRESHOLD  = 15;    // 0-127 AnalyserNode scale; below = silence. 8 was too low (treated quiet speech as silence). Typical: ambient 2-5, speech 20-60.
   const MIC_SILENCE_MS         = 800;   // ms of sustained silence → flush. 1500ms was too long — natural sentence pauses are 500-800ms.
@@ -9561,10 +9738,14 @@
     if (_micWarnTimer)  { clearTimeout(_micWarnTimer);   _micWarnTimer  = null; }
     if (_micMaxTimer)   { clearTimeout(_micMaxTimer);    _micMaxTimer   = null; }
     if (_micChunkTimer) { clearInterval(_micChunkTimer); _micChunkTimer = null; }
+    if (_archiveSegmentTimer) { clearInterval(_archiveSegmentTimer); _archiveSegmentTimer = null; } // APP-59 Phase 2
     _micSilenceStart     = null;
     _micRecordStart      = null;
     _micTranscribing     = false;
     _micRecentChunkBytes = [];
+    _vaLcPrevRawBlob     = null;
+    _vaLcPrevTranscript  = '';
+    _vaLcTurnToken++; // VA-LC Phase 1: invalidate any in-flight correction from this turn
     memMicActive = false;
     MicManager.release();
   }
@@ -9600,6 +9781,9 @@
     _micTranscriptSoFar  = '';
     _micRecordStart      = Date.now();
     _micRecentChunkBytes = [];
+    _vaLcPrevRawBlob     = null;
+    _vaLcPrevTranscript  = '';
+    _vaLcTurnToken++; // VA-LC Phase 1: new turn — any correction from a prior turn is now stale
     _micFlushCooldown    = false;
     _micSilenceStart     = null;
     _micTranscribing     = false;
@@ -9607,6 +9791,42 @@
 
     // ── Shared transcription helper (used by both chunk and final paths) ────
     var HALLUCINATIONS = AGP_HALLUCINATIONS; // reuse AGP filter — catches multi-word fillers like 'Okay. Amen. Okay.' (≤8 filler tokens)
+
+    // VA-LC Phase 2 (2026-08-27): deterministic, self-authored punctuation
+    // at every segment boundary — replaces the old bare-space join. Written
+    // for Lexical mode, which returned zero punctuation from the provider by
+    // design. UPDATE 2026-08-28: transcribeAudioBytes now prefers
+    // NBest[0].Display (see index.ts), which already arrives punctuated, so
+    // this function is now mostly a SAFETY NET rather than the primary
+    // fix — it's a no-op whenever a segment already ends in ./!/? (the
+    // common case under Display), and only still does real work if Azure
+    // ever returns a segment with no terminal punctuation. Left in place
+    // rather than removed: harmless either way, and removing it isn't
+    // needed to test VA-LC Phase 1 correction, which is the current goal.
+    // Every pause is treated as a sentence
+    // boundary here, same accepted approximation as the rest of this sprint
+    // (no real NLP sentence-boundary detection — see CONSOLIDATED BACKLOG
+    // SPRINT VA-LC decision 2). Directly fixes "no full stops at all" and
+    // the mid-sentence-capital artifact together, as one join-time change —
+    // does not touch cleanTranscript itself (its whitespace-collapse
+    // behavior is unchanged) and does not touch VA-LC Phase 1's correction
+    // splice (that only ever replaces a segment's own raw-word span, never
+    // the separator before it, so the two phases don't interact).
+    function _vaLcJoinSeparator(cur) {
+      if (!cur) return ''; // nothing before this — no boundary to punctuate
+      var trimmed = cur.replace(/\s+$/, '');
+      if (!trimmed) return ''; // cur was pure whitespace
+      if (cur.endsWith('\n')) return ''; // manual paragraph break — leave it alone
+      var lastChar = trimmed.slice(-1);
+      if (/[.!?]/.test(lastChar)) {
+        // Already ends in terminal punctuation (e.g. the user typed it, or
+        // — not possible today, but harmless if it ever were — a provider
+        // emitted one) — don't stack a second one, just ensure one space.
+        return cur.endsWith(' ') ? '' : ' ';
+      }
+      return '. ';
+    }
+
     async function _transcribeBlob(blob, ext, isFinal) {
       try {
         var session = (await sb.auth.getSession()).data.session;
@@ -9633,11 +9853,13 @@
         if (transcript && !HALLUCINATIONS.test(transcript)) {
           var el  = document.getElementById('memAnswer');
           var cur = el.value;
-          var sep = (cur && !cur.endsWith('\n') && !cur.endsWith(' ')) ? ' ' : '';
+          var sep = _vaLcJoinSeparator(cur); // VA-LC Phase 2: was a bare space — now inserts "." at real segment boundaries
+          var appendStart = cur.length + sep.length; // VA-LC Phase 1: captured atomically, same instant as the mutation below — immune to any race with user typing during the network await above
           el.value = cur + sep + transcript;
           _userHasTyped = true;
           memCheckButtons();
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcript appended — ' + transcript.length + ' chars');
+          return { start: appendStart, end: el.value.length, text: transcript }; // VA-LC Phase 1: span of what was just appended, for the correction pass
         } else if (transcript) {
           dbg('MIC', 'Hallucination filtered: "' + transcript + '"');
         } else if (isFinal) {
@@ -9653,6 +9875,132 @@
         } else {
           toast('Transcription unavailable — ' + err.message, 6000);
         }
+      }
+      return null; // nothing appended (filtered, empty, or errored)
+    }
+
+    // ── VA-LC Phase 1 (2026-08-27): live self-correction ────────────────────
+    // Fetches a plain (non-mutating) Lexical transcript for an arbitrary WAV
+    // blob — same 'transcribe' action/endpoint as _transcribeBlob, same
+    // Lexical-mode output (transcribeAudioBytes always reads NBest[0].Lexical
+    // server-side, regardless of caller — see index.ts), just without the
+    // textarea side effect, since the caller here decides what to do with
+    // the result itself.
+    async function _vaLcFetchTranscript(blob, ext) {
+      try {
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var form = new FormData();
+        form.append('action', 'transcribe');
+        form.append('audio', blob, 'correction.' + ext);
+        var _abort = new AbortController();
+        var _timeout = setTimeout(function() { _abort.abort(); }, 10000);
+        var res;
+        try {
+          res = await fetch(GETHRO_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+            body: form,
+            signal: _abort.signal,
+          });
+        } finally {
+          clearTimeout(_timeout);
+        }
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || ('Transcription error ' + res.status));
+        return (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      } catch (e) {
+        dbgWarn('VA_LC', 'Correction fetch failed:', e.message);
+        return null;
+      }
+    }
+
+    // Word-level longest-common-prefix match between the ALREADY-DISPLAYED
+    // previous segment's text and a fresh joint Lexical retranscription of
+    // [previous audio + current audio]. Returns the remainder of the joint
+    // transcript's words after that shared prefix — i.e. an approximation of
+    // "just the current segment's words, but produced with the benefit of
+    // the previous segment's audio as extra context". Returns null if the
+    // match is too weak to trust: this is a heuristic, not true forced
+    // alignment, and a weak match most likely means Lexical produced a
+    // meaningfully different result for the previous segment this time
+    // around — in which case declining to correct is far safer than
+    // guessing a split point and risking silently dropped or duplicated
+    // words. Deliberately conservative: correction is a nice-to-have, never
+    // something that should be able to corrupt what the user already said.
+    // VA-LC Phase 1, punctuation-mode update (2026-08-28): now that Azure
+    // returns Display/ITN text (see transcribeAudioBytes in index.ts), the
+    // SAME word can legitimately come back with different attached
+    // punctuation between the two calls being compared here — e.g. "day."
+    // in the already-displayed previous segment vs "day," in the joint
+    // retranscription, purely because Azure now sees more audio after it
+    // and chose a softer break. That's Azure re-punctuating, not a real
+    // disagreement about the word — but a raw string comparison would count
+    // it as a mismatch anyway, silently tanking the match count and making
+    // correction decline far more often than it should, for the wrong
+    // reason. Fix: strip leading/trailing punctuation ONLY for the purpose
+    // of deciding whether two words match. The words actually returned by
+    // this function (jointWords.slice(...)) are always taken verbatim from
+    // jointText — full punctuation intact, nothing here ever waters down or
+    // discards it from what gets shown to the user.
+    function _vaLcNormForMatch(w) {
+      return w.toLowerCase().replace(/^[^\w']+|[^\w']+$/g, '');
+    }
+    function _vaLcStripSharedPrefix(prevText, jointText) {
+      var prevWords = (prevText || '').trim().split(/\s+/).filter(Boolean);
+      var jointWords = (jointText || '').trim().split(/\s+/).filter(Boolean);
+      var matched = 0;
+      while (matched < prevWords.length && matched < jointWords.length &&
+             _vaLcNormForMatch(prevWords[matched]) === _vaLcNormForMatch(jointWords[matched])) {
+        matched++;
+      }
+      var minRequired = Math.ceil(prevWords.length * 0.6);
+      if (prevWords.length > 0 && matched < minRequired) return null; // low-confidence — decline rather than guess
+      return jointWords.slice(matched).join(' '); // verbatim from jointText — punctuation untouched
+    }
+
+    // Attempts to improve the segment that just landed at [curStart, curEnd)
+    // in the textarea, using its own audio plus the immediately-preceding
+    // segment's audio as context (see SPRINT VA-LC Phase 1, CONSOLIDATED
+    // BACKLOG). Fire-and-forget from the caller's point of view — never
+    // throws, never blocks dictation, and only ever touches the CURRENT
+    // segment's own span (never reaches back into the previous segment's
+    // already-settled text) so a bad heuristic split can, at worst, decline
+    // to improve a segment — it can never lose or corrupt one.
+    async function _vaLcTryCorrect(curStart, curEnd, curRawBlob, curLiveText) {
+      var prevRawBlob    = _vaLcPrevRawBlob;
+      var prevTranscript = _vaLcPrevTranscript;
+      var tokenAtStart   = _vaLcTurnToken;
+      // Always advance the "previous" pointers for the NEXT segment's pairing,
+      // regardless of whether THIS segment ends up corrected — the live text
+      // is a perfectly good baseline if correction is skipped or fails.
+      _vaLcPrevRawBlob    = curRawBlob;
+      _vaLcPrevTranscript = curLiveText;
+
+      if (!prevRawBlob) return; // first segment of the turn — nothing to pair with yet
+      try {
+        var wav = await MicManager.buildTrailingWav([prevRawBlob, curRawBlob]);
+        if (!wav) return; // Phase 0 build failed — already logged via VA_LC_P0
+        var jointText = await _vaLcFetchTranscript(wav, 'wav');
+        if (!jointText) return;
+        if (_vaLcTurnToken !== tokenAtStart) { dbg('VA_LC', 'Correction discarded — turn changed mid-flight'); return; }
+        var improved = _vaLcStripSharedPrefix(prevTranscript, jointText);
+        if (improved === null) { dbg('VA_LC', 'Correction declined — weak prefix match, not confident enough to split'); return; }
+        if (!improved || HALLUCINATIONS.test(improved)) { dbg('VA_LC', 'Correction declined — empty or hallucination-filtered result'); return; }
+        var el = document.getElementById('memAnswer');
+        if (!el) return;
+        if (el.value.slice(curStart, curEnd) !== curLiveText) { dbg('VA_LC', 'Correction discarded — span no longer matches (user likely edited it)'); return; }
+        el.value = el.value.slice(0, curStart) + improved + el.value.slice(curEnd);
+        _userHasTyped = true;
+        memCheckButtons();
+        // Keep the "previous" baseline in sync with what's now actually on
+        // screen for THIS segment, since a later segment may pair against it.
+        if (_vaLcTurnToken === tokenAtStart && _vaLcPrevRawBlob === curRawBlob) {
+          _vaLcPrevTranscript = improved;
+        }
+        dbg('VA_LC', 'Live correction applied — ' + curLiveText.length + ' → ' + improved.length + ' chars');
+      } catch (e) {
+        dbgWarn('VA_LC', 'Correction attempt failed:', e.message);
       }
     }
 
@@ -9686,13 +10034,19 @@
     // only if the user saves). The archive blob now comes from ArchiveRecorder
     // (single continuous recorder, one header) instead of concatenating
     // _turnSegments (which produced multi-header files — see BACKGROUND (b)).
-    async function _stageCurrentTurn() {
-      var archived = await ArchiveRecorder.stop();
-      if (!archived) { dbg('VA', 'Phase 1: no archive recorder output — skipping stage (e.g. instant tap-stop)'); return; }
+    // ── APP-59 Phase 1/UX-VA03/Phase 2 shared helper: validate a stopped
+    // ArchiveRecorder segment and push it into _stagedVoiceArchives. Used by
+    // BOTH a normal end-of-turn stop (_stageCurrentTurn, below) and a
+    // Phase 2 auto-segment mid-recording (_autoSegmentArchiveIfDue, below) —
+    // same data shape either way, just triggered by a tap vs a timer.
+    // Returns true if a turn was actually staged, false otherwise (no
+    // archive output, or it failed the integrity check).
+    async function _finalizeAndStageArchive(archived) {
+      if (!archived) { dbg('VA', 'Phase 1: no archive recorder output — skipping stage (e.g. instant tap-stop)'); return false; }
       if (!(await _canDecodeAudio(archived.blob))) {
         logActivity && logActivity('voice_archive_error', 'integrity check failed at stage time — turn discarded before upload', 'error', 'VA');
         toast('That recording could not be saved cleanly — please try recording this turn again', 4500);
-        return;
+        return false;
       }
       var answerEl = document.getElementById('memAnswer');
       _stagedVoiceArchives.push({
@@ -9700,9 +10054,64 @@
         mime: archived.mime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
-        baselineSnapshot: (answerEl ? answerEl.value : '')
+        baselineSnapshot: (answerEl ? answerEl.value : ''),
+        // UX-VA03 2026-08-27: captured HERE, sequentially in the browser, the
+        // moment recording for this take actually stops — well before the
+        // eventual commit_voice_turn requests race each other over the
+        // network (see _commitAndApplyVoiceTurn / the Save handler's
+        // un-awaited forEach). This is the source of truth for both display
+        // order and default naming going forward — turn_index's live COUNT
+        // query server-side can still race and come out wrong, but display
+        // no longer depends on it once this is wired through. ISO string so
+        // it round-trips cleanly through FormData -> Postgres timestamptz.
+        recordedAt: new Date().toISOString()
       });
-      dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', staged count=' + _stagedVoiceArchives.length);
+      dbg('VA', 'Phase 1: turn staged — ' + archived.blob.size + ' bytes (single-header archive), offset=' + _micPreRecordLength + ', recordedAt=' + _stagedVoiceArchives[_stagedVoiceArchives.length - 1].recordedAt + ', staged count=' + _stagedVoiceArchives.length);
+      // APP-59 Phase 2: advance the offset baseline for whatever comes
+      // next — a Phase 2 auto-segment, or simply another manual take later
+      // in the same session. Each turn's offset should point to where ITS
+      // OWN text begins, not the whole session's start. Harmless for the
+      // normal single-take/final-stop case too: this value gets overwritten
+      // either by memResetForm (reset to 0) or fresh startMemMic() math the
+      // next time a mic session opens, so updating it here never leaks into
+      // an unrelated later session.
+      if (answerEl) _micPreRecordLength = answerEl.value.length;
+      return true;
+    }
+
+    async function _stageCurrentTurn() {
+      var archived = await ArchiveRecorder.stop();
+      await _finalizeAndStageArchive(archived);
+    }
+
+    // ── APP-59 Phase 2: fired on a timer (ARCHIVE_SEGMENT_MS) while
+    // recording continues past the threshold. Stops the current archive
+    // segment, stages it exactly like a manual tap-to-stop would, then
+    // immediately starts a fresh ArchiveRecorder on the SAME stream so
+    // archiving continues seamlessly — invisible to the user, live
+    // dictation (MicManager) is never touched or interrupted.
+    // NOTE on offset/baseline semantics: because live dictation keeps
+    // appending text under EARLIER segments while a later segment is still
+    // being recorded, an earlier auto-segment's baselineSnapshot will
+    // almost always be stale by the time apply_voice_transcript's exact-
+    // match guard checks it after Save — meaning the background quality-
+    // pass retranscription realistically only ever lands for the LAST
+    // segment of a long recording. This is a known, accepted trade-off
+    // (not a bug introduced here — see CONSOLIDATED BACKLOG APP-59 PHASE 2
+    // note), not something this function tries to work around.
+    async function _autoSegmentArchiveIfDue() {
+      if (_micState !== 'recording' || !ArchiveRecorder.active) return;
+      dbg('VA_ARCHIVE', 'Phase 2: auto-segmenting archive at ' + Math.round(ARCHIVE_SEGMENT_MS / 1000) + 's — stopping current segment and starting a fresh one');
+      var archived = await ArchiveRecorder.stop();
+      await _finalizeAndStageArchive(archived);
+      // Restart regardless of whether staging succeeded above, so a failed
+      // integrity check on one segment doesn't also silently kill archiving
+      // for the remainder of a still-ongoing session.
+      if (_micState === 'recording' && MicManager.stream) {
+        if (!ArchiveRecorder.start(MicManager.stream, MicManager.mime)) {
+          dbgWarn('VA_ARCHIVE', 'Phase 2: failed to restart archive recorder after auto-segment — remainder of this session will have no archive');
+        }
+      }
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
@@ -9742,10 +10151,20 @@
         } else {
           _micTranscribing = true;
           setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
-          await _transcribeBlob(xcribeBlob, xcribeExt, isFinal);
+          var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, isFinal);
           _micTranscribing = false;
           if (_micState === 'recording') {
             setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
+          }
+          // VA-LC Phase 1 (2026-08-27): if this segment's live transcript
+          // actually landed in the textarea (not filtered/empty), try to
+          // improve it using this + the previous segment's audio together.
+          // Fire-and-forget — never blocks or delays dictation; splices in
+          // place if/when it resolves. See _vaLcTryCorrect for the safety
+          // guards (turn-token check, span-still-matches check, confidence
+          // threshold on the word-alignment heuristic).
+          if (_vaLcAppended) {
+            _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
           }
         }
       },
@@ -9823,6 +10242,14 @@
     _micMaxTimer = setTimeout(function() {
       if (_micState === 'recording') { stopMemMic(); toast('Recording stopped \u2014 maximum length reached. Your words are being transcribed.', 5000); }
     }, MIC_MAX_MS);
+
+    // APP-59 Phase 2: auto-segment the archive recorder every ARCHIVE_SEGMENT_MS
+    // while recording continues — see _autoSegmentArchiveIfDue for full detail.
+    _archiveSegmentTimer = setInterval(function() {
+      _autoSegmentArchiveIfDue().catch(function(e) {
+        dbgErr('VA_ARCHIVE', 'Phase 2: auto-segment failed:', e.message);
+      });
+    }, ARCHIVE_SEGMENT_MS);
   }
 
   function stopMemMic() {
@@ -17984,26 +18411,80 @@
       // again) still fully supported: all turns render inside the one
       // panel, each independently playable/rename-able, exactly as before —
       // only the default visibility changed, not the underlying data model.
+      // UX-VA03 2026-08-27: default name for a turn with no user-set label.
+      // Priority: label (user renamed it) -> recorded_at (real DB column,
+      // works for every take from any session, once the recorded_at
+      // migration is live) -> client_committed_at (legacy same-session-only
+      // stopgap, kept for turns committed by an older client build) ->
+      // plain sequence label as the last resort for pre-migration rows with
+      // neither. This closes the old gap where only turn_index 0 (and,
+      // after the previous round, only same-session later turns) ever got a
+      // real timestamp name — recorded_at now covers every take going
+      // forward, any session, any turn_index.
+      function _vaDefaultName(va, position) {
+        if (va.label) return va.label;
+        var ts = va.recorded_at || va.client_committed_at;
+        if (ts) {
+          try {
+            return 'Voice: ' + new Date(ts).toLocaleString('en-AU', {
+              day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+            });
+          } catch (e) { /* fall through to sequence label below */ }
+        }
+        return 'Recording ' + (position + 1);
+      }
+
       var entryVoiceArchives = (_voiceArchiveCache && _voiceArchiveCache[e.id]) || [];
+      // UX-VA03 2026-08-27: sort by recorded_at (real timestamp, captured
+      // client-side at stage time), not turn_index — turn_index is assigned
+      // by a server-side live COUNT that races whenever more than one take
+      // is staged before a single Save (the normal, every-time case for a
+      // multi-take entry), which could put takes in the wrong display order.
+      // recorded_at is generated sequentially in the browser before any
+      // network race can happen, so this is correct regardless of how the
+      // eventual commit requests land. Rows with no recorded_at (pre-
+      // migration, or the legacy client_committed_at-only stopgap) sort
+      // using whatever we have — see the fallback chain below; they won't
+      // have a trustworthy order relative to each other, but that's a
+      // pre-existing limitation of those old rows, not a regression.
       entryVoiceArchives = entryVoiceArchives.slice().sort(function(a, b) {
-        return (a.turn_index || 0) - (b.turn_index || 0);
+        var aT = a.recorded_at ? new Date(a.recorded_at).getTime() : (a.client_committed_at || 0);
+        var bT = b.recorded_at ? new Date(b.recorded_at).getTime() : (b.client_committed_at || 0);
+        if (aT !== bT) return aT - bT;
+        return (a.turn_index || 0) - (b.turn_index || 0); // last-resort tiebreak for legacy rows with no timestamp at all
       });
       var vaButtonHtml = '';
       var vaPanelHtml = '';
       if (!_selectMode && !isStoryMode && entryVoiceArchives.length) {
-        var headerRow = entryVoiceArchives[0];
-        var headerLabel = escHtml(headerRow.label || 'Voice recording');
         var safeEId = escHtml(e.id || '');
         var isThread = entryVoiceArchives.length > 1;
-        var turnsHtml = entryVoiceArchives.map(function(va) {
+        // UX-VA02 2026-08-26: label + rename are now PER TURN, not just on
+        // the panel header. Previously only turn_index 0 had a label/rename
+        // control at all — every other take in a multi-take thread had no
+        // name and no way to get one, despite the surrounding code comment
+        // claiming otherwise. Each turn now gets its own <span id="va-label-
+        // {va.id}"> and its own rename button targeting that exact id, so
+        // the existing rename-voice-archive handler (already generic, keyed
+        // by va-id) works per-take with no handler changes needed.
+        var turnsHtml = entryVoiceArchives.map(function(va, i) {
           var safeVaId  = escHtml(va.id || '');
           var safePath  = escHtml(va.storage_path || '');
+          var displayName = escHtml(_vaDefaultName(va, i));
           var questionHtml = (va.question && va.question.trim())
             ? '<div style="font-size:0.76rem;color:var(--text-light);font-style:italic;margin-bottom:5px;line-height:1.35">'
                 + '\uD83E\uDD16 ' + escHtml(va.question) // 🤖
               + '</div>'
             : '';
           return (isThread ? '<div style="padding:6px 0 6px 10px;border-left:2px solid var(--gold-dim)">' : '') +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+              '<span id="va-label-' + safeVaId + '" style="font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0">' +
+                displayName +
+              '</span>' +
+              '<button data-action="rename-voice-archive" data-entry-id="' + safeEId + '" data-va-id="' + safeVaId + '"' +
+                ' title="Rename" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;flex-shrink:0;font-family:Lato,sans-serif">' +
+                'Rename' +
+              '</button>' +
+            '</div>' +
             questionHtml +
             '<div id="va-player-' + safeVaId + '">' +
               '<button data-action="play-voice-archive" data-va-id="' + safeVaId + '" data-va-path="' + safePath + '"' +
@@ -18025,21 +18506,6 @@
 
         vaPanelHtml =
           '<div id="va-panel-' + safeEId + '" style="display:none;margin-top:10px;background:var(--surface2);border-radius:10px;padding:10px 12px;border-left:3px solid var(--gold-dim)">' +
-            // Header row — label (editable) + mic icon
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (isThread ? '10' : '8') + 'px">' +
-              '<span style="font-size:1rem;flex-shrink:0">\uD83C\uDF99\uFE0F</span>' +
-              '<div style="flex:1;min-width:0">' +
-                '<span id="va-label-' + safeEId + '" style="font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block">'
-                  + headerLabel +
-                '</span>' +
-              '</div>' +
-              // Rename button — only for owner, not in select/story mode
-              '<button data-action="rename-voice-archive" data-entry-id="' + safeEId + '" data-va-id="' + escHtml(headerRow.id || '') + '"' +
-                ' title="Rename" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;flex-shrink:0;font-family:Lato,sans-serif">' +
-                'Rename' +
-              '</button>' +
-            '</div>' +
-            // Turns
             turnsHtml +
           '</div>';
       }
@@ -27591,7 +28057,11 @@
         case 'rename-voice-archive': {
           var _rEntryId = btn.dataset.entryId || '';
           var _rVaId    = btn.dataset.vaId    || '';
-          var _labelEl  = _rEntryId ? document.getElementById('va-label-' + _rEntryId) : null;
+          // UX-VA02 2026-08-26: label element is now keyed by va-id, not
+          // entry-id — each turn in a multi-take thread has its own
+          // independently-renameable label. entryId is still needed below,
+          // just for the local cache lookup, not for finding the DOM node.
+          var _labelEl  = _rVaId ? document.getElementById('va-label-' + _rVaId) : null;
           if (!_labelEl || !_rVaId) break;
           var _curLabel = _labelEl.textContent || '';
           var _inp = document.createElement('input');
@@ -27606,8 +28076,8 @@
             var newLabel = _inp.value.trim() || _curLabel;
             // Restore span immediately (optimistic) so UI never stays in edit state
             var _newSpan = document.createElement('span');
-            _newSpan.id = 'va-label-' + _rEntryId;
-            _newSpan.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block';
+            _newSpan.id = 'va-label-' + _rVaId;
+            _newSpan.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0';
             _newSpan.textContent = newLabel;
             _inp.replaceWith(_newSpan);
             if (newLabel === _curLabel) return; // nothing changed
@@ -27636,7 +28106,7 @@
           _inp.addEventListener('blur', _rCommit);
           _inp.addEventListener('keydown', function(ev) {
             if (ev.key === 'Enter')  { ev.preventDefault(); _rCommit(); }
-            if (ev.key === 'Escape') { _rDone = true; var _s = document.createElement('span'); _s.id = 'va-label-' + _rEntryId; _s.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block'; _s.textContent = _curLabel; _inp.replaceWith(_s); }
+            if (ev.key === 'Escape') { _rDone = true; var _s = document.createElement('span'); _s.id = 'va-label-' + _rVaId; _s.style.cssText = 'font-size:0.78rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;flex:1;min-width:0'; _s.textContent = _curLabel; _inp.replaceWith(_s); }
           });
           break;
         }
