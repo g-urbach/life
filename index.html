@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.141';
+  const APP_VERSION = 'v7.142';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9954,15 +9954,20 @@
     // segment's own span (never reaches back into the previous segment's
     // already-settled text) so a bad heuristic split can, at worst, decline
     // to improve a segment — it can never lose or corrupt one.
-    async function _vaLcTryCorrect(curStart, curEnd, curRawBlob, curLiveText) {
-      var prevRawBlob    = _vaLcPrevRawBlob;
-      var prevTranscript = _vaLcPrevTranscript;
-      var tokenAtStart   = _vaLcTurnToken;
-      // Always advance the "previous" pointers for the NEXT segment's pairing,
-      // regardless of whether THIS segment ends up corrected — the live text
-      // is a perfectly good baseline if correction is skipped or fails.
-      _vaLcPrevRawBlob    = curRawBlob;
-      _vaLcPrevTranscript = curLiveText;
+    // overrideCtx: optional { prevRawBlob, prevTranscript, turnToken } — used by
+    // the isFinal path which captures these BEFORE _micRelease() wipes them.
+    // Without this, the final chunk always saw prevRawBlob=null (early return)
+    // and a bumped turnToken (discard). Non-final callers omit it.
+    async function _vaLcTryCorrect(curStart, curEnd, curRawBlob, curLiveText, overrideCtx) {
+      var prevRawBlob    = overrideCtx ? overrideCtx.prevRawBlob    : _vaLcPrevRawBlob;
+      var prevTranscript = overrideCtx ? overrideCtx.prevTranscript : _vaLcPrevTranscript;
+      var tokenAtStart   = overrideCtx ? overrideCtx.turnToken      : _vaLcTurnToken;
+      // Advance the "previous" pointers for the NEXT segment — skip for isFinal
+      // (overrideCtx present) since _micRelease() already reset them.
+      if (!overrideCtx) {
+        _vaLcPrevRawBlob    = curRawBlob;
+        _vaLcPrevTranscript = curLiveText;
+      }
 
       if (!prevRawBlob) return; // first segment of the turn — nothing to pair with yet
       try {
@@ -9970,7 +9975,9 @@
         if (!wav) return; // Phase 0 build failed — already logged via VA_LC_P0
         var jointText = await _vaLcFetchTranscript(wav, 'wav');
         if (!jointText) return;
-        if (_vaLcTurnToken !== tokenAtStart) { dbg('VA_LC', 'Correction discarded — turn changed mid-flight'); return; }
+        // For the isFinal override path, tokenAtStart was captured before _micRelease()
+        // bumped _vaLcTurnToken — skip the mid-flight check since the bump is expected.
+        if (!overrideCtx && _vaLcTurnToken !== tokenAtStart) { dbg('VA_LC', 'Correction discarded — turn changed mid-flight'); return; }
         var improved = _vaLcStripSharedPrefix(prevTranscript, jointText);
         if (improved === null) { dbg('VA_LC', 'Correction declined — weak prefix match, not confident enough to split'); return; }
         if (!improved || HALLUCINATIONS.test(improved)) { dbg('VA_LC', 'Correction declined — empty or hallucination-filtered result'); return; }
@@ -9982,7 +9989,8 @@
         memCheckButtons();
         // Keep the "previous" baseline in sync with what's now actually on
         // screen for THIS segment, since a later segment may pair against it.
-        if (_vaLcTurnToken === tokenAtStart && _vaLcPrevRawBlob === curRawBlob) {
+        // Skip baseline update for isFinal override path — mic is released, no next segment.
+        if (!overrideCtx && _vaLcTurnToken === tokenAtStart && _vaLcPrevRawBlob === curRawBlob) {
           _vaLcPrevTranscript = improved;
         }
         dbg('VA_LC', 'Live correction applied — ' + curLiveText.length + ' → ' + improved.length + ' chars');
@@ -10126,25 +10134,35 @@
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
+          // Capture VA-LC state NOW — before _stageCurrentTurn()/_micRelease() wipe it.
+          // _micRelease() zeros _vaLcPrevRawBlob and bumps _vaLcTurnToken, so the IIFE
+          // would always see prevRawBlob=null and a stale token if it read the module-level
+          // vars after release. Captured here in local vars and passed directly into
+          // _vaLcTryCorrect via the overrideCtx argument (see that function).
+          var _finalPrevBlob       = _vaLcPrevRawBlob;
+          var _finalPrevTranscript = _vaLcPrevTranscript;
+          var _finalToken          = _vaLcTurnToken;
           // Go idle immediately on stop — final chunk transcribes + corrects in background.
           // User never waits on orange screen.
           await _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          // VA-LC Phase 1 fix (2026-08-31): assign to _vaLcFinalCorrectionPromise so
-          // memDone can await it before wiping the textarea. Previously fire-and-forget,
-          // which meant _transcribeBlob resolved after memResetForm() cleared the textarea
-          // and the splice silently discarded. The mic is already idle — UI is unblocked.
-          // memDone awaits this with a 6s safety timeout so a slow/failed network call
-          // never blocks save indefinitely.
+          // memDone awaits _vaLcFinalCorrectionPromise (6s timeout) before reading the
+          // textarea for saving — correction splices in while form is still live.
           _vaLcFinalCorrectionPromise = (async function() {
             var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
               dbgErr('MIC', 'Background final transcription failed:', e.message);
               return null;
             });
             if (_vaLcAppended) {
-              await _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text);
+              // Pass captured pre-release context so _vaLcTryCorrect doesn't read the
+              // now-wiped module-level vars (_vaLcPrevRawBlob=null, bumped _vaLcTurnToken).
+              await _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text, {
+                prevRawBlob:    _finalPrevBlob,
+                prevTranscript: _finalPrevTranscript,
+                turnToken:      _finalToken
+              });
             }
           })();
         } else {
