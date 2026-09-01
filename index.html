@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.146';
+  const APP_VERSION = 'v7.147';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8966,7 +8966,7 @@
     // finish splicing into the textarea before we read the form value for saving.
     // Without this, memResetForm() would wipe the textarea before _vaLcTryCorrect
     // resolved, and the correction was silently discarded every time.
-    // 6s safety timeout — a slow Whisper call should never block Save indefinitely.
+    // 6s safety timeout — a slow transcription call should never block Save indefinitely.
     if (_vaLcFinalCorrectionPromise) {
       try {
         await Promise.race([
@@ -9100,8 +9100,8 @@
     // re-encode as a real WAV file. This is the same blob for every browser,
     // so Azure gets a format it actually accepts for the first time.
     // Falls back to the original (untranscoded) blob on any failure — the
-    // server already treats unrecognised mimeTypes as "skip Azure, use Groq",
-    // so a WAV-encode failure just means this one chunk goes Groq-only
+    // server already has a fallback path for unrecognised mimeTypes,
+    // so a WAV-encode failure just means this one chunk uses that fallback path
     // instead of crashing the turn.
     // 2026-08-27 (VA-LC Phase 0): split the original single-blob transcode
     // into two reusable halves so a NEW multi-blob path (below) can share
@@ -9179,7 +9179,7 @@
         var wavBlob = await _blobToWav16kMono(blob);
         return { blob: wavBlob, mime: 'audio/wav', ext: 'wav' };
       } catch (e) {
-        dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (Azure will be skipped server-side, Groq still works):', e);
+        dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (server will use its fallback transcription path):', e);
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
       }
     }
@@ -9251,8 +9251,8 @@
     // playback (not just decodability) on the browser that recorded it:
     //   1. audio/webm;codecs=opus — native on Chrome, Firefox, Edge, and
     //      Safari 18.4+; the best-supported, best-tested combination there
-    //      is, and (per APP-59 Phase 1 round 3) fully accepted by our Azure
-    //      Fast Transcription / Groq STT paths, so there's no STT downside.
+    //      is, and (per APP-59 Phase 1 round 3) fully accepted by our server's
+    //      transcription paths, so there's no STT downside.
     //      NOTE: previously excluded here on the belief that Inworld STT
     //      rejected webm — confirmed (Aug 2026) that Inworld is TTS-only in
     //      this app and was never in the STT path, so that exclusion was
@@ -9327,7 +9327,7 @@
       // already holds all prior blobs. The old early-return meant onChunk(isFinal=true)
       // was never called, _stageCurrentTurn() never ran, _stagedVoiceArchives stayed
       // empty, and commit_voice_turn/apply_voice_transcript were never reached.
-      // Non-final flushes with empty chunks are still no-ops (nothing to send to Whisper).
+      // Non-final flushes with empty chunks are still no-ops (nothing to transcribe).
       if (!_recorder) return;
       if (!isFinal && _chunks.length === 0) return;
       var mime     = _mime;
@@ -9373,7 +9373,7 @@
         var blob2   = new Blob(snap2.concat(tail2), { type: mime || 'audio/ogg' });
         _chunks     = [];
 
-        // Restart immediately so we capture speech during Whisper round-trip
+        // Restart immediately so we capture speech during the transcription round-trip
         var newRec  = _makeRecorder(_stream, mime, callbacks);
         if (newRec) { newRec.start(100); _recorder = newRec; }
 
@@ -9494,7 +9494,12 @@
   // back one blob; MicManager's restart-based recorder is completely
   // untouched and keeps driving live STT exactly as before. The two
   // recorders are independent consumers of the same stream.
-  const ArchiveRecorder = (function() {
+  //
+  // 2026-09-02: pulled out into a factory (_makeArchiveRecorder) so the AGP
+  // conversation mic can get its own independent instance of the exact same
+  // pattern for its full-pass fix, without sharing state with the memory-entry
+  // one below. Behavior/API is unchanged for existing ArchiveRecorder callers.
+  function _makeArchiveRecorder(logTag) {
     var _rec    = null;
     var _chunks = [];
     var _mime   = '';
@@ -9507,11 +9512,11 @@
     function start(stream, mime) {
       _chunks = [];
       _mime   = mime || '';
-      if (!stream) { dbgWarn('VA_ARCHIVE', 'start() called with no stream'); return false; }
+      if (!stream) { dbgWarn(logTag, 'start() called with no stream'); return false; }
       try {
         _rec = new MediaRecorder(stream, _mime ? { mimeType: _mime } : {});
       } catch(e) {
-        dbgErr('VA_ARCHIVE', 'MediaRecorder construction failed:', e.message);
+        dbgErr(logTag, 'MediaRecorder construction failed:', e.message);
         _rec = null;
         return false;
       }
@@ -9522,7 +9527,7 @@
         if (e.data && e.data.size > 0) _chunks.push(e.data);
       };
       _rec.onerror = function(e) {
-        dbgErr('VA_ARCHIVE', 'MediaRecorder error:', e.error);
+        dbgErr(logTag, 'MediaRecorder error:', e.error);
       };
       try {
         // APP-59 Phase 1 fix: no timeslice argument. With start(100), Safari/
@@ -9537,7 +9542,7 @@
         // behavior untouched — that's a separate recorder on the same stream.
         _rec.start();
       } catch(e) {
-        dbgErr('VA_ARCHIVE', 'start() threw:', e.message);
+        dbgErr(logTag, 'start() threw:', e.message);
         _rec = null;
         return false;
       }
@@ -9582,9 +9587,10 @@
       discard: discard,
       get active() { return !!_rec; },
     };
-  })();
+  }
+  const ArchiveRecorder = _makeArchiveRecorder('VA_ARCHIVE');
 
-  // ── APP-52 Phase 2: MediaRecorder + Whisper mic dictation ────────────────────
+  // ── APP-52 Phase 2: MediaRecorder + transcription-service mic dictation ──────
   // Replaces SpeechRecognition entirely for the Add Memory mic button.
   // State enum: 'idle' | 'recording' | 'transcribing' | 'error'
   // Dead code removed: startPersistentListening(), _micPrimedStream, iosRecording,
@@ -9679,7 +9685,7 @@
   const MIC_SILENCE_THRESHOLD  = 15;    // 0-127 AnalyserNode scale; below = silence. 8 was too low (treated quiet speech as silence). Typical: ambient 2-5, speech 20-60.
   const MIC_SILENCE_MS         = 800;   // ms of sustained silence → flush. 1500ms was too long — natural sentence pauses are 500-800ms.
   const MIC_MIN_CHUNK_MS       = 1500;  // minimum segment age before flushing. 3000ms blocked short utterances entirely.
-  const MIC_MIN_CHUNK_BYTES    = 4000;  // blob below this = silence/noise, skip Whisper. 8000 required ~10s of speech; 4000 allows ~2-3s utterances.
+  const MIC_MIN_CHUNK_BYTES    = 4000;  // blob below this = silence/noise, skip transcription. 8000 required ~10s of speech; 4000 allows ~2-3s utterances.
   const MIC_COOLDOWN_MS        = 10000; // backoff after failed POST (e.g. 429)
   const MIC_CHUNK_RATE_WINDOW  = 20;    // rolling window size for chunk-rate heuristic (20 × 100ms = 2s)
   const MIC_CHUNK_RATE_SILENCE = 60;    // avg bytes/chunk below this = silence (speech is typically 200+)
@@ -9739,11 +9745,11 @@
   // ── APP-52 Phase 3: Background chunk transcription ────────────────────────────
   // On silence/timer: stop the current MediaRecorder, collect the segment blob,
   // immediately start a fresh MediaRecorder on the same stream (new WebM = valid header),
-  // then POST the segment to Whisper non-blocking.
+  // then POST the segment for transcription, non-blocking.
   // Each segment is a standalone valid WebM file — no header-stripping problems.
   // ── APP-52 Phase 3 + APP-55 Phase 0: Chunk flush delegated to MicManager ────
   // MicManager.flush() owns recorder restart and blob assembly.
-  // This wrapper owns: cooldown gate, Whisper POST, transcript append,
+  // This wrapper owns: cooldown gate, transcription POST, transcript append,
   // hallucination filter, UI status updates. Archive accumulation added Phase 1.
   // _micFlushChunk and _micSilenceLoop removed v7.19.
   // Flush: handled by MicManager.flush() + onChunk callback in startMemMic().
@@ -9874,8 +9880,9 @@
     // textarea side effect, since the caller here decides what to do with
     // the result itself.
     // VA-LC Full-Pass (2026-09-01): sends the whole staged archive blob to the
-    // server's 'transcribe' action with fullPass=true (Groq Whisper, full context),
-    // then splices the improved text over the span added during this recording.
+    // server's 'transcribe' action with fullPass=true (full continuous-audio
+    // context, not chunked), then splices the improved text over the span
+    // added during this recording.
     // Called at tap-stop from both the normal and too-small-final-blob paths.
     async function _vaLcRunFullPassCorrection(turn) {
       try {
@@ -10193,7 +10200,7 @@
         var xcribeBlob = wavBlob || blob;
         var xcribeExt  = wavExt || ext;
         if (blob.size < MIC_MIN_CHUNK_BYTES) {
-          dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
+          dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping transcription');
           if (isFinal) {
             dbg('VA_LC', 'Final blob too small (' + blob.size + 'B) — full-pass correction will still run from staged archive');
             await _stageCurrentTurn();
@@ -10222,11 +10229,13 @@
           // archive blob, matching what the old post-save server patch did but
           // triggered client-side at stop-time, before Save is ever reached.
           //
-          // WHY: the two-chunk approach sent small per-chunk WAVs to Azure's
-          // short-audio endpoint — Azure heard each chunk in isolation, so numbers
-          // spoken across pauses ("nineteen... thirty... eight") still came back as
-          // "19. 30. 8." The fullPass path sends the whole recording to Groq Whisper
-          // which hears full context and returns correctly ITN'd text ("1938").
+          // WHY: the two-chunk approach sent small per-chunk audio to the
+          // server's short-audio transcription path — each chunk was heard in
+          // isolation, so numbers spoken across pauses ("nineteen... thirty...
+          // eight") still came back as "19. 30. 8." The fullPass path sends the
+          // whole recording as one continuous stream, so the transcription
+          // service hears full context and returns correctly formatted text
+          // ("1938").
           //
           // HOW: the staged archive blob is already in memory (_stagedVoiceArchives
           // last entry). We POST it to the existing 'transcribe' action with
@@ -22820,7 +22829,7 @@
   //
   //   1. Record continuously, collecting 100ms chunks (same as mem mic).
   //   2. Silence loop: if AGP_SILENCE_MS (5000ms) of sustained silence AND the
-  //      segment is old enough, flush everything to Whisper and call sendToGethro().
+  //      segment is old enough, flush everything to the transcription service and call sendToGethro().
   //   3. Manual stop button (toggleAgpMic) also flushes and sends.
   //   4. No inactivity timer, no autoSend flag, no hadVoice — just silence detection
   //      and chunk accumulation, identical to what works in "Add Memory".
@@ -22856,19 +22865,27 @@
   var _agpConsecutiveNudges = 0;  // retained for sendToGethro compat
   var _agpHadVoice        = false; // true once analyser detected real speech this segment
 
+  // AGP-LC Full-Pass (2026-09-02): same never-restarted parallel-recorder pattern
+  // as VA-LC's ArchiveRecorder above (see that comment block for the full why) —
+  // gives AGP a complete, single-header recording of the whole conversation turn
+  // so _agpRunFullPassTranscription can send it as one continuous stream instead
+  // of relying only on small per-chunk transcriptions, which is what fragmented
+  // "1995" into "19. 9. T5." (see _agpFlushAndSend for how it's wired in).
+  const AgpArchiveRecorder = _makeArchiveRecorder('AGP_ARCHIVE');
+
   // Silence / timing constants
   // Two-tier silence system:
-  //   AGP_FLUSH_MS  (2s): short pause → flush chunk to Whisper, restart recorder, accumulate _agpLiveText
+  //   AGP_FLUSH_MS  (2s): short pause → flush chunk for transcription, restart recorder, accumulate _agpLiveText
   //   AGP_SILENCE_MS (5s): long pause → final flush + send accumulated text to Gethro
   const AGP_FLUSH_MS         = 2000;  // 2s pause → transcribe chunk, keep recording
   const AGP_SILENCE_MS       = 5000;  // 5s pause → send final text to Gethro
   const AGP_MIN_REC_MS       = 800;   // don't flush if recording < 0.8s old
-  const AGP_MIN_CHUNK_BYTES  = 3000;  // blobs below this = near-silence, skip Whisper
+  const AGP_MIN_CHUNK_BYTES  = 3000;  // blobs below this = near-silence, skip transcription
   const AGP_SPEECH_THRESHOLD = 10;    // AnalyserNode 0-127; below = silence
   const AGP_CHUNK_RATE_WINDOW  = 20;
   const AGP_CHUNK_RATE_SILENCE = 60;  // avg bytes/chunk below this = silence (fallback)
 
-  // Hallucinations Whisper emits on near-silence — discard silently.
+  // Hallucinations the transcription service emits on near-silence — discard silently.
   // AGP_HALLUCINATIONS_TEST() catches both single-word fillers and short multi-word
   // filler strings like "Okay. Amen. uh Amen. Okay. Yeah." (≤8 words, all filler tokens).
   var _AGP_HALL_SINGLE = /^(thank you\.?|thanks\.?|you\.?|bye\.?|goodbye\.?|what\??|okay\.?|ok\.?|yeah\.?|yes\.?|no\.?|huh\??|hmm+\.?|um+\.?|uh+\.?|hello\??|hi\.?|so\.?|right\.?|amen\.?|sure\.?|yep\.?|nope\.?|oh\.?|ah\.?|\[.*\]|\.+|,+)$/i;
@@ -22908,6 +22925,10 @@
     _agpMicActive       = false;
     _agpHadVoice        = false;
     _agpLiveText        = '';
+    // AGP-LC Full-Pass (2026-09-02): safety net for paths that call
+    // _agpMicRelease() directly without going through _agpFlushAndSend
+    // (e.g. onError above) — no-op if already stopped/never started.
+    AgpArchiveRecorder.discard();
     // Stream/recorder/analyser teardown delegated to MicManager
     MicManager.release();
   }
@@ -22982,7 +23003,7 @@
 
     if (!_agpMicActive) { _agpMicTranscribing = false; return; }
 
-    // Restart recorder immediately — captures speech during Whisper round-trip
+    // Restart recorder immediately — captures speech during the transcription round-trip
     _agpMicChunks      = [];
     _agpMicRecentBytes = [];
     _agpMicRecordStart = Date.now();
@@ -23006,7 +23027,7 @@
     }
 
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
-      dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping Whisper');
+      dbg('AGP_MIC', 'Chunk too small (' + blob.size + ' bytes) — skipping transcription');
       _agpMicTranscribing = false; return;
     }
 
@@ -23069,6 +23090,49 @@
 
   // Transcribe everything accumulated and call sendToGethro.
   // Called by: silence loop, manual stop button, focus-loss (without sending).
+  // AGP-LC Full-Pass (2026-09-02): same fix as VA-LC's _vaLcRunFullPassCorrection,
+  // applied to the Gethro conversation mic. The per-chunk transcription used by
+  // _agpFlushChunk sends small, isolated slices of audio to the server — fine for
+  // ordinary words, but a spoken date or number split across chunk boundaries
+  // gets heard as separate fragments with no shared context (this is exactly what
+  // turned "1995" into "Probably. 19. 9. T5." in testing). AgpArchiveRecorder
+  // captures the WHOLE turn as one continuous, single-header recording; sending
+  // that as one fullPass=true call lets the transcription service hear it with
+  // full context instead of fragment-by-fragment. Returns the improved transcript
+  // string, or '' on any failure/empty/hallucination — callers fall back to the
+  // existing per-chunk-based logic in that case, so this can only make things
+  // better, never worse, than before this fix.
+  async function _agpRunFullPassTranscription(archived) {
+    if (!archived || !archived.blob || archived.blob.size < AGP_MIN_CHUNK_BYTES) return '';
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) return '';
+      var out = await MicManager.toWav16kMono(archived.blob, archived.mime || 'audio/ogg');
+      var form = new FormData();
+      form.append('action', 'transcribe');
+      form.append('fullPass', 'true');
+      form.append('audio', out.blob, 'agp_fullpass.' + out.ext);
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form
+      });
+      var rawText = await res.text();
+      var data;
+      try { data = JSON.parse(rawText); } catch(e) { return ''; }
+      if (!res.ok || !data.ok) {
+        dbgWarn('AGP_MIC', 'Full-pass transcription failed:', data && data.error || res.status);
+        return '';
+      }
+      var improved = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+      if (!improved || AGP_HALLUCINATIONS.test(improved)) return '';
+      return improved;
+    } catch(e) {
+      dbgWarn('AGP_MIC', 'Full-pass transcription error:', e.message);
+      return '';
+    }
+  }
+
   async function _agpFlushAndSend(doSend) {
     if (doSend === undefined) doSend = true;
     if (_agpMicTranscribing) return;
@@ -23107,10 +23171,29 @@
     // gap in talking and switches mic off but doesn't move on to next question."
     var savedLiveText  = _agpLiveText;
 
+    // AGP-LC Full-Pass (2026-09-02): stop the whole-turn archive BEFORE
+    // _agpMicRelease() releases the stream, same ordering VA-LC uses
+    // (_stageCurrentTurn's ArchiveRecorder.stop() runs before _micRelease()).
+    var agpArchived = await AgpArchiveRecorder.stop();
+
     _agpMicRelease();
     _agpSetBtn(doSend ? 'transcribing' : 'idle');
 
     if (!doSend) { _agpMicTranscribing = false; return; } // focus-loss stop — discard
+
+    // Try the full-pass transcription first — same proven pattern as VA-LC.
+    // Only proceeds to the older per-chunk-based fallback logic below if this
+    // comes back empty (tiny/failed archive, network error, or hallucination).
+    var fullPassText = await _agpRunFullPassTranscription(agpArchived);
+    if (fullPassText) {
+      dbg('AGP_MIC', 'Full-pass transcription used — ' + fullPassText.length + ' chars');
+      var inpFp = document.getElementById('agpInput');
+      if (inpFp) inpFp.value = fullPassText;
+      _agpMicTranscribing = false;
+      sendToGethro();
+      return;
+    }
+    dbg('AGP_MIC', 'Full-pass unavailable — falling back to per-chunk transcript');
 
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       dbg('AGP_MIC', 'Blob too small (' + blob.size + ' bytes) — checking for accumulated live text');
@@ -23128,9 +23211,9 @@
     }
 
     // If AnalyserNode was running but never flagged real speech, this is ambient
-    // noise — Whisper will hallucinate. Skip Whisper but still send any accumulated text.
+    // noise — the transcription service will hallucinate on it. Skip transcription but still send any accumulated text.
     if (analyserWasOn && !hadVoice) {
-      dbg('AGP_MIC', 'Analyser active but no speech detected — skipping Whisper');
+      dbg('AGP_MIC', 'Analyser active but no speech detected — skipping transcription');
       if (savedLiveText) {
         var inp2 = document.getElementById('agpInput');
         if (inp2) inp2.value = savedLiveText;
@@ -23179,7 +23262,7 @@
       // AGP-LC bug fix (2026-09-01): use savedLiveText (snapshotted before _agpMicRelease()
       // wiped _agpLiveText above) — same issue as the two earlier branches, but here it was
       // silently DROPPING already-accumulated chunk text instead of prepending it whenever
-      // this final blob's own Whisper call succeeded.
+      // this final blob's own transcription call succeeded.
       var fullText = transcriptIsReal
         ? (savedLiveText ? savedLiveText + ' ' + transcript : transcript)
         : savedLiveText;
@@ -23264,6 +23347,16 @@
     _agpMicActive  = true;
     _agpSetBtn('recording');
     dbg('AGP_MIC', 'Started — mime=' + MicManager.mime);
+
+    // AGP-LC Full-Pass (2026-09-02): defensive discard in case a prior turn's
+    // archive recorder wasn't cleanly stopped (e.g. an error path that called
+    // _agpMicRelease() directly) — start() below resets its internal chunks
+    // anyway, but stop the old MediaRecorder object first so it isn't left
+    // running against a stream that's about to change.
+    AgpArchiveRecorder.discard();
+    if (!AgpArchiveRecorder.start(MicManager.stream, MicManager.mime)) {
+      dbgWarn('AGP_MIC', 'Archive recorder failed to start — this turn will fall back to per-chunk transcription only');
+    }
 
     // BUG FIX v7.130: _agpMicRecorder was never initialized here, so the very
     // first _agpFlushChunk() call always hit its `if (!_agpMicRecorder ...) return;`
