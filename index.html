@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.145';
+  const APP_VERSION = 'v7.146';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9917,7 +9917,10 @@
           return;
         }
         var prefix = cur.slice(0, baseLen);
-        var sep = baseLen > 0 && prefix.trim().length > 0 ? ' ' : '';
+        // 2026-09-01: each new take now starts on its own line instead of being
+        // run into the previous take with a single space — reads cleaner as a
+        // diary entry when someone records the same memory in several parts.
+        var sep = baseLen > 0 && prefix.trim().length > 0 ? '\n\n' : '';
         var before = cur.slice(baseLen).length;
         el.value = prefix + sep + improved;
         _userHasTyped = true;
@@ -23094,6 +23097,15 @@
     // Snapshot before _agpMicRelease() clears everything
     var hadVoice       = _agpHadVoice;
     var analyserWasOn  = _agpHadVoice || MicManager.active; // true = real audio session was running
+    // AGP-LC bug fix (2026-09-01): _agpLiveText needs the same snapshot treatment as
+    // hadVoice/analyserWasOn above — _agpMicRelease() (below) sets _agpLiveText = ''
+    // as part of its cleanup, so the `if (_agpLiveText)` fallback checks further down
+    // (blob-too-small path and no-voice-detected path) were always seeing '' and
+    // silently going idle instead of sending — the mic would release and just sit
+    // there with the transcript stuck in the input box, unsent, until the user
+    // noticed and hit Send/Enter themselves. This is what looked like "detects a
+    // gap in talking and switches mic off but doesn't move on to next question."
+    var savedLiveText  = _agpLiveText;
 
     _agpMicRelease();
     _agpSetBtn(doSend ? 'transcribing' : 'idle');
@@ -23102,11 +23114,10 @@
 
     if (blob.size < AGP_MIN_CHUNK_BYTES) {
       dbg('AGP_MIC', 'Blob too small (' + blob.size + ' bytes) — checking for accumulated live text');
-      // Blob is small (silence), but _agpLiveText may have been built up by prior _agpFlushChunk calls
-      if (_agpLiveText) {
+      // Blob is small (silence), but savedLiveText may have been built up by prior _agpFlushChunk calls
+      if (savedLiveText) {
         var inp = document.getElementById('agpInput');
-        if (inp) inp.value = _agpLiveText;
-        _agpLiveText = '';
+        if (inp) inp.value = savedLiveText;
         _agpMicTranscribing = false;
         sendToGethro();
         return;
@@ -23120,10 +23131,9 @@
     // noise — Whisper will hallucinate. Skip Whisper but still send any accumulated text.
     if (analyserWasOn && !hadVoice) {
       dbg('AGP_MIC', 'Analyser active but no speech detected — skipping Whisper');
-      if (_agpLiveText) {
+      if (savedLiveText) {
         var inp2 = document.getElementById('agpInput');
-        if (inp2) inp2.value = _agpLiveText;
-        _agpLiveText = '';
+        if (inp2) inp2.value = savedLiveText;
         _agpMicTranscribing = false;
         sendToGethro();
         return;
@@ -23166,10 +23176,13 @@
       if (!res.ok || !data.ok) throw new Error(data.error || 'Transcription error ' + res.status);
       var transcript = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
       var transcriptIsReal = transcript && !AGP_HALLUCINATIONS.test(transcript);
+      // AGP-LC bug fix (2026-09-01): use savedLiveText (snapshotted before _agpMicRelease()
+      // wiped _agpLiveText above) — same issue as the two earlier branches, but here it was
+      // silently DROPPING already-accumulated chunk text instead of prepending it whenever
+      // this final blob's own Whisper call succeeded.
       var fullText = transcriptIsReal
-        ? (_agpLiveText ? _agpLiveText + ' ' + transcript : transcript)
-        : _agpLiveText;
-      _agpLiveText = '';
+        ? (savedLiveText ? savedLiveText + ' ' + transcript : transcript)
+        : savedLiveText;
       dbg('AGP_MIC', 'Transcription complete — ' + (fullText ? fullText.length : 0) + ' chars');
       if (fullText) {
         var inp = document.getElementById('agpInput');
