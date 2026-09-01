@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.144';
+  const APP_VERSION = 'v7.145';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -10104,7 +10104,18 @@
         mime: archived.mime,
         offset: _micPreRecordLength,
         question: recCurQuestion || null,
-        baselineSnapshot: (answerEl ? answerEl.value : ''),
+        // VA-LC bug 6 fix (2026-09-01): baselineSnapshot must be the textarea
+        // content as it was BEFORE this take started, not the current value.
+        // This function runs at tap-stop, after every mid-recording chunk has
+        // already live-transcribed and appended its raw text — so answerEl.value
+        // here already includes everything this take just added. Using it
+        // directly made the full-pass splice treat that whole raw block as
+        // "settled" and append the clean fullPass text after it instead of
+        // replacing it (visible as duplicated raw+clean paragraphs). Slicing to
+        // _micPreRecordLength (snapshotted at mic-start, still holding its
+        // pre-take value here — it's only overwritten below, after this push)
+        // gives the correct anchor for the 1st, 2nd, or 10th take alike.
+        baselineSnapshot: (answerEl ? answerEl.value.slice(0, _micPreRecordLength) : ''),
         // UX-VA03 2026-08-27: captured HERE, sequentially in the browser, the
         // moment recording for this take actually stops — well before the
         // eventual commit_voice_turn requests race each other over the
