@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.143';
+  const APP_VERSION = 'v7.144';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9873,6 +9873,61 @@
     // server-side, regardless of caller — see index.ts), just without the
     // textarea side effect, since the caller here decides what to do with
     // the result itself.
+    // VA-LC Full-Pass (2026-09-01): sends the whole staged archive blob to the
+    // server's 'transcribe' action with fullPass=true (Groq Whisper, full context),
+    // then splices the improved text over the span added during this recording.
+    // Called at tap-stop from both the normal and too-small-final-blob paths.
+    async function _vaLcRunFullPassCorrection(turn) {
+      try {
+        dbg('VA_LC', 'Full-pass correction starting — blob=' + turn.blob.size + 'B baseline=' + turn.baselineSnapshot.length + ' chars');
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) throw new Error('Not authenticated');
+        var ext = (turn.mime || '').includes('mp4') || (turn.mime || '').includes('m4a') ? 'm4a'
+                : (turn.mime || '').includes('ogg') ? 'ogg' : 'webm';
+        var form = new FormData();
+        form.append('action', 'transcribe');
+        form.append('fullPass', 'true');
+        form.append('audio', turn.blob, 'fullpass.' + ext);
+        var abort = new AbortController();
+        var timeout = setTimeout(function() { abort.abort(); }, 25000);
+        var res;
+        try {
+          res = await fetch(GETHRO_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+            body: form,
+            signal: abort.signal
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Full-pass transcription failed ' + res.status);
+        var improved = (data.result && data.result.transcript) ? data.result.transcript.trim() : '';
+        if (!improved || HALLUCINATIONS.test(improved)) {
+          dbg('VA_LC', 'Full-pass correction declined — empty or hallucination-filtered');
+          return;
+        }
+        var el = document.getElementById('memAnswer');
+        if (!el) return;
+        var baseLen = turn.baselineSnapshot.length;
+        var cur = el.value;
+        if (cur.length < baseLen) {
+          dbg('VA_LC', 'Full-pass correction discarded — textarea shorter than baseline (user cleared it)');
+          return;
+        }
+        var prefix = cur.slice(0, baseLen);
+        var sep = baseLen > 0 && prefix.trim().length > 0 ? ' ' : '';
+        var before = cur.slice(baseLen).length;
+        el.value = prefix + sep + improved;
+        _userHasTyped = true;
+        memCheckButtons();
+        dbg('VA_LC', 'Full-pass correction applied — ' + before + ' → ' + improved.length + ' chars');
+      } catch(e) {
+        dbgErr('VA_LC', 'Full-pass correction failed:', e.message);
+      }
+    }
+
     async function _vaLcFetchTranscript(blob, ext) {
       try {
         var session = (await sb.auth.getSession()).data.session;
@@ -10126,50 +10181,50 @@
         if (blob.size < MIC_MIN_CHUNK_BYTES) {
           dbg('MIC', (isFinal ? 'Final' : 'Chunk') + ' blob too small (' + blob.size + ' bytes) — skipping Whisper');
           if (isFinal) {
-            dbg('VA_LC', 'Final chunk too small — correction skipped (blob=' + blob.size + 'B, min=' + MIC_MIN_CHUNK_BYTES + 'B)');
+            dbg('VA_LC', 'Final blob too small (' + blob.size + 'B) — full-pass correction will still run from staged archive');
             await _stageCurrentTurn();
             _micRelease(); // v7.32: release stream tracks so browser tab red indicator clears (was missing from this early-return path)
             _setMicState('idle'); setMemStatus('idle', '');
+            // Still run full-pass correction — the MicManager blob may be empty
+            // (periodic flush just ran) but the staged archive blob is complete.
+            var _stagedTurnSmall = _stagedVoiceArchives[_stagedVoiceArchives.length - 1];
+            if (_stagedTurnSmall) {
+              _vaLcFinalCorrectionPromise = _vaLcRunFullPassCorrection(_stagedTurnSmall);
+            }
           }
           return;
         }
         _micChunkMimeType = mime; // keep in sync for legacy references
         if (isFinal) {
-          // Capture VA-LC state NOW — before _stageCurrentTurn()/_micRelease() wipe it.
-          // _micRelease() zeros _vaLcPrevRawBlob and bumps _vaLcTurnToken, so the IIFE
-          // would always see prevRawBlob=null and a stale token if it read the module-level
-          // vars after release. Captured here in local vars and passed directly into
-          // _vaLcTryCorrect via the overrideCtx argument (see that function).
-          var _finalPrevBlob       = _vaLcPrevRawBlob;
-          var _finalPrevTranscript = _vaLcPrevTranscript;
-          var _finalToken          = _vaLcTurnToken;
-          // Go idle immediately on stop — final chunk transcribes + corrects in background.
+          // Go idle immediately on stop — full-pass correction runs in background.
           // User never waits on orange screen.
-          await _stageCurrentTurn(); // stage before background transcribe so baselineSnapshot is correct
+          await _stageCurrentTurn(); // must run first — pushes turn into _stagedVoiceArchives
           _micRelease();
           _setMicState('idle');
           setMemStatus('idle', '');
-          // memDone awaits _vaLcFinalCorrectionPromise (6s timeout) before reading the
-          // textarea for saving — correction splices in while form is still live.
-          _vaLcFinalCorrectionPromise = (async function() {
-            dbg('VA_LC', 'Final chunk correction starting — blob=' + xcribeBlob.size + 'B prevBlob=' + (_finalPrevBlob ? _finalPrevBlob.size + 'B' : 'null') + ' token=' + _finalToken);
-            var _vaLcAppended = await _transcribeBlob(xcribeBlob, xcribeExt, true).catch(function(e) {
-              dbgErr('MIC', 'Background final transcription failed:', e.message);
-              return null;
-            });
-            if (_vaLcAppended) {
-              dbg('VA_LC', 'Final chunk transcribed — attempting correction, span=[' + _vaLcAppended.start + ',' + _vaLcAppended.end + '] prevBlob=' + (_finalPrevBlob ? 'yes' : 'null'));
-              // Pass captured pre-release context so _vaLcTryCorrect doesn't read the
-              // now-wiped module-level vars (_vaLcPrevRawBlob=null, bumped _vaLcTurnToken).
-              await _vaLcTryCorrect(_vaLcAppended.start, _vaLcAppended.end, blob, _vaLcAppended.text, {
-                prevRawBlob:    _finalPrevBlob,
-                prevTranscript: _finalPrevTranscript,
-                turnToken:      _finalToken
-              });
-            } else {
-              dbg('VA_LC', 'Final chunk transcription returned null — correction skipped');
-            }
-          })();
+
+          // ── VA-LC Full-Pass (2026-09-01): replace the two-chunk trailing-window
+          // approach with a single fullPass=true re-transcription of the whole
+          // archive blob, matching what the old post-save server patch did but
+          // triggered client-side at stop-time, before Save is ever reached.
+          //
+          // WHY: the two-chunk approach sent small per-chunk WAVs to Azure's
+          // short-audio endpoint — Azure heard each chunk in isolation, so numbers
+          // spoken across pauses ("nineteen... thirty... eight") still came back as
+          // "19. 30. 8." The fullPass path sends the whole recording to Groq Whisper
+          // which hears full context and returns correctly ITN'd text ("1938").
+          //
+          // HOW: the staged archive blob is already in memory (_stagedVoiceArchives
+          // last entry). We POST it to the existing 'transcribe' action with
+          // fullPass=true (same multipart path as per-chunk, just flagged). The
+          // server returns a clean full transcript. We then splice it over the span
+          // from baselineSnapshot.length to end of current textarea — i.e. exactly
+          // the text added during this recording session.
+          //
+          // memDone still awaits _vaLcFinalCorrectionPromise (6s timeout) so if the
+          // user taps Save very quickly, correction finishes first.
+          var _stagedTurn = _stagedVoiceArchives[_stagedVoiceArchives.length - 1];
+          _vaLcFinalCorrectionPromise = _stagedTurn ? _vaLcRunFullPassCorrection(_stagedTurn) : Promise.resolve();
         } else {
           _micTranscribing = true;
           setMemStatus('listening', '\u270D\uFE0F Transcribing\u2026');
