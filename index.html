@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.149';
+  const APP_VERSION = 'v7.150';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -22278,7 +22278,12 @@
       _gethroHistory.push({ role: 'assistant', content: question });
       if (_agpIsBlankSession) _agpBlankSeedCount++; // only count sparker questions (blank sessions)
       featTrackInterview();
-      gethroSpeak(question).catch(function(){}).finally(function() {
+      // APP-6x: this is the conversation's OPENING line — was missed in the
+      // original wiring, which only covered _agpCallGethro's replies, not
+      // this seed-question path. Fixed 2026-09-02 after real testing
+      // surfaced the gap (conversations were starting from the user's
+      // reply with no Gethro audio before it).
+      gethroSpeak(question, { archive: true }).catch(function(){}).finally(function() {
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
       });
     } catch(err) {
@@ -22288,7 +22293,9 @@
         : 'I can see you\'re working on a memory. What stands out most when you think back to that time?';
       _agpAppendGethro(fallback, null);
       _gethroHistory.push({ role: 'assistant', content: fallback });
-      gethroSpeak(fallback).catch(function(){}).finally(function() {
+      // Same fix as above — this fallback IS the opening line when the
+      // seed_question AI call itself fails, so it needs archiving too.
+      gethroSpeak(fallback, { archive: true }).catch(function(){}).finally(function() {
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
       });
     }
