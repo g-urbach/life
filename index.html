@@ -5151,7 +5151,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.148';
+  const APP_VERSION = 'v7.149';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -7760,6 +7760,9 @@
     // Reset Gethro panel state so the next sign-in always gets a fresh greeting
     _gethroHistory = [];
     _agpMemoryMode = false;
+    // APP-6x: signing out ends whatever conversation was active — genuine
+    // abandon, not a pause-to-resume, so discard rather than leave pending.
+    _agpDiscardConversation();
     _agpPendingMemoryConvo = false;
     var agpLog = document.getElementById('agpLog');
     if (agpLog) agpLog.innerHTML = '';
@@ -8271,7 +8274,17 @@
       context: 'voice'
     });
   }
-  function gethroSpeak(text) {
+  // APP-6x (2026-09-01): optional 2nd param, opts.archive — when true, the
+  // raw TTS audio this function already fetches for playback is ALSO handed
+  // to the conversation archive (fire-and-forget, never affects playback).
+  // Every existing call site passes nothing here and is 100% unaffected —
+  // opts defaults to undefined, the archive branch below is a no-op unless
+  // explicitly asked for. Only wired at the one canonical AGP conversation
+  // reply site (_agpCallGethro) as of this build — see that call site and
+  // the APP-6x backlog entry for which OTHER gethroSpeak call sites (seed
+  // questions, greetings, resume prompts, etc.) are deliberately NOT
+  // covered yet, rather than silently assumed to be.
+  function gethroSpeak(text, opts) {
     return new Promise(async function(resolve) {
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
@@ -8312,6 +8325,19 @@
         var arrayBuf = await res.arrayBuffer();
         dbg('TTS', 'arrayBuffer size=' + arrayBuf.byteLength);
         if (!arrayBuf.byteLength) throw new Error('TTS_PROXY returned empty buffer');
+        // APP-6x: archive this reply's audio — fire-and-forget, before the
+        // decode/playback below, so a decode failure or fallback further
+        // down can never suppress archiving of audio we did genuinely get
+        // back from the server. skipTranscode=true: azure-tts-proxy already
+        // returns 16kHz mono WAV (decision 6) — this is already exactly the
+        // format append_conversation_turn requires, so re-running it through
+        // the mic-recording transcode path would just be wasted decode/
+        // encode work on every single reply, not a correctness fix.
+        if (opts && opts.archive) {
+          try {
+            _agpAppendConversationTurn(new Blob([arrayBuf], { type: 'audio/wav' }), 'audio/wav', true).catch(function(){});
+          } catch(e) {}
+        }
         // Use AudioContext to decode and play — bypasses Chrome desktop autoplay
         // policy that blocks new Audio().play() on low-engagement sites.
         // AudioContext is unlocked by _primeAudioContext() called in the gesture handler.
@@ -8948,7 +8974,12 @@
     // call it from anywhere new; remove it once VA-LC is confirmed stable.
   }
 
-  async function memDone() {
+  // APP-6x: optional param, agpConversationIdToCommit — passed ONLY by
+  // agpAcceptConsolidated (via the panel dataset, see that function and
+  // agpSaveToEntry for why it's threaded this way rather than kept in
+  // module state). Every other caller (the normal Save button,
+  // memRetryDone) passes nothing, so this is a no-op for them.
+  async function memDone(agpConversationIdToCommit) {
     stopMemMic(); // stop any in-progress recording before saving
     memClearSaveError(); // clear any prior banner before attempting
     let savedId;
@@ -9003,6 +9034,18 @@
         _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
           dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
         });
+      });
+    }
+    // ── APP-6x: link the Gethro conversation archive (if any) to this entry ──
+    // Same fire-and-forget shape as the staged-voice-turn block above — the
+    // entry itself already saved successfully by this point regardless of
+    // whether this call succeeds. If it fails, the archive just stays
+    // status='pending', unlinked — audio is never lost, only its link to
+    // this entry. Also simply never fires when agpConversationIdToCommit is
+    // empty (the normal Save button, memRetryDone) — nothing to link.
+    if (agpConversationIdToCommit && savedId && savedId !== 'offline') {
+      _agpCommitConversation(agpConversationIdToCommit, savedId).catch(function(e) {
+        dbgErr('AGP_ARCHIVE', 'commit_conversation threw:', e.message);
       });
     }
     // ── Success: clear form ───────────────────────────────────────────
@@ -21723,6 +21766,11 @@
           var log = document.getElementById('agpLog');
           if (log) log.innerHTML = '';
           _agpMemoryMode = false;
+          // APP-6x: this starts a brand-new conversation (_convoStart just
+          // below) without going through closeAskGethro/gethroNewChat —
+          // discard whatever conversation id was active before it's
+          // silently replaced.
+          _agpDiscardConversation();
           _convoStart('memory_entry', latest.id || null);
           openAskGethro(true); // open panel immediately, skip generic greeting
           // Show onboarding context first, then ask the follow-up question
@@ -21897,6 +21945,13 @@
   var _agpSending     = false;
   var _agpMemoryMode         = false; // true while panel open + memory-related
   var _agpPendingMemoryConvo  = false; // true after panel closed mid-memory-convo without saving
+  // APP-6x: client-generated id for the CURRENT conversation's server-side
+  // voice archive (life_voice_archives.conversation_id), or null when
+  // nothing has been persisted yet. Created lazily by
+  // _agpAppendConversationTurn on the first turn actually archived — see
+  // that function below. Cleared (not necessarily discarded — see
+  // _agpDiscardConversation) at every point a conversation genuinely ends.
+  var _agpConversationId = null;
   var _agpPendingResponseCount = 0;   // set by loadResponsesTile when unread responses exist; Gethro mentions them on open
   var _agpBlankSeedCount = 0;          // sparker questions asked during a BLANK-entry session
   var _agpIsBlankSession  = false;      // true only when panel opened with completely empty Add Memory tab
@@ -22029,6 +22084,9 @@
       // _agpMemoryMode set to true in sendToGethro after first user message
       _agpMemoryMode = false;
       _agpUpdateSaveBar();
+      // APP-6x: same reasoning as the entry-saved followup above — a fresh
+      // conversation starts right below without closeAskGethro/gethroNewChat.
+      _agpDiscardConversation();
       var seedCtx = memAnswer.slice(0, 800);
       _convoStart('memory_entry', null);
       // Small delay so panel animation completes before seed question appears
@@ -22102,6 +22160,10 @@
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
     if (!_agpPendingMemoryConvo) {
+      // APP-6x: only discard here when this is a genuine end, not a pause —
+      // _agpPendingMemoryConvo true means _agpShowResumePrompt may resume
+      // this exact conversation later, so its archive must survive.
+      _agpDiscardConversation();
       _convoClose(false);
     }
   }
@@ -22113,6 +22175,9 @@
     _agpPendingMemoryConvo = false;
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
+    // APP-6x: explicit fresh start — drops any paused conversation too,
+    // since _agpPendingMemoryConvo was just cleared above.
+    _agpDiscardConversation();
     _convoClose(false);
     _gethroHistory = [];
     var log = document.getElementById('agpLog');
@@ -22302,11 +22367,34 @@
     }
     var userOnlyTranscriptPre = userOnlyLinesPre.join('\n\n');
 
+    // APP-6x: capture this BEFORE nulling _agpConversationId below — it's
+    // threaded through to the panel dataset just below, then to memDone()
+    // as an explicit param once the user actually picks a version (see
+    // agpAcceptConsolidated). Deliberately NOT kept in ambient module state
+    // beyond this point: memDone() is also called from unrelated saves
+    // (memRetryDone → the normal Save button), and a leftover module-level
+    // "pending commit" variable would risk linking THIS conversation to
+    // some later, unrelated entry if the user abandoned this panel instead
+    // of clicking a choice button. Passing it explicitly, scoped to the
+    // panel's own dataset lifecycle, makes that leak structurally
+    // impossible rather than something to remember not to break.
+    var agpConversationIdForCommit = _agpConversationId;
     // Clear history and memory mode BEFORE closeAskGethro so it doesn't
     // re-set _agpPendingMemoryConvo = true (which triggers the resume prompt).
     _gethroHistory = [];
     _agpMemoryMode = false;
     _agpUpdateSaveBar();
+    // APP-6x: this conversation is being SAVED, not abandoned — must not
+    // discard its archive. closeAskGethro(true) below will otherwise see
+    // _agpPendingMemoryConvo already false (just above) and take its
+    // genuine-close branch, which does call discard — so the id is cleared
+    // here first (not via _agpDiscardConversation, which would also delete
+    // the file server-side) so that branch is a no-op by the time it runs.
+    // Its VALUE survives via agpConversationIdForCommit above — carried
+    // through the panel dataset, then to memDone(), which links it to
+    // whatever entry this conversation turns into (see
+    // agpConversationIdForCommit / agpAcceptConsolidated / memDone).
+    _agpConversationId = null;
     closeAskGethro(true); // suppress memMic restart — save panel is about to appear
     showPanel('memories', null, 1);
 
@@ -22317,6 +22405,10 @@
     // Reuse memSpellPanel — same element the AI Review uses, same styling
     var panel = document.getElementById('memSpellPanel');
     if (!panel) return;
+    // APP-6x: scoped to this panel's own lifecycle — read and deleted
+    // together with dataset.consolidated/transcript in
+    // agpAcceptConsolidated below, same pattern as those.
+    panel.dataset.agpConversationId = agpConversationIdForCommit || '';
     panel.style.display = 'block';
     panel.innerHTML = '<span style="color:var(--text-light);font-style:italic">Gethro is writing this up…</span>';
     setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
@@ -22376,6 +22468,10 @@
     if (!panel) return;
     var text     = useRaw ? (panel.dataset.transcript || '') : (panel.dataset.consolidated || '');
     var hasEntry = panel.dataset.hasEntry === '1';
+    // APP-6x: captured here, before it's deleted below — see the dataset
+    // comment in agpSaveToEntry for why this rides on the panel instead of
+    // module state.
+    var agpConversationIdForCommit = panel.dataset.agpConversationId || '';
     if (!text) return;
 
     var ta = document.getElementById('memAnswer');
@@ -22396,14 +22492,21 @@
     delete panel.dataset.consolidated;
     delete panel.dataset.transcript;
     delete panel.dataset.hasEntry;
+    delete panel.dataset.agpConversationId;
 
     // Clear Gethro log and history immediately
     _gethroHistory = [];
     var log = document.getElementById('agpLog');
     if (log) log.innerHTML = '';
 
-    // Auto-save via memDone — saves, clears form, resets state. No extra tap needed.
-    await memDone();
+    // Auto-save via memDone — saves, clears form, resets state. No extra tap
+    // needed. APP-6x: conversationId passed through explicitly so memDone
+    // can link the archive to whatever entry this save produces — see
+    // memDone's own comment for why this stays an explicit param rather
+    // than module state (memRetryDone calls memDone() with no args, so a
+    // save that fails here and gets retried loses the link — known,
+    // accepted gap, not a silent wrong-link risk).
+    await memDone(agpConversationIdForCommit);
   }
 
   // ── Send message ─────────────────────────────────────────────────
@@ -22600,7 +22703,10 @@
       _convoAppendMessages(_gethroHistory); // persist to Supabase
 
       // Speak the reply then auto-start mic for hands-free flow
-      gethroSpeak(reply).catch(function(){}).finally(function() {
+      // APP-6x: archive:true — the other half of two-sided capture (decision
+      // 2). See gethroSpeak's own header note for exactly what this does
+      // and which OTHER gethroSpeak call sites are deliberately not covered.
+      gethroSpeak(reply, { archive: true }).catch(function(){}).finally(function() {
         if (!_agpMicActive) setTimeout(function() { _agpStartMic(); }, 200);
       });
 
@@ -22970,6 +23076,117 @@
     _agpMicSilenceRAF = requestAnimationFrame(_agpSilenceLoop);
   }
 
+  // ── APP-6x: conversation voice archiving wiring ──────────────────────────
+  // _agpAppendConversationTurn: fire-and-forget upload of ONE turn's audio
+  // to the server-side merge (GETHRO_PROXY action append_conversation_turn,
+  // see that function's header for what it does with this). Called for the
+  // interviewee's side from _agpFlushAndSend, right after AgpArchiveRecorder
+  // hands back the whole-turn recording it already captures for full-pass
+  // transcription — this reuses that same audio, doesn't record anything
+  // twice. NOT yet called for Gethro's own spoken side (would need
+  // gethroSpeak() to expose the raw audio bytes it already fetches for
+  // playback, which touches ~40 other call sites — separate follow-up, not
+  // done in this build; until then, archived conversations only contain the
+  // interviewee's turns, not Gethro's replies).
+  // Deliberately never awaited by callers and never throws outward — a
+  // failure here must not affect the actual conversation UX, which has
+  // already succeeded (transcription/reply) by the time this runs.
+  // skipTranscode: true when the caller already knows this is 16kHz mono
+  // WAV (currently only gethroSpeak's archive path — azure-tts-proxy
+  // guarantees that format, decision 6) — skips MicManager.toWav16kMono
+  // entirely rather than decoding and re-encoding audio that is already in
+  // exactly the target format. Mic-captured audio (the default, false)
+  // still always needs that transcode — its actual format depends on
+  // whatever codec the browser's MediaRecorder chose.
+  async function _agpAppendConversationTurn(blob, mime, skipTranscode) {
+    try {
+      if (!blob || blob.size < AGP_MIN_CHUNK_BYTES) return; // silence/empty — nothing worth archiving
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) return;
+      if (!_agpConversationId) _agpConversationId = crypto.randomUUID();
+      // Server only accepts WAV (see append_conversation_turn's own
+      // comments — no decoder in that runtime) — same transcode already
+      // used for transcription elsewhere in this file, except when the
+      // caller has already guaranteed WAV (see skipTranscode note above).
+      var outBlob = skipTranscode ? blob : (await MicManager.toWav16kMono(blob, mime || 'audio/ogg')).blob;
+      var form = new FormData();
+      form.append('action', 'append_conversation_turn');
+      form.append('conversationId', _agpConversationId);
+      form.append('audio', outBlob, 'agp_turn.wav');
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
+        body: form
+      });
+      if (!res.ok) {
+        var errText = await res.text().catch(function() { return ''; });
+        dbgWarn('AGP_ARCHIVE', 'append_conversation_turn failed:', res.status, errText);
+      }
+    } catch(e) {
+      dbgWarn('AGP_ARCHIVE', 'append_conversation_turn error:', e.message);
+    }
+  }
+
+  // _agpDiscardConversation: tells the server to drop the pending archive
+  // for whatever conversation is currently tracked, if any, then clears the
+  // local id — see the several call sites below for exactly which
+  // conversation-end paths this is (and, just as importantly, is NOT)
+  // wired into. Synchronous id-clear before the fire-and-forget network
+  // call, so two reset points firing in quick succession can't both send a
+  // discard for the same (or a stale) id.
+  function _agpDiscardConversation() {
+    if (!_agpConversationId) return;
+    var cid = _agpConversationId;
+    _agpConversationId = null;
+    (async function() {
+      try {
+        var session = (await sb.auth.getSession()).data.session;
+        if (!session) return;
+        await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + session.access_token,
+            'apikey': SUPABASE_ANON,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ action: 'discard_conversation', conversationId: cid })
+        });
+      } catch(e) {
+        dbgWarn('AGP_ARCHIVE', 'discard_conversation error:', e.message);
+      }
+    })();
+  }
+
+  // _agpCommitConversation: links a pending conversation archive to the
+  // entry it was just saved as (GETHRO_PROXY action commit_conversation —
+  // sets entry_id + status='committed'). Called from memDone(), not
+  // directly from anywhere in the AGP flow — see memDone's own comment for
+  // why the conversationId arrives as an explicit param rather than read
+  // from module state here. Fire-and-forget, same reasoning as the other
+  // two archive helpers: the entry has already saved successfully by the
+  // time this runs, so a failure here must never surface as a save error.
+  async function _agpCommitConversation(conversationId, entryId) {
+    try {
+      var session = (await sb.auth.getSession()).data.session;
+      if (!session) return;
+      var res = await fetch(GETHRO_PROXY_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session.access_token,
+          'apikey': SUPABASE_ANON,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ action: 'commit_conversation', conversationId: conversationId, entryId: entryId })
+      });
+      if (!res.ok) {
+        var errText = await res.text().catch(function() { return ''; });
+        dbgWarn('AGP_ARCHIVE', 'commit_conversation failed:', res.status, errText);
+      }
+    } catch(e) {
+      dbgWarn('AGP_ARCHIVE', 'commit_conversation error:', e.message);
+    }
+  }
+
   // Mid-conversation chunk flusher — runs on a fixed interval while mic is active.
   // Every AGP_FLUSH_MS, if real speech was detected, transcribes the current chunk,
   // restarts the recorder, and appends the result to _agpLiveText shown in the input.
@@ -23175,6 +23392,12 @@
     // _agpMicRelease() releases the stream, same ordering VA-LC uses
     // (_stageCurrentTurn's ArchiveRecorder.stop() runs before _micRelease()).
     var agpArchived = await AgpArchiveRecorder.stop();
+    // APP-6x: archive this turn server-side — same recording used for
+    // full-pass transcription just below, not a second capture. Fire and
+    // forget: never awaited, must not delay the actual reply flow.
+    if (agpArchived && agpArchived.blob) {
+      _agpAppendConversationTurn(agpArchived.blob, agpArchived.mime).catch(function(){});
+    }
 
     _agpMicRelease();
     _agpSetBtn(doSend ? 'transcribing' : 'idle');
@@ -28360,6 +28583,8 @@
         _gethroHistory = [];
         _agpMemoryMode = false;
         _agpUpdateSaveBar();
+        // APP-6x: user explicitly declined to save — genuine abandon.
+        _agpDiscardConversation();
         var firstName3 = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var opener3 = firstName3
           ? 'No worries. What can I help you with, ' + firstName3 + '?'
