@@ -1192,7 +1192,11 @@
     @media (max-width: 600px) { .story-photo { float: none; max-width: 100%; margin: 0 0 16px 0; } }
 
     /* ── BUTTONS ── */
-    .btn { padding: 11px 22px; border: none; border-radius: 8px; font-family: 'Lato', sans-serif; font-size: 0.88rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: all 0.18s; }
+    /* 2026-09-02: text-transform was uppercase app-wide — switched to sentence case
+       for readability (all-caps everywhere flattened button hierarchy). Letter-spacing
+       trimmed to suit normal casing; button copy elsewhere in the file is already
+       written in sentence/title case so this needed no text changes to reveal correctly. */
+    .btn { padding: 11px 22px; border: none; border-radius: 8px; font-family: 'Lato', sans-serif; font-size: 0.88rem; font-weight: 700; letter-spacing: 0.01em; cursor: pointer; transition: all 0.18s; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     /* Larger buttons for memories panel — 60+ audience */
     .mem-action-btn { padding: 14px 18px; font-size: 1rem; border-radius: 10px; width: 100%; }
@@ -2927,7 +2931,7 @@
     <!-- Mic button — prominent, above textarea -->
     <div style="margin-bottom:12px">
       <button id="memMicBtn"
-        style="width:100%;padding:16px 18px;border-radius:10px;border:2px solid var(--border);background:var(--surface);font-family:'Lato',sans-serif;font-size:1.05rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;transition:all 0.2s;color:var(--text)">
+        style="width:100%;padding:16px 18px;border-radius:30px;border:2px solid var(--gold);background:rgba(201,169,110,0.1);font-family:'Lato',sans-serif;font-size:1.05rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;transition:all 0.2s;color:var(--gold-dark)">
         <span id="memMicIcon" style="font-size:1.5rem">🎙️</span>
         <span id="memMicLabel">Tap to speak your memory</span>
       </button>
@@ -3045,7 +3049,7 @@
     <div id="memButtons">
       <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:10px">
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-ghost mem-action-btn" id="memSpellBtn" style="flex:1">🔍 Review this entry</button>
+          <button class="btn btn-ghost mem-action-btn" id="memSpellBtn" style="flex:1;border:1px solid var(--gold);color:var(--gold-dark)">🔍 Review with AI</button>
           <button id="memCancelReviewBtn" style="display:none;font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;white-space:nowrap">✕ Cancel</button>
         </div>
       </div>
@@ -3664,7 +3668,7 @@
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
               <span style="font-size:1.3rem">🩺</span>
-              <span class="dash-tile-title" style="margin:0">Story Health &amp; Hygiene</span>
+              <span class="dash-tile-title" style="margin:0">Story Health &amp; Quality</span>
             </div>
             <div class="dash-stat-row">
               <div class="dash-stat">
@@ -3674,7 +3678,7 @@
               <div class="dash-stat-sep"></div>
               <div class="dash-stat">
                 <div class="dash-stat-val" id="dashHygieneValue" style="font-size:0.9rem">—</div>
-                <div class="dash-stat-lbl" id="dashHygieneSub">Hygiene</div>
+                <div class="dash-stat-lbl" id="dashHygieneSub">Quality</div>
               </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
@@ -3688,7 +3692,7 @@
           <div class="dash-section-label">📖 Chapter Coverage</div>
           <p style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px">Click a chapter to see its entries and add more</p>
           <div id="dashHealthChapterGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:20px"></div>
-          <div class="dash-section-label" style="padding-top:14px;border-top:1px solid var(--border)">🩺 Hygiene Checks</div>
+          <div class="dash-section-label" style="padding-top:14px;border-top:1px solid var(--border)">🩺 Quality Checks</div>
           <div id="dashHygieneChecks"></div>
         </div>
       </div>
@@ -5151,7 +5155,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.151';
+  const APP_VERSION = 'v7.157';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8300,6 +8304,16 @@
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
       dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
+      // 2026-09-03: pre-warm the mic stream NOW, while TTS is fetching and
+      // playing. By the time resolve() fires and the caller's .then() opens
+      // the mic for real, the OS audio pipeline has already initialised and
+      // the hardware is warm — eliminating the cold-open ~0.5s dropout on
+      // desktop Chrome. Fire-and-forget: failure is silent and start() falls
+      // back to a cold open. cancelPrewarm() is called at resolve() so any
+      // call site that does NOT follow gethroSpeak with startMemMic() won't
+      // leak an open stream — start() consumes and nulls _prewarmStream,
+      // so cancelPrewarm() is a no-op when startMemMic follows normally.
+      MicManager.prewarm().catch(function(){});
       try {
         // JWT ON: token sent as Authorization header. getSession() refreshes it if near-expiry.
         var freshToken = sessionToken;
@@ -8339,14 +8353,34 @@
         // APP-6x: archive this reply's audio — fire-and-forget, before the
         // decode/playback below, so a decode failure or fallback further
         // down can never suppress archiving of audio we did genuinely get
-        // back from the server. skipTranscode=true: azure-tts-proxy already
-        // returns 16kHz mono WAV (decision 6) — this is already exactly the
-        // format append_conversation_turn requires, so re-running it through
-        // the mic-recording transcode path would just be wasted decode/
-        // encode work on every single reply, not a correctness fix.
+        // back from the server.
+        // FIXED 2026-09-03 — real bug found by the developer testing a
+        // cloned (Inworld) voice: this used to hardcode 'audio/wav' and
+        // skipTranscode=true unconditionally, which is only actually true
+        // for azure-tts-proxy (decision 6). _ttsUrlFor routes cloned
+        // voices to INWORLD_TTS_PROXY_URL instead — a completely separate
+        // function, never touched by decision 6, whose real output format
+        // is whatever Inworld's API returns (not WAV). Mislabelling that
+        // as WAV meant append_conversation_turn's server-side RIFF check
+        // rejected every single one of those turns with a 400 — Gethro's
+        // cloned-voice replies were never silently skipped client-side,
+        // they were being sent and rejected, turn after turn, which is why
+        // playback had exact silence gaps where Gethro spoke rather than
+        // just missing audio. Now reads the ACTUAL content-type the
+        // response returned instead of assuming — self-correct if either
+        // backend's format ever changes again, not just a one-off patch
+        // for today's two known backends.
+        var ttsContentType = (res.headers.get('content-type') || '').toLowerCase();
+        var ttsIsWav = ttsContentType.indexOf('wav') !== -1;
         if (opts && opts.archive) {
           try {
-            _agpAppendConversationTurn(new Blob([arrayBuf], { type: 'audio/wav' }), 'audio/wav', true).catch(function(){});
+            var archiveBlob = new Blob([arrayBuf], { type: ttsIsWav ? 'audio/wav' : (ttsContentType || 'audio/mpeg') });
+            // skipTranscode only when we KNOW it's already WAV — otherwise
+            // (Inworld, or anything else) this routes through the exact
+            // same MicManager.toWav16kMono decode-and-resample path
+            // already proven on the interviewee's mic audio, codec-
+            // agnostic via decodeAudioData, not a WAV-specific shortcut.
+            _agpAppendConversationTurn(archiveBlob, archiveBlob.type, ttsIsWav).catch(function(){});
           } catch(e) {}
         }
         // Use AudioContext to decode and play — bypasses Chrome desktop autoplay
@@ -9098,9 +9132,9 @@
       // Highlight the textarea so user sees dictation flowing in
       if (textarea) textarea.style.borderColor = 'var(--rose)';
     } else {
-      btn.style.background   = 'var(--surface)';
-      btn.style.borderColor  = 'var(--border)';
-      btn.style.color        = 'var(--text)';
+      btn.style.background   = 'rgba(201,169,110,0.1)';
+      btn.style.borderColor  = 'var(--gold)';
+      btn.style.color        = 'var(--gold-dark)';
       if (icon)  icon.textContent  = '🎙️';
       if (label) label.textContent = 'Tap to speak your memory';
       if (textarea) textarea.style.borderColor = 'var(--border)';
@@ -9139,6 +9173,15 @@
     var _active      = false;
     var _mime        = '';
     var _callbacks   = {};
+    // 2026-09-03: pre-warm stream — opened silently during gethroSpeak() so the
+    // mic hardware is already live by the time start() is called. Eliminates the
+    // ~0.5s cold-open dropout on desktop Chrome (getUserMedia initialises the OS
+    // audio capture pipeline synchronously on the first open; subsequent opens on
+    // the same device reuse the warm hardware). Android is unaffected because its
+    // audio subsystem stays warm. Prewarm is silent — no recorder, no AnalyserNode,
+    // no chunks — just tracks open. start() adopts it; release() and prewarm() both
+    // stop tracks so we never leak.
+    var _prewarmStream = null;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -9451,15 +9494,65 @@
       _silenceRAF = requestAnimationFrame(_silenceLoop);
     }
 
+    // prewarm() — open the mic stream silently, without starting a recorder.
+    // Call at the start of gethroSpeak() so the OS audio pipeline is warm
+    // by the time start() is called. Fire-and-forget: if it fails (no
+    // permission, already active) it's a no-op — start() falls back to a
+    // cold open. Never call if already active (recording in progress).
+    async function prewarm() {
+      if (_active || _prewarmStream) return; // already recording or already prewarmed
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      try {
+        _prewarmStream = await navigator.mediaDevices.getUserMedia({
+          audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+        });
+        dbg('MIC_MGR', 'Prewarm stream open — mic hardware warm and ready');
+      } catch(e) {
+        dbg('MIC_MGR', 'Prewarm failed (will cold-open on start):', e.message);
+        _prewarmStream = null;
+      }
+    }
+
+    // cancelPrewarm() — release the prewarm stream if start() was never called
+    // (e.g. user navigated away, or gethroSpeak was cancelled). Harmless if
+    // no prewarm stream exists.
+    function cancelPrewarm() {
+      if (_prewarmStream) {
+        _prewarmStream.getTracks().forEach(function(t){ t.stop(); });
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Prewarm stream released (start never called)');
+      }
+    }
+
     async function start(opts) {
       if (_active) return false;
       opts = opts || {};
 
-      // Acquire stream
-      try {
-        _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch(permErr) {
-        return permErr;
+      // Acquire stream — reuse prewarm stream if available (2026-09-03).
+      // Prewarm is opened silently at the start of gethroSpeak() so the
+      // OS audio capture pipeline is already warm by the time the user
+      // starts speaking. On desktop Chrome a cold getUserMedia open has a
+      // measurable hardware-init latency (~0.5s dropout at mic-open) that
+      // is absent on Android because Android's audio subsystem stays warm.
+      // If prewarm raced and lost (start() called before prewarm resolved,
+      // or prewarm was never triggered) we fall back to a fresh open.
+      // All three browser audio-processing steps disabled (2026-09-03) —
+      // AGC and noiseSuppression caused transcription garbling in the first
+      // few words; echoCancellation's convergence window caused the same
+      // dropout when those two were fixed. Matches startVoiceCloneRecording.
+      if (_prewarmStream) {
+        _stream = _prewarmStream;
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Adopted prewarm stream — skipping cold getUserMedia open');
+      } else {
+        try {
+          _stream = await navigator.mediaDevices.getUserMedia({
+            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+          });
+          dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
+        } catch(permErr) {
+          return permErr;
+        }
       }
 
       _mime      = _pickMime(opts.mime || null);
@@ -9502,6 +9595,9 @@
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
       if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
+      // Also clean up any prewarm stream that was never adopted by start()
+      // (e.g. recording cancelled, user navigated away mid-TTS).
+      cancelPrewarm();
       _recorder = null;
       _chunks   = [];
       _active   = false;
@@ -9516,6 +9612,8 @@
       get stream()   { return _stream; },  // read-only: AGP flush uses stream to restart its own recorder
       get mime()     { return _mime; },
       get chunks()   { return _chunks; },  // read-only access for archive accumulation (Phase 1)
+      prewarm: prewarm,           // 2026-09-03: open mic hardware silently during gethroSpeak
+      cancelPrewarm: cancelPrewarm, // release prewarm stream if start() never called
       start:   start,
       flush:   flush,
       stop:    stop,
@@ -9767,9 +9865,9 @@
       if (textarea) textarea.style.borderColor = 'var(--amber, #f59e0b)';
     } else {
       // idle or error
-      btn.style.background  = 'var(--surface)';
-      btn.style.borderColor = 'var(--border)';
-      btn.style.color       = 'var(--text)';
+      btn.style.background  = 'rgba(201,169,110,0.1)';
+      btn.style.borderColor = 'var(--gold)';
+      btn.style.color       = 'var(--gold-dark)';
       if (icon)  icon.textContent  = '🎙️';
       if (label) label.textContent = 'Tap to speak your memory';
       if (textarea) textarea.style.borderColor = 'var(--border)';
@@ -10783,7 +10881,7 @@
         })
       : [];
     await runAIReview(text, readTags('rec'), panel, _memEditEntryId || null, memFeedbackReplies);
-    btn.textContent = '🔍 Review this entry'; btn.disabled = false;
+    btn.textContent = '🔍 Review with AI'; btn.disabled = false;
     if (cancelBtn) cancelBtn.style.display = 'none';
     if (_aiReviewAborted) { panel.style.display = 'none'; }
   }
@@ -10893,7 +10991,7 @@
 
       // ── Build hygiene checklist ──
       let html = '<div style="margin-bottom:14px">';
-      html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:10px">HYGIENE CHECK</p>';
+      html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:10px">REVIEW SUMMARY</p>';
 
       // Strip AI filler words that clutter the UI when ok
       const cleanNote = (note) => {
@@ -10934,8 +11032,8 @@
       html += row(r.grammar?.ok,  'Grammar',  r.grammar?.notes);
       html += row(r.length?.ok,   'Length',   r.length?.notes);
       html += row(r.voice?.ok,    'Clarity',  r.voice?.notes);
-      html += row(hasTitle,    'Title',    !hasTitle    ? (r.suggestTitle    ? 'Suggested: ' + r.suggestTitle    : 'Not set — give this memory a title') : '', false);
-      html += row(hasChapter,  'Chapter',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — broad life chapter e.g. Family') : '', false);
+      html += row(hasTitle,    'Title',    !hasTitle    ? (r.suggestTitle    ? 'Suggested: ' + r.suggestTitle    : 'Not set — give this memory a title') : '', !hasTitle);
+      html += row(hasChapter,  'Chapter',  !hasChapter  ? (r.suggestChapter  ? 'Suggested: ' + r.suggestChapter  : 'Not set — broad life chapter e.g. Family') : '', !hasChapter);
       // Era row intentionally removed — date is now freetext 'When' field, not era/decade
       // People: show suggestion even when already set, if there are responders to add
       const existingPeopleArr = (tags.people || '').split(',').map(function(n){return n.trim().toLowerCase();}).filter(Boolean);
@@ -10988,13 +11086,13 @@
 
       // ── Reconstruction ──
       if (r.reconstruction && r.reconstruction.trim()) {
-        html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
-        html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:4px">AI RECONSTRUCTION</p>';
+        html += '<div id="recon-block-' + (entryId || 'new') + '" style="border-top:1px solid var(--border);padding-top:12px">';
+        html += '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-light);margin-bottom:4px">POLISHED VERSION</p>';
         html += '<p style="font-size:0.75rem;color:var(--text-light);margin-bottom:8px">Your entry, cleaned up — all your facts, just tidier</p>';
         html += '<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:0.9rem;line-height:1.7;color:var(--text);margin-bottom:10px;font-style:italic">' + r.reconstruction + '</div>';
-        html += '<div style="display:flex;gap:8px">';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
         html += '<button class="btn btn-primary" data-action="accept-reconstruction" data-id="' + (entryId || '') + '" style="font-size:0.78rem;padding:7px 14px">✓ Use this version</button>';
-
+        html += '<button class="btn btn-ghost" data-action="dismiss-reconstruction" data-id="' + (entryId || '') + '" style="font-size:0.78rem;padding:7px 14px">Keep my original</button>';
         html += '</div></div>';
         panel.dataset.reconstruction = r.reconstruction;
       }
@@ -19453,7 +19551,7 @@
     if (interviews === 0 && entryCount >= 1) {
       nudge = '&#127897; <strong>Try a Gethro interview</strong> — tap the microphone in Memories and let Gethro ask you questions. The fastest way to capture a story.';
     } else if (reviews === 0 && entryCount >= 3) {
-      nudge = '&#10024; <strong>Try AI Review</strong> — open any memory in Entries, tap Review this entry, and Gethro will enrich the writing and flag any gaps.';
+      nudge = '&#10024; <strong>Try AI Review</strong> — open any memory in Entries, tap Review with AI, and Gethro will enrich the writing and flag any gaps.';
     } else if (gethroOpen === 0) {
       nudge = '&#128172; <strong>Ask Gethro anything</strong> — tap the &#127897; button at the bottom of any screen. Ask him to find a memory, start a story, or just have a chat.';
     } else if (convoSaves === 0 && gethroOpen >= 2) {
@@ -21812,8 +21910,8 @@
       setTimeout(function() {
         var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         var msg = firstName
-          ? 'Did you know, ' + firstName + '? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.'
-          : 'Did you know? After writing a memory, tap \u201c\uD83D\uDD0D Review this entry\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.';
+          ? 'Did you know, ' + firstName + '? After writing a memory, tap \u201c\uD83D\uDD0D Review with AI\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.'
+          : 'Did you know? After writing a memory, tap \u201c\uD83D\uDD0D Review with AI\u201d and I\u2019ll check your spelling, suggest a title, chapter and tags \u2014 or just ask me to review it right here.';
         openAskGethro(true); // skipGreeting — nudge message IS the opener
         _agpAppendGethro(msg, null);
         _gethroHistory.push({ role: 'assistant', content: msg });
@@ -23109,12 +23207,16 @@
   // Deliberately never awaited by callers and never throws outward — a
   // failure here must not affect the actual conversation UX, which has
   // already succeeded (transcription/reply) by the time this runs.
-  // skipTranscode: true when the caller already knows this is 16kHz mono
-  // WAV (currently only gethroSpeak's archive path — azure-tts-proxy
-  // guarantees that format, decision 6) — skips MicManager.toWav16kMono
-  // entirely rather than decoding and re-encoding audio that is already in
-  // exactly the target format. Mic-captured audio (the default, false)
-  // still always needs that transcode — its actual format depends on
+  // skipTranscode: true only when the caller has CONFIRMED (not assumed)
+  // this is already 16kHz mono WAV — skips MicManager.toWav16kMono
+  // entirely rather than decoding and re-encoding audio already in exactly
+  // the target format. gethroSpeak's archive path checks the TTS
+  // response's actual content-type per call (fixed 2026-09-03 — see that
+  // function's own comment for the bug this fixed: azure-tts-proxy really
+  // does return WAV, but cloned voices route to a separate Inworld backend
+  // that does not, and assuming both did was silently dropping every
+  // cloned-voice reply). Mic-captured audio (the default, false) always
+  // needs the transcode regardless — its actual format depends on
   // whatever codec the browser's MediaRecorder chose.
   async function _agpAppendConversationTurn(blob, mime, skipTranscode) {
     try {
@@ -28471,6 +28573,11 @@
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
         case 'accept-reconstruction': acceptReconstruction(id || null);                    break;
+        case 'dismiss-reconstruction': {
+          var _reconBlock = document.getElementById('recon-block-' + (id || 'new'));
+          if (_reconBlock) _reconBlock.remove();
+          break;
+        }
         case 'accept-ai-tag': {
           var rawTags = btn.dataset.tags || '{}';
           try { applyAIReviewTags(JSON.parse(rawTags.replace(/&quot;/g, '"')), id || null, btn); } catch(e) { /* malformed tag JSON — ignore */ }
