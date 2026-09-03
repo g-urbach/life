@@ -5155,7 +5155,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.155';
+  const APP_VERSION = 'v7.156';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9488,17 +9488,21 @@
       // transcription — "Mrs. Patton" came back as "Mrs", then "Says Pat",
       // taking three tries to land correctly, specifically because those
       // first few words are exactly where AGC/noise-suppression are still
-      // settling. Echo cancellation left ON — nothing in the reported
-      // symptoms implicates it, and this stream can genuinely overlap with
-      // Gethro's own TTS audio in ways AGC/noise-suppression don't need to
-      // worry about, so there's no equivalent evidence to justify that
-      // trade-off too. Matches the precedent already set in
-      // startVoiceCloneRecording below (search "cleanest possible
-      // signal") — same reasoning, scoped here to what MicManager actually
-      // needs fixed rather than copying that block wholesale.
+      // settling. echoCancellation also disabled 2026-09-03: after AGC and
+      // noiseSuppression were off, the developer observed a persistent ~0.5s
+      // dropout starting ~0.5s into each recording, still desktop-only,
+      // absent on Android. That pattern (timing, platform specificity) is
+      // the echo-cancellation adaptive filter convergence window: it fires
+      // right after Gethro's TTS finished playing and attenuates audio it
+      // mistakes for echo while it converges. In this app's flow the mic
+      // never starts until gethroSpeak() fully resolves, so there is no
+      // genuine simultaneous playback+recording for echo cancellation to
+      // guard against — it was costing audio for no protective benefit.
+      // Now matches startVoiceCloneRecording exactly — all three browser
+      // audio-processing steps disabled for the cleanest possible signal.
       try {
         _stream = await navigator.mediaDevices.getUserMedia({
-          audio: { autoGainControl: false, noiseSuppression: false }
+          audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
         });
       } catch(permErr) {
         return permErr;
