@@ -5155,7 +5155,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.153';
+  const APP_VERSION = 'v7.154';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8343,14 +8343,34 @@
         // APP-6x: archive this reply's audio — fire-and-forget, before the
         // decode/playback below, so a decode failure or fallback further
         // down can never suppress archiving of audio we did genuinely get
-        // back from the server. skipTranscode=true: azure-tts-proxy already
-        // returns 16kHz mono WAV (decision 6) — this is already exactly the
-        // format append_conversation_turn requires, so re-running it through
-        // the mic-recording transcode path would just be wasted decode/
-        // encode work on every single reply, not a correctness fix.
+        // back from the server.
+        // FIXED 2026-09-03 — real bug found by the developer testing a
+        // cloned (Inworld) voice: this used to hardcode 'audio/wav' and
+        // skipTranscode=true unconditionally, which is only actually true
+        // for azure-tts-proxy (decision 6). _ttsUrlFor routes cloned
+        // voices to INWORLD_TTS_PROXY_URL instead — a completely separate
+        // function, never touched by decision 6, whose real output format
+        // is whatever Inworld's API returns (not WAV). Mislabelling that
+        // as WAV meant append_conversation_turn's server-side RIFF check
+        // rejected every single one of those turns with a 400 — Gethro's
+        // cloned-voice replies were never silently skipped client-side,
+        // they were being sent and rejected, turn after turn, which is why
+        // playback had exact silence gaps where Gethro spoke rather than
+        // just missing audio. Now reads the ACTUAL content-type the
+        // response returned instead of assuming — self-correct if either
+        // backend's format ever changes again, not just a one-off patch
+        // for today's two known backends.
+        var ttsContentType = (res.headers.get('content-type') || '').toLowerCase();
+        var ttsIsWav = ttsContentType.indexOf('wav') !== -1;
         if (opts && opts.archive) {
           try {
-            _agpAppendConversationTurn(new Blob([arrayBuf], { type: 'audio/wav' }), 'audio/wav', true).catch(function(){});
+            var archiveBlob = new Blob([arrayBuf], { type: ttsIsWav ? 'audio/wav' : (ttsContentType || 'audio/mpeg') });
+            // skipTranscode only when we KNOW it's already WAV — otherwise
+            // (Inworld, or anything else) this routes through the exact
+            // same MicManager.toWav16kMono decode-and-resample path
+            // already proven on the interviewee's mic audio, codec-
+            // agnostic via decodeAudioData, not a WAV-specific shortcut.
+            _agpAppendConversationTurn(archiveBlob, archiveBlob.type, ttsIsWav).catch(function(){});
           } catch(e) {}
         }
         // Use AudioContext to decode and play — bypasses Chrome desktop autoplay
@@ -23113,12 +23133,16 @@
   // Deliberately never awaited by callers and never throws outward — a
   // failure here must not affect the actual conversation UX, which has
   // already succeeded (transcription/reply) by the time this runs.
-  // skipTranscode: true when the caller already knows this is 16kHz mono
-  // WAV (currently only gethroSpeak's archive path — azure-tts-proxy
-  // guarantees that format, decision 6) — skips MicManager.toWav16kMono
-  // entirely rather than decoding and re-encoding audio that is already in
-  // exactly the target format. Mic-captured audio (the default, false)
-  // still always needs that transcode — its actual format depends on
+  // skipTranscode: true only when the caller has CONFIRMED (not assumed)
+  // this is already 16kHz mono WAV — skips MicManager.toWav16kMono
+  // entirely rather than decoding and re-encoding audio already in exactly
+  // the target format. gethroSpeak's archive path checks the TTS
+  // response's actual content-type per call (fixed 2026-09-03 — see that
+  // function's own comment for the bug this fixed: azure-tts-proxy really
+  // does return WAV, but cloned voices route to a separate Inworld backend
+  // that does not, and assuming both did was silently dropping every
+  // cloned-voice reply). Mic-captured audio (the default, false) always
+  // needs the transcode regardless — its actual format depends on
   // whatever codec the browser's MediaRecorder chose.
   async function _agpAppendConversationTurn(blob, mime, skipTranscode) {
     try {
