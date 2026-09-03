@@ -5155,7 +5155,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.156';
+  const APP_VERSION = 'v7.157';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8304,6 +8304,16 @@
       if (!text || !text.trim()) { resolve(); return; }
       gethroCancel();
       dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
+      // 2026-09-03: pre-warm the mic stream NOW, while TTS is fetching and
+      // playing. By the time resolve() fires and the caller's .then() opens
+      // the mic for real, the OS audio pipeline has already initialised and
+      // the hardware is warm — eliminating the cold-open ~0.5s dropout on
+      // desktop Chrome. Fire-and-forget: failure is silent and start() falls
+      // back to a cold open. cancelPrewarm() is called at resolve() so any
+      // call site that does NOT follow gethroSpeak with startMemMic() won't
+      // leak an open stream — start() consumes and nulls _prewarmStream,
+      // so cancelPrewarm() is a no-op when startMemMic follows normally.
+      MicManager.prewarm().catch(function(){});
       try {
         // JWT ON: token sent as Authorization header. getSession() refreshes it if near-expiry.
         var freshToken = sessionToken;
@@ -9163,6 +9173,15 @@
     var _active      = false;
     var _mime        = '';
     var _callbacks   = {};
+    // 2026-09-03: pre-warm stream — opened silently during gethroSpeak() so the
+    // mic hardware is already live by the time start() is called. Eliminates the
+    // ~0.5s cold-open dropout on desktop Chrome (getUserMedia initialises the OS
+    // audio capture pipeline synchronously on the first open; subsequent opens on
+    // the same device reuse the warm hardware). Android is unaffected because its
+    // audio subsystem stays warm. Prewarm is silent — no recorder, no AnalyserNode,
+    // no chunks — just tracks open. start() adopts it; release() and prewarm() both
+    // stop tracks so we never leak.
+    var _prewarmStream = null;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -9475,37 +9494,65 @@
       _silenceRAF = requestAnimationFrame(_silenceLoop);
     }
 
+    // prewarm() — open the mic stream silently, without starting a recorder.
+    // Call at the start of gethroSpeak() so the OS audio pipeline is warm
+    // by the time start() is called. Fire-and-forget: if it fails (no
+    // permission, already active) it's a no-op — start() falls back to a
+    // cold open. Never call if already active (recording in progress).
+    async function prewarm() {
+      if (_active || _prewarmStream) return; // already recording or already prewarmed
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      try {
+        _prewarmStream = await navigator.mediaDevices.getUserMedia({
+          audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+        });
+        dbg('MIC_MGR', 'Prewarm stream open — mic hardware warm and ready');
+      } catch(e) {
+        dbg('MIC_MGR', 'Prewarm failed (will cold-open on start):', e.message);
+        _prewarmStream = null;
+      }
+    }
+
+    // cancelPrewarm() — release the prewarm stream if start() was never called
+    // (e.g. user navigated away, or gethroSpeak was cancelled). Harmless if
+    // no prewarm stream exists.
+    function cancelPrewarm() {
+      if (_prewarmStream) {
+        _prewarmStream.getTracks().forEach(function(t){ t.stop(); });
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Prewarm stream released (start never called)');
+      }
+    }
+
     async function start(opts) {
       if (_active) return false;
       opts = opts || {};
 
-      // Acquire stream
-      // FIXED 2026-09-03: was { audio: true }, no constraints — left the
-      // browser's default AutoGainControl and noise-suppression voice-
-      // activity gate running. The developer confirmed this wasn't just a
-      // cosmetic archive-audio issue (loud start + a small interruption on
-      // laptop, absent on Android): it was actively garbling real
-      // transcription — "Mrs. Patton" came back as "Mrs", then "Says Pat",
-      // taking three tries to land correctly, specifically because those
-      // first few words are exactly where AGC/noise-suppression are still
-      // settling. echoCancellation also disabled 2026-09-03: after AGC and
-      // noiseSuppression were off, the developer observed a persistent ~0.5s
-      // dropout starting ~0.5s into each recording, still desktop-only,
-      // absent on Android. That pattern (timing, platform specificity) is
-      // the echo-cancellation adaptive filter convergence window: it fires
-      // right after Gethro's TTS finished playing and attenuates audio it
-      // mistakes for echo while it converges. In this app's flow the mic
-      // never starts until gethroSpeak() fully resolves, so there is no
-      // genuine simultaneous playback+recording for echo cancellation to
-      // guard against — it was costing audio for no protective benefit.
-      // Now matches startVoiceCloneRecording exactly — all three browser
-      // audio-processing steps disabled for the cleanest possible signal.
-      try {
-        _stream = await navigator.mediaDevices.getUserMedia({
-          audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
-        });
-      } catch(permErr) {
-        return permErr;
+      // Acquire stream — reuse prewarm stream if available (2026-09-03).
+      // Prewarm is opened silently at the start of gethroSpeak() so the
+      // OS audio capture pipeline is already warm by the time the user
+      // starts speaking. On desktop Chrome a cold getUserMedia open has a
+      // measurable hardware-init latency (~0.5s dropout at mic-open) that
+      // is absent on Android because Android's audio subsystem stays warm.
+      // If prewarm raced and lost (start() called before prewarm resolved,
+      // or prewarm was never triggered) we fall back to a fresh open.
+      // All three browser audio-processing steps disabled (2026-09-03) —
+      // AGC and noiseSuppression caused transcription garbling in the first
+      // few words; echoCancellation's convergence window caused the same
+      // dropout when those two were fixed. Matches startVoiceCloneRecording.
+      if (_prewarmStream) {
+        _stream = _prewarmStream;
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Adopted prewarm stream — skipping cold getUserMedia open');
+      } else {
+        try {
+          _stream = await navigator.mediaDevices.getUserMedia({
+            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+          });
+          dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
+        } catch(permErr) {
+          return permErr;
+        }
       }
 
       _mime      = _pickMime(opts.mime || null);
@@ -9548,6 +9595,9 @@
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
       if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
+      // Also clean up any prewarm stream that was never adopted by start()
+      // (e.g. recording cancelled, user navigated away mid-TTS).
+      cancelPrewarm();
       _recorder = null;
       _chunks   = [];
       _active   = false;
@@ -9562,6 +9612,8 @@
       get stream()   { return _stream; },  // read-only: AGP flush uses stream to restart its own recorder
       get mime()     { return _mime; },
       get chunks()   { return _chunks; },  // read-only access for archive accumulation (Phase 1)
+      prewarm: prewarm,           // 2026-09-03: open mic hardware silently during gethroSpeak
+      cancelPrewarm: cancelPrewarm, // release prewarm stream if start() never called
       start:   start,
       flush:   flush,
       stop:    stop,
