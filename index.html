@@ -5155,7 +5155,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.154';
+  const APP_VERSION = 'v7.155';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9480,8 +9480,26 @@
       opts = opts || {};
 
       // Acquire stream
+      // FIXED 2026-09-03: was { audio: true }, no constraints — left the
+      // browser's default AutoGainControl and noise-suppression voice-
+      // activity gate running. The developer confirmed this wasn't just a
+      // cosmetic archive-audio issue (loud start + a small interruption on
+      // laptop, absent on Android): it was actively garbling real
+      // transcription — "Mrs. Patton" came back as "Mrs", then "Says Pat",
+      // taking three tries to land correctly, specifically because those
+      // first few words are exactly where AGC/noise-suppression are still
+      // settling. Echo cancellation left ON — nothing in the reported
+      // symptoms implicates it, and this stream can genuinely overlap with
+      // Gethro's own TTS audio in ways AGC/noise-suppression don't need to
+      // worry about, so there's no equivalent evidence to justify that
+      // trade-off too. Matches the precedent already set in
+      // startVoiceCloneRecording below (search "cleanest possible
+      // signal") — same reasoning, scoped here to what MicManager actually
+      // needs fixed rather than copying that block wholesale.
       try {
-        _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        _stream = await navigator.mediaDevices.getUserMedia({
+          audio: { autoGainControl: false, noiseSuppression: false }
+        });
       } catch(permErr) {
         return permErr;
       }
