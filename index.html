@@ -5183,7 +5183,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.159';
+  const APP_VERSION = 'v7.160';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -7477,6 +7477,7 @@
         await loadFeatureUsage(); // Supabase-backed feature counters
         await loadMilestones();   // UX-NEW-05: milestone celebration state
         await loadEmailPrefs();   // weekly email nudge opt-in
+        await loadAutoFillDefaultsPref(); // auto-fill title/location/date/people on memory save
         await loadSubscriptionTier(); // SUB-05: cache subscription tier for isPremium()
         await loadVoicePrefs();       // APP-53: cache gethro_voice_id + story_reader_voice_id
         refreshPremiumGates();         // SUB-05: apply premium header/UI immediately on login
@@ -10679,7 +10680,7 @@
   async function memSaveCurrentEntry() {
     const { title, answer, tags } = memReadEntry();
     if (!answer && !title && !recPhotos.length && !recAudios.length) return null;
-    const fullTags = title ? { ...tags, title } : tags;
+    const fullTags = applyMemorySaveDefaults(title ? { ...tags, title } : tags, answer);
     const text  = answer || (title ? '(see title)' : 'Photo entry');
     const entryQuestion = recCurQuestion || null;
 
@@ -19507,6 +19508,11 @@
   // ── Weekly email nudge preferences ────────────────────────────────
   var _emailNudge = { enabled: false, frequency: 'weekly' };
 
+  // ── Auto-fill defaults on memory save (title/location/date/people) ────────
+  // Default ON — persisted per-user in life_settings under key
+  // 'auto_fill_memory_defaults'. Row absent (new/older user) = treated as ON.
+  var _autoFillMemoryDefaults = true;
+
   async function loadEmailPrefs() {
     if (!currentUser) return;
     try {
@@ -19585,6 +19591,229 @@
     _emailNudge.frequency = freq;
     renderEmailPrefsUI();
     await saveEmailPrefKey('weekly_email_frequency', freq);
+  }
+
+  // ── Auto-fill memory defaults setting ──────────────────────────────
+  async function loadAutoFillDefaultsPref() {
+    if (!currentUser) return;
+    try {
+      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.auto_fill_memory_defaults', {
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) return;
+      var rows = await res.json();
+      // No row yet = treat as ON (default-ticked for everyone, incl. existing users)
+      _autoFillMemoryDefaults = rows.length ? (rows[0].value === 'true' || rows[0].value === true) : true;
+      renderAutoFillDefaultsUI();
+    } catch(e) { dbgWarn('SETTINGS', 'loadAutoFillDefaultsPref error:', e.message); }
+  }
+
+  function renderAutoFillDefaultsUI() {
+    var check = document.getElementById('autoFillDefaultsCheck');
+    if (check) check.checked = _autoFillMemoryDefaults;
+  }
+
+  async function toggleAutoFillDefaults() {
+    var check = document.getElementById('autoFillDefaultsCheck');
+    _autoFillMemoryDefaults = check ? check.checked : !_autoFillMemoryDefaults;
+    if (!currentUser) return;
+    try {
+      await fetch(DB_SETTINGS_URL, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, key: 'auto_fill_memory_defaults', value: String(_autoFillMemoryDefaults), updated_at: new Date().toISOString() })
+      });
+    } catch(e) { dbgWarn('SETTINGS', 'toggleAutoFillDefaults error:', e.message); }
+  }
+
+  // ── Derive a default title from free-text answer ───────────────────
+  // Prefers the first sentence; falls back to a truncated snippet.
+  function _memDefaultTitleFromText(text) {
+    if (!text) return '';
+    var clean = text.replace(/\s+/g, ' ').trim();
+    if (!clean) return '';
+    var MAX = 60;
+    var m = clean.match(/^[^.!?]{3,80}[.!?]/);
+    var base = m ? m[0].slice(0, -1).trim() : clean;
+    if (base.length > MAX) {
+      var cut = base.slice(0, MAX);
+      var lastSpace = cut.lastIndexOf(' ');
+      if (lastSpace > 20) cut = cut.slice(0, lastSpace);
+      base = cut.trim() + '…';
+    }
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  }
+
+  // ── Most recent location the user has recorded, if any ─────────────
+  function _memLastKnownLocation() {
+    if (typeof entries === 'undefined' || !Array.isArray(entries) || !entries.length) return '';
+    var withLoc = entries.filter(function(e) { return e && e.location && !e.parent_entry_id; });
+    if (!withLoc.length) return '';
+    withLoc.sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
+    return withLoc[0].location;
+  }
+
+  // ── Detect people already known (family tree) mentioned in the text ─
+  function _memDetectKnownPeopleInText(text) {
+    if (!text || typeof _mpPeople === 'undefined' || !_mpPeople.length) return '';
+    var matched = [];
+    _mpPeople.forEach(function(p) {
+      if (!p || !p.name || p.relationship_type === 'self') return;
+      var full = p.name.trim();
+      if (!full) return;
+      var first = full.split(' ')[0];
+      var esc = function(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+      var reFull  = new RegExp('\\b' + esc(full)  + '\\b', 'i');
+      var reFirst = new RegExp('\\b' + esc(first) + '\\b', 'i');
+      if ((reFull.test(text) || reFirst.test(text)) && matched.indexOf(full) === -1) {
+        matched.push(full);
+      }
+    });
+    return matched.join(', ');
+  }
+
+  // ── Birth year for whoever the memory is about ──────────────────────
+  // Self-mode: the account holder's own DOB (userProfile.dob).
+  // "Other" mode (writing someone else's story, e.g. Mum): prefer that
+  // person's DOB from the family tree if they've been added with one;
+  // fall back to the account holder's DOB only if the subject isn't found.
+  function _memBirthYearForSubject() {
+    var dobStr = null;
+    if (userProfile && userProfile.subjectMode === 'other' && userProfile.subjectName
+        && typeof _mpPeople !== 'undefined' && _mpPeople.length) {
+      var subjLower = userProfile.subjectName.trim().toLowerCase();
+      var subjPerson = _mpPeople.find(function(p) { return p && p.name && p.name.trim().toLowerCase() === subjLower; });
+      if (subjPerson && subjPerson.dob) dobStr = subjPerson.dob;
+    }
+    if (!dobStr && userProfile && userProfile.dob) dobStr = userProfile.dob;
+    if (!dobStr) return null;
+    var m = dobStr.match(/\b(18|19|20)\d{2}\b/);
+    if (m) return parseInt(m[0], 10);
+    var parsed = new Date(dobStr);
+    if (!isNaN(parsed.getTime())) return parsed.getFullYear();
+    return null;
+  }
+
+  // ── "When I was 10" → an actual year, but only if we know a birth year ──
+  // Patterns are restricted to phrasings that explicitly say "I" — this
+  // avoids misreading someone else's age ("She was 10 years old...", "My
+  // brother was 10...") as the story subject's, and avoids non-age uses of
+  // "years old" ("The house was 100 years old").
+  function _memDetectAgeYear(text) {
+    var birthYear = _memBirthYearForSubject();
+    if (!birthYear) return '';
+    var patterns = [
+      /\bwhen\s+I\s+was\s+(\d{1,3})\b/i,
+      /\bI\s+was\s+(\d{1,3})\s+when\b/i,
+      /\bI\s+was\s+(\d{1,3})\s*years?\s*old\b/i,
+      /\bI\s+turned\s+(\d{1,3})\b/i,
+      /\bat\s+(?:the\s+)?age\s+of\s+(\d{1,3})\s*,?\s*I\b/i,
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = text.match(patterns[i]);
+      if (!m) continue;
+      var age = parseInt(m[1], 10);
+      if (age < 0 || age > 110) continue;
+      var year = birthYear + age;
+      var curYear = new Date().getFullYear();
+      if (year >= 1900 && year <= curYear) return String(year);
+    }
+    return '';
+  }
+
+  // ── Derive a date only when the text itself clearly states one ─────
+  // High-certainty extraction only — explicit year, month+year, season+year,
+  // an unambiguous decade, or an age we can resolve against a known birth
+  // year. Anything vaguer (an age with no birth year on file, "years ago",
+  // "when I was young") is left blank rather than guessed, and today's date
+  // is never used as a fallback — "today" tells us nothing about when the
+  // memory being described actually happened.
+  function _memDetectDateFromText(text) {
+    if (!text) return '';
+    var CUR_YEAR = new Date().getFullYear();
+    var MIN_YEAR = 1900;
+
+    // 1) "12 March 1985" / "March 12, 1985" / "March 1985" — month names are
+    //    unambiguous, so day+month+year or bare month+year are high confidence.
+    var months = '(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\.?';
+    var reMonthYear = new RegExp(
+      '\\b(?:(\\d{1,2})(?:st|nd|rd|th)?\\s+)?' + months + '(?:\\s+(\\d{1,2})(?:st|nd|rd|th)?,?)?\\s+(19\\d{2}|20\\d{2})\\b', 'i'
+    );
+    var mmy = text.match(reMonthYear);
+    if (mmy) {
+      var yy = parseInt(mmy[4], 10);
+      if (yy >= MIN_YEAR && yy <= CUR_YEAR) return mmy[0].trim();
+    }
+
+    // 2) "Summer 1985" / "spring of 1972" — season + explicit year.
+    var reSeasonYear = /\b(spring|summer|autumn|fall|winter)\s+(?:of\s+)?(19\d{2}|20\d{2})\b/i;
+    var sy = text.match(reSeasonYear);
+    if (sy) {
+      var syYear = parseInt(sy[2], 10);
+      if (syYear >= MIN_YEAR && syYear <= CUR_YEAR) {
+        var season = sy[1].charAt(0).toUpperCase() + sy[1].slice(1).toLowerCase();
+        return season + ' ' + syYear;
+      }
+    }
+
+    // 3) A 4-digit decade — "the 1980s" / "1930s" — fully unambiguous.
+    var reDecade4 = /\b(19[0-9]0|20[0-9]0)s\b/;
+    var d4 = text.match(reDecade4);
+    if (d4) {
+      var d4Year = parseInt(d4[1], 10);
+      if (d4Year >= MIN_YEAR && d4Year <= CUR_YEAR) return d4[1] + 's';
+    }
+
+    // 4) A bare 4-digit year — "in 1985" / "1985 was the year…".
+    var reYear = /\b(19\d{2}|20\d{2})\b/;
+    var y = text.match(reYear);
+    if (y) {
+      var yr = parseInt(y[1], 10);
+      if (yr >= MIN_YEAR && yr <= CUR_YEAR) return y[1];
+    }
+
+    // 5) A 2-digit decade — "the 80s" / "early 70s" / "back in the 80s".
+    //    Only accept 30s-90s: anything 00s/10s/20s is genuinely ambiguous
+    //    between this century and last (we're only in the 2020s ourselves),
+    //    so those are left blank rather than guessed.
+    var reDecade2 = /\b(early|mid|late)?[\s-]*(?:the\s+)?'?([3-9]0)s\b/i;
+    var d2 = text.match(reDecade2);
+    if (d2) {
+      var prefix = d2[1] ? d2[1].charAt(0).toUpperCase() + d2[1].slice(1).toLowerCase() + ' ' : '';
+      return prefix + '19' + d2[2] + 's';
+    }
+
+    // 6) "When I was 10" / "at the age of 10" / "aged 10" — only resolvable
+    //    into a real year if we know the relevant person's birth year.
+    var ageYear = _memDetectAgeYear(text);
+    if (ageYear) return ageYear;
+
+    return '';
+  }
+
+  // ── Apply auto-fill defaults to a tags object ahead of saving ───────
+  // Only fills fields that are currently blank — never overwrites anything
+  // the user has explicitly set. No-op unless the setting is ticked.
+  function applyMemorySaveDefaults(tags, text) {
+    if (!_autoFillMemoryDefaults) return tags;
+    var out = { ...tags };
+    if (!out.title) {
+      var t = _memDefaultTitleFromText(text);
+      if (t) out.title = t;
+    }
+    if (!out.date) {
+      var dt = _memDetectDateFromText(text);
+      if (dt) out.date = dt; // only set when the text itself states a date — never defaults to today
+    }
+    if (!out.location) {
+      var loc = _memLastKnownLocation();
+      if (loc) out.location = loc;
+    }
+    if (!out.people) {
+      var people = _memDetectKnownPeopleInText(text);
+      if (people) out.people = people;
+    }
+    return out;
   }
 
   // ── UX-M09: Tokenised one-click unsubscribe ───────────────────────
@@ -25449,6 +25678,7 @@
     var el = document.getElementById('settingsOverlay');
     if (el) el.style.display = 'flex';
     renderEmailPrefsUI();
+    renderAutoFillDefaultsUI();
     renderSubjectSettingsSection(); // FAM-01b
     loadSubscriptionTier().then(refreshPremiumGates); // SUB-05
     renderPrivacySettingsSection(); // SUB-31
@@ -27892,6 +28122,7 @@
     on('profileModeSelf',      'click', function() { _profileUpdateModeBtns('self'); });
     on('profileModeOther',     'click', function() { _profileUpdateModeBtns('other'); setTimeout(function() { var el = document.getElementById('profileSubjectName'); if (el) el.focus(); }, 100); });
     on('settingsBtn',          'click', openSettings);
+    on('autoFillDefaultsCheck','change', toggleAutoFillDefaults);
     on('signOutBtn',    'click', signOut);
     // ── FE-01: Final Edit overlay ─────────────────────────────────────────
     on('feCloseBtn',    'click', closeFinalEdit);
@@ -28845,6 +29076,18 @@
         </div>
       </div>
       <p id="emailNudgeStatus" style="font-size:0.78rem;color:var(--text-light);margin:0"></p>
+    </div>
+
+    <!-- Auto-fill memory defaults -->
+    <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border)">
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">🪄 Memory Saving</h4>
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+        <input id="autoFillDefaultsCheck" type="checkbox" checked style="margin-top:3px;flex-shrink:0">
+        <span style="font-size:0.85rem;color:var(--text);line-height:1.55">
+          Auto-fill title, location, date and tag people when saving memories
+          <span style="display:block;margin-top:4px;font-size:0.78rem;color:var(--text-light)">If a title's blank, we'll create one from your text. We'll fill in the location if we know it, tag anyone from your family tree we spot in the text, and set the date — but only when your text clearly states one (a year, decade, month or season, or an age like "when I was 10" if we know a birth year) — we never guess or use today's date. It only ever fills in blanks, never overwrites what you've entered.</span>
+        </span>
+      </label>
     </div>
 
     <!-- SUB-31: Your Privacy -->
