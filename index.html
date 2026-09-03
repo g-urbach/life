@@ -5183,7 +5183,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.160';
+  const APP_VERSION = 'v7.161';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -19644,13 +19644,41 @@
     return base.charAt(0).toUpperCase() + base.slice(1);
   }
 
-  // ── Most recent location the user has recorded, if any ─────────────
-  function _memLastKnownLocation() {
-    if (typeof entries === 'undefined' || !Array.isArray(entries) || !entries.length) return '';
-    var withLoc = entries.filter(function(e) { return e && e.location && !e.parent_entry_id; });
-    if (!withLoc.length) return '';
-    withLoc.sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
-    return withLoc[0].location;
+  // ── Detect a location the user has used before, mentioned in this text ──
+  // Deliberately does NOT carry forward the most recent entry's location
+  // regardless of content — that produced wrong results whenever an entry
+  // is actually about somewhere else (e.g. "when I was travelling around
+  // Mexico" while the last entry saved was tagged with a home address).
+  // Only fires when a place the user has tagged before is actually named
+  // in this entry's text — same "known things mentioned in text" approach
+  // used for people-tagging below. A location never mentioned before is
+  // left blank rather than guessed, just like the date logic.
+  function _memKnownLocationsList() {
+    if (typeof entries === 'undefined' || !Array.isArray(entries)) return [];
+    var seen = {};
+    var out = [];
+    entries.forEach(function(e) {
+      if (!e || !e.location) return;
+      var loc = e.location.trim();
+      if (!loc || seen[loc.toLowerCase()]) return;
+      seen[loc.toLowerCase()] = true;
+      out.push(loc);
+    });
+    // Longest first so a more specific match wins (e.g. "Mexico City" over "Mexico")
+    out.sort(function(a, b) { return b.length - a.length; });
+    return out;
+  }
+
+  function _memDetectLocationInText(text) {
+    if (!text) return '';
+    var known = _memKnownLocationsList();
+    for (var i = 0; i < known.length; i++) {
+      var loc = known[i];
+      var esc = loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var re = new RegExp('\\b' + esc + '\\b', 'i');
+      if (re.test(text)) return loc;
+    }
+    return '';
   }
 
   // ── Detect people already known (family tree) mentioned in the text ─
@@ -19806,8 +19834,8 @@
       if (dt) out.date = dt; // only set when the text itself states a date — never defaults to today
     }
     if (!out.location) {
-      var loc = _memLastKnownLocation();
-      if (loc) out.location = loc;
+      var loc = _memDetectLocationInText(text);
+      if (loc) out.location = loc; // only a place already known from past entries, and only when this text names it
     }
     if (!out.people) {
       var people = _memDetectKnownPeopleInText(text);
@@ -29085,7 +29113,7 @@
         <input id="autoFillDefaultsCheck" type="checkbox" checked style="margin-top:3px;flex-shrink:0">
         <span style="font-size:0.85rem;color:var(--text);line-height:1.55">
           Auto-fill title, location, date and tag people when saving memories
-          <span style="display:block;margin-top:4px;font-size:0.78rem;color:var(--text-light)">If a title's blank, we'll create one from your text. We'll fill in the location if we know it, tag anyone from your family tree we spot in the text, and set the date — but only when your text clearly states one (a year, decade, month or season, or an age like "when I was 10" if we know a birth year) — we never guess or use today's date. It only ever fills in blanks, never overwrites what you've entered.</span>
+          <span style="display:block;margin-top:4px;font-size:0.78rem;color:var(--text-light)">If a title's blank, we'll create one from your text. We'll fill in the location only if it's a place you've tagged before and your text actually names it, tag anyone from your family tree we spot in the text, and set the date only when your text clearly states one (a year, decade, month or season, or an age like "when I was 10" if we know a birth year) — we never guess, and never use today's date or your last-used location by default. It only ever fills in blanks, never overwrites what you've entered.</span>
         </span>
       </label>
     </div>
