@@ -5183,7 +5183,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.161';
+  const APP_VERSION = 'v7.162';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9097,7 +9097,10 @@
     featTrackSave();
     featCheckNudge();
     checkMilestones(); // UX-NEW-05: milestone celebration moments
-    toast('Memory saved ✓');
+    // Longer than the default toast (3s) — this is the one confirmation that
+    // something saved at all, and it's easy to miss during the panel
+    // transition straight after a Gethro conversation save.
+    toast('Memory saved ✓', 4500);
   }
 
   // ── New entry: warn if unsaved content, then clear ───────────────
@@ -17593,7 +17596,6 @@
 
       return `<div class="entry-card" id="${safeId}" style="margin-bottom:12px">
         <div class="entry-meta">
-          <span class="entry-cat">${e.chapter || e.category || 'Unspecified'}</span>
           <span class="entry-date">${new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}${e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : ''}</span>
           ${e.id ? `<button class="entry-delete-btn" data-action="delete-entry" data-id="${escHtml(e.id)}" title="Delete">✕</button>` : ''}
         </div>
@@ -18579,9 +18581,10 @@
           }).join('') + '</div>'
         : '';
 
-      const wc = e.answer ? e.answer.trim().split(/\s+/).filter(Boolean).length : 0;
-      const wcLabel = wc < 50 ? '🔴' : wc < 150 ? '🟡' : '🟢';
-      const wcBadge = wc > 0 ? `<span style="font-size:0.72rem;color:var(--text-light);margin-left:auto;padding-right:6px" title="${wc} words">${wcLabel} ${wc}w</span>` : '';
+      // Word count / chapter badges intentionally removed from the card header
+      // per user request — chapter still appears in the tag chips below (via
+      // buildTagChips/getEntryTags) but only when actually set, never as an
+      // "Unspecified" placeholder, and word count is no longer shown at all.
 
       // APP-55 Phase 6: Voice archive conversation thread
       // Rows are already loaded into _voiceArchiveCache per entry.
@@ -18804,8 +18807,6 @@
         cardDataAction + '>' +
         selectOverlay +
         '<div class="entry-meta">' +
-          '<span class="entry-cat">' + escHtml(e.chapter || e.category || 'Unspecified') + '</span>' +
-          wcBadge +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
           (!_selectMode && !isStoryMode && e.id ? '<button class="entry-delete-btn" data-action="delete-entry" data-id="' + escHtml(e.id) + '" title="Delete">✕</button>' : '') +
         '</div>' +
@@ -19644,6 +19645,149 @@
     return base.charAt(0).toUpperCase() + base.slice(1);
   }
 
+  // ── Common capitalised words that are never a person or place name ──
+  // Used to trim junk off the end/start of a heuristic proper-noun capture
+  // (e.g. "Guatemala I" → "Guatemala", not a two-word place called
+  // "Guatemala I"). Kept short and generic on purpose — this only needs to
+  // catch the words that would otherwise leak into a capture, not be a full
+  // stopword dictionary.
+  var _MEM_STOPWORDS = new Set([
+    'I','The','A','An','We','He','She','They','You','It','This','That','These','Those',
+    'My','His','Her','Their','Our','Its','Your',
+    'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday',
+    'January','February','March','April','May','June','July','August','September','October','November','December',
+    'Jan','Feb','Mar','Apr','Jun','Jul','Aug','Sep','Sept','Oct','Nov','Dec',
+    'Spring','Summer','Autumn','Fall','Winter',
+    'Mr','Mrs','Ms','Dr','God','Christmas','Easter',
+    'Yes','No','Ok','Okay','Please','Thanks','Thank','Hello','Hi','Hey'
+  ]);
+
+  // ── Liberal proper-noun capture: "<cue word> <Capitalised Phrase>" ─────
+  // Shared by the location and people heuristics below — only the cue list
+  // differs (locative prepositions vs relational words). Captures 1-3
+  // consecutive capitalised tokens (Unicode-aware, so accented names like
+  // "Atitlán" work), skips an optional leading "the/a/an", and trims any
+  // stopword that ends up at either edge of the capture (e.g. a sentence
+  // boundary pulling in the next word's leading pronoun).
+  // Deliberately loose by design (per user request) — this trades some
+  // false positives for much better recall, and is always correctable via
+  // Edit tags, and can be switched off entirely in Settings.
+  // ── Case-variant cue list, without touching the proper-noun capture ────
+  // The cue words themselves need to match both "in Guatemala" (sentence
+  // start, capitalised) and "stayed in Venice Beach" (mid-sentence,
+  // lowercase) — so each cue gets an explicit capitalised variant added
+  // instead of using a case-insensitive flag, which would otherwise also
+  // make the proper-noun capture itself match lowercase words.
+  function _memCueVariants(cueSource) {
+    return cueSource.split('|').map(function(c) {
+      var capped = c.charAt(0).toUpperCase() + c.slice(1);
+      return capped === c ? c : c + '|' + capped;
+    }).join('|');
+  }
+
+  function _memExtractCuedProperNouns(text, cueSource) {
+    var TOKEN  = "[A-Z][\\p{L}'\u2019-]*";
+    var PHRASE = TOKEN + "(?:\\s+" + TOKEN + "){0,2}";
+    var re;
+    try {
+      var cues = _memCueVariants(cueSource);
+      re = new RegExp('\\b(?:' + cues + ')\\s+(?:the\\s+|a\\s+|an\\s+|The\\s+|A\\s+|An\\s+)?(' + PHRASE + ')', 'gu');
+    } catch (e) {
+      return []; // no Unicode-property-escape support in this environment — fail safe
+    }
+    var out = [];
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      var words = m[1].trim().split(/\s+/);
+      while (words.length && _MEM_STOPWORDS.has(words[words.length - 1])) words.pop();
+      while (words.length && _MEM_STOPWORDS.has(words[0])) words.shift();
+      if (!words.length) continue;
+      var phrase = words.join(' ');
+      if (phrase.length < 2) continue;
+      out.push(phrase);
+    }
+    return out;
+  }
+
+  // ── Merge newly detected values into an existing comma-list tag ────────
+  // Never removes or changes anything already there — only appends values
+  // not already present (case-insensitive dedup).
+  function _memMergeTagValues(existingVal, detectedList) {
+    var existing = (existingVal || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    var seen = {};
+    existing.forEach(function(v) { seen[v.toLowerCase()] = true; });
+    detectedList.forEach(function(v) {
+      var key = v.toLowerCase();
+      if (!seen[key]) { seen[key] = true; existing.push(v); }
+    });
+    return existing.join(', ');
+  }
+
+  // ── Locations mentioned in this text — a list, not a single guess ──────
+  // Combines two sources: (1) places the user has tagged before, matched
+  // anywhere they're named in this text (as many as appear, not just the
+  // first — see _memKnownLocationsList), and (2) a liberal heuristic catching
+  // brand-new places too, any proper-noun phrase following a locative
+  // preposition ("in", "to", "at", "through", "near", etc.). (2) is
+  // deliberately loose — it will occasionally tag something that isn't
+  // really a place, that's the trade-off for not missing real ones, and
+  // it's why this whole feature has a Settings toggle.
+  function _memDetectLocationsInText(text) {
+    if (!text) return [];
+    var found = [];
+    var seen = {};
+    var known = _memKnownLocationsList();
+    known.forEach(function(k) {
+      var esc = k.candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var re = new RegExp('\\b' + esc + '\\b', 'i');
+      if (re.test(text)) {
+        var key = k.full.toLowerCase();
+        if (!seen[key]) { seen[key] = true; found.push(k.full); }
+      }
+    });
+    var cues = 'back in|in|to|at|through|throughout|around|near|from|towards?|across|via';
+    _memExtractCuedProperNouns(text, cues).forEach(function(loc) {
+      var key = loc.toLowerCase();
+      if (!seen[key]) { seen[key] = true; found.push(loc); }
+    });
+    return found;
+  }
+
+  // ── People mentioned in this text — a list, not a single guess ─────────
+  // Combines two sources: (1) anyone already in the family tree who's named
+  // in the text (full name or first name), and (2) a liberal heuristic
+  // catching people who AREN'T in the tree, any capitalised name following
+  // a relational cue word ("friend", "brother", "with", "named", etc.).
+  // (2) is deliberately loose, same trade-off as locations above. Neither
+  // source ever creates a new family-tree entry — a name only ever gets
+  // added to THIS entry's people tag, never inserted into My People.
+  function _memDetectPeopleInText(text) {
+    if (!text) return [];
+    var found = [];
+    var seen = {};
+    if (typeof _mpPeople !== 'undefined' && _mpPeople.length) {
+      _mpPeople.forEach(function(p) {
+        if (!p || !p.name || p.relationship_type === 'self') return;
+        var full = p.name.trim();
+        if (!full) return;
+        var first = full.split(' ')[0];
+        var esc = function(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+        var reFull  = new RegExp('\\b' + esc(full)  + '\\b', 'i');
+        var reFirst = new RegExp('\\b' + esc(first) + '\\b', 'i');
+        if (reFull.test(text) || reFirst.test(text)) {
+          var key = full.toLowerCase();
+          if (!seen[key]) { seen[key] = true; found.push(full); }
+        }
+      });
+    }
+    var cues = 'friend|friends|brother|sister|mother|father|mom|dad|mum|husband|wife|girlfriend|boyfriend|partner|cousin|aunt|uncle|neighbou?r|colleague|named|called|with';
+    _memExtractCuedProperNouns(text, cues).forEach(function(name) {
+      var key = name.toLowerCase();
+      if (!seen[key]) { seen[key] = true; found.push(name); }
+    });
+    return found;
+  }
+
   // ── Detect a location the user has used before, mentioned in this text ──
   // Deliberately does NOT carry forward the most recent entry's location
   // regardless of content — that produced wrong results whenever an entry
@@ -19656,48 +19800,30 @@
   function _memKnownLocationsList() {
     if (typeof entries === 'undefined' || !Array.isArray(entries)) return [];
     var seen = {};
-    var out = [];
+    var out = []; // { candidate: string to search for, full: value to actually store }
     entries.forEach(function(e) {
       if (!e || !e.location) return;
       var loc = e.location.trim();
-      if (!loc || seen[loc.toLowerCase()]) return;
-      seen[loc.toLowerCase()] = true;
-      out.push(loc);
-    });
-    // Longest first so a more specific match wins (e.g. "Mexico City" over "Mexico")
-    out.sort(function(a, b) { return b.length - a.length; });
-    return out;
-  }
-
-  function _memDetectLocationInText(text) {
-    if (!text) return '';
-    var known = _memKnownLocationsList();
-    for (var i = 0; i < known.length; i++) {
-      var loc = known[i];
-      var esc = loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      var re = new RegExp('\\b' + esc + '\\b', 'i');
-      if (re.test(text)) return loc;
-    }
-    return '';
-  }
-
-  // ── Detect people already known (family tree) mentioned in the text ─
-  function _memDetectKnownPeopleInText(text) {
-    if (!text || typeof _mpPeople === 'undefined' || !_mpPeople.length) return '';
-    var matched = [];
-    _mpPeople.forEach(function(p) {
-      if (!p || !p.name || p.relationship_type === 'self') return;
-      var full = p.name.trim();
-      if (!full) return;
-      var first = full.split(' ')[0];
-      var esc = function(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
-      var reFull  = new RegExp('\\b' + esc(full)  + '\\b', 'i');
-      var reFirst = new RegExp('\\b' + esc(first) + '\\b', 'i');
-      if ((reFull.test(text) || reFirst.test(text)) && matched.indexOf(full) === -1) {
-        matched.push(full);
+      if (!loc) return;
+      var key = loc.toLowerCase();
+      if (!seen[key]) { seen[key] = true; out.push({ candidate: loc, full: loc }); }
+      // Locations are often "City, Country" / "City, State" — also match on
+      // just the city so a text mentioning "Melbourne" still finds a
+      // previously-tagged "Melbourne, Australia", not only an exact repeat
+      // of the whole string.
+      var comma = loc.indexOf(',');
+      if (comma > 2) {
+        var head = loc.slice(0, comma).trim();
+        var headKey = 'h:' + head.toLowerCase();
+        if (head.length >= 3 && !seen[headKey]) {
+          seen[headKey] = true;
+          out.push({ candidate: head, full: loc });
+        }
       }
     });
-    return matched.join(', ');
+    // Longest candidate first so a more specific match wins (e.g. "Mexico City" over "Mexico")
+    out.sort(function(a, b) { return b.candidate.length - a.candidate.length; });
+    return out;
   }
 
   // ── Birth year for whoever the memory is about ──────────────────────
@@ -19820,8 +19946,11 @@
   }
 
   // ── Apply auto-fill defaults to a tags object ahead of saving ───────
-  // Only fills fields that are currently blank — never overwrites anything
-  // the user has explicitly set. No-op unless the setting is ticked.
+  // Title & date are single-value — only ever filled when blank, never
+  // overwritten. Location & people are multi-value — every save, any newly
+  // detected location/person gets appended to whatever's already tagged;
+  // nothing already there is ever removed or changed. No-op unless the
+  // Settings checkbox is ticked.
   function applyMemorySaveDefaults(tags, text) {
     if (!_autoFillMemoryDefaults) return tags;
     var out = { ...tags };
@@ -19833,14 +19962,10 @@
       var dt = _memDetectDateFromText(text);
       if (dt) out.date = dt; // only set when the text itself states a date — never defaults to today
     }
-    if (!out.location) {
-      var loc = _memDetectLocationInText(text);
-      if (loc) out.location = loc; // only a place already known from past entries, and only when this text names it
-    }
-    if (!out.people) {
-      var people = _memDetectKnownPeopleInText(text);
-      if (people) out.people = people;
-    }
+    var detectedLocations = _memDetectLocationsInText(text);
+    if (detectedLocations.length) out.location = _memMergeTagValues(out.location, detectedLocations);
+    var detectedPeople = _memDetectPeopleInText(text);
+    if (detectedPeople.length) out.people = _memMergeTagValues(out.people, detectedPeople);
     return out;
   }
 
@@ -20951,7 +21076,6 @@
       return '<div class="entry-card type-' + type + '" id="' + safeId + '">' +
         '<div class="entry-meta">' +
           getEntryTypeBadge(type) +
-          '<span class="entry-cat">' + escHtml(e.category || 'Unspecified') + '</span>' +
           '<span class="entry-date">' + new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + (e.updated_at && e.updated_at.substring(0,10) !== new Date(e.timestamp).toISOString().substring(0,10) ? ' <span style="color:var(--text-light);font-size:0.72rem">(edited ' + new Date(e.updated_at).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) + ')</span>' : '') + '</span>' +
           (e.id ? '<button class="entry-delete-btn" data-action="delete-entry" data-id="' + e.id + '" title="Delete entry">✕</button>' : '') +
         '</div>' +
@@ -29113,7 +29237,7 @@
         <input id="autoFillDefaultsCheck" type="checkbox" checked style="margin-top:3px;flex-shrink:0">
         <span style="font-size:0.85rem;color:var(--text);line-height:1.55">
           Auto-fill title, location, date and tag people when saving memories
-          <span style="display:block;margin-top:4px;font-size:0.78rem;color:var(--text-light)">If a title's blank, we'll create one from your text. We'll fill in the location only if it's a place you've tagged before and your text actually names it, tag anyone from your family tree we spot in the text, and set the date only when your text clearly states one (a year, decade, month or season, or an age like "when I was 10" if we know a birth year) — we never guess, and never use today's date or your last-used location by default. It only ever fills in blanks, never overwrites what you've entered.</span>
+          <span style="display:block;margin-top:4px;font-size:0.78rem;color:var(--text-light)">If a title's blank, we'll create one from your text. We'll set the date only when your text clearly states one (a year, decade, month or season, or an age like "when I was 10" if we know a birth year) — never a guess, never today's date by default. Locations and people are more liberal: every save, we tag any place or person we can spot in the text — not just ones you've tagged or added before — and add them alongside whatever's already tagged, without removing anything. This can occasionally tag something that isn't really a place or person; just edit the tags to fix it. Newly spotted people are only ever added to this entry's tags, never added to your family tree.</span>
         </span>
       </label>
     </div>
