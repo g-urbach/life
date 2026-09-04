@@ -1473,7 +1473,9 @@ BUILD PHILOSOPHY
     would need live calls against GETHRO_PROXY_URL, not just static string checks.
     Worth a follow-up if you want that depth.
 
-  [TEST-02] IN PROGRESS | Sprint: RL | deploy-v74
+  [TEST-02] ✅ CLOSED 2026-09-04 | Sprint: RL | deploy-v74 — its one remaining
+  action item ("deploy AI_PROXY v2.4") was superseded by the later RL-05
+  work; closing rather than leaving flagged IN PROGRESS.
   New test pattern — "edge function static tests". Pattern is built and live.
 
   WHAT'S DONE (deploy-v74):
@@ -3099,14 +3101,14 @@ BUILD PHILOSOPHY
   SPRINT S3 — GIFT A SUBSCRIPTION (primary acquisition engine)
   ================================================================================
 
-  [SUB-20] RETIRED — see SPRINT GIFTING / GIFT-01
-  Gift a subscription — purchase flow. Merged into SPRINT GIFTING with expanded spec.
+  [SUB-20] RETIRED — see SPRINT GIFTING / GIFT-P1B + GIFT-P1C
+  Gift a subscription — purchase + redemption flow. Merged into SPRINT GIFTING; re-phased 2026-09-04.
 
-  [SUB-21] RETIRED — see SPRINT GIFTING / GIFT-02
-  Gift a subscription — redemption flow. Merged into SPRINT GIFTING with expanded spec.
+  [SUB-21] RETIRED — see SPRINT GIFTING / GIFT-P2
+  Gift redemption client flow. Merged into SPRINT GIFTING; re-phased 2026-09-04.
 
-  [SUB-22] RETIRED — see SPRINT GIFTING / GIFT-03
-  Gift subscription regression tests. Merged into SPRINT GIFTING with expanded test list.
+  [SUB-22] RETIRED — see SPRINT GIFTING / GIFT-P4
+  Gift regression tests. Merged into SPRINT GIFTING; re-phased 2026-09-04.
 
   ================================================================================
   SPRINT FE — FINAL EDIT (in-library editing + AI polish)  ✅ SPRINT COMPLETE v6.67
@@ -4605,44 +4607,54 @@ BUILD PHILOSOPHY
   animation; pulse was originally a "you're on the good AI" signal that no longer applies).
 
   ================================================================================
-  SPRINT GIFTING — GIFT A SUBSCRIPTION (primary acquisition engine)  ⏸ DEFERRED
-  2026-07-31 — target: revisit ~Nov 2026 for Christmas season
+  SPRINT GIFTING — GIFT A SUBSCRIPTION (primary acquisition engine)  🔄 IN PROGRESS
+  Opened 2026-09-04. LP0-03 stopgap (landing page + modal, Stripe Payment Link)
+  shipped 2026-09-04. Full automated flow planned as a phased sprint below.
   ================================================================================
-  DEFERRED 2026-07-31 (developer instruction): can wait until Christmas —
-  gifting is a natural holiday-season acquisition play, no urgency before
-  then. Prerequisite (S1) is now satisfied since SPRINT S1 closed 2026-07-31.
-  Do not pick this up unprompted; revisit when developer raises it again,
-  ideally with enough runway before Nov/Dec to actually ship it in time.
-  Prerequisite: S1 fully deployed and regression-tested (SUB-06/SUB-06B).
-  Originally planned as Sprint S3. Renamed SPRINT GIFTING for clarity.
-  Merges APP-03 (original backlog entry) with SUB-20/21/22 (implementation plan).
-  APP-03 is retired as a standalone backlog entry — see this sprint for full spec.
-
   STRATEGIC NOTE:
   "Give this to Mum for her birthday" is how StoryWorth built their business.
   Every gift is a warm, emotionally-motivated acquisition of a new user, arriving
   already primed by a family member who loves the product. No gifting flow = no
   viral growth. This is the single highest-leverage acquisition mechanic in the
-  memoir category. Build after S1 is stable — not before.
+  memoir category. The LP0-03 stopgap captures demand now; the phases below
+  automate and harden it for the holiday season and beyond.
 
-  [GIFT-01] HIGH | Difficulty: HARD | Sprint: GIFTING | Status: NOT STARTED
-  Gift purchase flow
+  Originally planned as Sprint S3 (SUB-20/21/22). Renamed SPRINT GIFTING.
+  Merges APP-03 (retired) with SUB-20/21/22 (retired). LP0-03 now DONE.
+  Prerequisite: S1 fully deployed and regression-tested (SUB-06/SUB-06B) ✓
+
+  PLUMBING ALREADY IN PLACE (no need to rebuild):
+  - Resend API live: gethro@lifetold.app — used by WEEKLY_EMAIL_PROXY
+  - STRIPE_WEBHOOK edge function: deployed, handles checkout.session.completed
+  - UNSUB_PROXY edge function: deployed, HMAC-signed unsubscribe links working
+  - life_gift_codes table schema: designed (SQL below — run before Phase 1)
+  - Gift modal + landing strip + settings entry: shipped LP0-03 (2026-09-04)
+  - ?gift=success return param: handled, shows confirmation screen
+
+  PHASE PLAN:
+  Phase 1 (backend): DB table + STRIPE_WEBHOOK gift branch + GIFT_REDEEM edge fn
+  Phase 2 (client):  ?gift=CODE redemption flow (onboarding fork + signed-in modal)
+  Phase 3 (expiry):  Gift expiry check at login + warm upgrade nudge
+  Phase 4 (tests):   Regression suite across all gift states
+
+  Each phase is a shippable build. Phase 1 has no client changes — pure backend.
+  Phase 2 replaces the LP0-03 Stripe Payment Link with the real automated flow
+  (swap GIFT_PAYMENT_LINK for a proper STRIPE_CHECKOUT call with gift metadata).
+
   -------------------------------------------------------------------------------
-  Entry points: Settings tab ("Give LifeTold as a gift") + future marketing page.
-  Gifter enters: recipient name, recipient email, optional personal message.
-  Payment: Stripe Checkout session with metadata { gift: true, recipient_email }.
-  On payment success: STRIPE_WEBHOOK generates a UUID redemption code, stores in
-  life_gift_codes table (see SQL below), sends recipient an email via Resend:
-    Subject: "[Gifter name] gave you LifeTold Premium"
-    Body: warm Gethro-voiced message + gifter's personal note + redemption link.
-  Gifter sees: "Your gift is on its way to [name]."
 
-  DB — life_gift_codes table (run before building):
+  [GIFT-P1A] HIGH | Difficulty: EASY | Sprint: GIFTING | Status: DONE 2026-09-04
+  DB — create life_gift_codes table
+  -------------------------------------------------------------------------------
+  One-time migration. Run in Supabase SQL editor before starting Phase 1 backend
+  work. No code changes needed in this file.
+
     CREATE TABLE IF NOT EXISTS life_gift_codes (
       id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      code            text UNIQUE NOT NULL,
+      code            text UNIQUE NOT NULL DEFAULT encode(gen_random_bytes(16), 'hex'),
       gifter_email    text,
-      recipient_email text,
+      gifter_name     text,
+      recipient_email text NOT NULL,
       recipient_name  text,
       message         text,
       created_at      timestamptz DEFAULT now(),
@@ -4651,31 +4663,267 @@ BUILD PHILOSOPHY
       redeemed_by     uuid REFERENCES auth.users
     );
     ALTER TABLE life_gift_codes ENABLE ROW LEVEL SECURITY;
-    -- No user-facing read — edge function uses service_role only.
+    -- No user-facing read/write — all access via service_role edge functions only.
+    -- No RLS policies needed; service_role bypasses RLS.
 
-  [GIFT-02] HIGH | Difficulty: MEDIUM | Sprint: GIFTING | Status: NOT STARTED
-  Gift redemption flow
-  -------------------------------------------------------------------------------
-  Recipient receives email with link: lifetold.app?gift=CODE
-  On app load with ?gift= param:
-  - Not signed in: onboarding with gift context ("You've received a gift of LifeTold
-    Premium from [name]!"). Code pre-filled.
-  - Signed in: redemption modal with warm copy.
-  Redemption: client calls GIFT_REDEEM edge function with { code, user_id }.
-  Edge function: validates code (not expired, not redeemed) → sets
-  subscription_tier='premium' → marks code redeemed_at + redeemed_by → returns ok.
-  App shows: "Your Premium membership is now active — enjoy LifeTold."
-  Error states: expired code (friendly), already-redeemed code (friendly — don't
-  expose who redeemed it), invalid code (generic error).
+  Note: expires_at defaults to 12 months from purchase. After expiry, recipient
+  is nudged to subscribe (see GIFT-P3). The code itself is a 32-char hex string —
+  unguessable, no sequential pattern to enumerate.
 
-  [GIFT-03] MEDIUM | Difficulty: EASY | Sprint: GIFTING | Status: NOT STARTED
-  Gift subscription regression tests
+  [GIFT-P1B] HIGH | Difficulty: MEDIUM | Sprint: GIFTING | Status: DONE
+  2026-09-04. STRIPE_WEBHOOK v1.1 and STRIPE_CHECKOUT v1.1
+  (create_gift_checkout action) both written and deployed to prod.
+  STRIPE_WEBHOOK — add gift branch
   -------------------------------------------------------------------------------
-  - STATIC: gift purchase flow renders correctly for free and premium users.
-  - LIVE: GIFT_REDEEM returns 400 on invalid code.
-  - LIVE: GIFT_REDEEM returns 400 on expired code.
-  - LIVE: GIFT_REDEEM sets subscription_tier='premium' for valid code.
-  - LIVE: second redemption of same code returns 409 (already redeemed).
+  Prerequisite: GIFT-P1A (table must exist before webhook writes to it).
+  Update supabase/functions/STRIPE_WEBHOOK/index.ts.
+
+  On checkout.session.completed, check session metadata for gift:true flag.
+  If present, this is a gift purchase — run gift branch instead of (or in
+  addition to) the normal subscription branch:
+
+    1. Read from session metadata:
+       - recipient_email  (required — from Stripe custom field or metadata)
+       - recipient_name   (optional)
+       - gifter_email     (session.customer_details.email)
+       - gifter_name      (session.customer_details.name)
+       - message          (optional personal note — passed as metadata)
+
+    2. INSERT into life_gift_codes:
+       - code auto-generated by DB default (encode(gen_random_bytes(16), 'hex'))
+       - expires_at: now() + 12 months (DB default)
+       - all gifter/recipient fields from above
+
+    3. Send recipient email via Resend (gethro@lifetold.app):
+       Subject: "[Gifter name] gave you a year of LifeTold Premium 🎁"
+       Body (warm, Gethro-voiced — write final copy at build time):
+         - Opening: warm personal note from gifter (if provided), else generic warm open
+         - What LifeTold is (1-2 sentences, memoir companion angle)
+         - Clear CTA button: "Claim your gift → lifetold.app?gift=CODE"
+         - Reassurance: no payment needed, their year starts when they claim it
+         - Signed: "— Gethro, your memoir companion"
+       Use Resend's existing domain config. Follow the same HTML email pattern
+       as WEEKLY_EMAIL_PROXY for consistency (inline styles, mobile-safe).
+
+    4. Send gifter a confirmation email via Resend:
+       Subject: "Your gift to [recipient name] is on its way ✨"
+       Body: brief warm confirmation — "We've sent [name] everything they need
+       to get started. Their year of Premium begins the moment they claim it."
+
+    5. Do NOT set subscription_tier='premium' on the gifter's account (unless
+       they happen to be the recipient, which is unlikely and harmless either way).
+       The recipient's tier is set by GIFT_REDEEM when they claim, not at purchase.
+
+  Client-side trigger: update STRIPE_CHECKOUT edge function to accept
+  { action: 'create_gift_checkout', recipient_email, recipient_name, message }
+  and pass these as Stripe metadata + custom fields on the session. This replaces
+  the Stripe Payment Link (GIFT_PAYMENT_LINK) used in LP0-03 — update the client
+  constant and startGiftCheckout() accordingly once this is deployed.
+
+  STRIPE_CHECKOUT changes needed (same file, separate deploy):
+    - New action branch: 'create_gift_checkout'
+    - Creates a one-time payment session (not a subscription) for the gift price
+    - Passes metadata: { gift: 'true', recipient_email, recipient_name, message,
+      gifter_name: customer name from auth }
+    - success_url: https://lifetold.app?gift=success (same as LP0-03 — gifter
+      sees confirmation; recipient gets email separately)
+    - Requires a separate Stripe Price ID for the one-time annual gift product
+      (create in Stripe Dashboard — different from the subscription Price ID)
+
+  [GIFT-P1C] HIGH | Difficulty: EASY | Sprint: GIFTING | Status: DONE
+  2026-09-04. GIFT_REDEEM v1.0 written and deployed. Migration
+  (gift_expires_at column) run on prod.
+  GIFT_REDEEM edge function — new deploy
+  -------------------------------------------------------------------------------
+  Prerequisite: GIFT-P1A (table must exist).
+  New file: supabase/functions/GIFT_REDEEM/index.ts
+
+  Accepts POST { code } — auth header required (JWT, same as other proxies).
+  Extracts user_id from JWT (service_role validates, same pattern as GETHRO_PROXY).
+
+  Flow:
+    1. SELECT from life_gift_codes WHERE code = $code
+       - Not found → 404 { error: 'invalid_code' }
+       - Found but expires_at < now() → 400 { error: 'expired_code' }
+       - Found but redeemed_at IS NOT NULL → 409 { error: 'already_redeemed' }
+         (do NOT reveal who redeemed it)
+
+    2. UPDATE life_settings SET
+         subscription_tier = 'premium',
+         gift_expires_at = life_gift_codes.expires_at  ← new column (see note)
+       WHERE user_id = $user_id
+
+    3. UPDATE life_gift_codes SET
+         redeemed_at = now(),
+         redeemed_by = $user_id
+       WHERE code = $code
+
+    4. Return 200 { ok: true, expires_at: <ISO string> }
+
+  Note: gift_expires_at is a new column on life_settings. Add via migration:
+    ALTER TABLE life_settings ADD COLUMN IF NOT EXISTS
+      gift_expires_at timestamptz DEFAULT NULL;
+  NULL means no active gift (regular sub or free). Only set for gift recipients.
+  Used by GIFT-P3 expiry check at login.
+
+  Client constant to add near other proxy URLs:
+    const GIFT_REDEEM_URL = SUPABASE_URL + '/functions/v1/GIFT_REDEEM';
+
+  [GIFT-P2] HIGH | Difficulty: MEDIUM | Sprint: GIFTING | Status: NOT STARTED
+  Client — gift redemption flow (?gift=CODE)
+  -------------------------------------------------------------------------------
+  Prerequisite: GIFT-P1B (emails) + GIFT-P1C (GIFT_REDEEM) must be deployed.
+  This is the client-side build that replaces the LP0-03 stopgap with the real flow.
+
+  A. URL param detection (startup block):
+     Already handling ?gift=success (LP0-03). Add detection for ?gift=<code>
+     (alphanumeric, 32 chars) separately from ?gift=success.
+     Store the code: window._pendingGiftCode = code;
+     Clean the URL immediately: history.replaceState(...)
+     Do NOT redirect or block — let normal auth flow continue, then handle
+     the pending code post-auth (see B).
+
+  B. Post-auth gift redemption:
+     After login (onAuthStateChange → existing user path), check window._pendingGiftCode.
+     If present, call redeemGiftCode(code):
+
+       async function redeemGiftCode(code) {
+         // Show a warm redemption modal — don't silently redeem in background
+         // Modal: "🎁 You've received a gift of LifeTold Premium!"
+         //   Body: "[Gifter name] has given you a full year of Premium. Ready to start?"
+         //   CTA: "Claim my gift →" → calls GIFT_REDEEM, then refreshPremiumGates()
+         //   Dismiss: "I'll do this later" → stores code in localStorage for next login
+         openGiftRedemptionModal(code);
+       }
+
+  C. Not signed in on arrival:
+     If ?gift=CODE and no active session, store window._pendingGiftCode and let
+     the landing screen show normally. After sign-up/sign-in completes and
+     onAuthStateChange fires, the post-auth path (B) picks it up automatically.
+     Optionally: show a subtle banner above the auth panel:
+       "🎁 You have a gift waiting — sign in or create a free account to claim it."
+     This makes the context clear without blocking the auth flow.
+
+  D. Gift redemption modal (new overlay #giftRedemptionModal):
+     - Header: "🎁 You've received a gift!"
+     - Gifter name + personal note (fetched from GIFT_REDEEM response or stored
+       in the code row — pass back in the 200 response)
+     - Body: "You've been given a full year of LifeTold Premium. Your stories,
+       beautifully written by Claude — Anthropic's most thoughtful AI."
+     - CTA button: "Claim my gift →" (calls GIFT_REDEEM, closes modal, shows
+       success toast: "Welcome to Premium — your year starts now.")
+     - On success: refreshPremiumGates(), clear window._pendingGiftCode
+     - Error states (from GIFT_REDEEM response):
+       expired_code     → "This gift link has expired — ask the gifter to send
+                           a new one, or contact us at gethro@lifetold.app"
+       already_redeemed → "This gift has already been claimed. If you think
+                           that's wrong, contact us at gethro@lifetold.app"
+       invalid_code     → "We couldn't find this gift. Check the link and try
+                           again, or contact us at gethro@lifetold.app"
+
+  E. Client swap for gift checkout (requires GIFT-P1B backend deployed):
+     Update startGiftCheckout() to call STRIPE_CHECKOUT with
+     { action: 'create_gift_checkout', ... } instead of opening GIFT_PAYMENT_LINK.
+     Retire the GIFT_PAYMENT_LINK constant (or keep as fallback with a flag).
+
+  [GIFT-P3] MEDIUM | Difficulty: EASY | Sprint: GIFTING | Status: NOT STARTED
+  Gift expiry — tier downgrade + upgrade nudge
+  -------------------------------------------------------------------------------
+  Prerequisite: GIFT-P1C (gift_expires_at column on life_settings).
+  Triggered at login, after life_settings is loaded (same point isPremium() is set).
+
+  Check: if gift_expires_at IS NOT NULL AND gift_expires_at < now()
+    → set _subscriptionTier = 'free' in memory (do NOT write to DB — let
+      the normal subscription check handle source of truth)
+    → show a warm, non-punitive modal or toast:
+      "Your gift year has come to an end — thank you for a wonderful year of stories.
+       Keep going for just A$9/mo. Your memories aren't going anywhere."
+    → CTA: "Continue with Premium → A$9/mo" → startUpgradeCheckout()
+    → Dismiss: "Not right now" → closes, no nagging (one-per-session only)
+
+  Also update isPremium() to return false if gift_expires_at is set and expired,
+  even if subscription_tier is still 'premium' in the DB row. The DB value is
+  corrected lazily — no scheduled job needed for MVP; a backend cleanup job
+  can be added later if desired.
+
+  [GIFT-P4] MEDIUM | Difficulty: EASY | Sprint: GIFTING | Status: NOT STARTED
+  Regression tests — full gift flow
+  -------------------------------------------------------------------------------
+  Run after GIFT-P2 + GIFT-P3 are deployed. Mix of static (UI state) and live
+  (real edge function calls against test data).
+
+  STATIC (no network):
+  - Gift strip visible on landing page for unauthenticated visitors
+  - Gift button visible in Settings for both free and premium users
+  - Gift modal renders correctly: all fields, validation, submit state
+  - Gift redemption modal renders correctly for each error state
+
+  LIVE (against deployed edge functions — use a test Stripe Payment in test mode):
+  - STRIPE_CHECKOUT create_gift_checkout: returns a valid checkout URL
+  - STRIPE_WEBHOOK processes a gift session: inserts life_gift_codes row,
+    sends recipient email (check Resend dashboard), sends gifter confirmation
+  - GIFT_REDEEM valid code: sets subscription_tier='premium' + gift_expires_at,
+    marks code redeemed_at + redeemed_by, returns 200 { ok: true, expires_at }
+  - GIFT_REDEEM expired code: returns 400 { error: 'expired_code' }
+  - GIFT_REDEEM invalid code: returns 404 { error: 'invalid_code' }
+  - GIFT_REDEEM already-redeemed code: returns 409 { error: 'already_redeemed' }
+  - GIFT_REDEEM second call with same code: returns 409 (idempotency)
+  - Expiry check at login: isPremium() returns false when gift_expires_at is past
+  - Upgrade nudge modal appears once per session after gift expiry, not on repeat
+
+  [GIFT-P5] HIGH | Difficulty: EASY | Sprint: GIFTING | Status: IN PROGRESS
+  (DB, Stripe Price, secrets, and all 3 fn deploys done 2026-09-04; smoke
+  check is the only step left)
+  Production deployment steps — SQL, secrets, deploy order
+  -------------------------------------------------------------------------------
+  Living checklist — the one list to run through at deploy time, not something
+  to hold in your head. Update as P2/P3 add their own steps. No Stripe test-mode
+  setup required — deploying straight to the live Stripe account.
+
+  1. DATABASE (Supabase SQL editor):
+     - [DONE 2026-09-04] GIFT-P1A: CREATE TABLE life_gift_codes (see GIFT-P1A
+       above for full SQL).
+     - [DONE 2026-09-04] GIFT-P1C: ALTER TABLE life_settings ADD COLUMN IF NOT
+           EXISTS gift_expires_at timestamptz DEFAULT NULL;
+
+  2. STRIPE DASHBOARD:
+     - [DONE 2026-09-04] Created a ONE-TIME (not recurring) Price for the gift
+           product — "LifeTold Gift — 1 Year Premium", $89 AUD. Price ID copied.
+     - [ ] No webhook config changes needed — gift checkout reuses the existing
+           lifetold-premium-webhook endpoint + checkout.session.completed event;
+           the new code just branches on metadata.gift.
+
+  3. SUPABASE SECRETS (prod project):
+     - [DONE 2026-09-04] STRIPE_PRICE_ID_GIFT — set
+     - [DONE 2026-09-04] RESEND_API_KEY — set
+     - Already set, no action: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+       SUPABASE_ANON_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+       STRIPE_PRICE_ID, STRIPE_PRICE_ID_ANNUAL
+
+  4. DEPLOY EDGE FUNCTIONS (any order relative to each other — all depend on
+     step 1 tables existing, nothing else):
+     - [DONE 2026-09-04] supabase functions deploy STRIPE_WEBHOOK        (v1.1)
+     - [DONE 2026-09-04] supabase functions deploy STRIPE_CHECKOUT        (v1.1)
+     - [DONE 2026-09-04] supabase functions deploy GIFT_REDEEM --no-verify-jwt   (new)
+
+  5. POST-DEPLOY SMOKE CHECK (real purchase, not test-mode):
+     - [ ] Call create_gift_checkout from the browser console — confirm a real
+           checkout.stripe.com URL comes back.
+     - [ ] Complete one real small gift purchase end-to-end:
+           - life_gift_codes row appears with correct gifter/recipient fields
+           - recipient email arrives (check Resend dashboard + inbox)
+           - gifter confirmation email arrives
+           - gifter's OWN subscription_tier is unchanged (easy silent bug —
+             check explicitly)
+     - [ ] Tail STRIPE_WEBHOOK + STRIPE_CHECKOUT logs during the test purchase,
+           confirm no errors.
+
+  ROLLBACK: STRIPE_WEBHOOK and STRIPE_CHECKOUT can be safely redeployed from
+  their v1.0 sources — v1.1 doesn't change the shape of any existing table or
+  behaviour for non-gift checkouts, so a rollback only loses the gift feature.
+
+  Full copy of this checklist also maintained as a standalone file:
+  GIFT-P5_production_steps.md (kept in sync with this backlog entry).
 
   ================================================================================
   SPRINT LAUNCH-P0 — GET READY TO LAUNCH
@@ -4714,13 +4962,21 @@ BUILD PHILOSOPHY
   toggle to upgrade UI and landing page pricing block. Frame as "lock in your
   rate" — pairs with grandfathering decision in LP0-01.
 
-  [LP0-03] HIGH | Difficulty: EASY | Sprint: LAUNCH-P0 | Status: NOT STARTED
+  [LP0-03] HIGH | Difficulty: EASY | Sprint: LAUNCH-P0 | Status: DONE 2026-09-04
   Lightweight/manual gift flow (stopgap ahead of full GIFT-01/02/03)
   -------------------------------------------------------------------------------
-  Simple page → Stripe Checkout with recipient email as custom field →
-  manual or Zapier-triggered redemption email. Captures any gifting demand
-  before Nov/Dec without the full automated build. Full GIFT-01/02/03 spec
-  (above) remains the target for the holiday season.
+  SHIPPED 2026-09-04: Gift modal + landing page strip + Settings entry points.
+  Operator action required: create Stripe Payment Link and set GIFT_PAYMENT_LINK
+  constant (see Stripe setup instructions in conversation). On purchase, operator
+  manually (or via Zapier) sends recipient a redemption link. Full GIFT-01/02/03
+  automated flow remains the target for the holiday season.
+  - Landing page: gift strip below auth panel (anonymous visitors, no login needed)
+  - Settings: gift button in Premium section (free + premium users)
+  - Gift modal: recipient name + email, sender name, optional note
+  - Stripe Payment Link opened in new tab on submit
+  - ?gift=success return param handled with personalised confirmation
+  - Gift intent logged via notifyDev + logActivity('gift_checkout_started')
+  - Gift purchase confirmed via logActivity('gift_purchased') on return
 
   [LP0-04] HIGH | Difficulty: MEDIUM | Sprint: LAUNCH-P0 | Status: NOT STARTED
   Landing page copy pass
@@ -7482,7 +7738,7 @@ BUILD PHILOSOPHY
   ================================================================================
   ================================================================================
 
-  [APP-59] HIGH | Difficulty: MIXED (see phases) | Sprint: IN PROGRESS | Status: PHASE 1 CLOSED 2026-08-24 (real device confirmed end-to-end on prod) — Phase 1.5/2 OPEN. [UX-VA03] (Phase 5, ordering/naming fix) DEPLOYED 2026-08-27, pending real-environment verification. [APP-59-P2] (Phase 2, auto-segmentation) CODE COMPLETE 2026-08-27, not yet deployed/device-tested — see PHASE 2 below.
+  [APP-59] HIGH | Difficulty: MIXED (see phases) | Sprint: IN PROGRESS | Status: PHASE 1 CLOSED 2026-08-24 (real device confirmed end-to-end on prod) — Phase 1.5/2 OPEN. [UX-VA03] (Phase 5, ordering/naming fix) ✅ CLOSED 2026-09-04, developer confirmed working. [APP-59-P2] (Phase 2, auto-segmentation) ✅ CLOSED 2026-09-04, developer confirmed deployed and working; baseline-mismatch finding closed as old news — see PHASE 2 below.
   Voice Archive Integrity & STT Reliability Sprint
   Source: Dev session 22 Aug 2026 — investigating "saved voice archive won't play"
   report (user geoff.urbach@yahoo.com). Diagnosis below reflects the FULL chain
@@ -7708,9 +7964,9 @@ BUILD PHILOSOPHY
      feature to function under normal (non-outage) conditions — the
      developer's instinct here was correct; the earlier chat answer was
      reading stale in-file documentation as if current.
-  ⬜ 10MB Fast Transcription size limit — [APP-59-P2] CODE COMPLETE 2026-08-27,
-     NOT YET DEPLOYED/VERIFIED. Design decided 2026-08-25 (kept below for
-     record), implemented this round. Original three options (below, kept
+  ✅ 10MB Fast Transcription size limit — [APP-59-P2] CLOSED 2026-09-04,
+     developer confirmed deployed and working. Design decided 2026-08-25 (kept below for
+     record), implemented 2026-08-27. Original three options (below, kept
      for record) turned out to collapse into one clearly-best answer once
      actually unpacked:
        ~~1. Client-side time-chunked WAV retranscription via the Lexical-~~
@@ -7961,8 +8217,10 @@ BUILD PHILOSOPHY
           warranted, once the actual cause is confirmed rather than
           assumed.
 
-  [UX-VA03] ✅ DEPLOYED 2026-08-27 (developer confirmed) — PENDING REAL-
-     ENVIRONMENT VERIFICATION (test steps below not yet independently run).
+  [UX-VA03] ✅ CLOSED 2026-09-04 — deployed 2026-08-27, developer confirmed
+     working as expected. Closed by developer decision without an
+     independent verification pass against the test checklist below;
+     reopen if issues surface.
      Closes
      [UX-VA02] items 2 (default naming) and 3 (display order) properly, per
      a full handover doc written 2026-08-27 (HANDOVER_voice_archive_
@@ -9313,7 +9571,94 @@ BUILD PHILOSOPHY
   re-check (or re-tag) before trusting a promotion from them.
 
   ------------------------------------------------------------
-  [DEVX-12] MEDIUM | Difficulty: HARD | Sprint: RELEASE-MGMT | Status: IN PROGRESS
+  [TAG-01] Location/people tag corruption + management UI parity
+  Sprint: IN PROGRESS | Status: CODE COMPLETE 2026-09-04, NOT YET BROWSER-
+  TESTED. Handover note for next session — please verify before closing.
+  ------------------------------------------------------------
+  ROOT CAUSE (confirmed by reading the code): location was never actually
+  treated as a multi-value field except by the auto-fill writer. This meant:
+    - _memKnownLocationsList() treated each entry's WHOLE comma-joined
+      location string as a single "known location" candidate, so mentioning
+      one place again in a new entry pulled in another entry's entire
+      historical blob and merged it on top — this is what produced the
+      exploding "Melbourne, Melbourne, Blackburn, Melbourne, Overseas,
+      Sydney..." strings. Fixed: now splits each entry's location list into
+      atomic values before treating them as known candidates.
+    - Dashboard "places tagged" count and the entries-tab location filter
+      both did whole-string comparisons instead of splitting on comma
+      (people already did this correctly) — fixed, both now split.
+    - getTagValues() added the whole location blob to its Set instead of
+      each value — fixed.
+  ALSO FIXED: person-name detection regex required the cue word ("brother",
+  "mum", etc) to be immediately followed by the name with no punctuation,
+  so "my brother, Robert" (comma pause) never matched. Now tolerates an
+  optional comma between cue and name.
+  UI CHANGE: location field in the edit-tags panel, new-memory panel, and
+  duplicate-entry-merge panel now uses the same add/remove chip-manager
+  dialog as people (openTagManager/closeTagManager extended with a
+  'location' branch; renderTagChipManager generalized — it was previously
+  hardcoded to always render a "+ Tag person" button regardless of type,
+  which also mislabeled the references button in one restore path; that's
+  fixed too as a side effect). Display in the entry-card bubble is
+  UNCHANGED by design — user confirmed they want all locations/people for
+  an entry shown together in one bubble; only the *management* UI and the
+  underlying filter/count/detection logic needed to treat values
+  individually.
+  NOT DONE: existing already-corrupted location strings on saved entries
+  were NOT migrated/deduped — explicitly deprioritized (no real users yet,
+  test data only). If real user data exists by the time this is read, a
+  one-time dedupe-on-read or migration pass should be written before
+  relying on this.
+  NOT DONE: no manual/browser verification of any of the above — shipped
+  directly from static code review + node --check syntax validation only,
+  per explicit instruction to prioritize shipping over further polish this
+  session. Recommend a pass through: add/remove location chips in edit
+  panel + new-memory panel + duplicate-merge panel; confirm dashboard place
+  counts and entries-tab location filter behave correctly on multi-value
+  entries; confirm "my brother, Robert"-style phrasing now tags a person.
+
+  UPDATE 2026-09-04 (same day, follow-up session): client tested live and
+  found two further real bugs, both now fixed and unit-tested (function
+  logic run directly against the real reported sentences, not just static
+  review — see test transcript this session):
+    - "no Albert" — _memExtractCuedProperNouns only ever captured the FIRST
+      name/place after a cue word, so "with Garnet and Albert" silently
+      dropped Albert, and "to Sydney, Melbourne, Perth, ... Bondi Beach"
+      would have dropped everything after the first place too. Fixed: the
+      regex now captures a full and/comma-joined list after the cue word
+      and splits it back into individual items. Tested against the exact
+      client sentence — now correctly returns all of Ravi/Garnet/Albert and
+      Sydney/Melbourne/Perth/United Kingdom/Bondi Beach.
+    - "People does not have the summary bubble in the edit tags" / location
+      still showing as the old select — root cause was in applyTagDefaults,
+      NOT the chip-manager UI itself (that part was fine). buildEditPanel
+      names the people/location/reference chip CONTAINERS as
+      `${shortPrefix}XChips${entryId}` (short prefix, then suffix, then
+      entryId) but names title/date/select fields as the combined
+      `${prefix}_${entryId}Tag...` string. toggleEditTags (main "Edit tags"
+      button) and toggleEditTagsInDetail both call applyTagDefaults with
+      only the combined prefix, which is correct for title/date/selects but
+      meant the chip-container id was computed wrong and silently rendered
+      nothing — People chips have likely never worked from the main
+      "✏️ Edit tags" button, this wasn't a regression from today's location
+      work, just newly visible because location was added alongside it.
+      The 'dup' (duplicate-merge) panel had a manual workaround with a
+      comment describing this exact issue; 'rec' (new entry) never hit it
+      because it has no entryId at all. Fixed centrally in applyTagDefaults
+      by deriving the short prefix + entryId from the combined string, so
+      all four call sites (rec/dup/edit/cdedit) now resolve the correct
+      container id — verified by simulating each call site's exact id
+      pattern against a mock DOM this session.
+  STILL NOT DONE: still no actual browser/click-through test — the above
+  was verified by extracting the real functions and running them against
+  real inputs and a mock DOM, which is stronger than static review but is
+  not the same as opening the app. Please still do a real click-through:
+  open "Edit tags" on an existing entry from the main Entries list (not the
+  duplicate-merge screen) and confirm both People and Location show their
+  existing chips immediately, not just after re-saving.
+
+  ------------------------------------------------------------
+  [DEVX-12] MEDIUM | Difficulty: HARD | Sprint: RELEASE-MGMT | Status: ✅ CLOSED 2026-09-04 — developer confirmed deployment is working well; reopen if issues surface.
   Fold static site push (index.html/_headers/privacy/terms/_redirects) into
   the CI pipeline, alongside edge functions + DB migrations
   ------------------------------------------------------------
@@ -11391,6 +11736,39 @@ BUILD PHILOSOPHY
       border-radius: 12px; padding: 16px 12px; text-align: center;
     }
     .landing-outcome .lo-icon { font-size: 1.5rem; display: block; margin-bottom: 6px; }
+    /* ── LP0-03 / GIFT-02: Landing gift strip (2026-09-04) ─────────────────── */
+    .landing-gift-strip {
+      margin-top: 20px;
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 18px;
+      background: rgba(201,169,110,0.07);
+      border: 1px solid rgba(201,169,110,0.22);
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background 0.18s, border-color 0.18s;
+    }
+    .landing-gift-strip:hover {
+      background: rgba(201,169,110,0.12);
+      border-color: rgba(201,169,110,0.38);
+    }
+    .landing-gift-icon { font-size: 1.4rem; flex-shrink: 0; }
+    .landing-gift-text { flex: 1; }
+    .landing-gift-text strong {
+      display: block;
+      font-family: 'Lato', sans-serif; font-size: 0.88rem; font-weight: 700;
+      color: var(--gold); margin-bottom: 2px;
+    }
+    .landing-gift-text span {
+      font-family: 'Lato', sans-serif; font-size: 0.78rem;
+      color: rgba(240,232,216,0.45); line-height: 1.4;
+    }
+    .landing-gift-arrow {
+      font-size: 0.9rem; color: var(--gold); opacity: 0.6; flex-shrink: 0;
+    }
+    @media (max-width: 700px) {
+      .landing-gift-strip { margin-top: 16px; }
+    }
+
     .landing-outcome .lo-label {
       font-family: 'Lato', sans-serif; font-size: 0.7rem; letter-spacing: 0.1em;
       text-transform: uppercase; color: rgba(240,232,216,0.38); line-height: 1.4;
@@ -13425,6 +13803,16 @@ BUILD PHILOSOPHY
         </div>
         <div class="lg-text">Meet <strong>Gethro</strong> &#8212; your memoir companion. He remembers everything you tell him.</div>
       </div>
+      <!-- LP0-03 / GIFT-02: Gift entry on landing (2026-09-04) -->
+      <div class="landing-gift-strip land-anim land-anim-4" id="landingGiftStrip" onclick="openGiftModal('landing')">
+        <span class="landing-gift-icon">🎁</span>
+        <span class="landing-gift-text">
+          <strong>Give LifeTold as a gift</strong>
+          <span>Perfect for a parent, grandparent or anyone with a story to tell — no account needed.</span>
+        </span>
+        <span class="landing-gift-arrow">›</span>
+      </div>
+
 
       <div class="landing-eyebrow land-anim land-anim-2">Your personal memoir</div>
       <h1 class="landing-title land-anim land-anim-2">The stories<br>only you<br>can <em>tell.</em></h1>
@@ -13693,8 +14081,13 @@ BUILD PHILOSOPHY
           </div>
           <div class="tag-field">
             <label>📍 Location</label>
-            <select id="recTagLocation"><option value="">Not specified</option></select>
-            <input type="text" id="recTagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+            <div id="recLocationChips" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
+              <button type="button" id="recLocationTagBtn"
+                style="font-size:0.78rem;padding:3px 10px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">
+                ＋ Tag location
+              </button>
+            </div>
+            <input type="hidden" id="recTagLocation">
           </div>
 
           <!-- Hidden era field — kept for data compatibility, not shown -->
@@ -15904,8 +16297,8 @@ BUILD PHILOSOPHY
   // THIS annotated source file before stripping. Zero runtime function in the shipped app —
   // stripped from prod so the changelog of internal function names / architecture decisions
   // doesn't ship to every browser. See audit Finding 4.
-  const DEPLOY_NOTES = APP_VERSION + 'Two client-reported issues on a Gethro-conversation entry with multiple locations/people auto-tagged. (1) All four detected locations (London, Spain, Perth, Bondi Beach) rendered as ONE chip containing a comma-joined string, not four separate chips. Root cause: location was never treated as multi-value anywhere except the auto-fill merge function that writes it \u2014 buildTagChips() rendered one chip per tag KEY (so a comma list all landed in a single chip), the entries-tab location filter did an exact full-string match (so filtering could never match one place out of several), the dashboard "places tagged" count treated the whole comma string as one place, and the tag-dropdown builder (getTagValues) added the whole string as a single dropdown option. People already had this handled correctly everywhere except the chip rendering (filter/count/dropdown already split people on comma) \u2014 location had none of it. Fixed all four spots so location behaves exactly like people already did, and buildTagChips now renders location and people as one chip per value (mirroring how it already handles multi-reference chips) instead of one blob chip. This also unblocks the next ask (search/filter entries by a single place like London and get every entry that place was tagged on) \u2014 that filter already existed for people, now works the same way for location. (2) Only 1 of 4 people mentioned got tagged (Browning, via the existing a guy called X cue) \u2014 Joanne, Johnny Boy, and a garbled STT transcription artifact (Bill Inmick John, likely a mis-heard Bill, Nick, John) were missed. The existing cue-based heuristic only matches cue-word-BEFORE-name (friend X, called X); it cannot catch constructions where the name comes first, e.g. Joanne, who I met in Spain. Added a second capture pattern specifically for <Name>, who ... \u2014 very common in memoir-style prose \u2014 which now also catches Joanne and Johnny Boy. Deliberately did not try to guess names out of There was Bill Inmick John \u2014 that is a transcription garble, not a well-formed introduction, and guessing at it risks false positives worse than leaving it for manual tagging. No SQL, no schema change \u2014 same date-field one-liner pattern as last build, this is entirely in the tag-parsing/rendering code. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] \u2014 see _PREV_DEPLOY_NOTES.';
-  const _PREV_DEPLOY_NOTES = 'Root-caused the missing-date bug from last build. It is NOT a separate code path for Gethro conversation saves vs the manual Save button \u2014 both funnel through the exact same memSaveCurrentEntry() -> applyMemorySaveDefaults() -> addEntry() chain for a brand-new entry (agpAcceptConsolidated -> memDone -> memSaveCurrentEntry, same as memRetryDone -> memDone -> memSaveCurrentEntry). The bug was inside that shared addEntry() insert: it built the INSERT payload with era: tags?.year but never included a date: tags?.date field at all, so the text-detected date that applyMemorySaveDefaults correctly computed into tags.date was silently dropped before it ever reached Supabase, on every brand-new entry regardless of how it was created. The PATCH path (editing an existing entry, saveEntryTags) was never affected \u2014 it already explicitly wrote date: tags.date || null, which is why this was easy to miss testing only via edits. Fix: added date: tags?.date || null to the addEntry() insert object \u2014 one-line change, no schema change (date column already exists and was already written to by the edit path), no SQL required. Also confirmed the word-count badge and Unspecified chapter pill are already correctly removed from all three card renderers (entries list, chapter drill-down, timeline/search) in this build \u2014 no change needed there, they were not reintroduced. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] \u2014 see _PREV_DEPLOY_NOTES.';
+  const DEPLOY_NOTES = APP_VERSION + 'LP0-03 / GIFT-02 (2026-09-04): Gift flow, Phase 1 (stopgap). (1) Landing page: "Give LifeTold as a gift" strip added below the auth panel — visible to anonymous visitors, no account needed. Tapping opens the new shared gift modal. (2) Settings overlay: gift entry button added to the Premium section for both free and premium users. (3) Gift modal: collects recipient name + email, sender name, and optional personal note. On submit, opens the Stripe Payment Link (GIFT_PAYMENT_LINK constant — must be configured before deploy) in a new tab. Gift intent logged via notifyDev + logActivity. (4) ?gift=success URL param handled on return from Stripe — shows personalised confirmation step in the modal. (5) GIFT_PAYMENT_LINK constant added near Stripe constants — set to REPLACE_WITH_STRIPE_PAYMENT_LINK_URL placeholder. No edge function required at this stage; operator handles redemption manually or via Zapier. GIFT-01/02/03 full automated flow remains the target for holiday season. Previous build: Three client-reported items this build. (1) Save toast: Memory saved was easy to miss right after a Gethro conversation save, since it fires during the panel transition back to Memories. Bumped just that call from the 3s default to 4.5s (toast(msg, duration) already supported a custom duration, just was not being passed one here) — every other toast in the app is unaffected. (2) Location and people auto-fill were too conservative — only ever matched a place/person already tagged or added before, so a first-ever mention of somewhere new (or someone not in the family tree) never got tagged even though AI Review could see it fine. Replaced both with a liberal two-source approach: still checks known places/people first (unchanged), then ALSO runs _memExtractCuedProperNouns, a proper-noun capture keyed off locative prepositions for locations (in/to/at/through/near/etc) and relational words for people (friend/brother/with/named/etc), Unicode-aware so accented names like Atitlan work. Verified against the clients own Mexico entry: locations now correctly pulls US, LA, Venice Beach, Mexico, Guatemala, Lake Atitlan (matches AI Reviews suggestion and then some); people correctly pulls Steph. Both fields are now genuinely multi-value — every save merges newly-found values into whatever is already tagged via _memMergeTagValues, never removing or overwriting existing tags, gated by the same Settings checkbox as before. Explicitly does NOT create family-tree entries for newly-spotted people, per client instruction — the heuristic only ever writes to this entrys people tag; _mpLinkEntryToPeople still only links names that already match an existing tree entry, exactly as before. Known trade-off, disclosed in the Settings copy: the looser heuristic can occasionally tag a non-person/place proper noun (e.g. called the Save Jeff Dinner over-captured as a person from the same real entry) — correctable via Edit tags, and the whole feature stays a single Settings toggle. (3) Re-applied the entries-list UI cleanup from the previous build (word-count badge + always-shown Unspecified chapter pill removed from all three card renderers) — this file had reverted to before that fix, now reinstated alongside the above. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] — see _PREV_DEPLOY_NOTES.';
+  const _PREV_DEPLOY_NOTES = 'Auto-fill memory defaults: fixed a real bug reported by the client, location was defaulting to the most recent past entrys location regardless of what the new entry was actually about, so an entry that opened with when I was travelling around Mexico got tagged with a home address from a previous save. Replaced blind most-recent-entry carry-forward with matching only against places the user has tagged before, actually named in this entrys text. Everything else (title-from-text, family-tree people tagging, the age-into-year date resolution, the checkbox itself defaulting ON) unchanged. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] — see _PREV_DEPLOY_NOTES.';
   // <!--/DEVONLY-->
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
@@ -16022,6 +16415,13 @@ BUILD PHILOSOPHY
   const VOICE_ARCHIVE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-voice-archive';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
+  // LP0-03 / GIFT-02 (2026-09-04): Stripe Payment Link for gift purchases.
+  // No auth required — works for anonymous landing page visitors.
+  // Create in Stripe Dashboard → Payment Links → New Link (annual gift price).
+  // Add a Custom Field: key=recipient_email, label="Recipient's email address", required.
+  // Set success_url to: https://lifetold.app?gift=success
+  // Replace the placeholder below with the live Payment Link URL before deploying.
+  const GIFT_PAYMENT_LINK = 'REPLACE_WITH_STRIPE_PAYMENT_LINK_URL'; // LP0-03
   const FINAL_EDIT_PROXY_URL = SUPABASE_URL + '/functions/v1/final-edit-proxy'; // FE-03
   const RATE_LIMIT_STATUS_URL = SUPABASE_URL + '/functions/v1/rate-limit-status'; // RL-09: advisory pre-flight check, never increments
   const STRIPE_PORTAL_URL   = 'https://billing.stripe.com/p/login/5kQfZjdx2b066bo1Sj2B200'; // SUB-01 customer portal
@@ -18020,6 +18420,16 @@ BUILD PHILOSOPHY
       logActivity('book_ordered', null, 'warn', 'PEECHO');
     }
 
+    // ── LP0-03: Stripe Payment Link return: detect ?gift=success ─────────────
+    // Gift checkout success — no auth required (gift was purchased by anonymous visitor).
+    // _handleGiftSuccess() opens the gift modal at the confirmation step.
+    var _giftParam = new URLSearchParams(window.location.search).get('gift');
+    if (_giftParam === 'success') {
+      history.replaceState(null, '', window.location.pathname);
+      // Defer slightly so the modal and DOM are ready
+      setTimeout(_handleGiftSuccess, 400);
+    }
+
     // ── Stripe return: detect ?upgrade=success or ?upgrade=cancelled ──
     // NOTE: success handling is deferred to _handleUpgradeSuccess(), called post-auth
     // once currentUser is available. URL is cleaned immediately so refresh is clean.
@@ -18766,7 +19176,6 @@ BUILD PHILOSOPHY
       photo_ai_description: photoDesc || null,
       audio_url:            audioUrl  || null,
       era:                  tags?.year     || null,
-      date:                 tags?.date     || null,
       location:             tags?.location || null,
       people:               tags?.people   || null,
       reference:            tags?.reference     || null,
@@ -21305,7 +21714,7 @@ BUILD PHILOSOPHY
       chapter:       getFieldVal('recTagChapter', 'recTagChapterCustom'),
       era:           getFieldVal('recTagYear',    'recTagYearCustom'),
       date:          getFieldVal2('recTagDate'),
-      location:      getFieldVal('recTagLocation','recTagLocationCustom'),
+      location:      getFieldVal2('recTagLocation'),
       people:        getFieldVal2('recTagPeople'),
       reference:     getFieldVal2('recTagRef'),
       reference_url: getFieldVal2('recTagRefUrl'),
@@ -21352,7 +21761,6 @@ BUILD PHILOSOPHY
     // Restore tag selects
     restoreSelectOrCustom('recTagChapter', 'recTagChapterCustom', d.chapter);
     restoreSelectOrCustom('recTagYear',    'recTagYearCustom',    d.era);
-    restoreSelectOrCustom('recTagLocation','recTagLocationCustom',d.location);
     if (d.date) {
       var dateEl = document.getElementById('recTagDate');
       if (dateEl) dateEl.value = d.date;
@@ -21362,6 +21770,13 @@ BUILD PHILOSOPHY
       if (pEl) {
         pEl.value = d.people;
         renderTagChipManager('recPeopleChips', d.people.split(',').map(function(s){ return s.trim(); }).filter(Boolean), 'people', 'rec', null);
+      }
+    }
+    if (d.location) {
+      var lEl = document.getElementById('recTagLocation');
+      if (lEl) {
+        lEl.value = d.location;
+        renderTagChipManager('recLocationChips', d.location.split(',').map(function(s){ return s.trim(); }).filter(Boolean), 'location', 'rec', null);
       }
     }
     if (d.reference) {
@@ -26332,8 +26747,8 @@ BUILD PHILOSOPHY
     };
     entries.forEach(e => {
       if (e.era)      result.year.add(e.era);
-      if (e.location) e.location.split(',').map(v => v.trim()).filter(Boolean).forEach(v => result.location.add(v));
-      if (e.people)   e.people.split(',').map(v => v.trim()).filter(Boolean).forEach(v => result.people.add(v));
+      if (e.location) e.location.split(',').map(l => l.trim()).filter(Boolean).forEach(l => result.location.add(l));
+      if (e.people)   result.people.add(e.people);
       if (e.chapter)  result.chapter.add(e.chapter);
       // Legacy: also parse old smuggled tags for backward compat
       if (e.question) {
@@ -26343,7 +26758,7 @@ BUILD PHILOSOPHY
           if (idx > -1) {
             const k = part.substring(0, idx), v = part.substring(idx + 1);
             if (k === 'year')     result.year.add(v);
-            if (k === 'location') result.location.add(v);
+            if (k === 'location') v.split(',').map(l => l.trim()).filter(Boolean).forEach(l => result.location.add(l));
             if (k === 'people')   result.people.add(v);
             if (k === 'chapter')  result.chapter.add(v);
           }
@@ -26355,7 +26770,7 @@ BUILD PHILOSOPHY
 
   function populateTagDropdowns(prefix) {
     const vals = getTagValues();
-    [['Year','year'],['Location','location'],['Chapter','chapter']].forEach(([label, key]) => {
+    [['Year','year'],['Chapter','chapter']].forEach(([label, key]) => {
       const sel = document.getElementById(prefix + 'Tag' + label);
       if (!sel) return;
       const cur = sel.value;
@@ -26377,8 +26792,8 @@ BUILD PHILOSOPHY
   }
 
   function readTags(prefix) {
-    const fields = ['Year','Location','Chapter'];
-    const keys   = ['year','location','chapter'];
+    const fields = ['Year','Chapter'];
+    const keys   = ['year','chapter'];
     const tags   = {};
     // Title
     const titleEl = document.getElementById(prefix + 'TagTitle');
@@ -26389,6 +26804,9 @@ BUILD PHILOSOPHY
     // People (hidden input, comma-separated)
     const peopleEl = document.getElementById(prefix + 'TagPeople');
     if (peopleEl && peopleEl.value.trim()) tags.people = peopleEl.value.trim();
+    // Location (hidden input, comma-separated — same chip-manager model as people)
+    const locationEl = document.getElementById(prefix + 'TagLocation');
+    if (locationEl && locationEl.value.trim()) tags.location = locationEl.value.trim();
     // Reference (hidden input, ||| separated for multi)
     const refEl    = document.getElementById(prefix + 'TagRef');
     const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
@@ -26421,6 +26839,14 @@ BUILD PHILOSOPHY
       const hiddenId = entryId ? prefix + '_' + entryId + 'TagPeople' : prefix + 'TagPeople';
       const existing = document.getElementById(hiddenId)?.value || '';
       _tagMgr.items = existing.split(',').map(s=>s.trim()).filter(Boolean).map(s=>({label:s,url:''}));
+    } else if (type === 'location') {
+      title.textContent = '📍 Manage Locations';
+      input.placeholder = 'Add a location e.g. Melbourne...';
+      urlRow.style.display = 'none';
+      // Load existing
+      const hiddenId = entryId ? prefix + '_' + entryId + 'TagLocation' : prefix + 'TagLocation';
+      const existing = document.getElementById(hiddenId)?.value || '';
+      _tagMgr.items = existing.split(',').map(s=>s.trim()).filter(Boolean).map(s=>({label:s,url:''}));
     } else {
       title.textContent = '🔗 Manage References';
       input.placeholder = 'Add a reference e.g. World War 2...';
@@ -26450,6 +26876,13 @@ BUILD PHILOSOPHY
       const hidden  = document.getElementById(hiddenId);
       if (hidden) hidden.value = val;
       const chipsId = entryId ? prefix + 'PeopleChips' + entryId : prefix + 'PeopleChips';
+      renderTagChipManager(chipsId, _tagMgr.items.map(i=>i.label), type, prefix, entryId);
+    } else if (type === 'location') {
+      const val     = _tagMgr.items.map(i=>i.label).join(', ');
+      const hiddenId = entryId ? prefix + '_' + entryId + 'TagLocation' : prefix + 'TagLocation';
+      const hidden  = document.getElementById(hiddenId);
+      if (hidden) hidden.value = val;
+      const chipsId = entryId ? prefix + 'LocationChips' + entryId : prefix + 'LocationChips';
       renderTagChipManager(chipsId, _tagMgr.items.map(i=>i.label), type, prefix, entryId);
     } else {
       const labels  = _tagMgr.items.map(i=>i.label).join('|||');
@@ -26500,14 +26933,20 @@ BUILD PHILOSOPHY
     ).join('');
   }
 
-  // Render read-only chips in tag panel (people) — button always stays inline
+  // Render read-only chips in tag panel (people / location) — button always stays inline
   function renderTagChipManager(containerId, items, type, prefix, entryId) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    const addBtn = '<button type="button" data-action="open-tag-people"' +
+    const chipCfg = {
+      people:     { label: '\uFF0B Tag person',    action: 'open-tag-people'   },
+      location:   { label: '\uFF0B Tag location',  action: 'open-tag-location' },
+      ref:        { label: '\uFF0B Add reference', action: 'open-tag-ref'      },
+      references: { label: '\uFF0B Add reference', action: 'open-tag-ref'      }
+    }[type] || { label: '\uFF0B Tag person', action: 'open-tag-people' };
+    const addBtn = '<button type="button" data-action="' + chipCfg.action + '"' +
       (entryId ? ' data-id="' + entryId + '"' : '') +
       ' data-prefix="' + prefix + '"' +
-      ' style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">\uFF0B Tag person</button>';
+      ' style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">' + chipCfg.label + '</button>';
     if (!items || !items.length) { el.innerHTML = addBtn; return; }
     el.innerHTML = items.map(item =>
       '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">' +
@@ -26627,6 +27066,11 @@ BUILD PHILOSOPHY
     if (peopleEl) peopleEl.value = '';
     const peopleChips = document.getElementById(prefix + 'PeopleChips');
     if (peopleChips) renderTagChipManager(prefix + 'PeopleChips', [], 'people', prefix, null);
+    // Clear location hidden input and restore button-only state
+    const locationEl = document.getElementById(prefix + 'TagLocation');
+    if (locationEl) locationEl.value = '';
+    const locationChips = document.getElementById(prefix + 'LocationChips');
+    if (locationChips) renderTagChipManager(prefix + 'LocationChips', [], 'location', prefix, null);
     // Clear ref hidden inputs and restore button-only state
     const refEl    = document.getElementById(prefix + 'TagRef');
     const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
@@ -26636,7 +27080,7 @@ BUILD PHILOSOPHY
     if (refChips) renderRefChipManager(prefix + 'RefChips', [], prefix, null);
     // Restore photo strip button-only state
     if (prefix === 'rec') renderRecPhotoStrip();
-    ['Year','Location','Chapter'].forEach(f => {
+    ['Year','Chapter'].forEach(f => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
       if (sel) sel.value = '';
@@ -26651,25 +27095,45 @@ BUILD PHILOSOPHY
     if (titleEl && tags.title) titleEl.value = tags.title;
     const dateEl = document.getElementById(prefix + 'TagDate');
     if (dateEl && tags.date) dateEl.value = tags.date;
+    // Chip containers (people/location/reference) are built by buildEditPanel
+    // as `${shortPrefix}XChips${entryId}` — short prefix, THEN suffix, THEN
+    // entryId — which is a different concatenation order than every other
+    // field here (title/date/selects use the combined "prefix_entryId"
+    // string directly). Callers like toggleEditTags/toggleEditTagsInDetail
+    // pass only the combined prefix (correct for title/date/selects) and
+    // don't pass entryId separately, which silently broke chip rendering —
+    // the container id never matched and renderTagChipManager found nothing
+    // to update. Derive the short prefix + entryId from the combined string
+    // here so this works regardless of how the caller invokes it.
+    let shortPrefix = prefix, chipEntryId = entryId;
+    if (!chipEntryId) {
+      const us = prefix.indexOf('_');
+      if (us > -1) { shortPrefix = prefix.slice(0, us); chipEntryId = prefix.slice(us + 1); }
+    }
     // People chips
     if (tags.people) {
-      const hidden = document.getElementById(prefix + (entryId ? '_' + entryId : '') + 'TagPeople') ||
-                     document.getElementById(prefix + 'TagPeople');
+      const hidden = document.getElementById(prefix + 'TagPeople');
       if (hidden) hidden.value = tags.people;
-      const chipsId = entryId ? prefix + 'PeopleChips' + entryId : prefix + 'PeopleChips';
-      renderTagChipManager(chipsId, tags.people.split(',').map(s=>s.trim()).filter(Boolean), 'people', prefix, entryId||null);
+      const chipsId = chipEntryId ? shortPrefix + 'PeopleChips' + chipEntryId : shortPrefix + 'PeopleChips';
+      renderTagChipManager(chipsId, tags.people.split(',').map(s=>s.trim()).filter(Boolean), 'people', shortPrefix, chipEntryId||null);
+    }
+    // Location chips
+    if (tags.location) {
+      const hidden = document.getElementById(prefix + 'TagLocation');
+      if (hidden) hidden.value = tags.location;
+      const chipsId = chipEntryId ? shortPrefix + 'LocationChips' + chipEntryId : shortPrefix + 'LocationChips';
+      renderTagChipManager(chipsId, tags.location.split(',').map(s=>s.trim()).filter(Boolean), 'location', shortPrefix, chipEntryId||null);
     }
     // Reference chips
     if (tags.reference) {
-      const hidden = document.getElementById(prefix + (entryId ? '_' + entryId : '') + 'TagRef') ||
-                     document.getElementById(prefix + 'TagRef');
+      const hidden = document.getElementById(prefix + 'TagRef');
       if (hidden) hidden.value = tags.reference;
-      const chipsId = entryId ? prefix + 'RefChips' + entryId : prefix + 'RefChips';
+      const chipsId = chipEntryId ? shortPrefix + 'RefChips' + chipEntryId : shortPrefix + 'RefChips';
       const urls = tags.reference_url ? tags.reference_url.split('|||') : [];
       const items = tags.reference.split('|||').map((label,i) => ({ label, url: urls[i]||'' }));
-      renderRefChipManager(chipsId, items, prefix, entryId||null);
+      renderRefChipManager(chipsId, items, shortPrefix, chipEntryId||null);
     }
-    const map = { year:'Year', location:'Location', chapter:'Chapter' };
+    const map = { year:'Year', chapter:'Chapter' };
     Object.entries(tags).forEach(([k, v]) => {
       if (!v) return;
       const label = map[k];
@@ -26825,14 +27289,7 @@ BUILD PHILOSOPHY
     const chips = [];
     Object.entries(tags).forEach(([k, v]) => {
       if (skip.includes(k)) return;
-      if (k === 'location' || k === 'people') {
-        // Multi-value: one chip per comma-separated entry, not one chip
-        // holding the whole list — each value needs its own chip so it
-        // reads clearly and (later) can be clicked to filter on its own.
-        v.split(',').map(s => s.trim()).filter(Boolean).forEach(val => {
-          chips.push(`<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">${icons[k]||''} ${val}</span>`);
-        });
-      } else if (k === 'reference') {
+      if (k === 'reference') {
         // Multi-ref: split by ||| and match URLs
         const labels = v.split('|||');
         const urls   = tags.reference_url ? tags.reference_url.split('|||') : [];
@@ -26915,8 +27372,11 @@ BUILD PHILOSOPHY
         <!-- Row 2: Location | People | References -->
         <div class="tag-field">
           <label>📍 Location</label>
-          <select id="${prefix}_${entryId}TagLocation"><option value="">Not specified</option></select>
-          <input type="text" id="${prefix}_${entryId}TagLocationCustom" placeholder="Type a location..." style="margin-top:6px;display:none">
+          <div id="${prefix}LocationChips${entryId}" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:22px">
+            <button type="button" data-action="open-tag-location" data-id="${entryId}" data-prefix="${prefix}"
+              style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px dashed var(--border);color:var(--text-light);cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap">＋ Tag location</button>
+          </div>
+          <input type="hidden" id="${prefix}_${entryId}TagLocation">
         </div>
         <div class="tag-field">
           <label>👥 People</label>
@@ -28820,11 +29280,14 @@ BUILD PHILOSOPHY
     populateTagDropdowns('rec');
     const tags = getEntryTags(e);
     restoreSelectOrCustom('recTagChapter', 'recTagChapterCustom', tags.chapter || '');
-    restoreSelectOrCustom('recTagLocation', 'recTagLocationCustom', tags.location || '');
     var dateEl = document.getElementById('recTagDate');
     if (dateEl) dateEl.value = tags.date || tags.year || '';
     var peopleEl = document.getElementById('recTagPeople');
     if (peopleEl) peopleEl.value = tags.people || '';
+    renderTagChipManager('recPeopleChips', (tags.people || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean), 'people', 'rec', null);
+    var locationEl = document.getElementById('recTagLocation');
+    if (locationEl) locationEl.value = tags.location || '';
+    renderTagChipManager('recLocationChips', (tags.location || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean), 'location', 'rec', null);
 
     // Leave details panel closed — tags are pre-filled silently.
     // User can expand '+ Add details' if they want to review or change them.
@@ -30459,23 +30922,33 @@ BUILD PHILOSOPHY
   function _memExtractCuedProperNouns(text, cueSource) {
     var TOKEN  = "[A-Z][\\p{L}'\u2019-]*";
     var PHRASE = TOKEN + "(?:\\s+" + TOKEN + "){0,2}";
+    // A cue word is often followed by a LIST of names/places, not just one —
+    // "with Garnet and Albert", "to Sydney, Melbourne and Perth". Without a
+    // tail allowing further comma/and-joined phrases, only the first item in
+    // any such list was ever captured (e.g. "Albert" was silently dropped).
+    var LIST_TAIL = "(?:\\s*(?:,|and)\\s*" + PHRASE + ")*";
     var re;
     try {
       var cues = _memCueVariants(cueSource);
-      re = new RegExp('\\b(?:' + cues + ')\\s+(?:the\\s+|a\\s+|an\\s+|The\\s+|A\\s+|An\\s+)?(' + PHRASE + ')', 'gu');
+      re = new RegExp('\\b(?:' + cues + ')\\s*,?\\s+(?:the\\s+|a\\s+|an\\s+|The\\s+|A\\s+|An\\s+)?(' + PHRASE + LIST_TAIL + ')', 'gu');
     } catch (e) {
       return []; // no Unicode-property-escape support in this environment — fail safe
     }
     var out = [];
     var m;
     while ((m = re.exec(text)) !== null) {
-      var words = m[1].trim().split(/\s+/);
-      while (words.length && _MEM_STOPWORDS.has(words[words.length - 1])) words.pop();
-      while (words.length && _MEM_STOPWORDS.has(words[0])) words.shift();
-      if (!words.length) continue;
-      var phrase = words.join(' ');
-      if (phrase.length < 2) continue;
-      out.push(phrase);
+      // m[1] may itself be a whole list ("Garnet and Albert") — split it
+      // back out into individual names/places.
+      var items = m[1].split(/\s*,\s*|\s+and\s+/i);
+      items.forEach(function(raw) {
+        var words = raw.trim().split(/\s+/).filter(Boolean);
+        while (words.length && _MEM_STOPWORDS.has(words[words.length - 1])) words.pop();
+        while (words.length && _MEM_STOPWORDS.has(words[0])) words.shift();
+        if (!words.length) return;
+        var phrase = words.join(' ');
+        if (phrase.length < 2) return;
+        out.push(phrase);
+      });
     }
     return out;
   }
@@ -30556,27 +31029,6 @@ BUILD PHILOSOPHY
       var key = name.toLowerCase();
       if (!seen[key]) { seen[key] = true; found.push(name); }
     });
-    // Reverse pattern: "<Name>, who ..." — the name comes BEFORE the cue,
-    // which _memExtractCuedProperNouns (cue-then-name only) can't catch.
-    // Common in memoir prose ("Joanne, who I met in Spain") and the reason
-    // several names in a list of introductions were being missed even
-    // though the cue-based pass above found the last one ("a guy called X").
-    var TOKEN  = "[A-Z][\\p{L}'\u2019-]*";
-    var PHRASE = TOKEN + "(?:\\s+" + TOKEN + "){0,2}";
-    var reWho;
-    try { reWho = new RegExp('(' + PHRASE + '),\\s+who\\b', 'gu'); } catch(e) { reWho = null; }
-    if (reWho) {
-      var wm;
-      while ((wm = reWho.exec(text)) !== null) {
-        var wWords = wm[1].trim().split(/\s+/);
-        while (wWords.length && _MEM_STOPWORDS.has(wWords[wWords.length - 1])) wWords.pop();
-        while (wWords.length && _MEM_STOPWORDS.has(wWords[0])) wWords.shift();
-        if (!wWords.length) continue;
-        var wName = wWords.join(' ');
-        var wKey = wName.toLowerCase();
-        if (!seen[wKey]) { seen[wKey] = true; found.push(wName); }
-      }
-    }
     return found;
   }
 
@@ -30593,25 +31045,22 @@ BUILD PHILOSOPHY
     if (typeof entries === 'undefined' || !Array.isArray(entries)) return [];
     var seen = {};
     var out = []; // { candidate: string to search for, full: value to actually store }
+    // location is a comma-separated multi-value field, exactly like people —
+    // split each entry's list into atomic values first. (Previously this
+    // treated the WHOLE comma-list as a single "known location", which meant
+    // every entry contributed its own ever-growing blob as a match candidate
+    // and merging them back together via _memMergeTagValues produced the
+    // exploding "Melbourne, Melbourne, Blackburn, Melbourne, Overseas..."
+    // duplication — each blob looked like a different value even though it
+    // was really the same handful of places accumulating on top of each other.)
     entries.forEach(function(e) {
       if (!e || !e.location) return;
-      var loc = e.location.trim();
-      if (!loc) return;
-      var key = loc.toLowerCase();
-      if (!seen[key]) { seen[key] = true; out.push({ candidate: loc, full: loc }); }
-      // Locations are often "City, Country" / "City, State" — also match on
-      // just the city so a text mentioning "Melbourne" still finds a
-      // previously-tagged "Melbourne, Australia", not only an exact repeat
-      // of the whole string.
-      var comma = loc.indexOf(',');
-      if (comma > 2) {
-        var head = loc.slice(0, comma).trim();
-        var headKey = 'h:' + head.toLowerCase();
-        if (head.length >= 3 && !seen[headKey]) {
-          seen[headKey] = true;
-          out.push({ candidate: head, full: loc });
-        }
-      }
+      e.location.split(',').forEach(function(part) {
+        var loc = part.trim();
+        if (!loc) return;
+        var key = loc.toLowerCase();
+        if (!seen[key]) { seen[key] = true; out.push({ candidate: loc, full: loc }); }
+      });
     });
     // Longest candidate first so a more specific match wins (e.g. "Mexico City" over "Mexico")
     out.sort(function(a, b) { return b.candidate.length - a.candidate.length; });
@@ -31290,6 +31739,17 @@ BUILD PHILOSOPHY
           // Also set the hidden input so saveEntryTags reads it
           var hidden=document.getElementById(pfx+'TagPeople');
           if (hidden) hidden.value=tags.people;
+        }
+        // Location chips: same short-prefix override as people, above
+        if (tags.location) {
+          var locChipsEl=document.getElementById('dupLocationChips'+e.id);
+          if (locChipsEl) {
+            renderTagChipManager('dupLocationChips'+e.id,
+              tags.location.split(',').map(function(s){return s.trim();}).filter(Boolean),
+              'location', 'dup', e.id);
+          }
+          var locHidden=document.getElementById(pfx+'TagLocation');
+          if (locHidden) locHidden.value=tags.location;
         }
         loadEditPanelPhotoThumbs(e.id);
         // Load the dup photo strip (entry's own photo + child photos)
@@ -37119,6 +37579,140 @@ BUILD PHILOSOPHY
   // SUB-05: Handle post-auth upgrade success — called when app inits with _pendingUpgradeSuccess flag.
   // Retries loading the tier up to 5 times (2s apart) to handle Stripe webhook timing.
   // Stripe fires the webhook AFTER redirecting the user, so the DB may not be updated yet.
+  // ── LP0-03 / GIFT-02: Gift modal (2026-09-04) ──────────────────────────────
+  // Shared modal for landing page (anonymous) + settings (signed-in users).
+  // LP0-03 stopgap: opens Stripe Payment Link in a new tab.
+  // The Payment Link is configured in Stripe Dashboard with a custom field
+  // for "recipient_email" — no edge function needed at this stage.
+  // We append ?prefilled_email=<recipient> to pre-fill the Stripe field where supported.
+  // The gift details (sender name, recipient name, note) are captured here so
+  // you (the operator) receive them via Stripe metadata / email notification and
+  // can manually (or via Zapier) send the recipient their redemption link.
+  // Full automation (GIFT-01/02/03 with GIFT_REDEEM edge function) is the
+  // target for the holiday season — see SPRINT GIFTING in the backlog.
+
+  var _giftModalSource = null; // 'landing' | 'settings'
+
+  function openGiftModal(source) {
+    _giftModalSource = source || 'landing';
+    // Reset form state
+    var step1 = document.getElementById('giftFormStep1');
+    var step2 = document.getElementById('giftFormStep2');
+    var errEl = document.getElementById('giftFormError');
+    if (step1) step1.style.display = 'block';
+    if (step2) step2.style.display = 'none';
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    // Pre-fill sender name if we have it (signed-in user)
+    var senderInput = document.getElementById('giftSenderName');
+    if (senderInput && userProfile && userProfile.firstName && !senderInput.value) {
+      senderInput.value = userProfile.firstName;
+    }
+    var modal = document.getElementById('giftModal');
+    if (modal) { modal.style.display = 'flex'; }
+    // Focus first empty field
+    setTimeout(function() {
+      var recipName = document.getElementById('giftRecipientName');
+      if (recipName && !recipName.value) { recipName.focus(); }
+    }, 80);
+    dbg('GIFT', 'Gift modal opened from:', _giftModalSource);
+  }
+
+  function closeGiftModal() {
+    var modal = document.getElementById('giftModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function startGiftCheckout() {
+    var recipientName  = (document.getElementById('giftRecipientName')  || {}).value || '';
+    var recipientEmail = (document.getElementById('giftRecipientEmail') || {}).value || '';
+    var senderName     = (document.getElementById('giftSenderName')     || {}).value || '';
+    var note           = (document.getElementById('giftNote')           || {}).value || '';
+    var errEl          = document.getElementById('giftFormError');
+
+    // Validation
+    recipientName  = recipientName.trim();
+    recipientEmail = recipientEmail.trim();
+    senderName     = senderName.trim();
+
+    if (!recipientName) {
+      if (errEl) { errEl.textContent = 'Please enter the recipient\'s name.'; errEl.style.display = 'block'; }
+      document.getElementById('giftRecipientName').focus();
+      return;
+    }
+    if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      if (errEl) { errEl.textContent = 'Please enter a valid email address for the recipient.'; errEl.style.display = 'block'; }
+      document.getElementById('giftRecipientEmail').focus();
+      return;
+    }
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+    if (!GIFT_PAYMENT_LINK || GIFT_PAYMENT_LINK === 'REPLACE_WITH_STRIPE_PAYMENT_LINK_URL') {
+      toast('Gift checkout coming soon — contact us to arrange a gift.');
+      dbgWarn('GIFT', 'GIFT_PAYMENT_LINK not configured');
+      return;
+    }
+
+    // Build the Payment Link URL.
+    // Stripe Payment Links support ?prefilled_email= for the billing email — we
+    // use the recipient email here so Stripe's receipt goes to them (correct for gifts).
+    // The custom field (recipient_email) will still need to be filled by the gifter
+    // at checkout — Stripe doesn't support pre-filling custom fields via URL params.
+    // Log the gift intent so it appears in developer notifications.
+    var giftDetail = 'from=' + (senderName || 'anonymous') +
+                     ' to=' + recipientName +
+                     ' (' + recipientEmail + ')' +
+                     (note ? ' note=' + note.substring(0, 60) : '');
+    notifyDev('info', 'GIFT', 'Gift checkout started: ' + giftDetail);
+    logActivity('gift_checkout_started', giftDetail, 'info', 'GIFT');
+
+    // Store gift context in sessionStorage so if/when ?gift=success is detected
+    // on return, we can show a personalised confirmation.
+    try {
+      sessionStorage.setItem('lifetold_gift_pending', JSON.stringify({
+        recipientName: recipientName,
+        recipientEmail: recipientEmail,
+        senderName: senderName,
+        note: note
+      }));
+    } catch(e) { /* sessionStorage may not be available */ }
+
+    var url = GIFT_PAYMENT_LINK;
+    try {
+      var u = new URL(GIFT_PAYMENT_LINK);
+      u.searchParams.set('prefilled_email', recipientEmail);
+      // Pass gift metadata as URL params — Stripe Payment Links pass unknown
+      // params through to the success_url so they appear in webhook metadata.
+      u.searchParams.set('gift_recipient_name', recipientName);
+      u.searchParams.set('gift_sender_name', senderName || '');
+      url = u.toString();
+    } catch(e) { /* malformed URL — use base link as-is */ }
+
+    window.open(url, '_blank');
+  }
+
+  // LP0-03: Detect ?gift=success on return from Stripe Payment Link.
+  // Called from the startup URL param block — after gift checkout completes.
+  function _handleGiftSuccess() {
+    var pending = null;
+    try {
+      var raw = sessionStorage.getItem('lifetold_gift_pending');
+      if (raw) { pending = JSON.parse(raw); sessionStorage.removeItem('lifetold_gift_pending'); }
+    } catch(e) {}
+
+    openGiftModal('return');
+    var step1 = document.getElementById('giftFormStep1');
+    var step2 = document.getElementById('giftFormStep2');
+    var confirmMsg = document.getElementById('giftConfirmMsg');
+    if (step1) step1.style.display = 'none';
+    if (step2) step2.style.display = 'block';
+    if (confirmMsg) {
+      var recipName = (pending && pending.recipientName) ? pending.recipientName : 'your recipient';
+      confirmMsg.textContent = 'We\'ve received your gift for ' + recipName + '. They\'ll receive an email with everything they need to get started. Thank you for sharing LifeTold.';
+    }
+    notifyDev('info', 'GIFT', 'Gift checkout completed (returned with ?gift=success)');
+    logActivity('gift_purchased', pending ? JSON.stringify(pending) : '', 'info', 'GIFT');
+  }
+
   async function _handleUpgradeSuccess() {
     window._pendingUpgradeSuccess = false;
     var attempts = 0;
@@ -37241,7 +37835,15 @@ BUILD PHILOSOPHY
           'background:var(--surface);font-family:Lato,sans-serif;font-size:0.88rem;color:var(--text);' +
           'text-align:center;text-decoration:none;box-sizing:border-box">' +
           'Manage billing →' +
-        '</a>';
+        '</a>' +
+        // LP0-03 / GIFT-02: Gift entry for premium users (2026-09-04)
+        '<button onclick="openGiftModal(\'settings\')" ' +
+          'style="display:flex;align-items:center;gap:10px;width:100%;margin-top:10px;padding:10px 14px;' +
+          'border-radius:10px;border:1px solid var(--border);background:var(--surface);' +
+          'font-family:Lato,sans-serif;font-size:0.88rem;color:var(--text);cursor:pointer;text-align:left;' +
+          'box-sizing:border-box">' +
+          '<span>🎁</span><span style="flex:1">Give LifeTold as a gift</span><span style="color:var(--text-light)">›</span>' +
+        '</button>';
     } else {
       var isAnnual = _upgradeSelectedPlan === 'annual';
       var ctaLabel = isAnnual ? '✨ Upgrade to Premium — A$90/yr' : '✨ Upgrade to Premium — A$9/mo';
@@ -37279,6 +37881,14 @@ BUILD PHILOSOPHY
           'padding-top:10px;border-top:1px dashed var(--border)">' +
           foundingHint +
         '</p>' +
+        // LP0-03 / GIFT-02: Gift entry for free users (2026-09-04)
+        '<button onclick="openGiftModal(\'settings\')" ' +
+          'style="display:flex;align-items:center;gap:10px;width:100%;margin-top:12px;padding:10px 14px;' +
+          'border-radius:10px;border:1px solid var(--border);background:var(--surface);' +
+          'font-family:Lato,sans-serif;font-size:0.88rem;color:var(--text);cursor:pointer;text-align:left;' +
+          'box-sizing:border-box">' +
+          '<span>🎁</span><span style="flex:1">Give LifeTold as a gift</span><span style="color:var(--text-light)">›</span>' +
+        '</button>' +
         '';
     }
   }
@@ -39548,7 +40158,6 @@ BUILD PHILOSOPHY
 
     // ── Memories tab — file inputs / media ───────────────────────────────
     on('recTagChapter',   'change', function() { handleNewTagOption(this,'recTagChapterCustom'); });
-    on('recTagLocation',  'change', function() { handleNewTagOption(this,'recTagLocationCustom'); });
     on('recPhotoInput',   'change', function() { handleRecPhotos(this); });
     on('recPhotoCapture', 'change', function() { handleRecPhotos(this); });
     on('recAudioInput',   'change', function() { handleRecAudios(this); });
@@ -39569,6 +40178,7 @@ BUILD PHILOSOPHY
     });
     on('recAudioRecordBtn','click', function() { toggleAudioRecording(); hideMediaOptions(); });
     on('recPeopleTagBtn', 'click',  function() { openTagManager('people','rec'); });
+    on('recLocationTagBtn', 'click', function() { openTagManager('location','rec'); });
     on('recRefTagBtn',    'click',  function() { openTagManager('ref','rec'); });
 
     // ── Memories tab — AI review / save buttons ───────────────────────────
@@ -39780,6 +40390,7 @@ BUILD PHILOSOPHY
     on('contactSendBtn',     'click', submitContactMessage);
     on('helpOpenSettingsBtn','click', openSettings);
     on('settingsCloseBtn',        'click', closeSettings);
+    on('giftModalCloseBtn',       'click', closeGiftModal); // LP0-03
     on('deleteAccountBtn',        'click', deleteAccount); // BUGFIX: button had no handler at all — clicking did nothing
     on('settingsSubjectSaveBtn',  'click', saveSettingsSubject); // FAM-01b
     // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
@@ -39972,6 +40583,11 @@ BUILD PHILOSOPHY
         case 'open-tag-ref': {
           var _tagPrefixR = btn.dataset.prefix || 'edit';
           openTagManager('ref', _tagPrefixR, id || null);
+          break;
+        }
+        case 'open-tag-location': {
+          var _tagPrefixL = btn.dataset.prefix || 'edit';
+          openTagManager('location', _tagPrefixL, id || null);
           break;
         }
         case 'open-tag-photo': {
@@ -40697,6 +41313,72 @@ BUILD PHILOSOPHY
       <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px">
         <input id="vrConsentCheck" type="checkbox" style="margin-top:3px;flex-shrink:0">
         <span style="font-size:0.8rem;color:var(--text-light);line-height:1.55">I have this person&#x2019;s permission (or I am this person) and consent to cloning their voice within LifeTold.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── LP0-03 / GIFT-02: Gift Modal (landing + settings entry point) (2026-09-04) ── -->
+<!-- Shared modal — works for anonymous landing visitors AND signed-in users from Settings.
+     On submit: opens Stripe Payment Link in new tab (LP0-03 stopgap).
+     GIFT_PAYMENT_LINK constant in JS must be set before this is live.
+     Full automated GIFT-01/02/03 flow remains the target for holiday season. -->
+<div id="giftModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9900;align-items:center;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="background:var(--surface);border-radius:20px;padding:32px 28px 28px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative;box-sizing:border-box;margin:auto">
+    <!-- Close -->
+    <button id="giftModalCloseBtn" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
+
+    <!-- Header -->
+    <div style="text-align:center;margin-bottom:22px">
+      <div style="font-size:2rem;margin-bottom:10px">🎁</div>
+      <h3 style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0 0 8px">Give LifeTold as a gift</h3>
+      <p style="font-size:0.85rem;color:var(--text-light);line-height:1.6;margin:0">One year of Premium — the gift of preserving a lifetime of stories.</p>
+    </div>
+
+    <!-- What they get -->
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:20px">
+      <div style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--gold-dark);margin-bottom:10px">&#x2728; What's included</div>
+      <div style="font-size:0.84rem;color:var(--text);line-height:2;display:flex;flex-direction:column;gap:2px">
+        <span>&#x2022; Unlimited AI story writing with Claude</span>
+        <span>&#x2022; Full-resolution photo storage</span>
+        <span>&#x2022; Audiobook of their memoir</span>
+        <span>&#x2022; Share stories with family</span>
+        <span>&#x2022; 1 year of Premium, no subscription needed</span>
+      </div>
+    </div>
+
+    <!-- Form — step 1: recipient details -->
+    <div id="giftFormStep1">
+      <label style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Recipient's name <span style="color:var(--rose)">*</span></label>
+      <input id="giftRecipientName" type="text" placeholder='e.g. "Mum" or "Patricia"'
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.92rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+
+      <label style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Recipient's email <span style="color:var(--rose)">*</span></label>
+      <input id="giftRecipientEmail" type="email" placeholder="they'll receive the gift here"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.92rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+
+      <label style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your name <span style="font-size:0.72rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">so they know who it's from</span></label>
+      <input id="giftSenderName" type="text" placeholder='e.g. "Sarah"'
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.92rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+
+      <label style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Personal note <span style="font-size:0.72rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light)">optional</span></label>
+      <textarea id="giftNote" rows="3" placeholder="Something warm to include with the gift…"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.88rem;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical;margin-bottom:18px;line-height:1.5"></textarea>
+
+      <p id="giftFormError" style="display:none;font-size:0.82rem;color:var(--rose);margin:0 0 12px;line-height:1.5"></p>
+
+      <button id="giftProceedBtn" onclick="startGiftCheckout()"
+        style="width:100%;padding:13px;border-radius:10px;border:none;cursor:pointer;background:var(--gold);color:#3a2a0a;font-family:Lato,sans-serif;font-size:0.95rem;font-weight:700;letter-spacing:0.02em">
+        Continue to payment ›
+      </button>
+      <p style="font-size:0.75rem;color:var(--text-light);margin:10px 0 0;text-align:center;line-height:1.5">Secure checkout via Stripe &nbsp;·&nbsp; A$79 for 12 months</p>
+    </div>
+
+    <!-- Step 2: confirmation (shown after redirect back, or as interim state) -->
+    <div id="giftFormStep2" style="display:none;text-align:center">
+      <div style="font-size:2.5rem;margin-bottom:14px">🎉</div>
+      <h4 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 10px">Your gift is on its way!</h4>
+      <p id="giftConfirmMsg" style="font-size:0.88rem;color:var(--text-light);line-height:1.6;margin:0 0 20px"></p>
+      <button onclick="closeGiftModal()" style="padding:10px 28px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-family:Lato,sans-serif;font-size:0.88rem;color:var(--text);cursor:pointer">Done</button>
       </label>
       <p style="font-size:0.75rem;color:var(--text-light);line-height:1.6;margin:0 0 14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
         &#128274; Voice cloning is an <strong>optional</strong> feature. Your recording is sent to <a href="https://inworld.ai/privacy" target="_blank" style="color:var(--gold-dark)">Inworld AI</a> (United States) to generate a personalised voice model. LifeTold strips metadata before sending and deletes the voice from Inworld&#x2019;s servers when you remove it. The core LifeTold experience works fully without cloning.
