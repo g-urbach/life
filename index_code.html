@@ -15898,14 +15898,14 @@ BUILD PHILOSOPHY
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.163';
+  const APP_VERSION = 'v7.164';
   // <!--DEVONLY-->
   // DEPLOY_NOTES / _PREV_DEPLOY_NOTES: read by the deployer (deploy-notes parse regex) from
   // THIS annotated source file before stripping. Zero runtime function in the shipped app —
   // stripped from prod so the changelog of internal function names / architecture decisions
   // doesn't ship to every browser. See audit Finding 4.
-  const DEPLOY_NOTES = APP_VERSION + 'Root-caused the missing-date bug from last build. It is NOT a separate code path for Gethro conversation saves vs the manual Save button — both funnel through the exact same memSaveCurrentEntry() -> applyMemorySaveDefaults() -> addEntry() chain for a brand-new entry (agpAcceptConsolidated -> memDone -> memSaveCurrentEntry, same as memRetryDone -> memDone -> memSaveCurrentEntry). The bug was inside that shared addEntry() insert: it built the INSERT payload with era: tags?.year but never included a date: tags?.date field at all, so the text-detected date that applyMemorySaveDefaults correctly computed into tags.date was silently dropped before it ever reached Supabase, on every brand-new entry regardless of how it was created. The PATCH path (editing an existing entry, saveEntryTags) was never affected — it already explicitly wrote date: tags.date || null, which is why this was easy to miss testing only via edits. Fix: added date: tags?.date || null to the addEntry() insert object — one-line change, no schema change (date column already exists and was already written to by the edit path), no SQL required. Also confirmed the word-count badge and \"Unspecified\" chapter pill are already correctly removed from all three card renderers (entries list, chapter drill-down, timeline/search) in this build — no change needed there, they were not reintroduced. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] — see _PREV_DEPLOY_NOTES.';
-  const _PREV_DEPLOY_NOTES = 'Three client-reported items this build. (1) Save toast: Memory saved was easy to miss right after a Gethro conversation save, since it fires during the panel transition back to Memories. Bumped just that call from the 3s default to 4.5s (toast(msg, duration) already supported a custom duration, just was not being passed one here) — every other toast in the app is unaffected. (2) Location and people auto-fill were too conservative — only ever matched a place/person already tagged or added before, so a first-ever mention of somewhere new (or someone not in the family tree) never got tagged even though AI Review could see it fine. Replaced both with a liberal two-source approach: still checks known places/people first (unchanged), then ALSO runs _memExtractCuedProperNouns, a proper-noun capture keyed off locative prepositions for locations (in/to/at/through/near/etc) and relational words for people (friend/brother/with/named/etc), Unicode-aware so accented names like Atitlan work. Verified against the clients own Mexico entry: locations now correctly pulls US, LA, Venice Beach, Mexico, Guatemala, Lake Atitlan (matches AI Reviews suggestion and then some); people correctly pulls Steph. Both fields are now genuinely multi-value — every save merges newly-found values into whatever is already tagged via _memMergeTagValues, never removing or overwriting existing tags, gated by the same Settings checkbox as before. Explicitly does NOT create family-tree entries for newly-spotted people, per client instruction — the heuristic only ever writes to this entrys people tag; _mpLinkEntryToPeople still only links names that already match an existing tree entry, exactly as before. Known trade-off, disclosed in the Settings copy: the looser heuristic can occasionally tag a non-person/place proper noun (e.g. called the Save Jeff Dinner over-captured as a person from the same real entry) — correctable via Edit tags, and the whole feature stays a single Settings toggle. (3) Re-applied the entries-list UI cleanup from the previous build (word-count badge + always-shown Unspecified chapter pill removed from all three card renderers) — this file had reverted to before that fix, now reinstated alongside the above. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] — see _PREV_DEPLOY_NOTES.';
+  const DEPLOY_NOTES = APP_VERSION + 'Two client-reported issues on a Gethro-conversation entry with multiple locations/people auto-tagged. (1) All four detected locations (London, Spain, Perth, Bondi Beach) rendered as ONE chip containing a comma-joined string, not four separate chips. Root cause: location was never treated as multi-value anywhere except the auto-fill merge function that writes it \u2014 buildTagChips() rendered one chip per tag KEY (so a comma list all landed in a single chip), the entries-tab location filter did an exact full-string match (so filtering could never match one place out of several), the dashboard "places tagged" count treated the whole comma string as one place, and the tag-dropdown builder (getTagValues) added the whole string as a single dropdown option. People already had this handled correctly everywhere except the chip rendering (filter/count/dropdown already split people on comma) \u2014 location had none of it. Fixed all four spots so location behaves exactly like people already did, and buildTagChips now renders location and people as one chip per value (mirroring how it already handles multi-reference chips) instead of one blob chip. This also unblocks the next ask (search/filter entries by a single place like London and get every entry that place was tagged on) \u2014 that filter already existed for people, now works the same way for location. (2) Only 1 of 4 people mentioned got tagged (Browning, via the existing a guy called X cue) \u2014 Joanne, Johnny Boy, and a garbled STT transcription artifact (Bill Inmick John, likely a mis-heard Bill, Nick, John) were missed. The existing cue-based heuristic only matches cue-word-BEFORE-name (friend X, called X); it cannot catch constructions where the name comes first, e.g. Joanne, who I met in Spain. Added a second capture pattern specifically for <Name>, who ... \u2014 very common in memoir-style prose \u2014 which now also catches Joanne and Johnny Boy. Deliberately did not try to guess names out of There was Bill Inmick John \u2014 that is a transcription garble, not a well-formed introduction, and guessing at it risks false positives worse than leaving it for manual tagging. No SQL, no schema change \u2014 same date-field one-liner pattern as last build, this is entirely in the tag-parsing/rendering code. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] \u2014 see _PREV_DEPLOY_NOTES.';
+  const _PREV_DEPLOY_NOTES = 'Root-caused the missing-date bug from last build. It is NOT a separate code path for Gethro conversation saves vs the manual Save button \u2014 both funnel through the exact same memSaveCurrentEntry() -> applyMemorySaveDefaults() -> addEntry() chain for a brand-new entry (agpAcceptConsolidated -> memDone -> memSaveCurrentEntry, same as memRetryDone -> memDone -> memSaveCurrentEntry). The bug was inside that shared addEntry() insert: it built the INSERT payload with era: tags?.year but never included a date: tags?.date field at all, so the text-detected date that applyMemorySaveDefaults correctly computed into tags.date was silently dropped before it ever reached Supabase, on every brand-new entry regardless of how it was created. The PATCH path (editing an existing entry, saveEntryTags) was never affected \u2014 it already explicitly wrote date: tags.date || null, which is why this was easy to miss testing only via edits. Fix: added date: tags?.date || null to the addEntry() insert object \u2014 one-line change, no schema change (date column already exists and was already written to by the edit path), no SQL required. Also confirmed the word-count badge and Unspecified chapter pill are already correctly removed from all three card renderers (entries list, chapter drill-down, timeline/search) in this build \u2014 no change needed there, they were not reintroduced. Carries forward unchanged: VA-LC (closed), AGP-LC savedLiveText fix, [PRELAUNCH-01], [VIP-01] \u2014 see _PREV_DEPLOY_NOTES.';
   // <!--/DEVONLY-->
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
@@ -26332,8 +26332,8 @@ BUILD PHILOSOPHY
     };
     entries.forEach(e => {
       if (e.era)      result.year.add(e.era);
-      if (e.location) result.location.add(e.location);
-      if (e.people)   result.people.add(e.people);
+      if (e.location) e.location.split(',').map(v => v.trim()).filter(Boolean).forEach(v => result.location.add(v));
+      if (e.people)   e.people.split(',').map(v => v.trim()).filter(Boolean).forEach(v => result.people.add(v));
       if (e.chapter)  result.chapter.add(e.chapter);
       // Legacy: also parse old smuggled tags for backward compat
       if (e.question) {
@@ -26825,7 +26825,14 @@ BUILD PHILOSOPHY
     const chips = [];
     Object.entries(tags).forEach(([k, v]) => {
       if (skip.includes(k)) return;
-      if (k === 'reference') {
+      if (k === 'location' || k === 'people') {
+        // Multi-value: one chip per comma-separated entry, not one chip
+        // holding the whole list — each value needs its own chip so it
+        // reads clearly and (later) can be clicked to filter on its own.
+        v.split(',').map(s => s.trim()).filter(Boolean).forEach(val => {
+          chips.push(`<span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-light)">${icons[k]||''} ${val}</span>`);
+        });
+      } else if (k === 'reference') {
         // Multi-ref: split by ||| and match URLs
         const labels = v.split('|||');
         const urls   = tags.reference_url ? tags.reference_url.split('|||') : [];
@@ -27813,7 +27820,7 @@ BUILD PHILOSOPHY
     }
 
     // Locations tile
-    const allLocations = real.flatMap(e => e.location ? [e.location.trim()] : []).filter(Boolean);
+    const allLocations = real.flatMap(e => e.location ? e.location.split(',').map(l => l.trim()).filter(Boolean) : []);
     const locationCounts = {};
     allLocations.forEach(l => { locationCounts[l] = (locationCounts[l] || 0) + 1; });
     const locationSorted = Object.entries(locationCounts).sort((a,b) => b[1]-a[1]);
@@ -29224,7 +29231,9 @@ BUILD PHILOSOPHY
       );
     }
     if (_entriesLocationFilter) {
-      filtered = filtered.filter(e => e.location && e.location.trim() === _entriesLocationFilter);
+      filtered = filtered.filter(e =>
+        e.location && e.location.split(',').map(l => l.trim()).includes(_entriesLocationFilter)
+      );
     }
     if (search) {
       filtered = filtered.filter(e => {
@@ -30547,6 +30556,27 @@ BUILD PHILOSOPHY
       var key = name.toLowerCase();
       if (!seen[key]) { seen[key] = true; found.push(name); }
     });
+    // Reverse pattern: "<Name>, who ..." — the name comes BEFORE the cue,
+    // which _memExtractCuedProperNouns (cue-then-name only) can't catch.
+    // Common in memoir prose ("Joanne, who I met in Spain") and the reason
+    // several names in a list of introductions were being missed even
+    // though the cue-based pass above found the last one ("a guy called X").
+    var TOKEN  = "[A-Z][\\p{L}'\u2019-]*";
+    var PHRASE = TOKEN + "(?:\\s+" + TOKEN + "){0,2}";
+    var reWho;
+    try { reWho = new RegExp('(' + PHRASE + '),\\s+who\\b', 'gu'); } catch(e) { reWho = null; }
+    if (reWho) {
+      var wm;
+      while ((wm = reWho.exec(text)) !== null) {
+        var wWords = wm[1].trim().split(/\s+/);
+        while (wWords.length && _MEM_STOPWORDS.has(wWords[wWords.length - 1])) wWords.pop();
+        while (wWords.length && _MEM_STOPWORDS.has(wWords[0])) wWords.shift();
+        if (!wWords.length) continue;
+        var wName = wWords.join(' ');
+        var wKey = wName.toLowerCase();
+        if (!seen[wKey]) { seen[wKey] = true; found.push(wName); }
+      }
+    }
     return found;
   }
 
