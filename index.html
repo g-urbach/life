@@ -5231,7 +5231,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.169';
+  const APP_VERSION = 'v7.170';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -15831,7 +15831,7 @@
     container.innerHTML = _tagMgr.items.map((item, i) =>
       '<span style="display:inline-flex;align-items:center;gap:5px;font-size:0.78rem;padding:4px 10px;border-radius:12px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">' +
         (item.url ? '<a href="' + item.url + '" target="_blank" style="color:var(--gold-dark);text-decoration:none">' + item.label + ' ↗</a>' : item.label) +
-        '<button style="background:none;border:none;cursor:pointer;color:var(--text-light);font-size:0.9rem;padding:0;line-height:1;margin-left:2px">✕</button>' +
+        '<button type="button" data-action="tag-manager-remove" data-idx="' + i + '" style="background:none;border:none;cursor:pointer;color:var(--text-light);font-size:0.9rem;padding:0;line-height:1;margin-left:2px">✕</button>' +
       '</span>'
     ).join('');
   }
@@ -19787,7 +19787,12 @@
     'Jan','Feb','Mar','Apr','Jun','Jul','Aug','Sep','Sept','Oct','Nov','Dec',
     'Spring','Summer','Autumn','Fall','Winter',
     'Mr','Mrs','Ms','Dr','God','Christmas','Easter',
-    'Yes','No','Ok','Okay','Please','Thanks','Thank','Hello','Hi','Hey'
+    'Yes','No','Ok','Okay','Please','Thanks','Thank','Hello','Hi','Hey',
+    // Discourse fillers/interjections that dictation/ASR often capitalises
+    // mid-sentence (as if starting a new clause) but are never a name or
+    // place — "lives in Well, he's dead now" is "well" the filler, not a
+    // place called Well.
+    'Well','Um','Uh','Umm','Uhh','Ah','Anyway','Anyways','Right','Actually','Basically'
   ]);
 
   // TAG-01 follow-up (2026-09-05): a bare stopword check missed contracted
@@ -19992,6 +19997,19 @@
       e.location.split(',').forEach(function(part) {
         var loc = part.trim();
         if (!loc) return;
+        // TAG-01 follow-up (2026-09-05): this list is built from whatever's
+        // already SAVED on any entry, with no re-validation — so a junk
+        // value that slipped in before a heuristic fix (e.g. "I've", saved
+        // back when the cue-extraction bug let it through) stayed a
+        // permanent "known location" forever after, silently re-matching
+        // via plain substring search on every future entry that happens to
+        // contain that word — completely bypassing any fix to the
+        // extraction regex itself, since this path never calls it. Reject
+        // known-list candidates that are themselves just a stopword/filler,
+        // so old corrupted data stops propagating even though it hasn't
+        // been migrated out of the DB (still recommend removing it via Edit
+        // Tags on the entry that has it — this only stops the bleeding).
+        if (!loc.split(/\s+/).some(function(w) { return !_memIsStopword(w); })) return;
         var key = loc.toLowerCase();
         if (!seen[key]) { seen[key] = true; out.push({ candidate: loc, full: loc }); }
       });
@@ -29186,6 +29204,11 @@
         case 'share-entry':          if (id) showShareConsent(id);                         break;
         // ── Tag panel buttons (people / ref / photo / save / cancel) ──
         // Data flows only through data-* attributes — no user content in executable position
+        case 'tag-manager-remove': {
+          var _rmIdx = parseInt(btn.dataset.idx, 10);
+          if (!isNaN(_rmIdx)) removeTagManagerItem(_rmIdx);
+          break;
+        }
         case 'open-tag-people': {
           var _tagPrefix = btn.dataset.prefix || 'edit';
           openTagManager('people', _tagPrefix, id || null);
