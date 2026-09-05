@@ -5231,13 +5231,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.168';
+  const APP_VERSION = 'v7.169';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":734,"offset":10707},{"maxLine":1910,"offset":10708},{"maxLine":2640,"offset":10709},{"maxLine":2692,"offset":10712},{"maxLine":3074,"offset":10713},{"maxLine":3254,"offset":10714},{"maxLine":5186,"offset":10715},{"maxLine":5492,"offset":10723},{"maxLine":6209,"offset":10733},{"maxLine":6491,"offset":10734},{"maxLine":6890,"offset":10735},{"maxLine":7690,"offset":10736},{"maxLine":9118,"offset":10738},{"maxLine":10275,"offset":10739},{"maxLine":10442,"offset":10740},{"maxLine":11158,"offset":10741},{"maxLine":11176,"offset":10743},{"maxLine":13034,"offset":10745},{"maxLine":13829,"offset":10746},{"maxLine":13831,"offset":10747},{"maxLine":14527,"offset":10748},{"maxLine":15398,"offset":10749},{"maxLine":17202,"offset":10752},{"maxLine":17516,"offset":10753},{"maxLine":17782,"offset":10754},{"maxLine":18397,"offset":10755},{"maxLine":18588,"offset":10756},{"maxLine":18780,"offset":10757},{"maxLine":18920,"offset":10758},{"maxLine":19196,"offset":10759},{"maxLine":19446,"offset":10760},{"maxLine":20001,"offset":10761},{"maxLine":20043,"offset":10762},{"maxLine":20178,"offset":10763},{"maxLine":22067,"offset":10764},{"maxLine":22362,"offset":10765},{"maxLine":25766,"offset":11103},{"maxLine":27585,"offset":11105},{"maxLine":null,"offset":11106}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11061},{"maxLine":1943,"offset":11062},{"maxLine":2673,"offset":11063},{"maxLine":2725,"offset":11066},{"maxLine":3122,"offset":11067},{"maxLine":3302,"offset":11068},{"maxLine":5234,"offset":11069},{"maxLine":5547,"offset":11077},{"maxLine":6264,"offset":11087},{"maxLine":6546,"offset":11088},{"maxLine":6945,"offset":11089},{"maxLine":7755,"offset":11090},{"maxLine":9183,"offset":11092},{"maxLine":10340,"offset":11093},{"maxLine":10507,"offset":11094},{"maxLine":11229,"offset":11095},{"maxLine":11247,"offset":11097},{"maxLine":13105,"offset":11099},{"maxLine":13900,"offset":11100},{"maxLine":13902,"offset":11101},{"maxLine":14598,"offset":11102},{"maxLine":15469,"offset":11103},{"maxLine":17325,"offset":11106},{"maxLine":17639,"offset":11107},{"maxLine":17905,"offset":11108},{"maxLine":18523,"offset":11109},{"maxLine":18716,"offset":11110},{"maxLine":18908,"offset":11111},{"maxLine":19048,"offset":11112},{"maxLine":19324,"offset":11113},{"maxLine":19574,"offset":11114},{"maxLine":20136,"offset":11115},{"maxLine":20178,"offset":11116},{"maxLine":20313,"offset":11117},{"maxLine":22213,"offset":11118},{"maxLine":22508,"offset":11119},{"maxLine":25923,"offset":11457},{"maxLine":27892,"offset":11459},{"maxLine":null,"offset":11460}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -19790,6 +19790,20 @@
     'Yes','No','Ok','Okay','Please','Thanks','Thank','Hello','Hi','Hey'
   ]);
 
+  // TAG-01 follow-up (2026-09-05): a bare stopword check missed contracted
+  // forms — "I've", "It's", "We're", "That'll" etc. are NOT in the Set above
+  // (only "I", "It", "We", "That" are), so a sentence like "I've been to
+  // Bondi Beach, I've been to Europe" let "I've" itself sit in the
+  // comma/and-joined list right alongside the real places and get captured
+  // as a location. Strip a trailing clitic ('ve/'re/'ll/'s/'d/'m) before
+  // testing, so "I've" -> "I" (stopword) is caught the same way "I" alone
+  // always was.
+  function _memIsStopword(w) {
+    if (_MEM_STOPWORDS.has(w)) return true;
+    var base = w.replace(/['\u2019](?:ve|re|ll|s|d|m)$/i, '');
+    return base !== w && _MEM_STOPWORDS.has(base);
+  }
+
   // ── Liberal proper-noun capture: "<cue word> <Capitalised Phrase>" ─────
   // Shared by the location and people heuristics below — only the cue list
   // differs (locative prepositions vs relational words). Captures 1-3
@@ -19813,7 +19827,23 @@
     }).join('|');
   }
 
-  function _memExtractCuedProperNouns(text, cueSource) {
+  // TAG-01 follow-up (2026-09-05): real dictated sentences routinely put
+  // conversational filler BETWEEN a cue word and the actual name(s) —
+  // "friends, you know, like Albert and Garnet", "with lots of people, lots
+  // of people along the way, John, Bill and Ted". The original pattern
+  // required the phrase to start right after the cue (plus at most one
+  // comma and one article), so any of that filler made the whole match fail
+  // silently — this is why a freshly-written entry mentioning six people by
+  // name could come back with the People field completely empty even though
+  // every one of them follows a real cue word somewhere in the sentence.
+  // `allowFiller` (used for people, not locations — see call sites below)
+  // lets a bounded run of lowercase words/commas sit between the cue and the
+  // phrase. It's word-based rather than a raw character cap so it scales
+  // with how wordy the filler is, and it's built only from lowercase
+  // letters/apostrophes/commas — it can never itself swallow a capitalised
+  // word or cross a sentence-ending . ! ?, so it can't accidentally bridge
+  // into an unrelated later sentence.
+  function _memExtractCuedProperNouns(text, cueSource, allowFiller) {
     var TOKEN  = "[A-Z][\\p{L}'\u2019-]*";
     var PHRASE = TOKEN + "(?:\\s+" + TOKEN + "){0,2}";
     // A cue word is often followed by a LIST of names/places, not just one —
@@ -19821,10 +19851,11 @@
     // tail allowing further comma/and-joined phrases, only the first item in
     // any such list was ever captured (e.g. "Albert" was silently dropped).
     var LIST_TAIL = "(?:\\s*(?:,|and)\\s*" + PHRASE + ")*";
+    var GAP = allowFiller ? "(?:\\s*(?:[a-z']+|,)){0,16}\\s*" : "\\s*,?\\s+";
     var re;
     try {
       var cues = _memCueVariants(cueSource);
-      re = new RegExp('\\b(?:' + cues + ')\\s*,?\\s+(?:the\\s+|a\\s+|an\\s+|The\\s+|A\\s+|An\\s+)?(' + PHRASE + LIST_TAIL + ')', 'gu');
+      re = new RegExp('\\b(?:' + cues + ')' + GAP + '(?:the\\s+|a\\s+|an\\s+|The\\s+|A\\s+|An\\s+)?(' + PHRASE + LIST_TAIL + ')', 'gu');
     } catch (e) {
       return []; // no Unicode-property-escape support in this environment — fail safe
     }
@@ -19836,8 +19867,8 @@
       var items = m[1].split(/\s*,\s*|\s+and\s+/i);
       items.forEach(function(raw) {
         var words = raw.trim().split(/\s+/).filter(Boolean);
-        while (words.length && _MEM_STOPWORDS.has(words[words.length - 1])) words.pop();
-        while (words.length && _MEM_STOPWORDS.has(words[0])) words.shift();
+        while (words.length && _memIsStopword(words[words.length - 1])) words.pop();
+        while (words.length && _memIsStopword(words[0])) words.shift();
         if (!words.length) return;
         var phrase = words.join(' ');
         if (phrase.length < 2) return;
@@ -19884,6 +19915,10 @@
       }
     });
     var cues = 'back in|in|to|at|through|throughout|around|near|from|towards?|across|via';
+    // Deliberately NOT filler-tolerant (3rd arg omitted/false): "to"/"in" are
+    // extremely common short words, and letting them reach across
+    // intervening clauses swept up unrelated capitalised words (e.g. "to
+    // school with Garnet and Albert" tagging Garnet/Albert as places).
     _memExtractCuedProperNouns(text, cues).forEach(function(loc) {
       var key = loc.toLowerCase();
       if (!seen[key]) { seen[key] = true; found.push(loc); }
@@ -19918,8 +19953,13 @@
         }
       });
     }
-    var cues = 'friend|friends|brother|sister|mother|father|mom|dad|mum|husband|wife|girlfriend|boyfriend|partner|cousin|aunt|uncle|neighbou?r|colleague|named|called|with';
-    _memExtractCuedProperNouns(text, cues).forEach(function(name) {
+    var cues = 'friend|friends|brother|sister|mother|father|mom|dad|mum|husband|wife|girlfriend|boyfriend|partner|cousin|aunt|uncle|neighbou?r|colleague|named|called|with|like|son|daughter|kids?|children';
+    // Filler-tolerant (3rd arg true): people get named at the end of a
+    // run-on aside far more often than locations do — "I've got lots of
+    // friends, you know, like Albert and Garnet", "with lots of people,
+    // lots of people along the way, John, Bill and Ted" — see GAP comment
+    // on _memExtractCuedProperNouns above.
+    _memExtractCuedProperNouns(text, cues, true).forEach(function(name) {
       var key = name.toLowerCase();
       if (!seen[key]) { seen[key] = true; found.push(name); }
     });
