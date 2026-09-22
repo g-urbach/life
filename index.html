@@ -3898,7 +3898,6 @@
 
     </div>
   </div>
-  </div>
 
   <!-- RESPONSES OVERLAY — full list of unread responses, opened from the compact dashboard card -->
   <div id="responsesOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column">
@@ -5226,7 +5225,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.182';
+  const APP_VERSION = 'v7.183';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -9769,6 +9768,21 @@
     // (caller should treat the turn as archive-less but still let live STT
     // proceed via MicManager — a missing archive is not worse than today).
     function start(stream, mime) {
+      // BUGFIX [AGP-MIC-REENTRANT] tripwire, 22 Sep 2026: this function used
+      // to silently replace _rec on a second call while one was already
+      // active, leaving the old MediaRecorder still attached to the stream
+      // and still writing into the (now-reset) shared _chunks array — two
+      // recorders of the same audio, both feeding one archive, independently
+      // transcribed. Suspected mechanism behind near-verbatim duplicate
+      // turns seen in a real tester session. The _agpStartMic re-entrancy
+      // fix should prevent this call from ever happening while _rec is
+      // still active, but detect and persist-log it here too, in case
+      // there's another path into it this fix didn't close — this is the
+      // one direct, confirmable signal for tonight's test.
+      if (_rec) {
+        dbgErr(logTag, 'start() called while a recorder was already active — discarding the stale one. This should not happen after AGP-MIC-REENTRANT; if it fires, there is still a re-entrant call path into ' + logTag + '.start().');
+        try { if (_rec.state !== 'inactive') _rec.stop(); } catch(e) {}
+      }
       _chunks = [];
       _mime   = mime || '';
       if (!stream) { dbgWarn(logTag, 'start() called with no stream'); return false; }
@@ -23985,6 +23999,35 @@
   var _agpFlushCooldown = false;
   var _agpChunkInterval = null;
 
+  // See BUGFIX [AGP-CHUNK-SEAM] at its call site (_agpFlushChunk) for why
+  // this exists. Compares up to the last 6 words of prevText against the
+  // first 6 words of newChunk (case/punctuation-insensitive); if they match
+  // as a run of 2+ words, strips that run from the front of newChunk before
+  // it gets appended. Deliberately conservative (2+ word match required,
+  // not a single word) — a single repeated common word ("the", "and") is
+  // more likely coincidence than a genuine boundary echo, and stripping it
+  // wrongly would silently eat real content.
+  function _agpDedupeChunkBoundary(prevText, newChunk) {
+    try {
+      var norm = function(s) { return s.toLowerCase().replace(/[^\w\s']/g, '').trim(); };
+      var prevWords = norm(prevText).split(/\s+/);
+      var newWords  = norm(newChunk).split(/\s+/);
+      var maxOverlap = Math.min(6, prevWords.length, newWords.length);
+      for (var n = maxOverlap; n >= 2; n--) {
+        var prevTail = prevWords.slice(-n).join(' ');
+        var newHead  = newWords.slice(0, n).join(' ');
+        if (prevTail === newHead) {
+          // Found an n-word echo — rebuild newChunk with the original
+          // (non-normalised) first n words removed, preserving real casing/
+          // punctuation for the remainder.
+          var origWords = newChunk.trim().split(/\s+/);
+          return origWords.slice(n).join(' ');
+        }
+      }
+      return newChunk;
+    } catch(e) { return newChunk; }
+  }
+
   async function _agpFlushChunk() {
     if (!_agpMicActive || _agpMicTranscribing || _agpFlushCooldown) return;
     if (!_agpHadVoice) {
@@ -24081,7 +24124,19 @@
       if (!res.ok || !parsed.ok) throw new Error(parsed.error || 'Transcription error ' + res.status);
       var chunk = (parsed.result && parsed.result.transcript) ? parsed.result.transcript.trim() : '';
       if (chunk && !AGP_HALLUCINATIONS.test(chunk)) {
-        _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + chunk : chunk;
+        // BUGFIX [AGP-CHUNK-SEAM], 22 Sep 2026: _agpFlushChunk stops the old
+        // MediaRecorder and starts a new one back-to-back on the SAME live
+        // stream (see just above) — on mobile browsers this handoff isn't
+        // hardware-atomic, so a small window of audio can land in both the
+        // tail of the old chunk and the head of the new one, producing
+        // verbatim word/phrase doubling at the seam once each chunk is
+        // transcribed independently and joined ("too. Too invasive...",
+        // "you don't. I don't need...") — seen in a real iPhone tester
+        // session (fallback-chunk path only; full-pass transcription, one
+        // continuous recording, isn't exposed to this). Mitigate at the
+        // text level: trim words from the START of this chunk that just
+        // repeat the END of what's already accumulated, before appending.
+        _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + _agpDedupeChunkBoundary(_agpLiveText, chunk) : chunk;
         var inp = document.getElementById('agpInput');
         if (inp) inp.value = _agpLiveText;
         dbg('AGP_MIC', 'Chunk appended — "' + chunk + '" / total=' + _agpLiveText.length + ' chars');
@@ -24301,12 +24356,36 @@
     _agpMicTranscribing = false;
   }
 
+  var _agpMicStarting = false; // see BUGFIX [AGP-MIC-REENTRANT] below
+
   async function _agpStartMic() {
     var panel = document.getElementById('askGethroPanel');
     if (!panel || !panel.classList.contains('open')) return;
-    if (_agpMicActive) return;
+    // BUGFIX [AGP-MIC-REENTRANT], 22 Sep 2026: the old guard only checked
+    // _agpMicActive, but that flag isn't set true until AFTER `await
+    // MicManager.start(...)` resolves further down — which itself awaits
+    // getUserMedia(), typically hundreds of ms. A second call landing in
+    // that window (e.g. a manual mic tap via toggleAgpMic() racing the
+    // 200ms auto-restart timer after Gethro finishes speaking) sailed
+    // straight past the old check and ran the whole start sequence again
+    // concurrently — including AgpArchiveRecorder.start(), which has no
+    // re-entrancy guard of its own and silently replaces its recorder
+    // reference on a second call without stopping the first, leaving both
+    // recorders writing into the same shared chunk array. Suspected root
+    // cause of near-verbatim duplicate turns seen in a real tester session
+    // (paragraph-length text appearing twice, once cleanly and once with
+    // chunk-boundary artifacts — consistent with two concurrent recorders
+    // of the same audio, transcribed independently). _agpMicStarting is
+    // set synchronously here, before any await, closing the gap the old
+    // _agpMicActive check couldn't cover.
+    if (_agpMicActive || _agpMicStarting) {
+      dbgWarn('AGP_MIC', 'Blocked re-entrant _agpStartMic call — active=' + _agpMicActive + ' starting=' + _agpMicStarting);
+      return;
+    }
+    _agpMicStarting = true;
 
     if (!_mediaRecordingSupported()) {
+      _agpMicStarting = false;
       logActivity('media_unsupported', JSON.stringify({ context: 'agpStartMic' }), 'warn', 'APP');
       return toast(_mediaUnsupportedMessage());
     }
@@ -24357,6 +24436,7 @@
     });
 
     if (err) {
+      _agpMicStarting = false;
       notifyDev('warn', 'AGP_MIC', 'MicManager.start failed (Gethro conversation): ' + err.name + ' — ' + err.message);
       logActivity('mic_start_failed', err.name + ': ' + err.message, 'warn', 'AGP_MIC');
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -24367,6 +24447,7 @@
 
     _agpMicMime    = MicManager.mime;
     _agpMicActive  = true;
+    _agpMicStarting = false; // guard's job is done — _agpMicActive now covers it
     _agpSetBtn('recording');
     dbg('AGP_MIC', 'Started — mime=' + MicManager.mime);
 
