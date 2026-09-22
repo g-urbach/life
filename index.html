@@ -3898,7 +3898,6 @@
 
     </div>
   </div>
-  </div>
 
   <!-- RESPONSES OVERLAY — full list of unread responses, opened from the compact dashboard card -->
   <div id="responsesOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column">
@@ -5226,13 +5225,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.176';
+  const APP_VERSION = 'v7.183';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11092},{"maxLine":1943,"offset":11093},{"maxLine":2673,"offset":11094},{"maxLine":2725,"offset":11097},{"maxLine":3122,"offset":11098},{"maxLine":3302,"offset":11099},{"maxLine":5234,"offset":11100},{"maxLine":5547,"offset":11108},{"maxLine":6264,"offset":11118},{"maxLine":6546,"offset":11119},{"maxLine":6945,"offset":11120},{"maxLine":7756,"offset":11121},{"maxLine":9184,"offset":11123},{"maxLine":10317,"offset":11124},{"maxLine":10484,"offset":11125},{"maxLine":11206,"offset":11126},{"maxLine":11224,"offset":11128},{"maxLine":13082,"offset":11130},{"maxLine":13877,"offset":11131},{"maxLine":13879,"offset":11132},{"maxLine":14575,"offset":11133},{"maxLine":15446,"offset":11134},{"maxLine":17302,"offset":11137},{"maxLine":17616,"offset":11138},{"maxLine":17882,"offset":11139},{"maxLine":18500,"offset":11140},{"maxLine":18693,"offset":11141},{"maxLine":18885,"offset":11142},{"maxLine":19297,"offset":11143},{"maxLine":19547,"offset":11144},{"maxLine":20167,"offset":11145},{"maxLine":20209,"offset":11146},{"maxLine":20344,"offset":11147},{"maxLine":22240,"offset":11148},{"maxLine":22535,"offset":11149},{"maxLine":25950,"offset":11487},{"maxLine":27916,"offset":11489},{"maxLine":null,"offset":11490}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11316},{"maxLine":1943,"offset":11317},{"maxLine":2673,"offset":11318},{"maxLine":2725,"offset":11321},{"maxLine":3129,"offset":11322},{"maxLine":3309,"offset":11323},{"maxLine":5229,"offset":11324},{"maxLine":5542,"offset":11332},{"maxLine":6259,"offset":11342},{"maxLine":6541,"offset":11343},{"maxLine":6942,"offset":11344},{"maxLine":7807,"offset":11345},{"maxLine":9235,"offset":11347},{"maxLine":10372,"offset":11348},{"maxLine":10543,"offset":11349},{"maxLine":11265,"offset":11350},{"maxLine":11283,"offset":11352},{"maxLine":13142,"offset":11354},{"maxLine":13937,"offset":11355},{"maxLine":13939,"offset":11356},{"maxLine":14635,"offset":11357},{"maxLine":15512,"offset":11358},{"maxLine":17368,"offset":11361},{"maxLine":17688,"offset":11362},{"maxLine":17954,"offset":11363},{"maxLine":18572,"offset":11364},{"maxLine":18765,"offset":11365},{"maxLine":18957,"offset":11366},{"maxLine":19369,"offset":11367},{"maxLine":19619,"offset":11368},{"maxLine":20241,"offset":11369},{"maxLine":20283,"offset":11370},{"maxLine":20437,"offset":11371},{"maxLine":22319,"offset":11372},{"maxLine":22614,"offset":11373},{"maxLine":26037,"offset":11784},{"maxLine":28186,"offset":11786},{"maxLine":null,"offset":11787}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -5384,7 +5383,7 @@
   // KNOWLEDGE_GENERATED_AT: updated every 10 builds when a generation build refreshes
   // the full GETHRO_APP_KNOWLEDGE array and the deployer pushes it to life_config.
   // Phase 2: knowledge fetched and injected server-side by GETHRO_PROXY (not client).
-  const KNOWLEDGE_GENERATED_AT = 'v7.104';
+  const KNOWLEDGE_GENERATED_AT = 'v7.180';
 
   // ── Theme ────────────────────────────────────────────────────────
   function initTheme() {
@@ -5415,13 +5414,39 @@
   // (bookmarks, onboarding deep-links) don't throw a ReferenceError.
   function toggleFunny() { /* no-op — select Comedy format via the story configurator */ }
 
-  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
+  // BUGFIX [DBG-TRAIL], 22 Sep 2026: dbg() (info) was console-only — during
+  // the DBG-PLAY iPhone stall investigation, the exact storagePath/resolvedUrl
+  // being loaded was logged via dbg() and lost forever, leaving only the
+  // final "STALLED" error with no context about which file it was.
+  // Blanket-persisting every dbg() call was considered and rejected: 169
+  // call sites, many in hot paths (per-keystroke/per-render), would flood
+  // life_activity_log with routine noise at real row-count/cost for no
+  // benefit on the happy path. Instead: keep a small in-memory ring buffer
+  // of recent dbg() breadcrumbs, and attach it ONLY when dbgErr/dbgWarn
+  // actually persists something — full context exactly when it's needed,
+  // zero added cost otherwise.
+  var _DBG_TRAIL_MAX = 20;
+  var _dbgTrail = [];
+  function _dbgTrailPush(area, args) {
+    try {
+      var msg = args.map(function(a) { return (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
+      _dbgTrail.push('[' + new Date().toISOString().slice(11, 23) + '][' + area + '] ' + msg);
+      if (_dbgTrail.length > _DBG_TRAIL_MAX) _dbgTrail.shift();
+    } catch(e) {}
+  }
+  function _dbgTrailSnapshot() {
+    return _dbgTrail.join('\n');
+  }
+  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); _dbgTrailPush(area, args); }
   function dbgErr(area,...args){
     console.error(`[${area}] ERROR`,...args);
     try {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      notifyDev('error', area, msg);          // Telegram — all errors
-      logActivity('app_error', msg, 'error', area); // Supabase — source of truth
+      const trail = _dbgTrailSnapshot();
+      const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
+      notifyDev('error', area, msg);                       // Telegram — keep concise, no trail (avoid spam/length limits)
+      logActivity('app_error', msgWithTrail, 'error', area); // Supabase — source of truth, now with breadcrumb trail
+      _dbgTrailPush(area, ['ERROR', ...args]);
     } catch(e) {}
   }
   // dbgWarn: always logs to console AND Supabase (logActivity). For curated serious
@@ -5457,10 +5482,13 @@
     console.warn(`[${area}] WARN`,...args);
     try {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      logActivity('app_warning', msg, 'warn', area); // Supabase — all warnings
+      const trail = _dbgTrailSnapshot();
+      const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
+      logActivity('app_warning', msgWithTrail, 'warn', area); // Supabase — all warnings, now with breadcrumb trail
       if (_WARN_NOTIFY_AREAS.includes(area)) {
-        notifyDev('warn', area, msg);  // Telegram — curated areas only
+        notifyDev('warn', area, msg);  // Telegram — curated areas only, concise
       }
+      _dbgTrailPush(area, ['WARN', ...args]);
     } catch(e) {}
   }
 
@@ -6892,19 +6920,68 @@
       var isAbsolute = /^https?:\/\//i.test(signedUrl);
       var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
       dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
+
+      // BUGFIX [WEBM-ON-IOS-STALL], 22 Sep 2026: iOS Safari has no WebM
+      // demuxer at all. Handing it a .webm src doesn't produce a clean
+      // 'error' event — the <audio> element just sits at networkState=2
+      // (NETWORK_LOADING) forever, firing 'stalled' with no other signal.
+      // Root-caused from a real DBG-PLAY session: a .webm archive recorded
+      // earlier the same day (likely on a non-Safari device/browser) was
+      // played back on iPhone Safari and stalled indefinitely — every other
+      // format that day (.wav) played fine. Cross-device archives are a
+      // known, expected case here (recordings can be made on any device and
+      // replayed on any other), so this must degrade gracefully rather than
+      // assume the playing browser can handle whatever was recorded.
+      // Fix: check canPlayType() against the storage path's extension BEFORE
+      // setting src, and fail fast with a clear message instead of silently
+      // stalling. Belt-and-braces: also cap how long we'll wait for
+      // loadedmetadata after a stalled/no-progress state, in case a browser
+      // optimistically reports 'maybe' for a container it can't actually
+      // demux (canPlayType() is advisory, not a guarantee).
+      var extMatch = /\.([a-z0-9]+)(?:\?|$)/i.exec(storagePath || '');
+      var ext = extMatch ? extMatch[1].toLowerCase() : '';
+      var extMimeMap = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'audio/mp4', wav: 'audio/wav', mp3: 'audio/mpeg' };
+      var probeMime = extMimeMap[ext] || '';
+      var probeEl = document.createElement('audio');
+      var canPlay = probeMime ? probeEl.canPlayType(probeMime) : ''; // '', 'maybe', or 'probably'
+      dbg('DBG-PLAY', 'format probe: ext=' + ext + ' mime=' + probeMime + ' canPlayType=' + JSON.stringify(canPlay));
+
+      if (probeMime && canPlay === '') {
+        dbgErr('DBG-PLAY', 'unsupported format on this browser — ext=' + ext + ' mime=' + probeMime);
+        container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">This recording can\u2019t be played on this device/browser (recorded in a format not supported here).</span>';
+        return;
+      }
+
       container.innerHTML =
         '<audio src="' + escHtml(resolvedUrl) + '" controls preload="metadata" style="width:100%;height:32px"></audio>';
       var audioEl = container.querySelector('audio');
       if (audioEl) {
+        var _stallGuardTimer = null;
+        var _loaded = false;
         audioEl.addEventListener('loadedmetadata', function() {
+          _loaded = true;
+          if (_stallGuardTimer) { clearTimeout(_stallGuardTimer); _stallGuardTimer = null; }
           dbg('DBG-PLAY', 'loadedmetadata OK — duration=' + audioEl.duration + 's readyState=' + audioEl.readyState);
         });
         audioEl.addEventListener('error', function() {
           var err = audioEl.error;
           // MediaError codes: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
           dbgErr('DBG-PLAY', 'audio element ERROR — code=' + (err && err.code) + ' message=' + (err && err.message) + ' | src=' + audioEl.currentSrc);
+          container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">Could not load audio for playback.</span>';
         });
-        audioEl.addEventListener('stalled', function() { dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState); });
+        audioEl.addEventListener('stalled', function() {
+          dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState);
+          // canPlayType() said 'maybe'/'probably' but the browser is stuck
+          // anyway — give it a grace window, then fail visibly instead of
+          // leaving the person staring at a spinner forever.
+          if (!_loaded && !_stallGuardTimer) {
+            _stallGuardTimer = setTimeout(function() {
+              if (_loaded) return;
+              dbgErr('DBG-PLAY', 'stall guard fired — no loadedmetadata within grace window, giving up');
+              container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">This recording isn\u2019t playing on this device — try another device or browser.</span>';
+            }, 6000);
+          }
+        });
         audioEl.addEventListener('play', function() { dbg('DBG-PLAY', 'audio play event fired'); });
       }
     } catch(e) {
@@ -7357,13 +7434,33 @@
       window._pendingGiftCode = _giftParam;
       history.replaceState(null, '', window.location.pathname);
       dbg('GIFT', 'Pending gift code detected from URL:', _giftParam);
+      // BUGFIX (2026-09-18): also stash to sessionStorage immediately, not just
+      // on "I'll do this later". window._pendingGiftCode alone does NOT survive
+      // an OAuth redirect (Google/Apple/Facebook all use a full-page redirectTo
+      // round-trip — see landingSignInWithGoogle()) — the URL is already
+      // stripped by the time the user returns, so a brand-new recipient signing
+      // up via Google would otherwise lose their gift code silently, with no
+      // error and no way to recover it short of re-clicking the email link.
+      // sessionStorage survives this exact round-trip already (same pattern
+      // used by startGiftCheckout()'s lifetold_gift_pending for the Stripe
+      // return), and is scoped to the tab so it doesn't leak across sessions
+      // the way localStorage would.
+      try { sessionStorage.setItem('lifetold_pending_gift_code_session', _giftParam); } catch(e) { /* unavailable */ }
     } else {
-      // No code in the URL this visit — check for one stashed from a previous
-      // "I'll do this later" dismissal (see dismissGiftRedemption()).
+      // No code in the URL this visit — check sessionStorage first (survives an
+      // OAuth redirect within this tab — see BUGFIX above), then fall back to
+      // localStorage (a previous "I'll do this later" dismissal from ANY
+      // session — see dismissGiftRedemption()).
       try {
-        var _storedGiftCode = localStorage.getItem('lifetold_pending_gift_code');
-        if (_storedGiftCode) window._pendingGiftCode = _storedGiftCode;
-      } catch(e) { /* localStorage may not be available */ logActivity('gift_localstorage_read_failed', String(e && e.message || e), 'warn', 'GIFT'); }
+        var _sessionGiftCode = sessionStorage.getItem('lifetold_pending_gift_code_session');
+        if (_sessionGiftCode) window._pendingGiftCode = _sessionGiftCode;
+      } catch(e) { /* sessionStorage may not be available */ }
+      if (!window._pendingGiftCode) {
+        try {
+          var _storedGiftCode = localStorage.getItem('lifetold_pending_gift_code');
+          if (_storedGiftCode) window._pendingGiftCode = _storedGiftCode;
+        } catch(e) { /* localStorage may not be available */ logActivity('gift_localstorage_read_failed', String(e && e.message || e), 'warn', 'GIFT'); }
+      }
     }
     // Pre-auth visibility: if we have a pending code but no session yet, show
     // a subtle banner above the sign-in panel so the context is clear without
@@ -9671,6 +9768,21 @@
     // (caller should treat the turn as archive-less but still let live STT
     // proceed via MicManager — a missing archive is not worse than today).
     function start(stream, mime) {
+      // BUGFIX [AGP-MIC-REENTRANT] tripwire, 22 Sep 2026: this function used
+      // to silently replace _rec on a second call while one was already
+      // active, leaving the old MediaRecorder still attached to the stream
+      // and still writing into the (now-reset) shared _chunks array — two
+      // recorders of the same audio, both feeding one archive, independently
+      // transcribed. Suspected mechanism behind near-verbatim duplicate
+      // turns seen in a real tester session. The _agpStartMic re-entrancy
+      // fix should prevent this call from ever happening while _rec is
+      // still active, but detect and persist-log it here too, in case
+      // there's another path into it this fix didn't close — this is the
+      // one direct, confirmable signal for tonight's test.
+      if (_rec) {
+        dbgErr(logTag, 'start() called while a recorder was already active — discarding the stale one. This should not happen after AGP-MIC-REENTRANT; if it fires, there is still a re-entrant call path into ' + logTag + '.start().');
+        try { if (_rec.state !== 'inactive') _rec.stop(); } catch(e) {}
+      }
       _chunks = [];
       _mime   = mime || '';
       if (!stream) { dbgWarn(logTag, 'start() called with no stream'); return false; }
@@ -20302,13 +20414,22 @@
         detail: dupGroups.map(g =>
           '<em>' + g.map(i => '\u201C' + (richEntries[i].title||'Untitled').slice(0,45) + '\u201D').join(' · ') + '</em>'
         ).join('<br>'),
-        // BUGFIX (2026-09-14): was `fn: 'openDuplicates()'`, a string that was
-        // never actually evaluated anywhere — this button rendered but did
-        // nothing when clicked. Switched to the same data-action pattern
-        // used everywhere else in the app.
-        action: { label: '\uD83D\uDD0D Review duplicates &amp; overlaps', action: 'open-duplicates' }
+        // BUGFIX (2026-09-16): this check's own data is topic CLUSTERS
+        // (multi-entry groups, same algorithm as consolidateRunClustering())
+        // but its button opened openDuplicates() — a completely separate
+        // pairwise near-identical detector with its own independent
+        // candidate-scoring pass. Routes to the matching screen now.
+        action: { label: '\uD83D\uDCDA Consolidate these groups', action: 'open-consolidate' }
       });
     }
+    // Pairwise near-identical check is a different algorithm (AI-judged,
+    // not topic clustering) — offered as its own always-available action
+    // so openDuplicates() stays reachable now that Check 1 points elsewhere.
+    checks.push({
+      ok: true,
+      label: 'Want a closer pairwise check too?',
+      action: { label: '\uD83D\uDD0D Review duplicates & overlaps', action: 'open-duplicates' }
+    });
 
     // ── Check 2: Chapter gap detection ───────────────────────────────────
     const allChapters = ['Childhood','Family','Education','Career','Relationships','Adventures','Challenges','Reflections'];
@@ -23777,7 +23898,22 @@
       // comments — no decoder in that runtime) — same transcode already
       // used for transcription elsewhere in this file, except when the
       // caller has already guaranteed WAV (see skipTranscode note above).
-      var outBlob = skipTranscode ? blob : (await MicManager.toWav16kMono(blob, mime || 'audio/ogg')).blob;
+      var transcodeResult = skipTranscode ? { blob: blob, mime: 'audio/wav' } : (await MicManager.toWav16kMono(blob, mime || 'audio/ogg'));
+      // BUGFIX [AGP-WAV-FALLBACK], 22 Sep 2026: toWav16kMono falls back to
+      // returning the ORIGINAL (non-WAV) blob if in-browser transcoding
+      // throws — but this call site was uploading that fallback blob
+      // unconditionally labelled 'agp_turn.wav' regardless of its real
+      // format. append_conversation_turn requires actual WAV bytes (it has
+      // no decoder server-side), so a fallback blob was always going to be
+      // rejected — sending it was a guaranteed-failed network call that
+      // also mislabeled the data. Skip the upload outright when transcode
+      // fell back, and log it clearly (was previously indistinguishable
+      // from any other append_conversation_turn failure in the logs).
+      if (!skipTranscode && transcodeResult.mime !== 'audio/wav') {
+        dbgWarn('AGP_ARCHIVE', 'skipping turn upload — WAV transcode fell back to original format:', transcodeResult.mime);
+        return;
+      }
+      var outBlob = transcodeResult.blob;
       var form = new FormData();
       form.append('action', 'append_conversation_turn');
       form.append('conversationId', _agpConversationId);
@@ -23862,6 +23998,35 @@
   // Does NOT send to Gethro — that is handled by the silence loop above.
   var _agpFlushCooldown = false;
   var _agpChunkInterval = null;
+
+  // See BUGFIX [AGP-CHUNK-SEAM] at its call site (_agpFlushChunk) for why
+  // this exists. Compares up to the last 6 words of prevText against the
+  // first 6 words of newChunk (case/punctuation-insensitive); if they match
+  // as a run of 2+ words, strips that run from the front of newChunk before
+  // it gets appended. Deliberately conservative (2+ word match required,
+  // not a single word) — a single repeated common word ("the", "and") is
+  // more likely coincidence than a genuine boundary echo, and stripping it
+  // wrongly would silently eat real content.
+  function _agpDedupeChunkBoundary(prevText, newChunk) {
+    try {
+      var norm = function(s) { return s.toLowerCase().replace(/[^\w\s']/g, '').trim(); };
+      var prevWords = norm(prevText).split(/\s+/);
+      var newWords  = norm(newChunk).split(/\s+/);
+      var maxOverlap = Math.min(6, prevWords.length, newWords.length);
+      for (var n = maxOverlap; n >= 2; n--) {
+        var prevTail = prevWords.slice(-n).join(' ');
+        var newHead  = newWords.slice(0, n).join(' ');
+        if (prevTail === newHead) {
+          // Found an n-word echo — rebuild newChunk with the original
+          // (non-normalised) first n words removed, preserving real casing/
+          // punctuation for the remainder.
+          var origWords = newChunk.trim().split(/\s+/);
+          return origWords.slice(n).join(' ');
+        }
+      }
+      return newChunk;
+    } catch(e) { return newChunk; }
+  }
 
   async function _agpFlushChunk() {
     if (!_agpMicActive || _agpMicTranscribing || _agpFlushCooldown) return;
@@ -23959,7 +24124,19 @@
       if (!res.ok || !parsed.ok) throw new Error(parsed.error || 'Transcription error ' + res.status);
       var chunk = (parsed.result && parsed.result.transcript) ? parsed.result.transcript.trim() : '';
       if (chunk && !AGP_HALLUCINATIONS.test(chunk)) {
-        _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + chunk : chunk;
+        // BUGFIX [AGP-CHUNK-SEAM], 22 Sep 2026: _agpFlushChunk stops the old
+        // MediaRecorder and starts a new one back-to-back on the SAME live
+        // stream (see just above) — on mobile browsers this handoff isn't
+        // hardware-atomic, so a small window of audio can land in both the
+        // tail of the old chunk and the head of the new one, producing
+        // verbatim word/phrase doubling at the seam once each chunk is
+        // transcribed independently and joined ("too. Too invasive...",
+        // "you don't. I don't need...") — seen in a real iPhone tester
+        // session (fallback-chunk path only; full-pass transcription, one
+        // continuous recording, isn't exposed to this). Mitigate at the
+        // text level: trim words from the START of this chunk that just
+        // repeat the END of what's already accumulated, before appending.
+        _agpLiveText = _agpLiveText ? _agpLiveText + ' ' + _agpDedupeChunkBoundary(_agpLiveText, chunk) : chunk;
         var inp = document.getElementById('agpInput');
         if (inp) inp.value = _agpLiveText;
         dbg('AGP_MIC', 'Chunk appended — "' + chunk + '" / total=' + _agpLiveText.length + ' chars');
@@ -24179,12 +24356,36 @@
     _agpMicTranscribing = false;
   }
 
+  var _agpMicStarting = false; // see BUGFIX [AGP-MIC-REENTRANT] below
+
   async function _agpStartMic() {
     var panel = document.getElementById('askGethroPanel');
     if (!panel || !panel.classList.contains('open')) return;
-    if (_agpMicActive) return;
+    // BUGFIX [AGP-MIC-REENTRANT], 22 Sep 2026: the old guard only checked
+    // _agpMicActive, but that flag isn't set true until AFTER `await
+    // MicManager.start(...)` resolves further down — which itself awaits
+    // getUserMedia(), typically hundreds of ms. A second call landing in
+    // that window (e.g. a manual mic tap via toggleAgpMic() racing the
+    // 200ms auto-restart timer after Gethro finishes speaking) sailed
+    // straight past the old check and ran the whole start sequence again
+    // concurrently — including AgpArchiveRecorder.start(), which has no
+    // re-entrancy guard of its own and silently replaces its recorder
+    // reference on a second call without stopping the first, leaving both
+    // recorders writing into the same shared chunk array. Suspected root
+    // cause of near-verbatim duplicate turns seen in a real tester session
+    // (paragraph-length text appearing twice, once cleanly and once with
+    // chunk-boundary artifacts — consistent with two concurrent recorders
+    // of the same audio, transcribed independently). _agpMicStarting is
+    // set synchronously here, before any await, closing the gap the old
+    // _agpMicActive check couldn't cover.
+    if (_agpMicActive || _agpMicStarting) {
+      dbgWarn('AGP_MIC', 'Blocked re-entrant _agpStartMic call — active=' + _agpMicActive + ' starting=' + _agpMicStarting);
+      return;
+    }
+    _agpMicStarting = true;
 
     if (!_mediaRecordingSupported()) {
+      _agpMicStarting = false;
       logActivity('media_unsupported', JSON.stringify({ context: 'agpStartMic' }), 'warn', 'APP');
       return toast(_mediaUnsupportedMessage());
     }
@@ -24235,6 +24436,7 @@
     });
 
     if (err) {
+      _agpMicStarting = false;
       notifyDev('warn', 'AGP_MIC', 'MicManager.start failed (Gethro conversation): ' + err.name + ' — ' + err.message);
       logActivity('mic_start_failed', err.name + ': ' + err.message, 'warn', 'AGP_MIC');
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -24245,6 +24447,7 @@
 
     _agpMicMime    = MicManager.mime;
     _agpMicActive  = true;
+    _agpMicStarting = false; // guard's job is done — _agpMicActive now covers it
     _agpSetBtn('recording');
     dbg('AGP_MIC', 'Started — mime=' + MicManager.mime);
 
@@ -26482,6 +26685,7 @@
         // it on every future login.
         window._pendingGiftCode = null;
         try { localStorage.removeItem('lifetold_pending_gift_code'); } catch(e) {}
+        try { sessionStorage.removeItem('lifetold_pending_gift_code_session'); } catch(e) {}
         _showGiftRedeemError(_giftErrorMessage(data.error));
         dbgWarn('GIFT', 'redeemGiftCode preview failed:', data.error);
         logActivity('gift_redeem_preview_rejected', data.error, 'info', 'GIFT');
@@ -26572,6 +26776,7 @@
       if (res.ok && data.ok) {
         window._pendingGiftCode = null;
         try { localStorage.removeItem('lifetold_pending_gift_code'); } catch(e) {}
+        try { sessionStorage.removeItem('lifetold_pending_gift_code_session'); } catch(e) {}
         closeGiftRedemptionModal();
         await loadSubscriptionTier();
         refreshPremiumGates();
@@ -26584,6 +26789,7 @@
         // could have expired in the interim — rare, but handle it the same way.
         window._pendingGiftCode = null;
         try { localStorage.removeItem('lifetold_pending_gift_code'); } catch(e) {}
+        try { sessionStorage.removeItem('lifetold_pending_gift_code_session'); } catch(e) {}
         _showGiftRedeemError(_giftErrorMessage(data.error));
         dbgWarn('GIFT', 'claimGiftCode failed:', data.error);
         logActivity('gift_claim_rejected', 'code=' + code + ' ' + data.error, 'warn', 'GIFT');
@@ -29430,6 +29636,7 @@
           break;
         }
         case 'open-duplicates':    openDuplicates();          break;
+        case 'open-consolidate':   openConsolidate();         break;
         case 'open-dash-coverage': openDashDialog('coverage'); break;
         case 'open-tag-photo': {
           var _tagPrefixP = btn.dataset.prefix || 'edit';
