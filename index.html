@@ -5226,7 +5226,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.181';
+  const APP_VERSION = 'v7.182';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5415,13 +5415,39 @@
   // (bookmarks, onboarding deep-links) don't throw a ReferenceError.
   function toggleFunny() { /* no-op — select Comedy format via the story configurator */ }
 
-  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); }
+  // BUGFIX [DBG-TRAIL], 22 Sep 2026: dbg() (info) was console-only — during
+  // the DBG-PLAY iPhone stall investigation, the exact storagePath/resolvedUrl
+  // being loaded was logged via dbg() and lost forever, leaving only the
+  // final "STALLED" error with no context about which file it was.
+  // Blanket-persisting every dbg() call was considered and rejected: 169
+  // call sites, many in hot paths (per-keystroke/per-render), would flood
+  // life_activity_log with routine noise at real row-count/cost for no
+  // benefit on the happy path. Instead: keep a small in-memory ring buffer
+  // of recent dbg() breadcrumbs, and attach it ONLY when dbgErr/dbgWarn
+  // actually persists something — full context exactly when it's needed,
+  // zero added cost otherwise.
+  var _DBG_TRAIL_MAX = 20;
+  var _dbgTrail = [];
+  function _dbgTrailPush(area, args) {
+    try {
+      var msg = args.map(function(a) { return (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
+      _dbgTrail.push('[' + new Date().toISOString().slice(11, 23) + '][' + area + '] ' + msg);
+      if (_dbgTrail.length > _DBG_TRAIL_MAX) _dbgTrail.shift();
+    } catch(e) {}
+  }
+  function _dbgTrailSnapshot() {
+    return _dbgTrail.join('\n');
+  }
+  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); _dbgTrailPush(area, args); }
   function dbgErr(area,...args){
     console.error(`[${area}] ERROR`,...args);
     try {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      notifyDev('error', area, msg);          // Telegram — all errors
-      logActivity('app_error', msg, 'error', area); // Supabase — source of truth
+      const trail = _dbgTrailSnapshot();
+      const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
+      notifyDev('error', area, msg);                       // Telegram — keep concise, no trail (avoid spam/length limits)
+      logActivity('app_error', msgWithTrail, 'error', area); // Supabase — source of truth, now with breadcrumb trail
+      _dbgTrailPush(area, ['ERROR', ...args]);
     } catch(e) {}
   }
   // dbgWarn: always logs to console AND Supabase (logActivity). For curated serious
@@ -5457,10 +5483,13 @@
     console.warn(`[${area}] WARN`,...args);
     try {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      logActivity('app_warning', msg, 'warn', area); // Supabase — all warnings
+      const trail = _dbgTrailSnapshot();
+      const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
+      logActivity('app_warning', msgWithTrail, 'warn', area); // Supabase — all warnings, now with breadcrumb trail
       if (_WARN_NOTIFY_AREAS.includes(area)) {
-        notifyDev('warn', area, msg);  // Telegram — curated areas only
+        notifyDev('warn', area, msg);  // Telegram — curated areas only, concise
       }
+      _dbgTrailPush(area, ['WARN', ...args]);
     } catch(e) {}
   }
 
@@ -6892,19 +6921,68 @@
       var isAbsolute = /^https?:\/\//i.test(signedUrl);
       var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
       dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
+
+      // BUGFIX [WEBM-ON-IOS-STALL], 22 Sep 2026: iOS Safari has no WebM
+      // demuxer at all. Handing it a .webm src doesn't produce a clean
+      // 'error' event — the <audio> element just sits at networkState=2
+      // (NETWORK_LOADING) forever, firing 'stalled' with no other signal.
+      // Root-caused from a real DBG-PLAY session: a .webm archive recorded
+      // earlier the same day (likely on a non-Safari device/browser) was
+      // played back on iPhone Safari and stalled indefinitely — every other
+      // format that day (.wav) played fine. Cross-device archives are a
+      // known, expected case here (recordings can be made on any device and
+      // replayed on any other), so this must degrade gracefully rather than
+      // assume the playing browser can handle whatever was recorded.
+      // Fix: check canPlayType() against the storage path's extension BEFORE
+      // setting src, and fail fast with a clear message instead of silently
+      // stalling. Belt-and-braces: also cap how long we'll wait for
+      // loadedmetadata after a stalled/no-progress state, in case a browser
+      // optimistically reports 'maybe' for a container it can't actually
+      // demux (canPlayType() is advisory, not a guarantee).
+      var extMatch = /\.([a-z0-9]+)(?:\?|$)/i.exec(storagePath || '');
+      var ext = extMatch ? extMatch[1].toLowerCase() : '';
+      var extMimeMap = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'audio/mp4', wav: 'audio/wav', mp3: 'audio/mpeg' };
+      var probeMime = extMimeMap[ext] || '';
+      var probeEl = document.createElement('audio');
+      var canPlay = probeMime ? probeEl.canPlayType(probeMime) : ''; // '', 'maybe', or 'probably'
+      dbg('DBG-PLAY', 'format probe: ext=' + ext + ' mime=' + probeMime + ' canPlayType=' + JSON.stringify(canPlay));
+
+      if (probeMime && canPlay === '') {
+        dbgErr('DBG-PLAY', 'unsupported format on this browser — ext=' + ext + ' mime=' + probeMime);
+        container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">This recording can\u2019t be played on this device/browser (recorded in a format not supported here).</span>';
+        return;
+      }
+
       container.innerHTML =
         '<audio src="' + escHtml(resolvedUrl) + '" controls preload="metadata" style="width:100%;height:32px"></audio>';
       var audioEl = container.querySelector('audio');
       if (audioEl) {
+        var _stallGuardTimer = null;
+        var _loaded = false;
         audioEl.addEventListener('loadedmetadata', function() {
+          _loaded = true;
+          if (_stallGuardTimer) { clearTimeout(_stallGuardTimer); _stallGuardTimer = null; }
           dbg('DBG-PLAY', 'loadedmetadata OK — duration=' + audioEl.duration + 's readyState=' + audioEl.readyState);
         });
         audioEl.addEventListener('error', function() {
           var err = audioEl.error;
           // MediaError codes: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
           dbgErr('DBG-PLAY', 'audio element ERROR — code=' + (err && err.code) + ' message=' + (err && err.message) + ' | src=' + audioEl.currentSrc);
+          container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">Could not load audio for playback.</span>';
         });
-        audioEl.addEventListener('stalled', function() { dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState); });
+        audioEl.addEventListener('stalled', function() {
+          dbgErr('DBG-PLAY', 'audio STALLED — networkState=' + audioEl.networkState);
+          // canPlayType() said 'maybe'/'probably' but the browser is stuck
+          // anyway — give it a grace window, then fail visibly instead of
+          // leaving the person staring at a spinner forever.
+          if (!_loaded && !_stallGuardTimer) {
+            _stallGuardTimer = setTimeout(function() {
+              if (_loaded) return;
+              dbgErr('DBG-PLAY', 'stall guard fired — no loadedmetadata within grace window, giving up');
+              container.innerHTML = '<span style="font-size:0.78rem;color:var(--rose)">This recording isn\u2019t playing on this device — try another device or browser.</span>';
+            }, 6000);
+          }
+        });
         audioEl.addEventListener('play', function() { dbg('DBG-PLAY', 'audio play event fired'); });
       }
     } catch(e) {
@@ -23806,7 +23884,22 @@
       // comments — no decoder in that runtime) — same transcode already
       // used for transcription elsewhere in this file, except when the
       // caller has already guaranteed WAV (see skipTranscode note above).
-      var outBlob = skipTranscode ? blob : (await MicManager.toWav16kMono(blob, mime || 'audio/ogg')).blob;
+      var transcodeResult = skipTranscode ? { blob: blob, mime: 'audio/wav' } : (await MicManager.toWav16kMono(blob, mime || 'audio/ogg'));
+      // BUGFIX [AGP-WAV-FALLBACK], 22 Sep 2026: toWav16kMono falls back to
+      // returning the ORIGINAL (non-WAV) blob if in-browser transcoding
+      // throws — but this call site was uploading that fallback blob
+      // unconditionally labelled 'agp_turn.wav' regardless of its real
+      // format. append_conversation_turn requires actual WAV bytes (it has
+      // no decoder server-side), so a fallback blob was always going to be
+      // rejected — sending it was a guaranteed-failed network call that
+      // also mislabeled the data. Skip the upload outright when transcode
+      // fell back, and log it clearly (was previously indistinguishable
+      // from any other append_conversation_turn failure in the logs).
+      if (!skipTranscode && transcodeResult.mime !== 'audio/wav') {
+        dbgWarn('AGP_ARCHIVE', 'skipping turn upload — WAV transcode fell back to original format:', transcodeResult.mime);
+        return;
+      }
+      var outBlob = transcodeResult.blob;
       var form = new FormData();
       form.append('action', 'append_conversation_turn');
       form.append('conversationId', _agpConversationId);
