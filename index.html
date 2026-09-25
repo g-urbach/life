@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.185';
+  const APP_VERSION = 'v7.186';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8407,6 +8407,19 @@
   let _gethroAudio    = null; // current Audio element (if playing)
   let _gethroAudioCtx = null; // AudioContext for TTS — created once on first gesture,
                                // reused so resume() reliably unlocks desktop Chrome autoplay.
+  // AGP-TTS-01 (2026-09-25): generation counter closing a race where two gethroSpeak()
+  // calls overlap audibly ("two questions talking over each other" — reported on Android,
+  // not noticed on desktop). gethroCancel() below only stops audio that has already
+  // started (_gethroAudio/_gethroFallback's utterance are set right before playback);
+  // if a 2nd call fires while the 1st is still mid network-fetch/decode — a window that's
+  // milliseconds on fast wifi but can be a second-plus on mobile data — gethroCancel() has
+  // nothing to stop yet, so BOTH calls eventually reach .start()/.speak() and both play.
+  // Fix: every call claims the next generation number; right before it actually starts
+  // audio, it checks it's still the latest generation and silently no-ops if a newer call
+  // has since been made, however far along its own fetch/decode already was. Newest call
+  // always wins, regardless of network timing — this is not a mobile-only fix, it closes
+  // the race everywhere, just fires far more often on the slower/more variable path.
+  let _gethroSpeakGen = 0;
   // ── Shared TTS text-cleaning and segmentation ───────────────────────────────
   // Single source of truth used by BOTH the in-app audiobook player (_abCleanForTts /
   // _abGetSegments are thin aliases below) AND the share page (loadSharePage calls
@@ -8539,6 +8552,7 @@
   function gethroSpeak(text, opts) {
     return new Promise(async function(resolve) {
       if (!text || !text.trim()) { resolve(); return; }
+      var myGen = ++_gethroSpeakGen; // AGP-TTS-01: claim this call's generation before anything async
       gethroCancel();
       dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
       try {
@@ -8569,7 +8583,7 @@
             // the conversation doesn't break, just stop mislabelling it.
             dbg('TTS', 'gethroSpeak rate-limited — falling back to speechSynthesis');
             _maybeShowTtsRateLimitToast(rlParsed);
-            _gethroFallback(text, resolve);
+            _gethroFallback(text, resolve, myGen);
             return;
           }
           throw new Error('TTS_PROXY ' + res.status + ': ' + errBody.slice(0, 200));
@@ -8610,9 +8624,13 @@
           var msg = decodeErr ? decodeErr.message || String(decodeErr) : 'decodeAudioData failed';
           dbg('TTS', 'decodeAudioData error:', msg);
           notifyDev('error', 'TTS', 'decodeAudioData failed: ' + msg);
-          _gethroAudio = null; _gethroFallback(text, resolve); return;
+          _gethroAudio = null; _gethroFallback(text, resolve, myGen); return;
         }
         dbg('TTS', 'decodeAudioData ok, duration=' + decoded.duration.toFixed(1) + 's');
+        // AGP-TTS-01: a newer gethroSpeak() call has been made since this one started —
+        // don't play; this is what actually closes the overlap, everything else here is
+        // just the same fetch/decode work finishing after it stopped being needed.
+        if (myGen !== _gethroSpeakGen) { dbg('TTS', 'gethroSpeak superseded — discarding, gen=' + myGen); resolve(); return; }
         var source = ctx.createBufferSource();
         source.buffer = decoded;
         source.connect(ctx.destination);
@@ -8625,17 +8643,25 @@
         dbg('TTS', 'TTS_PROXY error:', err.message);
         notifyDev('error', 'TTS', 'gethroSpeak error: ' + err.message);
         logActivity('tts_fallback', 'gethroSpeak error: ' + err.message, 'error', 'TTS');
-        _gethroFallback(text, resolve);
+        _gethroFallback(text, resolve, myGen);
       }
     });
   }
   // _gethroFallbackNotified removed — every failure now logs individually so we
   // can see exactly which path and how often it fails.
-  function _gethroFallback(text, resolve) {
+  function _gethroFallback(text, resolve, myGen) {
     dbg('TTS', '_gethroFallback called');
     if (!window.speechSynthesis) { dbg('TTS', 'speechSynthesis unavailable'); resolve(); return; }
     // Voices may be empty on first call (Chrome loads async) — wait if needed
     function _speak() {
+      // AGP-TTS-01: same supersession check as the primary AudioContext path. Extra
+      // important here — this is the browser speechSynthesis fallback, and mobile
+      // (Android Chrome in particular) is both more likely to land on this path at all
+      // (flakier network → more TTS_PROXY failures/timeouts) AND has its own known
+      // queueing quirks where a stray .speak() call before this one fully settles can
+      // still be audible even after .cancel(). Refusing to speak once superseded is a
+      // second line of defence on top of the .cancel() call already below.
+      if (myGen !== undefined && myGen !== _gethroSpeakGen) { dbg('TTS', 'fallback speak superseded — discarding, gen=' + myGen); resolve(); return; }
       var voices = speechSynthesis.getVoices();
       dbg('TTS', '_speak voices=' + voices.length);
       speechSynthesis.cancel();
@@ -19949,16 +19975,60 @@
         .sort(function(a, b) { return a.count - b.count; }).slice(0, 15);
     };
     var missing = _agpCommonChaptersRef.filter(function(c) { return !chapterTally[c]; });
+    // GTH-CTX-02 (2026-09-25): health/word-target numbers, duplicated here rather than
+    // shared with renderDashboard()'s "Story Health tile" block (different chapter model —
+    // dashboard uses a fixed 8-chapter list, this uses whatever chapters actually exist —
+    // so a shared function would need to paper over that mismatch). If the dashboard's
+    // formula changes, update the numbers below to match — search renderDashboard() for
+    // 'Story Health tile' and 'Words toward goal tile'.
+    var _shTotalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
+    var _shChapterCount = Object.keys(chapterTally).length;
+    var _shNoTag = (entries || []).filter(function(e) { return (!e.category || !e.category.startsWith('_profile')) && !e.chapter; }).length;
+    var _shScore = Math.min(100, Math.round((Math.min(_shTotalWords, 3000) / 3000) * 60 + (_shChapterCount / 8) * 30 + (_shNoTag === 0 ? 10 : 0)));
+    var _shWordTarget = 5000;
     return {
       entryCount: real.length,
       chapters: Object.keys(chapterTally).map(function(name) { return { name: name, count: chapterTally[name] }; }),
       missingChapters: missing,
+      // People/places are sorted ascending by count (least-mentioned first) by toCounted()
+      // above — that ordering IS the "under-explored" list; no separate computation needed.
       people: toCounted(peopleTally, peopleTitles),
       places: toCounted(placeTally, placeTitles),
       recentTopics: _agpRecentTopics,
       purpose: userProfile.memoirGoal || '',
-      era: userProfile.goalEra || ''
+      era: userProfile.goalEra || '',
+      healthScore: _shScore,
+      totalWords: _shTotalWords,
+      wordTarget: _shWordTarget
     };
+  }
+
+  // GTH-CTX-02 (2026-09-25): renders _agpBuildStoryMap() into a short text block for
+  // EVERY chat turn (previously the story map was only built for the blank-session seed
+  // question). Kept deliberately terse — this rides along on every message, so it's a
+  // per-turn token cost, not a one-off. Callers must NOT call this while _agpMemoryMode is
+  // true: the map covers the whole memoir and would pull Gethro's attention away from the
+  // specific memory being discussed (see entriesContext's own memory-mode suppression,
+  // same pattern, just above _agpCallGethro).
+  function _agpStoryMapSummary(map) {
+    if (!map || !map.entryCount) return '';
+    var parts = [];
+    parts.push('Health ' + map.healthScore + '/100, ' + map.totalWords.toLocaleString() + '/' + map.wordTarget.toLocaleString() + ' words toward book length.');
+    if (map.chapters && map.chapters.length) {
+      parts.push('Chapters covered: ' + map.chapters.map(function(c) { return c.name + '(' + c.count + ')'; }).join(', ') + '.');
+    }
+    if (map.missingChapters && map.missingChapters.length) {
+      parts.push('Not yet covered: ' + map.missingChapters.slice(0, 6).join(', ') + '.');
+    }
+    if (map.people && map.people.length) {
+      parts.push('Least-explored people: ' + map.people.slice(0, 5).map(function(p) {
+        return p.name + ' (' + p.count + (p.count === 1 ? ' entry' : ' entries') + (p.titles.length ? ', e.g. "' + p.titles[0] + '"' : '') + ')';
+      }).join('; ') + '.');
+    }
+    if (map.places && map.places.length) {
+      parts.push('Least-explored places: ' + map.places.slice(0, 4).map(function(p) { return p.name + ' (' + p.count + ')'; }).join(', ') + '.');
+    }
+    return parts.join(' ').slice(0, 900); // hard cap — modest per-turn token cost
   }
   // Shared with the gap-mode chapter list further down (_agpCommonChapters) — kept as one
   // definition so the two lists can never drift apart.
@@ -23563,12 +23633,30 @@
     var lastMsg = (_gethroHistory[_gethroHistory.length - 1] || {}).content || '';
     var stopWords = new Set(['what','do','you','think','about','my','the','a','an','is','are','was','were','have','has','had','i','me','we','us','tell','me','know','any','of','in','on','at','to','for','with','and','or','but','how','when','where','who']);
     var keywords = lastMsg.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(function(w) { return w.length > 2 && !stopWords.has(w); });
+    // GTH-CTX-02 (2026-09-25): light stemming — strips a common suffix so "doughnuts" in the
+    // message still matches an entry that only says "doughnut". Deliberately crude (no real
+    // stemmer library): just strips one trailing suffix, and only if 3+ chars remain, so it
+    // can't eat short real words down to noise. Reverse case (entry says "doughnuts", message
+    // says "doughnut") already worked before this, since "doughnut" is already a substring of
+    // "doughnuts" — only the plural/gerund-in-message direction needed help.
+    function _agpStem(w) {
+      var s = w.replace(/(ing|ies|ed|es|s)$/, '');
+      return s.length >= 3 ? s : w;
+    }
     var matchedSnippets = '';
     if (keywords.length) {
       var matched = real.filter(function(e) {
         var haystack = ((e.title || '') + ' ' + (e.answer || '') + ' ' + (e.people || '')).toLowerCase();
-        return keywords.some(function(k) { return haystack.indexOf(k) !== -1; });
+        return keywords.some(function(k) { return haystack.indexOf(k) !== -1 || haystack.indexOf(_agpStem(k)) !== -1; });
       });
+      if (!matched.length) {
+        // GTH-CTX-02: explicit "searched and found nothing" signal, so Gethro can say
+        // "we haven't talked about that yet" confidently instead of a vague non-answer
+        // or (worse) guessing. Previously an empty match just left this field blank.
+        matchedSnippets = '\n[REFERENCE DATA — a keyword search of ALL their entries for: ' +
+          keywords.slice(0, 5).join(', ') + ' — found NO matches. If asked whether this has ' +
+          'come up before, say clearly that it hasn\'t yet, rather than guessing.]\n';
+      }
       if (matched.length) {
         // Sanitise entry content before injecting into prompt — strip control chars and
         // any content that looks like a prompt injection (lines starting with keywords).
@@ -23606,12 +23694,24 @@
       if (_bboOv && _bboOv.classList.contains('open')) currentScreen = 'book_organiser';
     } catch(e) {}
 
+    // GTH-CTX-02 (2026-09-25): if they're looking at a specific chapter's drill-down on the
+    // Dashboard, say which one — same "tell Gethro exactly what's on screen" pattern already
+    // used for the Memories tab draft (memoryEntryTitle/memoryEntryText below).
+    var _dashDetailNote = '';
+    try {
+      var _dashDetailEl = document.getElementById('dashChapterDetail');
+      if (_dashDetailEl && _dashDetailEl.style.display !== 'none') {
+        var _dashDetailChapter = (document.getElementById('dashChapterDetailTitle') || {}).textContent || '';
+        if (_dashDetailChapter) _dashDetailNote = 'They are currently looking at the "' + _dashDetailChapter + '" chapter breakdown specifically.\n';
+      }
+    } catch(e) {}
+
     var currentScreenNote = 'USER IS CURRENTLY ON: ' + currentScreen + '\n' +
       (currentScreen === 'my_people' ? 'They are looking at their family tree. Proactively help with: adding people, setting relationships, navigating Tree vs Directory tabs, or tapping a node to edit.\n' : '') +
       (currentScreen === 'memories' ? 'They are on the Add Memory tab. Proactively help with: saving an entry, using the mic, adding details (chapter/people/photos), or using AI Review.\n' : '') +
       (currentScreen === 'entries' ? 'They are browsing their saved memories. Proactively help with: searching, filtering, editing, or sharing an entry.\n' : '') +
       (currentScreen === 'story' ? 'They are on the My Story tab. Proactively help with: generating a story, choosing a format, book details, or printing. IMPORTANT: if the user starts sharing personal memories or life experiences in conversation (even if unprompted), treat it as a memory conversation and set memory_conversation:true — people often reminisce while reviewing their story.\n' : '') +
-      (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' : '') +
+      (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' + _dashDetailNote : '') +
       (currentScreen === 'print_preview' ? 'They are in the print preview. Proactively help with: cover styles, filling in book details, or exporting their print-ready PDF.\n' : '') +
       (currentScreen === 'book_organiser' ? 'They are in the Organise My Book screen. They can: (1) change the chapter for each memory using the dropdown, (2) set a date/year, and (3) drag the ☰ handle on any row to reorder memories within their chapter. Changes save when they tap Save All Changes.\n' : '');
 
@@ -23621,6 +23721,11 @@
     var entriesContext = _agpMemoryMode
       ? 'CURRENT MEMORY TOPIC: Stay focused on the current conversation — do not reference other entries or topics.'
       : ('RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' + matchedSnippets);
+
+    // GTH-CTX-02 (2026-09-25): whole-memoir story map (health score, chapter coverage,
+    // least-explored people/places) — same memory-mode suppression as entriesContext above,
+    // same reasoning: don't let the big picture distract Gethro from the memory at hand.
+    var storyMapContext = _agpMemoryMode ? '' : _agpStoryMapSummary(_agpBuildStoryMap());
 
     // GTH-CTX-01: explicit flag (was inferred server-side from entriesContext text alone —
     // that inference stays, as a fallback for any client still on the old payload shape).
@@ -23672,6 +23777,7 @@
         agpCoveredChapters: _agpCoveredChapters,
         agpMissingChapters: _agpMissingChapters,
         entriesContext: entriesContext,
+        storyMapContext: storyMapContext, // GTH-CTX-02 (2026-09-25)
         memoryMode: _agpMemoryMode,
         memoryEntryTitle: memoryEntryTitle,
         memoryEntryText: memoryEntryText,
