@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.190';
+  const APP_VERSION = 'v7.191';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25408,13 +25408,14 @@
         });
       }
 
-      // Fix SVG clipping: dTree sets width/height to the viewport size at render
-      // time, but content bbox can extend outside those bounds (confirmed 2026-09-26:
-      // bbox y:193 + height:995 = 1188px but SVG height was only 856px — 332px
-      // clipped by overflow:hidden on #mpCanvasViewport with no scrollbar).
-      // Fix: set viewBox to the actual content bbox + padding so the SVG declares
-      // the right coordinate space, then let zoomToFit scale it to the viewport.
-      // We do NOT touch the <g> transform — dTree owns that for pan/zoom.
+      // Fix SVG clipping: dTree sizes the SVG to the viewport at render time,
+      // but the tree layout can place content outside those bounds — confirmed
+      // 2026-09-26: content bbox extended 332px below the declared SVG height,
+      // clipped silently by overflow:hidden on #mpCanvasViewport.
+      // Fix: after render, read the real content bbox, expand the SVG to contain
+      // it all, then apply a CSS scale so the whole tree fits the viewport.
+      // We own the SVG size and CSS scale; dTree still owns the inner <g>
+      // transform for subsequent user pan/zoom.
       setTimeout(function() {
         try {
           var svg = container.querySelector('svg');
@@ -25422,17 +25423,31 @@
           var bb = svg.getBBox();
           if (!bb || bb.width === 0 || bb.height === 0) return;
           var pad = 60;
-          var vbX = bb.x - pad;
-          var vbY = bb.y - pad;
-          var vbW = bb.width  + pad * 2;
-          var vbH = bb.height + pad * 2;
-          svg.setAttribute('viewBox', vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH);
-          // Match width/height to viewport so zoomToFit scales correctly
-          svg.setAttribute('width',  vp ? vp.offsetWidth  : vbW);
-          svg.setAttribute('height', vp ? vp.offsetHeight : vbH);
-          if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
-            try { _mpDTreeInstance.zoomToFit(300); } catch(e) {}
+          // Expand the SVG to the full content bounds
+          var fullW = Math.ceil(bb.x + bb.width  + pad);
+          var fullH = Math.ceil(bb.y + bb.height + pad);
+          // Also account for negative offsets (content left of origin)
+          var minX = Math.min(0, bb.x - pad);
+          var minY = Math.min(0, bb.y - pad);
+          if (minX < 0 || minY < 0) {
+            fullW -= minX;
+            fullH -= minY;
+            svg.setAttribute('viewBox', minX + ' ' + minY + ' ' + fullW + ' ' + fullH);
+          } else {
+            svg.setAttribute('viewBox', '0 0 ' + fullW + ' ' + fullH);
           }
+          svg.setAttribute('width',  fullW);
+          svg.setAttribute('height', fullH);
+          // Scale the SVG to fit the viewport, preserving aspect ratio
+          var vpW = vp ? vp.offsetWidth  : fullW;
+          var vpH = vp ? vp.offsetHeight : fullH;
+          var scale = Math.min(vpW / fullW, vpH / fullH, 1); // never scale up
+          svg.style.transformOrigin = '0 0';
+          svg.style.transform = 'scale(' + scale + ')';
+          // Tell the container how much space the scaled SVG actually occupies
+          // so dTree's pan/zoom gestures still work in the right coordinate space
+          container.style.width  = Math.ceil(fullW * scale) + 'px';
+          container.style.height = Math.ceil(fullH * scale) + 'px';
         } catch(e) {
           dbgErr('PEOPLE', 'SVG resize error: ' + e.message);
           if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
