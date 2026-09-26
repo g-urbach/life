@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.198';
+  const APP_VERSION = 'v7.199';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25321,11 +25321,19 @@
 
           var spouseKids    = childrenOf[spouseId] || [];
           var sharedKids    = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
+          // Kids recorded under ONLY the spouse's side (e.g. "child_of Saba" was entered
+          // but "child_of Mum" never was). There's no ambiguity about which marriage these
+          // belong to — we already know the exact spouse — so always pull them in here,
+          // regardless of which side "owns" the marriage node for layout purposes.
+          var spouseOnlyKids = spouseKids.filter(function(cid) { return myChildren.indexOf(cid) === -1; });
           var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
           var unattributed  = myChildren.filter(function(cid) {
             return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
           });
-          var marriageKids  = sharedKids.concat(isFirstSpouse ? unattributed : []);
+          var marriageKids  = sharedKids
+            .concat(isFirstSpouse ? unattributed : [])
+            .concat(spouseOnlyKids)
+            .filter(function(cid, idx, arr) { return arr.indexOf(cid) === idx; }); // dedup
 
           nodeMap[p.id].marriages.push({
             spouse:   nodeMap[spouseId] || makeNode(spouse),
