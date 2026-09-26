@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.189';
+  const APP_VERSION = 'v7.190';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25408,41 +25408,33 @@
         });
       }
 
-      // Fix SVG sizing so all content is visible before zoomToFit runs.
-      // dTree sizes the SVG to the viewport dimensions at render time, but the
-      // tree layout can place content outside those bounds (confirmed 2026-09-26:
-      // svgBBox y:193 + height:995 = 1188px, SVG height attr only 856px —
-      // 332px of content clipped by overflow:hidden on #mpCanvasViewport).
-      // We resize the SVG to the real content bbox + padding, then reset the
-      // transform so content starts at the origin, so zoomToFit has an accurate
-      // picture of the tree when it scales it to fit the viewport.
+      // Fix SVG clipping: dTree sets width/height to the viewport size at render
+      // time, but content bbox can extend outside those bounds (confirmed 2026-09-26:
+      // bbox y:193 + height:995 = 1188px but SVG height was only 856px — 332px
+      // clipped by overflow:hidden on #mpCanvasViewport with no scrollbar).
+      // Fix: set viewBox to the actual content bbox + padding so the SVG declares
+      // the right coordinate space, then let zoomToFit scale it to the viewport.
+      // We do NOT touch the <g> transform — dTree owns that for pan/zoom.
       setTimeout(function() {
         try {
           var svg = container.querySelector('svg');
           if (!svg) return;
-          var bb = svg.getBBox();          // actual content bounding box
-          if (!bb || bb.width === 0) return;
-          var pad = 60;                    // margin around content
-          // Resize SVG to content
-          var newW = Math.ceil(bb.width  + pad * 2);
-          var newH = Math.ceil(bb.height + pad * 2);
-          svg.setAttribute('width',   newW);
-          svg.setAttribute('height',  newH);
-          svg.setAttribute('viewBox', '0 0 ' + newW + ' ' + newH);
-          // Shift the zoom/transform group so content starts at (pad, pad)
-          var g = svg.querySelector('g');
-          if (g) {
-            var tx = pad - bb.x;
-            var ty = pad - bb.y;
-            g.setAttribute('transform', 'translate(' + tx + ',' + ty + ')');
-          }
-          // Now zoomToFit has correct dimensions to scale against
+          var bb = svg.getBBox();
+          if (!bb || bb.width === 0 || bb.height === 0) return;
+          var pad = 60;
+          var vbX = bb.x - pad;
+          var vbY = bb.y - pad;
+          var vbW = bb.width  + pad * 2;
+          var vbH = bb.height + pad * 2;
+          svg.setAttribute('viewBox', vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH);
+          // Match width/height to viewport so zoomToFit scales correctly
+          svg.setAttribute('width',  vp ? vp.offsetWidth  : vbW);
+          svg.setAttribute('height', vp ? vp.offsetHeight : vbH);
           if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
             try { _mpDTreeInstance.zoomToFit(300); } catch(e) {}
           }
         } catch(e) {
           dbgErr('PEOPLE', 'SVG resize error: ' + e.message);
-          // Fallback: just attempt zoomToFit anyway
           if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
             try { _mpDTreeInstance.zoomToFit(300); } catch(e2) {}
           }
