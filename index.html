@@ -3963,8 +3963,12 @@
       </div>
     </div>
 
-    <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom -->
-    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:auto">
+    <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom.
+         touch-action:pan-x pan-y lets one-finger drag-scroll through, but excludes
+         pinch-zoom — see mpZoomIn/mpZoomOut/mpRecentre for the intended zoom UI.
+         (This only affects touch pinch; a desktop trackpad pinch/ctrl+wheel zoom
+         is blocked separately via a wheel listener — see FAM-04 handover.) -->
+    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:auto;touch-action:pan-x pan-y">
       <div id="mpDTree" style="width:100%;height:100%"></div>
     </div>
 
@@ -5245,13 +5249,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.201';
+  const APP_VERSION = 'v7.202';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11623},{"maxLine":1943,"offset":11624},{"maxLine":2673,"offset":11625},{"maxLine":2725,"offset":11628},{"maxLine":3129,"offset":11629},{"maxLine":3309,"offset":11630},{"maxLine":5243,"offset":11631},{"maxLine":5585,"offset":11639},{"maxLine":6311,"offset":11649},{"maxLine":6593,"offset":11650},{"maxLine":7043,"offset":11651},{"maxLine":7909,"offset":11652},{"maxLine":9442,"offset":11654},{"maxLine":10594,"offset":11655},{"maxLine":10765,"offset":11656},{"maxLine":11487,"offset":11657},{"maxLine":11505,"offset":11659},{"maxLine":13364,"offset":11661},{"maxLine":14159,"offset":11662},{"maxLine":14161,"offset":11663},{"maxLine":14857,"offset":11664},{"maxLine":15734,"offset":11665},{"maxLine":17590,"offset":11668},{"maxLine":17910,"offset":11669},{"maxLine":18176,"offset":11670},{"maxLine":18794,"offset":11671},{"maxLine":18987,"offset":11672},{"maxLine":19179,"offset":11673},{"maxLine":19591,"offset":11674},{"maxLine":19841,"offset":11675},{"maxLine":20592,"offset":11676},{"maxLine":20634,"offset":11677},{"maxLine":20788,"offset":11678},{"maxLine":22670,"offset":11679},{"maxLine":22965,"offset":11680},{"maxLine":26570,"offset":12092},{"maxLine":28719,"offset":12094},{"maxLine":null,"offset":12095}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11623},{"maxLine":1943,"offset":11624},{"maxLine":2673,"offset":11625},{"maxLine":2725,"offset":11628},{"maxLine":3129,"offset":11629},{"maxLine":3309,"offset":11630},{"maxLine":5248,"offset":11631},{"maxLine":5590,"offset":11639},{"maxLine":6316,"offset":11649},{"maxLine":6598,"offset":11650},{"maxLine":7048,"offset":11651},{"maxLine":7914,"offset":11652},{"maxLine":9447,"offset":11654},{"maxLine":10599,"offset":11655},{"maxLine":10770,"offset":11656},{"maxLine":11492,"offset":11657},{"maxLine":11510,"offset":11659},{"maxLine":13369,"offset":11661},{"maxLine":14164,"offset":11662},{"maxLine":14166,"offset":11663},{"maxLine":14862,"offset":11664},{"maxLine":15739,"offset":11665},{"maxLine":17595,"offset":11668},{"maxLine":17915,"offset":11669},{"maxLine":18181,"offset":11670},{"maxLine":18799,"offset":11671},{"maxLine":18992,"offset":11672},{"maxLine":19184,"offset":11673},{"maxLine":19596,"offset":11674},{"maxLine":19846,"offset":11675},{"maxLine":20597,"offset":11676},{"maxLine":20639,"offset":11677},{"maxLine":20793,"offset":11678},{"maxLine":22675,"offset":11679},{"maxLine":22970,"offset":11680},{"maxLine":26696,"offset":12092},{"maxLine":28845,"offset":12094},{"maxLine":null,"offset":12095}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -25545,15 +25549,20 @@
     svg.setAttribute('width',  Math.ceil(pxW));
     svg.setAttribute('height', Math.ceil(pxH));
 
-    // Only center via flex when nothing overflows. Centering AND relying on
-    // overflow:auto scrolling at the same time is a known CSS gotcha (you can't
-    // always scroll back to the true start of centered-but-overflowing content),
-    // so we deliberately only ever do one or the other.
+    // Stay centered at every zoom level using 'safe center' rather than toggling
+    // between flex/centered and block/top-left. Plain 'center' is what caused the
+    // jump the user saw: the instant content stopped fitting, we switched to
+    // block+top-left and everything visually snapped to the corner. 'safe center'
+    // keeps flex centering permanently, but on whichever axis actually overflows
+    // it automatically falls back to start-alignment for THAT axis only — so
+    // content stays centered until it doesn't fit, then scrolls from a sane edge
+    // instead of jumping. (Supported in all current major browsers.)
+    container.style.display        = 'flex';
+    container.style.alignItems     = 'safe center';
+    container.style.justifyContent = 'safe center';
+
     var vpr = vp.getBoundingClientRect();
     var willScroll = (pxW > vpr.width) || (pxH > vpr.height);
-    container.style.display        = willScroll ? 'block' : 'flex';
-    container.style.alignItems     = willScroll ? ''       : 'center';
-    container.style.justifyContent = willScroll ? ''       : 'center';
 
     dbg('PEOPLE', '_mpApplyZoomState' +
       ' scale=' + _mpZoomScale.toFixed(2) +
@@ -29815,6 +29824,43 @@
     on('mpRecentreBtn',        'click', mpRecentre);
     on('mpZoomInBtn',          'click', mpZoomIn);
     on('mpZoomOutBtn',         'click', mpZoomOut);
+    // Trackpad pinch-to-zoom (and ctrl+scroll) are intercepted and redirected into
+    // our OWN zoom system, rather than blocked outright. Left unhandled, this
+    // gesture zooms the whole browser page (that's literally what desktop trackpad
+    // pinch does — Chrome/Firefox deliver it as `wheel` with ctrlKey:true, Safari
+    // as its own `gesture*` events), which desyncs from this position:fixed overlay
+    // and our own SVG-based zoom/scroll math — that's what looked like "scrolling
+    // stops working after pinching". Feeding the same gesture into mpZoomIn/Out's
+    // pathway keeps it intuitive while keeping everything in one coordinate system.
+    (function() {
+      var mpVpEl = document.getElementById('mpCanvasViewport');
+      if (!mpVpEl) return;
+
+      // Chrome / Firefox / Edge: trackpad pinch arrives as wheel+ctrlKey.
+      mpVpEl.addEventListener('wheel', function(e) {
+        if (!e.ctrlKey) return; // plain scroll — let it through untouched
+        e.preventDefault();
+        var factor = Math.exp(-e.deltaY * 0.01);
+        _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, _mpZoomScale * factor));
+        _mpApplyZoomState();
+      }, { passive: false });
+
+      // Safari: trackpad pinch arrives as non-standard gesture* events instead of
+      // wheel+ctrlKey. Feature-detected so this is a no-op elsewhere.
+      if ('ongesturestart' in window) {
+        var gestureStartScale = 1;
+        mpVpEl.addEventListener('gesturestart', function(e) {
+          e.preventDefault();
+          gestureStartScale = _mpZoomScale;
+        });
+        mpVpEl.addEventListener('gesturechange', function(e) {
+          e.preventDefault();
+          _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, gestureStartScale * e.scale));
+          _mpApplyZoomState();
+        });
+        mpVpEl.addEventListener('gestureend', function(e) { e.preventDefault(); });
+      }
+    })();
     on('mpGethroBtn',          'click', function() { openAskGethro(); });
     on('mpCloseBtn',           'click', closeMyPeople);
     on('dashResponsesTile',    'click', openResponsesOverlay);
