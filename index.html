@@ -777,6 +777,9 @@
       gap: 12px;
       max-width: 100%;
       box-sizing: border-box;
+      position: sticky;
+      top: var(--uat-banner-offset, 0px);
+      z-index: 101; /* above #navBar (100), so nothing can visually slip between them */
     }
     @media (max-width: 700px) {
       header { padding: 14px 16px; gap: 8px; }
@@ -847,7 +850,7 @@
       display: flex;
       overflow-x: auto;
       position: sticky;
-      top: var(--uat-banner-offset, 0px); /* sits below the UAT banner when present */
+      top: calc(var(--uat-banner-offset, 0px) + var(--header-height, 64px));
       z-index: 100;
     }
     @media (max-width: 700px) { #navBar { display: none; } }
@@ -5252,7 +5255,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.203';
+  const APP_VERSION = 'v7.204';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5351,6 +5354,23 @@
       document.documentElement.style.setProperty('--uat-banner-offset', '28px');
     });
   }
+
+  // #navBar's sticky "top" needs to sit exactly at the header's real rendered
+  // height, not a guessed constant — the header can wrap to a taller row on
+  // narrower desktop widths, or change size slightly once the sign-in-dependent
+  // buttons (Profile/Settings/Sign Out) become visible. ResizeObserver keeps
+  // --header-height correct through any of that automatically.
+  document.addEventListener('DOMContentLoaded', function() {
+    var headerEl = document.querySelector('header');
+    if (!headerEl || typeof ResizeObserver === 'undefined') return;
+    var ro = new ResizeObserver(function(entries) {
+      var h = entries[0].contentRect.height +
+        (parseFloat(getComputedStyle(headerEl).paddingTop) || 0) +
+        (parseFloat(getComputedStyle(headerEl).paddingBottom) || 0);
+      document.documentElement.style.setProperty('--header-height', h + 'px');
+    });
+    ro.observe(headerEl);
+  });
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
