@@ -5240,13 +5240,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.186';
+  const APP_VERSION = 'v7.187';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11439},{"maxLine":1943,"offset":11440},{"maxLine":2673,"offset":11441},{"maxLine":2725,"offset":11444},{"maxLine":3129,"offset":11445},{"maxLine":3309,"offset":11446},{"maxLine":5243,"offset":11447},{"maxLine":5585,"offset":11455},{"maxLine":6302,"offset":11465},{"maxLine":6584,"offset":11466},{"maxLine":7034,"offset":11467},{"maxLine":7900,"offset":11468},{"maxLine":9407,"offset":11470},{"maxLine":10559,"offset":11471},{"maxLine":10730,"offset":11472},{"maxLine":11452,"offset":11473},{"maxLine":11470,"offset":11475},{"maxLine":13329,"offset":11477},{"maxLine":14124,"offset":11478},{"maxLine":14126,"offset":11479},{"maxLine":14822,"offset":11480},{"maxLine":15699,"offset":11481},{"maxLine":17555,"offset":11484},{"maxLine":17875,"offset":11485},{"maxLine":18141,"offset":11486},{"maxLine":18759,"offset":11487},{"maxLine":18952,"offset":11488},{"maxLine":19144,"offset":11489},{"maxLine":19556,"offset":11490},{"maxLine":19806,"offset":11491},{"maxLine":20513,"offset":11492},{"maxLine":20555,"offset":11493},{"maxLine":20709,"offset":11494},{"maxLine":22591,"offset":11495},{"maxLine":22886,"offset":11496},{"maxLine":26404,"offset":11908},{"maxLine":28553,"offset":11910},{"maxLine":null,"offset":11911}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11439},{"maxLine":1943,"offset":11440},{"maxLine":2673,"offset":11441},{"maxLine":2725,"offset":11444},{"maxLine":3129,"offset":11445},{"maxLine":3309,"offset":11446},{"maxLine":5243,"offset":11447},{"maxLine":5585,"offset":11455},{"maxLine":6302,"offset":11465},{"maxLine":6584,"offset":11466},{"maxLine":7034,"offset":11467},{"maxLine":7900,"offset":11468},{"maxLine":9433,"offset":11470},{"maxLine":10585,"offset":11471},{"maxLine":10756,"offset":11472},{"maxLine":11478,"offset":11473},{"maxLine":11496,"offset":11475},{"maxLine":13355,"offset":11477},{"maxLine":14150,"offset":11478},{"maxLine":14152,"offset":11479},{"maxLine":14848,"offset":11480},{"maxLine":15725,"offset":11481},{"maxLine":17581,"offset":11484},{"maxLine":17901,"offset":11485},{"maxLine":18167,"offset":11486},{"maxLine":18785,"offset":11487},{"maxLine":18978,"offset":11488},{"maxLine":19170,"offset":11489},{"maxLine":19582,"offset":11490},{"maxLine":19832,"offset":11491},{"maxLine":20583,"offset":11492},{"maxLine":20625,"offset":11493},{"maxLine":20779,"offset":11494},{"maxLine":22661,"offset":11495},{"maxLine":22956,"offset":11496},{"maxLine":26510,"offset":11908},{"maxLine":28659,"offset":11910},{"maxLine":null,"offset":11911}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -5663,6 +5663,12 @@
         }
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
+        // FIX (v7.186): logActivity() can't call itself to report its own DB
+        // failure, so this went completely silent — no console (in prod),
+        // no DB row, no Telegram ping. notifyDev() is independent of the DB
+        // path, so it's the only way a broken activity-log pipeline surfaces
+        // at all. Dedup'd like every other notifyDev call (10s for errors).
+        notifyDev('error', 'ACTIVITY', 'logActivity insert failed: ' + err.message);
       });
     }
     // sb is not initialised in share-page context (no auth) — use anon key directly.
@@ -5677,6 +5683,9 @@
       _doInsert(token);
     }).catch(function(err) {
       console.warn('[ACTIVITY] getSession failed:', err.message);
+      // FIX (v7.186): same reasoning as the insert-failure catch above — this
+      // is the other way logActivity() can fail before ever reaching the DB.
+      notifyDev('error', 'ACTIVITY', 'logActivity getSession failed: ' + err.message);
     });
   }
   // ── Global error net ─────────────────────────────────────────────
@@ -19942,7 +19951,7 @@
       method: 'POST',
       headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: currentUser.id, key: 'agp_recent_blank_topics', value: JSON.stringify(_agpRecentTopics), updated_at: new Date().toISOString() })
-    }).catch(function(e) { dbgWarn('GETHRO', 'agpRecordRecentTopic save error:', e.message); });
+    }).catch(function(e) { dbgWarn('GETHRO', 'agpRecordRecentTopic save error:', e.message); logActivity('agp_recent_topics_warn', String(e && e.message || e), 'warn', 'GETHRO'); });
   }
 
   // Builds the story map sent with a BLANK-session seed question, so the opening question is
