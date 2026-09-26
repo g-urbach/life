@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.197';
+  const APP_VERSION = 'v7.198';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25032,10 +25032,18 @@
   };
 
   // ── Open overlay ─────────────────────────────────────────────────
+  var _mpBodyOverflowBeforeOpen = null; // restore point for the scroll-lock below
+
   async function openMyPeople() {
     console.warn('%%% LIFETOLD-DEBUG-2026-09-26 %%% openMyPeople() fired — this is the patched build');
     var overlay = document.getElementById('myPeopleOverlay');
     overlay.style.display = 'flex';
+    // The overlay is position:fixed;inset:0, so it visually covers the whole page —
+    // but without this, the page BEHIND it is still scrollable. Dragging the browser's
+    // scrollbar then scrolls the hidden page while the fixed overlay on top stays put,
+    // which looks exactly like "the scrollbar moves but nothing on screen does."
+    _mpBodyOverflowBeforeOpen = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     document.getElementById('mpReviewScreen').style.display = 'none';
     // Always open on Tree tab
     _mpActiveTab = 'tree';
@@ -25046,6 +25054,7 @@
 
   function closeMyPeople() {
     document.getElementById('myPeopleOverlay').style.display = 'none';
+    document.body.style.overflow = _mpBodyOverflowBeforeOpen || '';
   }
 
   // ── Load data ────────────────────────────────────────────────────
@@ -25148,6 +25157,19 @@
   };
 
   function _mpBuildDTreeData() {
+    // Dump the raw inputs before any tree-walking logic touches them. Only 3 of 10
+    // people made it into the last build, so the next thing to look at is the source
+    // data itself — names + relationship_type per person, and every (a, b, type) rel
+    // row — not the tree-walking code, until we can see what it's actually working with.
+    dbg('PEOPLE', 'RAW _mpPeople (id | name | relationship_type):');
+    console.table(_mpPeople.map(function(p) {
+      return { id: p.id, name: p.name, relationship_type: p.relationship_type };
+    }));
+    dbg('PEOPLE', 'RAW _mpRels (person_a_id | person_b_id | relationship_type):');
+    console.table(_mpRels.map(function(r) {
+      return { a: r.person_a_id, b: r.person_b_id, type: r.relationship_type };
+    }));
+
     // Build lookup maps from _mpRels
     var childrenOf  = {};  // parentId  → [childId]
     var parentsOf   = {};  // childId   → [parentId]
