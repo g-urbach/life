@@ -3959,7 +3959,7 @@
     </div>
 
     <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom -->
-    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:hidden">
+    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:auto">
       <div id="mpDTree" style="width:100%;height:100%"></div>
     </div>
 
@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.199';
+  const APP_VERSION = 'v7.200';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25129,8 +25129,6 @@
   //   We root the tree at the 'self' node and build outward.
   //
   var _mpDTreeInstance = null; // holds whatever dTree.init() returns (untrusted — see _mpFitTree)
-  var _mpZoom    = null; // our OWN d3.zoom() behaviour, bound directly to the rendered <svg>
-  var _mpZoomSvg = null; // the raw <svg> DOM node _mpZoom is currently bound to
 
   // Emoji fallback map
   var _mpEmojiMap = {
@@ -25509,61 +25507,49 @@
     });
   }
 
-  // Fit the rendered tree to the viewport, and (re)bind our own pan/zoom so
-  // dragging/scrolling keeps working afterwards. This is independent of whatever
-  // dTree.init() returned, on purpose: two prior sessions lost time assuming
-  // _mpDTreeInstance.zoomToFit exists and behaves like the public d3-dtree docs
-  // describe, without ever confirming that against the actual file this site
-  // serves at /dtree.min.js. If it turns out to match, great — this still works,
-  // it just duplicates what zoomToFit would have done. If it doesn't match (which
-  // dTreeKeys=null in the last session's logs suggests), this is unaffected either way.
+  // Size the rendered SVG to its ACTUAL content and let the browser's native scroll
+  // handle anything that doesn't fit — instead of computing a zoom/pan transform.
+  //
+  // Why the switch: every session on this bug (including mine, earlier this
+  // conversation) built pan-by-dragging instead, which structurally can never
+  // produce a scrollbar — that's not a bug in the drag implementation, it's just
+  // not what drag-pan is. The very first report in this whole thread was about a
+  // missing scrollbar, and that's stayed the ask every time since. Native overflow
+  // scrolling is also immune to the d3-zoom/dTree-version coordinate issues we've
+  // been chasing, because it doesn't touch SVG transforms at all.
   function _mpFitTree(vp, container) {
     try {
       var svg = container.querySelector('svg');
       var g   = svg ? svg.querySelector('g') : null;
-      if (!svg || !g || typeof d3 === 'undefined' || !d3.zoom) {
-        dbgErr('PEOPLE', '_mpFitTree: missing svg/g/d3.zoom — cannot fit'); return;
-      }
+      if (!svg || !g) { dbgErr('PEOPLE', '_mpFitTree: missing svg/g — cannot fit'); return; }
 
       var bb  = g.getBBox();                 // real content bounds — reliable, from the DOM
       var vpr = vp.getBoundingClientRect();   // real on-screen viewport size
+      if (!bb.width || !bb.height) { dbgErr('PEOPLE', '_mpFitTree: zero-size bbox, skipping'); return; }
 
-      if (!bb.width || !bb.height || !vpr.width || !vpr.height) {
-        dbgErr('PEOPLE', '_mpFitTree: zero-size bbox or viewport, skipping'); return;
-      }
+      var PAD = 40; // px of breathing room around the tree
 
-      // (Re)create our zoom behaviour once per render, bound to THIS svg node.
-      // Re-binding on every render (rather than reusing a stale one) matters because
-      // container.innerHTML = '' at the top of _mpRender() destroys the old <svg>.
-      if (_mpZoomSvg !== svg) {
-        _mpZoom = d3.zoom()
-          .scaleExtent([0.15, 4])
-          .on('zoom', function() {
-            // d3 v4 puts the event on d3.event; this file loads D3 v4 (see script tag
-            // comment near the top). If that ever changes to v6+, the transform would
-            // arrive as the handler's first argument instead — the try/catch below
-            // means a version mismatch fails loud in the console rather than silently.
-            var t = (typeof d3.event !== 'undefined' && d3.event) ? d3.event.transform : arguments[0];
-            g.setAttribute('transform', t);
-          });
-        d3.select(svg).call(_mpZoom);
-        _mpZoomSvg = svg;
-      }
+      // Reposition content to start just inside the top-left corner (a fixed,
+      // non-interactive transform — no d3.zoom involved), then size the SVG to
+      // exactly match. If the tree is bigger than the viewport, overflow:auto on
+      // #mpCanvasViewport now gives a real scrollbar automatically. If it's
+      // smaller, the SVG is simply smaller than its container — no scrollbar,
+      // nothing to fit, which is correct.
+      g.setAttribute('transform', 'translate(' + (PAD - bb.x) + ',' + (PAD - bb.y) + ')');
+      var svgW = Math.ceil(bb.width  + PAD * 2);
+      var svgH = Math.ceil(bb.height + PAD * 2);
+      svg.setAttribute('width',  svgW);
+      svg.setAttribute('height', svgH);
+      svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
 
-      var PAD   = 0.92; // leave a little breathing room around the tree
-      var scale = PAD * Math.min(vpr.width / bb.width, vpr.height / bb.height);
-      scale = Math.max(0.15, Math.min(scale, 1)); // don't blow up tiny 2-3 person trees to fill the screen
-
-      var tx = vpr.width  / 2 - scale * (bb.x + bb.width  / 2);
-      var ty = vpr.height / 2 - scale * (bb.y + bb.height / 2);
-      var transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
-
-      d3.select(svg).transition().duration(300).call(_mpZoom.transform, transform);
+      vp.scrollLeft = 0;
+      vp.scrollTop  = 0;
 
       dbg('PEOPLE', '_mpFitTree applied' +
         ' bbox=' + JSON.stringify({x:Math.round(bb.x),y:Math.round(bb.y),w:Math.round(bb.width),h:Math.round(bb.height)}) +
+        ' svg=' + svgW + 'x' + svgH +
         ' vp=' + Math.round(vpr.width) + 'x' + Math.round(vpr.height) +
-        ' scale=' + scale.toFixed(3)
+        ' willScroll=' + (svgW > vpr.width || svgH > vpr.height)
       );
     } catch(e) {
       dbgErr('PEOPLE', '_mpFitTree error: ' + e.message + ' | ' + (e.stack || ''));
@@ -25572,14 +25558,11 @@
     }
   }
 
+  // "Fit tree to screen" button — in the native-scroll model this just means
+  // "scroll back to the top-left of the tree", since there's no zoom level to reset.
   function mpRecentre() {
-    var vp        = document.getElementById('mpCanvasViewport');
-    var container = document.getElementById('mpDTree');
-    if (vp && container && container.querySelector('svg')) {
-      _mpFitTree(vp, container);
-    } else {
-      _mpRender();
-    }
+    var vp = document.getElementById('mpCanvasViewport');
+    if (vp) { vp.scrollLeft = 0; vp.scrollTop = 0; }
   }
 
   // Stubs — toolbar buttons won't throw if called
