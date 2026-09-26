@@ -5240,7 +5240,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.196';
+  const APP_VERSION = 'v7.197';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25342,6 +25342,27 @@
     var data = _mpBuildDTreeData();
     if (!data || !data.length) return;
 
+    // Hard evidence, not another guess: walk the exact structure we're about to hand
+    // to dTree and count every named node in it (people + spouses), plus collect the
+    // names, so a "tree looks too small" or "person appears twice" symptom can be
+    // confirmed or ruled out BEFORE blaming rendering/zoom again.
+    (function() {
+      var names = [];
+      function walk(node) {
+        if (!node) return;
+        names.push(node.name);
+        (node.children || []).forEach(walk);
+        (node.marriages || []).forEach(function(m) {
+          if (m.spouse) names.push(m.spouse.name + ' (spouse)');
+          (m.children || []).forEach(walk);
+        });
+      }
+      data.forEach(walk);
+      dbg('PEOPLE', '_mpBuildDTreeData output: roots=' + data.length +
+        ' totalNamedNodes=' + names.length + ' peopleCount=' + _mpPeople.length);
+      console.log('[PEOPLE] dTree data names (in build order):', names);
+    })();
+
     var vp    = document.getElementById('mpCanvasViewport');
     var vpW   = vp ? vp.offsetWidth  || 360 : 360;
     var vpH   = vp ? vp.offsetHeight || 600 : 600;
@@ -25425,7 +25446,12 @@
       // this deployment. Instead we bind our OWN d3.zoom() directly to the <svg>
       // dTree just created, and drive fit/pan/zoom entirely ourselves from here on.
       // See _mpFitTree() for the implementation.
-      setTimeout(function() { _mpFitTree(vp, container); }, 400);
+      setTimeout(function() {
+        var fos = container.querySelectorAll('foreignObject');
+        var visibleCards = container.querySelectorAll('.mpNode'); // excludes the hidden dummy-spouse divs
+        dbg('PEOPLE', 'DOM after render: foreignObjects=' + fos.length + ' visibleCards=' + visibleCards.length);
+        _mpFitTree(vp, container);
+      }, 400);
     } catch(e) {
       dbgErr('PEOPLE', 'dTree render error: ' + e.message + ' | ' + (e.stack || '')); notifyDev('error', 'PEOPLE', String(e && e.message || e)); logActivity('people_error', String(e && e.message || e), 'error', 'PEOPLE');
     }
