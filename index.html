@@ -5240,13 +5240,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.187';
+  const APP_VERSION = 'v7.188';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11439},{"maxLine":1943,"offset":11440},{"maxLine":2673,"offset":11441},{"maxLine":2725,"offset":11444},{"maxLine":3129,"offset":11445},{"maxLine":3309,"offset":11446},{"maxLine":5243,"offset":11447},{"maxLine":5585,"offset":11455},{"maxLine":6302,"offset":11465},{"maxLine":6584,"offset":11466},{"maxLine":7034,"offset":11467},{"maxLine":7900,"offset":11468},{"maxLine":9433,"offset":11470},{"maxLine":10585,"offset":11471},{"maxLine":10756,"offset":11472},{"maxLine":11478,"offset":11473},{"maxLine":11496,"offset":11475},{"maxLine":13355,"offset":11477},{"maxLine":14150,"offset":11478},{"maxLine":14152,"offset":11479},{"maxLine":14848,"offset":11480},{"maxLine":15725,"offset":11481},{"maxLine":17581,"offset":11484},{"maxLine":17901,"offset":11485},{"maxLine":18167,"offset":11486},{"maxLine":18785,"offset":11487},{"maxLine":18978,"offset":11488},{"maxLine":19170,"offset":11489},{"maxLine":19582,"offset":11490},{"maxLine":19832,"offset":11491},{"maxLine":20583,"offset":11492},{"maxLine":20625,"offset":11493},{"maxLine":20779,"offset":11494},{"maxLine":22661,"offset":11495},{"maxLine":22956,"offset":11496},{"maxLine":26510,"offset":11908},{"maxLine":28659,"offset":11910},{"maxLine":null,"offset":11911}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11439},{"maxLine":1943,"offset":11440},{"maxLine":2673,"offset":11441},{"maxLine":2725,"offset":11444},{"maxLine":3129,"offset":11445},{"maxLine":3309,"offset":11446},{"maxLine":5243,"offset":11447},{"maxLine":5585,"offset":11455},{"maxLine":6311,"offset":11465},{"maxLine":6593,"offset":11466},{"maxLine":7043,"offset":11467},{"maxLine":7909,"offset":11468},{"maxLine":9442,"offset":11470},{"maxLine":10594,"offset":11471},{"maxLine":10765,"offset":11472},{"maxLine":11487,"offset":11473},{"maxLine":11505,"offset":11475},{"maxLine":13364,"offset":11477},{"maxLine":14159,"offset":11478},{"maxLine":14161,"offset":11479},{"maxLine":14857,"offset":11480},{"maxLine":15734,"offset":11481},{"maxLine":17590,"offset":11484},{"maxLine":17910,"offset":11485},{"maxLine":18176,"offset":11486},{"maxLine":18794,"offset":11487},{"maxLine":18987,"offset":11488},{"maxLine":19179,"offset":11489},{"maxLine":19591,"offset":11490},{"maxLine":19841,"offset":11491},{"maxLine":20592,"offset":11492},{"maxLine":20634,"offset":11493},{"maxLine":20788,"offset":11494},{"maxLine":22670,"offset":11495},{"maxLine":22965,"offset":11496},{"maxLine":26519,"offset":11908},{"maxLine":28668,"offset":11910},{"maxLine":null,"offset":11911}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -23584,11 +23584,32 @@
       var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
       var memTitle  = (document.getElementById('memTitle')  || {}).value || '';
       var memAnswer = (document.getElementById('memAnswer') || {}).value || '';
-      // Include conversation so far so Gethro doesn't repeat covered topics
-      var convoSoFar = _gethroHistory.slice(-8).map(function(m) {
+      // Include conversation so far so Gethro doesn't repeat covered topics.
+      // GTH-CTX-02: this used to build the full string then .slice(0, 1000) it, which cuts
+      // from the END — i.e. it dropped the MOST RECENT turns and kept the oldest ones, the
+      // opposite of what "do NOT repeat" needs. Fixed the same way as sanitiseChatHistory does
+      // server-side: cap the entry snippet first, then keep the NEWEST conversation lines that
+      // fit whatever budget is left, dropping older lines instead of newer ones.
+      // GTH-CTX-03: was capped at 600 chars (~100 words) — meant "next question" never saw
+      // anything past the start of a longer entry. Raised to 8000 (~2000 tokens, well under a
+      // cent per call at Sonnet's $3/M input rate) so this effectively sends the WHOLE entry for
+      // any realistically-sized memory; the cap is now a defensive ceiling against a pathological
+      // paste, not a cost control.
+      var ENTRY_SNIPPET_MAX = 8000;
+      var SEED_CTX_MAX = 9000;
+      var convoLabel = '\n\nCONVERSATION SO FAR (do NOT repeat any of these topics):\n';
+      var entrySnippet = memAnswer.slice(0, ENTRY_SNIPPET_MAX);
+      var convoBudget = Math.max(0, SEED_CTX_MAX - entrySnippet.length - convoLabel.length);
+      var convoLines = _gethroHistory.slice(-8).map(function(m) {
         return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
-      }).join('\n');
-      var seedCtx = (memAnswer.slice(0, 600) + '\n\nCONVERSATION SO FAR (do NOT repeat any of these topics):\n' + convoSoFar).slice(0, 1000);
+      });
+      var convoSoFar = '';
+      for (var _ci = convoLines.length - 1; _ci >= 0; _ci--) {
+        var _candidate = convoLines[_ci] + (convoSoFar ? '\n' + convoSoFar : '');
+        if (_candidate.length > convoBudget) break;
+        convoSoFar = _candidate;
+      }
+      var seedCtx = entrySnippet + (convoSoFar ? convoLabel + convoSoFar : '');
       await _agpSeedMemoryQuestion(firstName, seedCtx, '');
       return;
     }
@@ -23742,7 +23763,7 @@
     // instead of asking about it again; server strips/neutralises it before use.
     var _onMemTabNow = !!(document.getElementById('panel-memories') && document.getElementById('panel-memories').classList.contains('active'));
     var memoryEntryTitle = (_agpMemoryMode && _onMemTabNow) ? ((document.getElementById('memTitle')  || {}).value || '').slice(0, 200)  : '';
-    var memoryEntryText  = (_agpMemoryMode && _onMemTabNow) ? ((document.getElementById('memAnswer') || {}).value || '').slice(0, 3200) : '';
+    var memoryEntryText  = (_agpMemoryMode && _onMemTabNow) ? ((document.getElementById('memAnswer') || {}).value || '').slice(0, 8000) : ''; // GTH-CTX-03: was 3200, raised to match the next-question fix — cost is negligible either way
 
     // After 10 seed questions, switch Gethro into gap-finding mode
     var _agpGapMode = (_agpIsBlankSession && _agpBlankSeedCount >= 10);
