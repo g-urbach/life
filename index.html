@@ -3919,8 +3919,13 @@
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0">
         <h2 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
         <div style="display:flex;align-items:center;gap:4px">
-          <!-- Tree controls (fit view button; dTree handles zoom/pan natively) -->
+          <!-- Tree controls: explicit zoom in/out + fit. Deliberately NOT relying on
+               trackpad/browser pinch-zoom or ctrl+scroll here — those act on the whole
+               page (this overlay is position:fixed) and don't reliably combine with a
+               scrollable panel, which is why "zoom" broke scrolling before. -->
           <div id="mpTreeControls" style="display:flex;align-items:center;gap:4px">
+            <button id="mpZoomOutBtn" title="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="mpZoomInBtn" title="Zoom in" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#43;</button>
             <button id="mpRecentreBtn" title="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
           </div>
           <!-- Gethro chat button — always accessible even inside overlay -->
@@ -5240,7 +5245,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.200';
+  const APP_VERSION = 'v7.201';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -25507,50 +25512,81 @@
     });
   }
 
-  // Size the rendered SVG to its ACTUAL content and let the browser's native scroll
-  // handle anything that doesn't fit — instead of computing a zoom/pan transform.
-  //
-  // Why the switch: every session on this bug (including mine, earlier this
-  // conversation) built pan-by-dragging instead, which structurally can never
-  // produce a scrollbar — that's not a bug in the drag implementation, it's just
-  // not what drag-pan is. The very first report in this whole thread was about a
-  // missing scrollbar, and that's stayed the ask every time since. Native overflow
-  // scrolling is also immune to the d3-zoom/dTree-version coordinate issues we've
-  // been chasing, because it doesn't touch SVG transforms at all.
+  // Native-scroll canvas with an explicit zoom LEVEL (not a drag-pan transform).
+  // Zooming works by growing/shrinking the <svg> element's own width/height
+  // attributes (while keeping viewBox fixed to the unscaled content size) — the
+  // standard SVG technique for "render this coordinate space at N× size". Because
+  // that's a real change to the element's rendered size (not a CSS transform: scale,
+  // which was tried and broken earlier in this conversation), the overflow:auto
+  // container picks it up automatically and grows/shrinks its scrollbars to match.
+  // No d3.zoom, no drag handling, no pinch/ctrl+wheel — deliberately not intercepting
+  // trackpad/browser-level zoom gestures, since this overlay is position:fixed and
+  // OS-level pinch-zoom on a fixed element is a known source of "looks broken after
+  // zooming" bugs that have nothing to do with our code.
+  var _mpTreeBBox  = null; // raw, unscaled content bounds from the last render
+  var _mpZoomScale = 1;    // current zoom level; 1 = one CSS px per SVG unit
+  var MP_ZOOM_PAD  = 40, MP_ZOOM_MIN = 0.2, MP_ZOOM_MAX = 3, MP_ZOOM_STEP = 1.25;
+
+  function _mpApplyZoomState() {
+    var container = document.getElementById('mpDTree');
+    var vp        = document.getElementById('mpCanvasViewport');
+    var svg       = container ? container.querySelector('svg') : null;
+    var g         = svg ? svg.querySelector('g') : null;
+    if (!svg || !g || !_mpTreeBBox || !vp) return;
+
+    var bb   = _mpTreeBBox;
+    var rawW = bb.width  + MP_ZOOM_PAD * 2; // unscaled viewBox size — never changes with zoom
+    var rawH = bb.height + MP_ZOOM_PAD * 2;
+    var pxW  = rawW * _mpZoomScale;         // actual rendered size — this is what changes
+    var pxH  = rawH * _mpZoomScale;
+
+    g.setAttribute('transform', 'translate(' + (MP_ZOOM_PAD - bb.x) + ',' + (MP_ZOOM_PAD - bb.y) + ')');
+    svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
+    svg.setAttribute('width',  Math.ceil(pxW));
+    svg.setAttribute('height', Math.ceil(pxH));
+
+    // Only center via flex when nothing overflows. Centering AND relying on
+    // overflow:auto scrolling at the same time is a known CSS gotcha (you can't
+    // always scroll back to the true start of centered-but-overflowing content),
+    // so we deliberately only ever do one or the other.
+    var vpr = vp.getBoundingClientRect();
+    var willScroll = (pxW > vpr.width) || (pxH > vpr.height);
+    container.style.display        = willScroll ? 'block' : 'flex';
+    container.style.alignItems     = willScroll ? ''       : 'center';
+    container.style.justifyContent = willScroll ? ''       : 'center';
+
+    dbg('PEOPLE', '_mpApplyZoomState' +
+      ' scale=' + _mpZoomScale.toFixed(2) +
+      ' svg=' + Math.ceil(pxW) + 'x' + Math.ceil(pxH) +
+      ' vp=' + Math.round(vpr.width) + 'x' + Math.round(vpr.height) +
+      ' willScroll=' + willScroll
+    );
+  }
+
+  // Called once per render. Measures the fresh content, picks a starting zoom level
+  // that fits the whole tree on screen (capped at 100%, so small trees don't get
+  // blown up), and centers it — this is the "starts zoomed out and centered"
+  // behaviour from before, now compatible with real scrolling once the person
+  // zooms in past that starting level via the +/- buttons.
   function _mpFitTree(vp, container) {
     try {
       var svg = container.querySelector('svg');
       var g   = svg ? svg.querySelector('g') : null;
       if (!svg || !g) { dbgErr('PEOPLE', '_mpFitTree: missing svg/g — cannot fit'); return; }
 
-      var bb  = g.getBBox();                 // real content bounds — reliable, from the DOM
-      var vpr = vp.getBoundingClientRect();   // real on-screen viewport size
+      var bb = g.getBBox(); // NOT affected by g's own transform attribute — safe to re-measure any time
       if (!bb.width || !bb.height) { dbgErr('PEOPLE', '_mpFitTree: zero-size bbox, skipping'); return; }
+      _mpTreeBBox = bb;
 
-      var PAD = 40; // px of breathing room around the tree
+      var vpr  = vp.getBoundingClientRect();
+      var rawW = bb.width  + MP_ZOOM_PAD * 2;
+      var rawH = bb.height + MP_ZOOM_PAD * 2;
+      var fitScale = 0.94 * Math.min(vpr.width / rawW, vpr.height / rawH);
+      _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(fitScale, 1)); // cap at 100% — don't blow up tiny trees
 
-      // Reposition content to start just inside the top-left corner (a fixed,
-      // non-interactive transform — no d3.zoom involved), then size the SVG to
-      // exactly match. If the tree is bigger than the viewport, overflow:auto on
-      // #mpCanvasViewport now gives a real scrollbar automatically. If it's
-      // smaller, the SVG is simply smaller than its container — no scrollbar,
-      // nothing to fit, which is correct.
-      g.setAttribute('transform', 'translate(' + (PAD - bb.x) + ',' + (PAD - bb.y) + ')');
-      var svgW = Math.ceil(bb.width  + PAD * 2);
-      var svgH = Math.ceil(bb.height + PAD * 2);
-      svg.setAttribute('width',  svgW);
-      svg.setAttribute('height', svgH);
-      svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
-
+      _mpApplyZoomState();
       vp.scrollLeft = 0;
       vp.scrollTop  = 0;
-
-      dbg('PEOPLE', '_mpFitTree applied' +
-        ' bbox=' + JSON.stringify({x:Math.round(bb.x),y:Math.round(bb.y),w:Math.round(bb.width),h:Math.round(bb.height)}) +
-        ' svg=' + svgW + 'x' + svgH +
-        ' vp=' + Math.round(vpr.width) + 'x' + Math.round(vpr.height) +
-        ' willScroll=' + (svgW > vpr.width || svgH > vpr.height)
-      );
     } catch(e) {
       dbgErr('PEOPLE', '_mpFitTree error: ' + e.message + ' | ' + (e.stack || ''));
       notifyDev('error', 'PEOPLE', '_mpFitTree: ' + String(e && e.message || e));
@@ -25558,11 +25594,15 @@
     }
   }
 
-  // "Fit tree to screen" button — in the native-scroll model this just means
-  // "scroll back to the top-left of the tree", since there's no zoom level to reset.
+  function mpZoomIn()  { _mpZoomScale = Math.min(MP_ZOOM_MAX, _mpZoomScale * MP_ZOOM_STEP); _mpApplyZoomState(); }
+  function mpZoomOut() { _mpZoomScale = Math.max(MP_ZOOM_MIN, _mpZoomScale / MP_ZOOM_STEP); _mpApplyZoomState(); }
+
+  // "Fit tree to screen" button — recompute the fit-to-screen zoom level fresh
+  // (viewport size may have changed) and reset scroll, same as the initial render.
   function mpRecentre() {
-    var vp = document.getElementById('mpCanvasViewport');
-    if (vp) { vp.scrollLeft = 0; vp.scrollTop = 0; }
+    var vp        = document.getElementById('mpCanvasViewport');
+    var container = document.getElementById('mpDTree');
+    if (vp && container && container.querySelector('svg')) _mpFitTree(vp, container);
   }
 
   // Stubs — toolbar buttons won't throw if called
@@ -29773,6 +29813,8 @@
 
     // ── My People ────────────────────────────────────────────────────────
     on('mpRecentreBtn',        'click', mpRecentre);
+    on('mpZoomInBtn',          'click', mpZoomIn);
+    on('mpZoomOutBtn',         'click', mpZoomOut);
     on('mpGethroBtn',          'click', function() { openAskGethro(); });
     on('mpCloseBtn',           'click', closeMyPeople);
     on('dashResponsesTile',    'click', openResponsesOverlay);
