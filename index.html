@@ -5240,13 +5240,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.195';
+  const APP_VERSION = 'v7.196';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11472},{"maxLine":1943,"offset":11473},{"maxLine":2673,"offset":11474},{"maxLine":2725,"offset":11477},{"maxLine":3129,"offset":11478},{"maxLine":3309,"offset":11479},{"maxLine":5243,"offset":11480},{"maxLine":5585,"offset":11488},{"maxLine":6311,"offset":11498},{"maxLine":6593,"offset":11499},{"maxLine":7043,"offset":11500},{"maxLine":7909,"offset":11501},{"maxLine":9442,"offset":11503},{"maxLine":10594,"offset":11504},{"maxLine":10765,"offset":11505},{"maxLine":11487,"offset":11506},{"maxLine":11505,"offset":11508},{"maxLine":13364,"offset":11510},{"maxLine":14159,"offset":11511},{"maxLine":14161,"offset":11512},{"maxLine":14857,"offset":11513},{"maxLine":15734,"offset":11514},{"maxLine":17590,"offset":11517},{"maxLine":17910,"offset":11518},{"maxLine":18176,"offset":11519},{"maxLine":18794,"offset":11520},{"maxLine":18987,"offset":11521},{"maxLine":19179,"offset":11522},{"maxLine":19591,"offset":11523},{"maxLine":19841,"offset":11524},{"maxLine":20592,"offset":11525},{"maxLine":20634,"offset":11526},{"maxLine":20788,"offset":11527},{"maxLine":22670,"offset":11528},{"maxLine":22965,"offset":11529},{"maxLine":26540,"offset":11941},{"maxLine":28689,"offset":11943},{"maxLine":null,"offset":11944}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11623},{"maxLine":1943,"offset":11624},{"maxLine":2673,"offset":11625},{"maxLine":2725,"offset":11628},{"maxLine":3129,"offset":11629},{"maxLine":3309,"offset":11630},{"maxLine":5243,"offset":11631},{"maxLine":5585,"offset":11639},{"maxLine":6311,"offset":11649},{"maxLine":6593,"offset":11650},{"maxLine":7043,"offset":11651},{"maxLine":7909,"offset":11652},{"maxLine":9442,"offset":11654},{"maxLine":10594,"offset":11655},{"maxLine":10765,"offset":11656},{"maxLine":11487,"offset":11657},{"maxLine":11505,"offset":11659},{"maxLine":13364,"offset":11661},{"maxLine":14159,"offset":11662},{"maxLine":14161,"offset":11663},{"maxLine":14857,"offset":11664},{"maxLine":15734,"offset":11665},{"maxLine":17590,"offset":11668},{"maxLine":17910,"offset":11669},{"maxLine":18176,"offset":11670},{"maxLine":18794,"offset":11671},{"maxLine":18987,"offset":11672},{"maxLine":19179,"offset":11673},{"maxLine":19591,"offset":11674},{"maxLine":19841,"offset":11675},{"maxLine":20592,"offset":11676},{"maxLine":20634,"offset":11677},{"maxLine":20788,"offset":11678},{"maxLine":22670,"offset":11679},{"maxLine":22965,"offset":11680},{"maxLine":26570,"offset":12092},{"maxLine":28719,"offset":12094},{"maxLine":null,"offset":12095}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -25119,7 +25119,9 @@
   //   Each root node: { id, name, marriages: [{ spouse, children: [] }] }
   //   We root the tree at the 'self' node and build outward.
   //
-  var _mpDTreeInstance = null; // holds the dTree object for recentre/reset
+  var _mpDTreeInstance = null; // holds whatever dTree.init() returns (untrusted — see _mpFitTree)
+  var _mpZoom    = null; // our OWN d3.zoom() behaviour, bound directly to the rendered <svg>
+  var _mpZoomSvg = null; // the raw <svg> DOM node _mpZoom is currently bound to
 
   // Emoji fallback map
   var _mpEmojiMap = {
@@ -25409,43 +25411,23 @@
         });
       }
 
-      // Fit the whole tree into the viewport after render.
-      // Log what dTree gave us regardless of whether zoomToFit exists.
-      setTimeout(function() {
-        try {
-          var svg = container.querySelector('svg');
-          var bb  = svg ? svg.getBBox() : null;
-          var vpr = vp  ? vp.getBoundingClientRect() : null;
-          var g   = svg ? svg.querySelector('g') : null;
-          dbg('PEOPLE', 'POST-RENDER' +
-            ' hasZoomToFit=' + !!(_mpDTreeInstance && _mpDTreeInstance.zoomToFit) +
-            ' dTreeKeys=' + (_mpDTreeInstance ? Object.keys(_mpDTreeInstance).join(',') : 'null') +
-            ' svgW='  + (svg ? svg.getAttribute('width')  : '?') +
-            ' svgH='  + (svg ? svg.getAttribute('height') : '?') +
-            ' bbox='  + (bb  ? JSON.stringify({x:Math.round(bb.x),y:Math.round(bb.y),w:Math.round(bb.width),h:Math.round(bb.height)}) : '?') +
-            ' vpW='   + (vpr ? Math.round(vpr.width)  : '?') +
-            ' vpH='   + (vpr ? Math.round(vpr.height) : '?') +
-            ' gTransform=' + (g ? g.getAttribute('transform') : '?')
-          );
-          if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
-            _mpDTreeInstance.zoomToFit(300);
-            setTimeout(function() {
-              var g2  = svg ? svg.querySelector('g') : null;
-              var bb2 = svg ? svg.getBBox() : null;
-              dbg('PEOPLE', 'POST-zoomToFit' +
-                ' bbox='  + (bb2 ? JSON.stringify({x:Math.round(bb2.x),y:Math.round(bb2.y),w:Math.round(bb2.width),h:Math.round(bb2.height)}) : '?') +
-                ' gTransform=' + (g2 ? g2.getAttribute('transform') : '?')
-              );
-            }, 400);
-          }
-        } catch(e) {
-          dbgErr('PEOPLE', 'post-render fit error: ' + e.message);
-          notifyDev('error', 'PEOPLE', 'post-render fit: ' + String(e && e.message || e));
-          logActivity('people_error', 'post-render fit: ' + String(e && e.message || e), 'error', 'PEOPLE');
-        }
-      }, 400);
+      // Log exactly what dTree.init() gave us back, in full — not just Object.keys,
+      // which prints nothing useful when the value isn't a plain object. This is a
+      // one-time diagnostic: if _mpDTreeVal below is ever anything other than an
+      // object with a zoomToFit function, the locally-hosted /dtree.min.js does NOT
+      // match the public d3-dtree@2.4.1 API and that mismatch — not our render
+      // logic — is the thing to chase.
+      dbg('PEOPLE', 'dTree.init returned: typeof=' + (typeof _mpDTreeInstance));
+      console.log('[PEOPLE] raw _mpDTreeInstance:', _mpDTreeInstance);
+
+      // Fit the whole tree into the viewport after render. We do NOT rely on
+      // _mpDTreeInstance.zoomToFit — see notes above on why that's unverified for
+      // this deployment. Instead we bind our OWN d3.zoom() directly to the <svg>
+      // dTree just created, and drive fit/pan/zoom entirely ourselves from here on.
+      // See _mpFitTree() for the implementation.
+      setTimeout(function() { _mpFitTree(vp, container); }, 400);
     } catch(e) {
-      dbgErr('PEOPLE', 'dTree render error: ' + e.message); notifyDev('error', 'PEOPLE', String(e && e.message || e)); logActivity('people_error', String(e && e.message || e), 'error', 'PEOPLE');
+      dbgErr('PEOPLE', 'dTree render error: ' + e.message + ' | ' + (e.stack || '')); notifyDev('error', 'PEOPLE', String(e && e.message || e)); logActivity('people_error', String(e && e.message || e), 'error', 'PEOPLE');
     }
 
     // Post-render: style SVG connector paths to match design system colours
@@ -25471,9 +25453,74 @@
     });
   }
 
+  // Fit the rendered tree to the viewport, and (re)bind our own pan/zoom so
+  // dragging/scrolling keeps working afterwards. This is independent of whatever
+  // dTree.init() returned, on purpose: two prior sessions lost time assuming
+  // _mpDTreeInstance.zoomToFit exists and behaves like the public d3-dtree docs
+  // describe, without ever confirming that against the actual file this site
+  // serves at /dtree.min.js. If it turns out to match, great — this still works,
+  // it just duplicates what zoomToFit would have done. If it doesn't match (which
+  // dTreeKeys=null in the last session's logs suggests), this is unaffected either way.
+  function _mpFitTree(vp, container) {
+    try {
+      var svg = container.querySelector('svg');
+      var g   = svg ? svg.querySelector('g') : null;
+      if (!svg || !g || typeof d3 === 'undefined' || !d3.zoom) {
+        dbgErr('PEOPLE', '_mpFitTree: missing svg/g/d3.zoom — cannot fit'); return;
+      }
+
+      var bb  = g.getBBox();                 // real content bounds — reliable, from the DOM
+      var vpr = vp.getBoundingClientRect();   // real on-screen viewport size
+
+      if (!bb.width || !bb.height || !vpr.width || !vpr.height) {
+        dbgErr('PEOPLE', '_mpFitTree: zero-size bbox or viewport, skipping'); return;
+      }
+
+      // (Re)create our zoom behaviour once per render, bound to THIS svg node.
+      // Re-binding on every render (rather than reusing a stale one) matters because
+      // container.innerHTML = '' at the top of _mpRender() destroys the old <svg>.
+      if (_mpZoomSvg !== svg) {
+        _mpZoom = d3.zoom()
+          .scaleExtent([0.15, 4])
+          .on('zoom', function() {
+            // d3 v4 puts the event on d3.event; this file loads D3 v4 (see script tag
+            // comment near the top). If that ever changes to v6+, the transform would
+            // arrive as the handler's first argument instead — the try/catch below
+            // means a version mismatch fails loud in the console rather than silently.
+            var t = (typeof d3.event !== 'undefined' && d3.event) ? d3.event.transform : arguments[0];
+            g.setAttribute('transform', t);
+          });
+        d3.select(svg).call(_mpZoom);
+        _mpZoomSvg = svg;
+      }
+
+      var PAD   = 0.92; // leave a little breathing room around the tree
+      var scale = PAD * Math.min(vpr.width / bb.width, vpr.height / bb.height);
+      scale = Math.max(0.15, Math.min(scale, 1)); // don't blow up tiny 2-3 person trees to fill the screen
+
+      var tx = vpr.width  / 2 - scale * (bb.x + bb.width  / 2);
+      var ty = vpr.height / 2 - scale * (bb.y + bb.height / 2);
+      var transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+
+      d3.select(svg).transition().duration(300).call(_mpZoom.transform, transform);
+
+      dbg('PEOPLE', '_mpFitTree applied' +
+        ' bbox=' + JSON.stringify({x:Math.round(bb.x),y:Math.round(bb.y),w:Math.round(bb.width),h:Math.round(bb.height)}) +
+        ' vp=' + Math.round(vpr.width) + 'x' + Math.round(vpr.height) +
+        ' scale=' + scale.toFixed(3)
+      );
+    } catch(e) {
+      dbgErr('PEOPLE', '_mpFitTree error: ' + e.message + ' | ' + (e.stack || ''));
+      notifyDev('error', 'PEOPLE', '_mpFitTree: ' + String(e && e.message || e));
+      logActivity('people_error', '_mpFitTree: ' + String(e && e.message || e), 'error', 'PEOPLE');
+    }
+  }
+
   function mpRecentre() {
-    if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
-      try { _mpDTreeInstance.zoomToFit(300); } catch(e) { _mpRender(); }
+    var vp        = document.getElementById('mpCanvasViewport');
+    var container = document.getElementById('mpDTree');
+    if (vp && container && container.querySelector('svg')) {
+      _mpFitTree(vp, container);
     } else {
       _mpRender();
     }
