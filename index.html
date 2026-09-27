@@ -2575,7 +2575,12 @@
 
     <!-- Header -->
     <div style="text-align:center;margin-bottom:28px">
-      <div style="font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold-dark);letter-spacing:0.04em;margin-bottom:4px">LifeTold</div>
+      <!-- FAM-06-FOLLOWUP (2026-09-27): header brand now links to prod so a
+           share-page visitor who isn't the recipient's owner (i.e. a brand-new
+           person) can find their way to sign-up. target=_blank + rel=noopener
+           so clicking mid-form doesn't blow away an unsent name/message —
+           matches the change made to the footer "lifetold.app" link below. -->
+      <a href="https://lifetold.app" target="_blank" rel="noopener" style="font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold-dark);letter-spacing:0.04em;margin-bottom:4px;text-decoration:none;display:inline-block">LifeTold</a>
       <div id="shareSubheading" style="font-size:0.9rem;color:var(--text-light)">A memory shared with you</div>
     </div>
 
@@ -2674,8 +2679,8 @@
               <div id="shareFormQuestion" style="background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
             </div>
             <!-- A label — changes between "Answer" and "Your message" -->
-            <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
-            <textarea id="shareMessage" rows="4" placeholder=""
+            <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message <span style="color:var(--rose)">*</span></label>
+            <textarea id="shareMessage" rows="4" placeholder="" required
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
 
@@ -2718,7 +2723,7 @@
       <!-- Footer CTA -->
       <div style="text-align:center;padding:16px 0;border-top:1px solid var(--border)">
         <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:10px">Preserve your own memories at</p>
-        <a href="https://lifetold.app" style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold-dark);text-decoration:none;font-weight:600">lifetold.app</a>
+        <a href="https://lifetold.app" target="_blank" rel="noopener" style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold-dark);text-decoration:none;font-weight:600">lifetold.app</a>
       </div>
 
     </div><!-- /shareContent -->
@@ -5294,7 +5299,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.209';
+  const APP_VERSION = 'v7.210';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6063,6 +6068,17 @@
     }
   }
 
+  // FAM-06-FOLLOWUP (2026-09-27): shareMessage is required (submitShareFeedback
+  // already enforced this server-side-ish via client validation — see the
+  // !text check there) but the label text swaps per share type/mode (Your
+  // comment / Your message / Answer / Your feedback) via .textContent at 4
+  // call sites below, which would each need to carry the "*" separately.
+  // Centralised here so all 4 stay in sync with the Name field's asterisk.
+  function _shareSetMsgLabel(el, text) {
+    if (!el) return;
+    el.innerHTML = escHtml(text) + ' <span style="color:var(--rose)">*</span>';
+  }
+
   async function loadSharePage(token) {
     dbg('SHARE', 'Loading share page, token:', token);
     try {
@@ -6144,11 +6160,11 @@
         var shareMsgArea     = document.getElementById('shareMessage');
         if (isSong) {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
-          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          _shareSetMsgLabel(shareMessageLbl, 'Your comment');
           if (shareMsgArea)     shareMsgArea.placeholder     = '';
         } else {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
-          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          _shareSetMsgLabel(shareMessageLbl, 'Your comment');
           if (shareMsgArea)     shareMsgArea.placeholder     = '';
         }
         // Hide the Q/A question wrap — piece shares don't have owner questions
@@ -6449,7 +6465,7 @@
         var shareFormHeadingT = document.getElementById('shareFormHeading');
         var shareMessageLblT  = document.getElementById('shareMessageLabel');
         if (shareFormHeadingT) shareFormHeadingT.textContent = 'Leave feedback';
-        if (shareMessageLblT)  shareMessageLblT.textContent  = 'Your message';
+        _shareSetMsgLabel(shareMessageLblT, 'Your message');
         var shareQWrapT = document.getElementById('shareFormQuestionWrap');
         if (shareQWrapT) shareQWrapT.style.display = 'none';
 
@@ -6523,13 +6539,13 @@
         // Question mode
         if (formQWrap)   formQWrap.style.display = 'block';
         if (formQEl)     formQEl.textContent     = data.note;
-        if (msgLabel)    msgLabel.textContent    = 'Answer';
+        _shareSetMsgLabel(msgLabel, 'Answer');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave your answer';
       } else {
         // Feedback mode — no question set
         if (formQWrap)   formQWrap.style.display = 'none';
-        if (msgLabel)    msgLabel.textContent    = 'Your feedback';
+        _shareSetMsgLabel(msgLabel, 'Your feedback');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave feedback';
       }
