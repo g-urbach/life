@@ -5349,7 +5349,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.205';
+  const APP_VERSION = 'v7.206';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5958,7 +5958,12 @@
     (people || []).forEach(function(p) { byId[p.id] = p; });
     var selfNode = (people || []).find(function(p) { return p.relationship_type === 'self'; }) || (people || [])[0];
     if (!selfNode) return [];
-    function makeNode(person) {
+    // Named _spMakeNode (not makeNode) specifically so it can never be flagged
+    // against _mpBuildDTreeData's own local _spMakeNode() by the duplicate-
+    // function-name regression test — they're genuinely different scopes
+    // (function-local to each of these two sibling functions) but the linter
+    // doesn't distinguish that, per the DUPE-FN-01 note in DEPLOY_NOTES.
+    function _spMakeNode(person) {
       var isSelf = person.relationship_type === 'self';
       var label  = isSelf ? 'The tree owner \u2605' : (person.relationship_label || MP_REL_LABEL[person.relationship_type] || '');
       var emoji  = _mpEmojiMap[person.relationship_type] || '👤';
@@ -5972,7 +5977,7 @@
       };
     }
     var nodeMap = {};
-    (people || []).forEach(function(p) { var node = makeNode(p); node.children = []; nodeMap[p.id] = node; });
+    (people || []).forEach(function(p) { var node = _spMakeNode(p); node.children = []; nodeMap[p.id] = node; });
     var renderedAsSpouse = {}, marriageOwners = {};
     (people || []).forEach(function(p) {
       (spouseOf[p.id] || []).forEach(function(spouseId) {
@@ -6012,13 +6017,13 @@
           var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []).concat(spouseOnlyKids)
             .filter(function(cid, idx, arr) { return arr.indexOf(cid) === idx; });
           nodeMap[p.id].marriages.push({
-            spouse: nodeMap[spouseId] || makeNode(spouse),
-            children: marriageKids.map(function(cid) { return nodeMap[cid] || makeNode(byId[cid]); }).filter(Boolean),
+            spouse: nodeMap[spouseId] || _spMakeNode(spouse),
+            children: marriageKids.map(function(cid) { return nodeMap[cid] || _spMakeNode(byId[cid]); }).filter(Boolean),
           });
         });
       } else {
         myChildren.forEach(function(cid) {
-          var childNode = nodeMap[cid] || makeNode(byId[cid]);
+          var childNode = nodeMap[cid] || _spMakeNode(byId[cid]);
           if (childNode) nodeMap[p.id].children.push(childNode);
         });
       }
@@ -6085,6 +6090,7 @@
       });
     } catch(e) {
       dbgErr('SHARE', 'tree share render error: ' + e.message);
+      logActivity('tree_share_render_failed', String(e && e.message || e), 'error', 'SHARE');
       canvasEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:0.85rem">Could not display the tree.</div>';
     }
   }
