@@ -2617,6 +2617,25 @@
         <div id="shareStoryMeta" style="margin-top:16px;font-size:0.78rem;color:var(--text-light);border-top:1px solid var(--border);padding-top:12px"></div>
         <div id="shareListenStatus" style="margin-top:8px;font-size:0.78rem;color:var(--text-light);display:none"></div>
       </div>
+      <!-- FAM-06 (2026-09-26): read-only family tree share card. Deliberately NOT
+           reusing #mpDTree/#mpCanvasViewport or _mpBuildDTreeData()/_mpRender() —
+           those are the in-app pan/zoom canvas that took three sessions to get
+           right (see FAM-04) and are wired to a position:fixed full-screen
+           overlay with its own custom zoom system. This page is normal document
+           flow, not a fixed overlay, so plain browser scroll/pinch works with no
+           custom zoom code needed at all — simpler AND zero regression risk to
+           the in-app tree. _spBuildTreeData()/_spRenderTree() below duplicate
+           the layout algorithm (kept deliberately in sync via the comment on
+           each function — same pattern as _agpBuildStoryMap()/renderDashboard()
+           elsewhere in this file) rather than parameterising the in-app
+           functions, so nothing about the just-fixed in-app tree is touched. -->
+      <div id="shareTreeCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:28px">
+        <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin-bottom:4px">🌳 Family Tree</div>
+        <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:14px">Read-only — pinch or scroll to explore.</div>
+        <div id="shareTreeViewport" style="width:100%;height:60vh;min-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+          <div id="shareTreeCanvas" style="width:100%;height:100%"></div>
+        </div>
+      </div>
       <div id="shareEntryCard" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
         <div id="shareEntryPhotos" style="margin-bottom:14px"></div>
@@ -3417,6 +3436,13 @@
             <option value="90">90 days</option>
           </select>
         </div>
+        <!-- FAM-06 (2026-09-26): sender-side consent checkbox, retrofitted for
+             consistency — see the matching note on shareConsentOverlay above. -->
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+          <input type="checkbox" id="storyShareConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+          <label for="storyShareConsent" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can read this story piece, and their name and comment will be stored.</label>
+        </div>
+        <p id="storyShareError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
         <!-- Share buttons — same layout as entry share -->
         <div id="storyShareBtns">
           <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
@@ -3440,6 +3466,61 @@
           </div>
         </div>
         <div id="storyShareSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
+      </div>
+    </div>
+
+    <!-- FAM-06 (2026-09-26): Share my tree modal — same shape as storyShareModal
+         minus the per-entry Q&A framing (a tree has no single "question"). -->
+    <div id="treeShareModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <h3 style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0">Share your family tree</h3>
+          <button id="treeShareModalCloseBtn" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
+        </div>
+        <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
+          Anyone with the link can view your tree (read-only — they can't edit it) and leave feedback. This includes the names and photos of people you've added, not just your own story.
+        </p>
+        <div style="margin-bottom:14px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a message (optional)</label>
+          <textarea id="treeShareNote" rows="2" placeholder="e.g. Let me know if anything looks wrong!"
+            style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Link expires after</label>
+          <select id="treeShareExpiry" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+          <input type="checkbox" id="treeShareConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+          <label for="treeShareConsent" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can view my family tree — including other people's names and photos — and that their name and any feedback they leave will be stored.</label>
+        </div>
+        <p id="treeShareError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
+        <div id="treeShareBtns">
+          <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
+          <div style="display:flex;justify-content:space-around;margin-bottom:16px">
+            <button id="treeShareWhatsappBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#25D366;display:flex;align-items:center;justify-content:center;font-size:1.6rem">💬</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">WhatsApp</span>
+            </button>
+            <button id="treeShareGmailBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#EA4335;display:flex;align-items:center;justify-content:center;font-size:1.6rem">✉️</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Gmail</span>
+            </button>
+            <button id="treeShareFacebookBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#1877F2;display:flex;align-items:center;justify-content:center;font-size:1.6rem">👤</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Facebook</span>
+            </button>
+            <button id="treeShareCopyBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.6rem">🔗</div>
+              <span id="treeShareCopyLabel" style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Copy link</span>
+            </button>
+          </div>
+        </div>
+        <div id="treeShareSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
       </div>
     </div>
 
@@ -3917,7 +3998,7 @@
   </div>
 
   <!-- MY PEOPLE OVERLAY (Phase 4 — pan/zoom canvas tree) -->
-  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column">
+  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column;padding-top:var(--uat-banner-offset, 0px)">
 
     <!-- Fixed header bar -->
     <div style="flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg);z-index:2">
@@ -3933,6 +4014,9 @@
             <button id="mpZoomOutBtn" title="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
             <button id="mpZoomInBtn" title="Zoom in" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#43;</button>
             <button id="mpRecentreBtn" title="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <!-- FAM-06 (2026-09-26): Share my tree entry point, next to the tree controls
+                 since that's naturally where the owner will be when they think to share it. -->
+            <button id="mpShareTreeBtn" title="Share my tree" aria-label="Share my tree" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#128279;</button>
           </div>
           <!-- Gethro chat button — always accessible even inside overlay -->
           <button id="mpGethroBtn" title="Chat with Gethro" aria-label="Chat with Gethro" style="width:36px;height:36px;border-radius:50%;background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
@@ -4506,6 +4590,16 @@
       <input id="shareConsentLabel" type="text" placeholder="e.g. Family group"
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
     </div>
+    <!-- FAM-06 (2026-09-26): sender-side consent checkbox, retrofitted here for
+         consistency with the new tree-share checkbox (developer decision: if
+         it's on one share type it should be on all). Mirrors sharePrivacyConsent's
+         existing recipient-side wording/behaviour — client-side gate only, same
+         as that one; see FAM-06 backlog entry for the reasoning. -->
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="shareConsentConfirm" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+      <label for="shareConsentConfirm" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can view this memory, and their name and response will be stored.</label>
+    </div>
+    <p id="shareConsentError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
     <!-- Share buttons — each creates the link then opens the app -->
     <div id="shareConsentBtns">
       <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
@@ -5255,7 +5349,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.204';
+  const APP_VERSION = 'v7.205';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -5822,6 +5916,179 @@
   var _shareFbVideoTimer     = null;
   var _shareEntryTitle = '';   // stored for Telegram notification
 
+  // ── FAM-06 (2026-09-26): read-only tree layout for the public share page ──
+  // Deliberate near-duplicate of _mpBuildDTreeData() (~line 37356 in the
+  // in-app My People code), parameterised to take people/rels as arguments
+  // instead of closing over the in-app _mpPeople/_mpRels globals, and with
+  // the diagnostic console logging stripped (this runs for anonymous
+  // visitors — no dbg() noise in their console). KEEP IN SYNC MANUALLY if
+  // the in-app tree-walking logic changes (marriage ownership, sibling
+  // parent propagation, grandchild_of handling, etc.) — same "two versions,
+  // commented at both sites" pattern used for the Story Health tile
+  // healthScore calc elsewhere in this file, for the same reason: the two
+  // versions have different enough surrounding code (one drives a pan/zoom
+  // canvas + profile editing, one drives a plain scrollable read-only div)
+  // that a shared function would need parameters/branches papering over
+  // that, which isn't worth it for ~150 lines of pure data transformation.
+  function _spBuildTreeData(people, rels) {
+    var childrenOf = {}, parentsOf = {}, spouseOf = {}, siblingOf = {};
+    function add(map, key, val) {
+      if (!map[key]) map[key] = [];
+      if (map[key].indexOf(val) === -1) map[key].push(val);
+    }
+    (rels || []).forEach(function(r) {
+      var a = r.person_a_id, b = r.person_b_id, t = r.relationship_type;
+      if (t === 'parent_of')  { add(childrenOf, a, b); add(parentsOf,  b, a); }
+      if (t === 'child_of')   { add(parentsOf,  a, b); add(childrenOf, b, a); }
+      if (t === 'spouse_of')  { add(spouseOf, a, b);   add(spouseOf, b, a);   }
+      if (t === 'sibling_of' || t === 'half_sibling_of') { add(siblingOf, a, b); add(siblingOf, b, a); }
+      if (t === 'grandchild_of')  { add(parentsOf, a, b);  add(childrenOf, b, a); }
+      if (t === 'grandparent_of') { add(childrenOf, a, b); add(parentsOf,  b, a); }
+    });
+    var peopleIds = (people || []).map(function(p) { return p.id; });
+    peopleIds.forEach(function(childId) {
+      (parentsOf[childId] || []).forEach(function(parentId) {
+        (siblingOf[childId] || []).forEach(function(sibId) {
+          add(childrenOf, parentId, sibId);
+          add(parentsOf,  sibId,    parentId);
+        });
+      });
+    });
+    var byId = {};
+    (people || []).forEach(function(p) { byId[p.id] = p; });
+    var selfNode = (people || []).find(function(p) { return p.relationship_type === 'self'; }) || (people || [])[0];
+    if (!selfNode) return [];
+    function makeNode(person) {
+      var isSelf = person.relationship_type === 'self';
+      var label  = isSelf ? 'The tree owner \u2605' : (person.relationship_label || MP_REL_LABEL[person.relationship_type] || '');
+      var emoji  = _mpEmojiMap[person.relationship_type] || '👤';
+      var avatarHtml = person.photo_url
+        ? '<img src="' + person.photo_url.replace(/"/g, '&quot;') + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : emoji;
+      return {
+        id: person.id, name: person.name || '\u2014',
+        extra: { isSelf: isSelf, label: label, avatarHtml: avatarHtml },
+        marriages: [], class: isSelf ? 'mpNode mpNode-self' : 'mpNode', textClass: 'mpNode-text',
+      };
+    }
+    var nodeMap = {};
+    (people || []).forEach(function(p) { var node = makeNode(p); node.children = []; nodeMap[p.id] = node; });
+    var renderedAsSpouse = {}, marriageOwners = {};
+    (people || []).forEach(function(p) {
+      (spouseOf[p.id] || []).forEach(function(spouseId) {
+        var key = [p.id, spouseId].sort().join('__');
+        if (marriageOwners[key]) return;
+        var pHasParents  = !!(parentsOf[p.id]     && parentsOf[p.id].length);
+        var spHasParents = !!(parentsOf[spouseId] && parentsOf[spouseId].length);
+        var pKids  = (childrenOf[p.id]       || []).length;
+        var spKids = (childrenOf[spouseId]   || []).length;
+        var owner;
+        if      (pHasParents  && !spHasParents) owner = p.id;
+        else if (!pHasParents &&  spHasParents) owner = spouseId;
+        else if (pKids > spKids)                owner = p.id;
+        else if (spKids > pKids)                owner = spouseId;
+        else                                    owner = (p.id < spouseId) ? p.id : spouseId;
+        marriageOwners[key] = owner;
+        renderedAsSpouse[(owner === p.id) ? spouseId : p.id] = true;
+      });
+    });
+    (people || []).forEach(function(p) {
+      var mySpouses  = spouseOf[p.id]   || [];
+      var myChildren = childrenOf[p.id] || [];
+      if (mySpouses.length === 0 && myChildren.length === 0) return;
+      if (mySpouses.length > 0) {
+        mySpouses.forEach(function(spouseId) {
+          var spouse = byId[spouseId];
+          if (!spouse) return;
+          var key = [p.id, spouseId].sort().join('__');
+          if (marriageOwners[key] !== p.id) return;
+          var spouseKids   = childrenOf[spouseId] || [];
+          var sharedKids   = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
+          var spouseOnlyKids = spouseKids.filter(function(cid) { return myChildren.indexOf(cid) === -1; });
+          var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
+          var unattributed = myChildren.filter(function(cid) {
+            return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
+          });
+          var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []).concat(spouseOnlyKids)
+            .filter(function(cid, idx, arr) { return arr.indexOf(cid) === idx; });
+          nodeMap[p.id].marriages.push({
+            spouse: nodeMap[spouseId] || makeNode(spouse),
+            children: marriageKids.map(function(cid) { return nodeMap[cid] || makeNode(byId[cid]); }).filter(Boolean),
+          });
+        });
+      } else {
+        myChildren.forEach(function(cid) {
+          var childNode = nodeMap[cid] || makeNode(byId[cid]);
+          if (childNode) nodeMap[p.id].children.push(childNode);
+        });
+      }
+    });
+    var roots = (people || []).filter(function(p) {
+      var noParents = !parentsOf[p.id] || parentsOf[p.id].length === 0;
+      return noParents && !renderedAsSpouse[p.id];
+    });
+    if (roots.length === 0) roots = [selfNode];
+    return roots.map(function(r) { return nodeMap[r.id]; });
+  }
+
+  // Simplified read-only render: no pan/zoom framework, no node-click wiring
+  // (see FAM-06 note above on _spBuildTreeData for why this isn't _mpRender()
+  // reused directly). Plain overflow:auto div + native browser scroll/pinch.
+  function _spRenderTree(canvasEl, viewportEl, data) {
+    if (!canvasEl || !data || !data.length) return;
+    var vpW = viewportEl ? (viewportEl.offsetWidth  || 360) : 360;
+    var vpH = viewportEl ? (viewportEl.offsetHeight || 480) : 480;
+    var rootStyle   = getComputedStyle(document.documentElement);
+    var borderColor = (rootStyle.getPropertyValue('--border') || '#e8dcc8').trim() || '#e8dcc8';
+    try {
+      dTree.init(data, {
+        target: '#shareTreeCanvas',
+        debug: false,
+        width: vpW, height: vpH,
+        nodeWidth: 120,
+        marriageNodeSize: 6,
+        hideMarriageNodes: false,
+        margin: { top: 40, right: 40, bottom: 40, left: 40 },
+        styles: { node: 'mpDTreeNode', linage: 'mpDTreeLink', marriage: 'mpDTreeMarriage', text: 'mpDTreeText' },
+        callbacks: {
+          nodeSize: function(nodes) { nodes.forEach(function(n) { n.cWidth = 120; n.cHeight = 108; }); return [120, 108]; },
+          nodeRenderer: function(name, x, y, height, width, extra, id, nodeClass) {
+            if (nodeClass === 'mpNodeHidden') return '<div style="width:100%;height:100%;opacity:0;pointer-events:none"></div>';
+            var isSelf = extra && extra.isSelf;
+            var label  = extra ? extra.label : '';
+            var avatar = extra ? extra.avatarHtml : '👤';
+            var labelStyle = isSelf ? 'color:var(--gold);font-weight:700' : 'color:var(--text-light)';
+            return [
+              '<div class="' + (isSelf ? 'mpNode mpNode-self' : 'mpNode') + '" style="width:100%;height:100%;box-sizing:border-box">',
+                '<div class="mpNode-avatar">' + avatar + '</div>',
+                '<div class="mpNode-name">' + (name || '\u2014') + '</div>',
+                '<div class="mpNode-rel" style="' + labelStyle + '">' + label + '</div>',
+              '</div>',
+            ].join('');
+          },
+          nodeClick: function() {}, // read-only — no delegated click listener attached either
+        },
+      });
+      requestAnimationFrame(function() {
+        var svg = canvasEl.querySelector('svg');
+        if (!svg) return;
+        svg.style.maxWidth = 'none'; // let it render at natural size; container scrolls
+        svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
+          el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
+        });
+        svg.querySelectorAll('path.mpDTreeMarriage, path.marriage').forEach(function(el) {
+          el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
+        });
+        svg.querySelectorAll('.mpDTreeMarriage circle, .marriage circle').forEach(function(el) {
+          el.style.fill = borderColor;
+        });
+      });
+    } catch(e) {
+      dbgErr('SHARE', 'tree share render error: ' + e.message);
+      canvasEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:0.85rem">Could not display the tree.</div>';
+    }
+  }
+
   async function loadSharePage(token) {
     dbg('SHARE', 'Loading share page, token:', token);
     try {
@@ -6184,6 +6451,57 @@
 
         return; // done — skip all entry-rendering code below
       } // end data.isPiece
+
+      // FAM-06 (2026-09-26): tree share path — data.people/relationships present,
+      // no data.entry. Same "guard on the flag alone first" caution as isPiece
+      // above: check isTree before touching anything entry/piece-shaped.
+      if (data.isTree) {
+        _shareEntryTitle = 'a family tree';
+        var ownerT = data.ownerName || data.ownerFirstName || 'Someone';
+        var subElT = document.getElementById('shareSubheading');
+        if (subElT) subElT.textContent = ownerT + ' has shared their family tree from LifeTold and would love your feedback.';
+
+        var ownerNoteElT = document.getElementById('shareOwnerNote');
+        if (ownerNoteElT) {
+          if (data.note) { ownerNoteElT.textContent = data.note; ownerNoteElT.style.display = 'block'; }
+          else { ownerNoteElT.style.display = 'none'; }
+        }
+
+        document.getElementById('shareEntryCard').style.display      = 'none';
+        document.getElementById('shareStoryPieceCard').style.display = 'none';
+        document.getElementById('shareTreeCard').style.display       = 'block';
+        document.getElementById('shareFeedbackSection').style.display = '';
+
+        var shareFormHeadingT = document.getElementById('shareFormHeading');
+        var shareMessageLblT  = document.getElementById('shareMessageLabel');
+        if (shareFormHeadingT) shareFormHeadingT.textContent = 'Leave feedback';
+        if (shareMessageLblT)  shareMessageLblT.textContent  = 'Your message';
+        var shareQWrapT = document.getElementById('shareFormQuestionWrap');
+        if (shareQWrapT) shareQWrapT.style.display = 'none';
+
+        document.getElementById('shareLoading').style.display = 'none';
+        document.getElementById('shareContent').style.display = 'block';
+        logActivity('share_viewed', JSON.stringify({ type: 'tree', token: token }), 'info', 'SHARE');
+
+        var expiryElT  = document.getElementById('shareExpiryWarning');
+        var expiryMsgT = document.getElementById('shareExpiryMsg');
+        if (expiryElT && expiryMsgT && data.expiresAt) {
+          var expiryDateT = new Date(data.expiresAt);
+          var daysLeftT   = Math.ceil((expiryDateT - Date.now()) / 86400000);
+          if (daysLeftT >= 0 && daysLeftT <= 7) {
+            var expiryFmtT = expiryDateT.toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' });
+            expiryMsgT.textContent = daysLeftT === 0
+              ? 'This link expires today.'
+              : 'This link expires on ' + expiryFmtT + ' (' + daysLeftT + ' day' + (daysLeftT === 1 ? '' : 's') + ' left).';
+            expiryElT.style.display = 'block';
+          }
+        }
+
+        var treeData = _spBuildTreeData(data.people || [], data.relationships || []);
+        _spRenderTree(document.getElementById('shareTreeCanvas'), document.getElementById('shareTreeViewport'), treeData);
+
+        return; // done — skip all entry/piece-rendering code below
+      } // end data.isTree
 
       // Entry share path — data.entry is present
       if (!data.entry) {
@@ -6649,6 +6967,10 @@
     document.getElementById('shareConsentNote').value  = '';
     var expiryEl = document.getElementById('shareConsentExpiry');
     if (expiryEl) expiryEl.value = '30';
+    var consentBoxEl0 = document.getElementById('shareConsentConfirm');
+    if (consentBoxEl0) consentBoxEl0.checked = false;
+    var consentErrEl0 = document.getElementById('shareConsentError');
+    if (consentErrEl0) consentErrEl0.style.display = 'none';
     document.getElementById('shareConsentBtns').style.display    = '';
     document.getElementById('shareConsentSpinner').style.display = 'none';
     document.getElementById('shareConsentOverlay').style.display = 'flex';
@@ -6666,6 +6988,19 @@
     var entryId = _shareConsentEntryId;
     var label   = (document.getElementById('shareConsentLabel').value || '').trim() || null;
     var note    = (document.getElementById('shareConsentNote').value  || '').trim() || null;
+
+    // FAM-06 (2026-09-26): sender-side consent gate, same pattern as the
+    // recipient-side sharePrivacyConsent check in submitShareFeedback().
+    var consentErrEl = document.getElementById('shareConsentError');
+    var consentBoxEl = document.getElementById('shareConsentConfirm');
+    if (consentBoxEl && !consentBoxEl.checked) {
+      if (consentErrEl) {
+        consentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        consentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (consentErrEl) consentErrEl.style.display = 'none';
 
     // Show spinner, hide buttons
     document.getElementById('shareConsentBtns').style.display    = 'none';
@@ -13993,6 +14328,16 @@
   var _storyShareCurrentPieceId = null;
 
   function _storyLibSharePiece(pieceId, pieceTitle) {
+    // FAM-06 (2026-09-26) BUG FIX found while touching this function: unlike
+    // entry sharing (showShareConsent()'s isPremium() nudge, RL-06), story-piece
+    // sharing never had a client-side premium gate either — the toast nudge
+    // pattern below mirrors showShareConsent() exactly. Server-side this was
+    // also ungated until now — see SHARE_PROXY v3.75 create_story_share fix.
+    if (!isPremium()) {
+      logActivity('premium_gate_hit', 'feature=share_story_piece', 'info', 'RL');
+      toast('\uD83D\uDD10 Sharing stories is a Premium feature \u2014 upgrade to share with family.');
+      return;
+    }
     _storyShareCurrentPieceId = pieceId;
     var modal    = document.getElementById('storyShareModal');
     var titleEl  = document.getElementById('storyShareModalTitle');
@@ -14000,10 +14345,14 @@
     var expiryEl = document.getElementById('storyShareExpiry');
     var btns     = document.getElementById('storyShareBtns');
     var spinner  = document.getElementById('storyShareSpinner');
+    var consentEl0 = document.getElementById('storyShareConsent');
+    var errEl0     = document.getElementById('storyShareError');
     if (!modal) return;
     if (titleEl)  titleEl.textContent = pieceTitle ? '“' + pieceTitle + '”' : '';
     if (noteEl)   noteEl.value = '';
     if (expiryEl) expiryEl.value = '30';
+    if (consentEl0) consentEl0.checked = false;
+    if (errEl0)      errEl0.style.display = 'none';
     if (btns)    btns.style.display = '';
     if (spinner) spinner.style.display = 'none';
     modal.style.display = 'flex';
@@ -14142,6 +14491,18 @@
     var btns    = document.getElementById('storyShareBtns');
     var spinner = document.getElementById('storyShareSpinner');
 
+    // FAM-06 (2026-09-26): sender-side consent gate, same pattern as entry share.
+    var storyConsentErrEl = document.getElementById('storyShareError');
+    var storyConsentBoxEl = document.getElementById('storyShareConsent');
+    if (storyConsentBoxEl && !storyConsentBoxEl.checked) {
+      if (storyConsentErrEl) {
+        storyConsentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        storyConsentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (storyConsentErrEl) storyConsentErrEl.style.display = 'none';
+
     if (btns)    btns.style.display    = 'none';
     if (spinner) spinner.style.display = 'block';
 
@@ -14175,6 +14536,112 @@
       window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
     } else if (method === 'gmail') {
       window.open('mailto:?subject=' + encodeURIComponent('A story I’d love your thoughts on') +
+        '&body=' + encodeURIComponent(shareMsg + '\n\n' + link));
+    } else if (method === 'facebook') {
+      window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
+    } else { // copy
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(link);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = link; ta.style.cssText = 'position:fixed;opacity:0';
+          document.body.appendChild(ta); ta.select();
+          document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        toast('Link copied ✓');
+      } catch(copyErr) { logActivity('clipboard_fallback', copyErr.message, 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+    }
+  }
+
+  // ── FAM-06 (2026-09-26): Share my tree ──────────────────────────────────────
+  // Modelled on _storyLibSharePiece()/_storyShareVia() — same modal shape,
+  // minus per-entry Q&A (a tree has no single "question"). Creation goes
+  // through SHARE_PROXY's create_tree_share action (needs a real premium check
+  // there since this bypasses RLS via the service-role client — see SHARE_PROXY
+  // v3.75 notes), not a direct life_share_tokens insert, because a user only
+  // has one tree and there's no client-owned row (like a component_id) to
+  // scope an insert to — the server resolves "the tree" as the caller's own
+  // life_people/life_people_relationships rows.
+  function _mpOpenTreeShareModal() {
+    if (!isPremium()) {
+      logActivity('premium_gate_hit', 'feature=share_tree', 'info', 'RL');
+      toast('\uD83D\uDD10 Sharing your family tree is a Premium feature \u2014 upgrade to share with family.');
+      return;
+    }
+    var modal    = document.getElementById('treeShareModal');
+    var noteEl   = document.getElementById('treeShareNote');
+    var expiryEl = document.getElementById('treeShareExpiry');
+    var btns     = document.getElementById('treeShareBtns');
+    var spinner  = document.getElementById('treeShareSpinner');
+    var consentEl = document.getElementById('treeShareConsent');
+    var errEl     = document.getElementById('treeShareError');
+    if (!modal) return;
+    if (noteEl)    noteEl.value = '';
+    if (expiryEl)  expiryEl.value = '30';
+    if (consentEl) consentEl.checked = false;
+    if (errEl)     errEl.style.display = 'none';
+    if (btns)    btns.style.display = '';
+    if (spinner) spinner.style.display = 'none';
+    modal.style.display = 'flex';
+  }
+
+  function _treeShareModalClose() {
+    var modal = document.getElementById('treeShareModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function _treeShareVia(method) {
+    var note       = (document.getElementById('treeShareNote').value || '').trim() || null;
+    var expiryDays = parseInt((document.getElementById('treeShareExpiry') || {}).value || '30', 10);
+    if (![7,14,30,90].includes(expiryDays)) expiryDays = 30;
+    var btns    = document.getElementById('treeShareBtns');
+    var spinner = document.getElementById('treeShareSpinner');
+
+    var consentErrEl = document.getElementById('treeShareError');
+    var consentBoxEl = document.getElementById('treeShareConsent');
+    if (consentBoxEl && !consentBoxEl.checked) {
+      if (consentErrEl) {
+        consentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        consentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (consentErrEl) consentErrEl.style.display = 'none';
+
+    if (btns)    btns.style.display    = 'none';
+    if (spinner) spinner.style.display = 'block';
+
+    var link;
+    try {
+      var res  = await fetch(SHARE_PROXY_URL, {
+        method:  'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body:    JSON.stringify({ action: 'create_tree_share', note: note, expires_days: expiryDays })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
+      link = 'https://lifetold.app/?share=' + data.token;
+      logActivity('tree_shared', '', 'info', 'SHARE');
+    } catch(err) {
+      if (btns)    btns.style.display    = '';
+      if (spinner) spinner.style.display = 'none';
+      toast('Could not create link \u2014 try again');
+      dbgErr('SHARE', '_treeShareVia error: ' + (err.message || err));
+      return;
+    }
+
+    _treeShareModalClose();
+
+    var shareMsg = note
+      ? 'I\u2019d love your thoughts on our family tree: \u201c' + note + '\u201d'
+      : 'I\u2019d love your thoughts on our family tree.';
+    var fullMsg = shareMsg + '\n' + link;
+
+    if (method === 'whatsapp') {
+      window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
+    } else if (method === 'gmail') {
+      window.open('mailto:?subject=' + encodeURIComponent('Our family tree') +
         '&body=' + encodeURIComponent(shareMsg + '\n\n' + link));
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
@@ -25748,7 +26215,95 @@
     document.getElementById('mpPersonModal').style.display = 'flex';
   }
 
-  // Called from profile panel — delete the currently open person
+  // FAM-05: full family-tree reset — lets the client start over when old tree
+  // data can't be trusted (motivated by FAM-04 Bug 1, duplicate "Mum" rows of
+  // unclear provenance). SCOPE: only life_people + life_people_relationships.
+  // Does NOT touch life_entries' people tags — names typed into memory text
+  // are untouched; confirmation copy says so explicitly so it can't be misread
+  // as "delete every mention of my family."
+  //
+  // OPEN QUESTION from the original plan — now answered by reading the code:
+  // does wiping the tree also need to reset some auto-seed flag so re-opening
+  // My People doesn't silently recreate a stale self/subject node? No such
+  // flag exists. Both _famAutoSeedSubjectPerson() (subjectMode 'other', see
+  // ~line 19948) and the self-node creation inside mpReviewSave() (subjectMode
+  // 'self', ~line 38459) check "does a row with this name/type already exist"
+  // and create one on demand if missing — there's nothing else to reset. The
+  // self/subject node self-heals correctly on next login or next action that
+  // needs one, which is the better of the two options the plan raised (always
+  // regenerate live from the profile, rather than trying to suppress it).
+  async function mpDeleteTree() {
+    if (!currentUser) return;
+
+    var count = _mpPeople.length;
+    var noun  = count === 1 ? 'person' : 'people';
+
+    // Step 1: stern warning naming exactly what's destroyed
+    var step1 = confirm(
+      '⚠️ DELETE FAMILY TREE — This cannot be undone.\n\n' +
+      'This will permanently remove:\n' +
+      '  • All ' + count + ' ' + noun + ' in your family tree\n' +
+      '  • Every relationship between them\n\n' +
+      'This does NOT delete anything from your written memories — names ' +
+      'you\'ve typed into entries are untouched. Only the tree itself is ' +
+      'cleared.\n\n' +
+      'Are you sure you want to continue?'
+    );
+    if (!step1) return;
+
+    // Step 2: type DELETE — lighter than deleteAccount()'s typed-email check,
+    // since the blast radius here is much smaller (tree only, not the whole
+    // account), but this is still irreversible and the data's own history is
+    // already unclear, so a plain "are you sure" isn't enough on its own.
+    var typed = prompt('Type DELETE (in capitals) to confirm.');
+    if (typed === null) return;
+    if (typed.trim() !== 'DELETE') {
+      toast('Did not match — family tree deletion cancelled.');
+      return;
+    }
+
+    // Step 3: absolute last chance
+    var step3 = confirm(
+      '🔴 LAST CHANCE\n\n' +
+      'Deleting your entire family tree (' + count + ' ' + noun + ').\n\n' +
+      'Press OK to delete, Cancel to keep your tree.'
+    );
+    if (!step3) return;
+
+    notifyDev('warn', 'PEOPLE', 'Family tree deletion confirmed by user: ' + currentUser.email);
+    var headers = getAuthHeaders();
+    try {
+      // Relationships first, then people — same order as mpProfileDelete()'s
+      // single-person delete just above, and for the same reason (a
+      // relationship row left pointing at a deleted person is worse than a
+      // person row briefly outliving its relationships).
+      var relRes = await fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id,
+        { method: 'DELETE', headers: headers });
+      if (!relRes.ok) throw new Error('Relationship delete failed (' + relRes.status + ')');
+
+      var peopleRes = await fetch(DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id,
+        { method: 'DELETE', headers: headers });
+      if (!peopleRes.ok) throw new Error('People delete failed (' + peopleRes.status + ')');
+
+      _mpPeople = [];
+      _mpRels   = [];
+      var dt = document.getElementById('mpDTree');
+      if (dt) dt.innerHTML = '';
+      var emptyEl = document.getElementById('mpEmptyState');
+      if (emptyEl) emptyEl.style.display = 'flex';
+      if (_mpActiveTab === 'directory') mpDirRender();
+
+      logActivity('family_tree_deleted', count + ' people removed', 'warn', 'PEOPLE');
+      toast('Your family tree has been deleted.');
+      closeSettings();
+    } catch (e) {
+      dbgErr('PEOPLE', 'mpDeleteTree error: ' + e.message);
+      notifyDev('error', 'PEOPLE', 'Family tree deletion failed: ' + String(e && e.message || e));
+      logActivity('people_error', 'mpDeleteTree: ' + String(e && e.message || e), 'error', 'PEOPLE');
+      toast('Could not delete your family tree — please try again.');
+    }
+  }
+
   async function mpProfileDelete() {
     var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
     if (!person) return;
@@ -29788,6 +30343,11 @@
     on('storyShareGmailBtn',      'click', function() { _storyShareVia('gmail'); });
     on('storyShareFacebookBtn',   'click', function() { _storyShareVia('facebook'); });
     on('storyShareCopyBtn',       'click', function() { _storyShareVia('copy'); });
+    on('treeShareModalCloseBtn',  'click', _treeShareModalClose);
+    on('treeShareWhatsappBtn',    'click', function() { _treeShareVia('whatsapp'); });
+    on('treeShareGmailBtn',       'click', function() { _treeShareVia('gmail'); });
+    on('treeShareFacebookBtn',    'click', function() { _treeShareVia('facebook'); });
+    on('treeShareCopyBtn',        'click', function() { _treeShareVia('copy'); });
 
     // ── Post-generation buttons ───────────────────────────────────────────
     on('postGenListenBtn', 'click', _postGenListen);
@@ -29849,6 +30409,7 @@
 
     // ── My People ────────────────────────────────────────────────────────
     on('mpRecentreBtn',        'click', mpRecentre);
+    on('mpShareTreeBtn',       'click', _mpOpenTreeShareModal);
     on('mpZoomInBtn',          'click', mpZoomIn);
     on('mpZoomOutBtn',         'click', mpZoomOut);
     // Trackpad pinch-to-zoom (and ctrl+scroll) are intercepted and redirected into
@@ -29989,6 +30550,7 @@
     on('giftRedeemLaterBtn',      'click', dismissGiftRedemption); // GIFT-P2
     on('giftRedeemCloseBtn',      'click', dismissGiftRedemption); // GIFT-P2: X = same as "later", don't lose the code
     on('deleteAccountBtn',        'click', deleteAccount); // BUGFIX: button had no handler at all — clicking did nothing
+    on('deleteFamilyTreeBtn',     'click', mpDeleteTree);
     on('settingsSubjectSaveBtn',  'click', saveSettingsSubject); // FAM-01b
     // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
     on('emailNudgeToggle',    'click', toggleEmailNudge);
@@ -30637,6 +31199,17 @@
       <button id="voicesRecordBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:9px;margin-top:4px">&#x1F399;&#xFE0F; + Record a voice</button>
 
       <p id="voicesStatus" style="font-size:0.78rem;color:var(--text-light);margin:8px 0 0;min-height:1em"></p>
+    </div>
+
+    <!-- FAM-05: Delete Family Tree — lives here, next to Delete Account,
+         rather than inside the tree view itself, since this is a rare/severe
+         action and shouldn't sit next to the everyday tree controls. -->
+    <div style="border:2px solid var(--rose);border-radius:12px;padding:18px;background:rgba(180,60,60,0.04);margin-bottom:16px">
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--rose);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">🌳 Delete Family Tree</h4>
+      <p style="font-size:0.85rem;color:var(--text-light);line-height:1.6;margin-bottom:14px">
+        Permanently removes everyone in your family tree and the relationships between them, so you can start over. Your written memories and any names tagged in them are <strong>not</strong> affected — only the tree itself is cleared.
+      </p>
+      <button class="btn btn-danger" id="deleteFamilyTreeBtn" style="width:100%;font-size:0.88rem">🗑 Delete My Family Tree</button>
     </div>
 
     <!-- Delete Account -->
