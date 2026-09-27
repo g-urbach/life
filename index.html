@@ -4000,6 +4000,11 @@
           style="padding:7px 18px;border:none;border-bottom:2px solid transparent;background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-light);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
           &#128101; Directory
         </button>
+        <!-- FAM-06-FIX (2026-09-27): Feedback tab — shows accepted tree-share feedback -->
+        <button id="mpTabFeedback"
+          style="padding:7px 18px;border:none;border-bottom:2px solid transparent;background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-light);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
+          &#128172; Feedback
+        </button>
       </div>
     </div>
 
@@ -4051,6 +4056,16 @@
       <div id="mpDirEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
         <div style="font-size:2rem;margin-bottom:12px">&#128101;</div>
         <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No people yet. Add family, friends, colleagues — anyone who features in your story.</p>
+      </div>
+    </div>
+
+    <!-- FAM-06-FIX (2026-09-27): Feedback panel — accepted tree-share feedback -->
+    <div id="mpFeedbackPanel" style="display:none;flex:1;overflow-y:auto;padding:16px">
+      <p style="font-size:0.78rem;color:var(--text-light);margin:0 0 14px;line-height:1.5">Feedback from people you shared your family tree with. Keep what's useful, dismiss the rest.</p>
+      <div id="mpFeedbackList" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="mpFeedbackEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128172;</div>
+        <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No accepted feedback yet. Share your family tree and accepted responses will appear here.</p>
       </div>
     </div>
 
@@ -5299,7 +5314,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.210';
+  const APP_VERSION = 'v7.211';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -7482,12 +7497,15 @@
       }
 
       list.innerHTML = feedback.map(function(f) {
-        var isPiece = !!f.component_id;
-        var entry = !isPiece ? entryMap[f.entry_id] : null;
+        var isTree  = !!f.is_tree_share;
+        var isPiece = !isTree && !!f.component_id;
+        var entry = (!isTree && !isPiece) ? entryMap[f.entry_id] : null;
         var piece = isPiece ? pieceMap[f.component_id] : null;
-        var contextTitle = isPiece
-          ? (piece ? (piece.title || 'a story piece') : 'a story piece')
-          : (entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory');
+        var contextTitle = isTree
+          ? 'your family tree'
+          : (isPiece
+            ? (piece ? (piece.title || 'a story piece') : 'a story piece')
+            : (entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory'));
         var timeAgo = formatTimeAgo(f.created_at);
         var mediaNote = '';
         if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
@@ -7501,17 +7519,30 @@
           : '';
         var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
 
-        // Piece comments get a "Dismiss" action (no memory to attach to).
-        // Memory feedback gets "Accept feedback" which imports to entries.
-        var acceptBtn = isPiece
-          ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
-              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
-              '\u2713 Dismiss' +
-            '</button>'
-          : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+        // FAM-06-FIX (2026-09-27): tree feedback gets its own Accept action (no entry to attach to);
+        // piece feedback gets Dismiss; memory feedback gets full Accept (imports to entries).
+        var acceptBtn = isTree
+          ? '<button data-action="accept-tree-feedback" data-fb-id="' + escHtml(f.id) + '" data-name="' + safeName + '" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
               '\u2714 Accept feedback' +
-            '</button>';
+            '</button>'
+          : (isPiece
+            ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
+                '\u2713 Dismiss' +
+              '</button>'
+            : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                '\u2714 Accept feedback' +
+              '</button>');
+
+        // Context label: tree → clickable "your family tree" link (opens My People → Feedback tab);
+        //               piece → clickable title link; memory → plain italic "on …"
+        var contextLabel = isTree
+          ? '<button data-action="open-tree-from-feedback" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">your family tree</button>'
+          : (isPiece
+            ? '<button data-action="open-piece-from-feedback" data-component-id="' + escHtml(f.component_id) + '" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">\u201c' + escHtml(contextTitle) + '\u201d</button>'
+            : '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>');
 
         return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
@@ -7519,10 +7550,9 @@
               '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name) + '</span>' +
               '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
               (isPiece ? '<span style="font-size:0.7rem;color:var(--gold-dark);background:rgba(201,169,110,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">story</span>' : '') +
+              (isTree  ? '<span style="font-size:0.7rem;color:var(--sage);background:rgba(107,153,120,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">family tree</span>' : '') +
             '</div>' +
-            (isPiece
-              ? '<button data-action="open-piece-from-feedback" data-component-id="' + escHtml(f.component_id) + '" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">\u201c' + escHtml(contextTitle) + '\u201d</button>'
-              : '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>') +
+            contextLabel +
           '</div>' +
           questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
@@ -7662,6 +7692,52 @@
       _importingFeedbackIds.delete(feedbackId);
       dbgWarn('DASH', 'importResponse error:', e.message);
       toast('Could not import \u2014 try again');
+      if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+    }
+  }
+
+  // ── FAM-06-FIX (2026-09-27): Accept tree feedback ────────────────────────
+  // No entry to attach to — deletes from DB (same pattern as importResponse),
+  // stores the row in _mpAcceptedTreeFeedback[], then opens My People → Feedback tab.
+  var _mpAcceptedTreeFeedback = []; // in-memory store of accepted tree feedback rows
+
+  async function acceptTreeFeedback(feedbackId, commenterName) {
+    var row = document.getElementById('response-row-' + feedbackId);
+    if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+
+    try {
+      // Fetch the full row so we have text + created_at for display
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*', { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error('fetch failed');
+      var rows = await res.json();
+      var fb = rows[0];
+      if (!fb) throw new Error('not found');
+
+      // Delete from DB (same as importResponse — no UPDATE RLS so DELETE is the path)
+      var del = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
+        method: 'DELETE', headers: getAuthHeaders()
+      });
+      if (!del.ok) throw new Error('delete failed');
+
+      // Stash accepted feedback for the Feedback tab to render
+      _mpAcceptedTreeFeedback.push({
+        id:             feedbackId,
+        commenter_name: commenterName || fb.commenter_name || 'Someone',
+        text:           fb.text || '',
+        created_at:     fb.created_at || new Date().toISOString()
+      });
+
+      toast('Feedback accepted \u2713');
+      if (row) row.remove();
+      await loadResponsesTile();
+
+      // Open My People and switch to Feedback tab
+      await openMyPeople();
+      mpSwitchTab('feedback');
+
+    } catch(e) {
+      dbgWarn('DASH', 'acceptTreeFeedback error:', e.message);
+      toast('Could not accept \u2014 try again');
       if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
     }
   }
@@ -25528,7 +25604,6 @@
   var _mpBodyOverflowBeforeOpen = null; // restore point for the scroll-lock below
 
   async function openMyPeople() {
-    console.warn('%%% LIFETOLD-DEBUG-2026-09-26 %%% openMyPeople() fired — this is the patched build');
     var overlay = document.getElementById('myPeopleOverlay');
     overlay.style.display = 'flex';
     // The overlay is position:fixed;inset:0, so it visually covers the whole page —
@@ -26331,29 +26406,40 @@
   function mpDeleteSelected() { mpProfileDelete(); }
 
   // ── My People — Tab switcher (Phase 5) ─────────────────────────────
-  var _mpActiveTab = 'tree';  // 'tree' | 'directory'
+  var _mpActiveTab = 'tree';  // 'tree' | 'directory' | 'feedback'
 
   function mpSwitchTab(tab) {
     _mpActiveTab = tab;
-    var treeVp   = document.getElementById('mpCanvasViewport');
-    var dirPanel = document.getElementById('mpDirPanel');
-    var treeCtrl = document.getElementById('mpTreeControls');
-    var tabTree  = document.getElementById('mpTabTree');
-    var tabDir   = document.getElementById('mpTabDir');
+    var treeVp      = document.getElementById('mpCanvasViewport');
+    var dirPanel    = document.getElementById('mpDirPanel');
+    var feedPanel   = document.getElementById('mpFeedbackPanel');
+    var treeCtrl    = document.getElementById('mpTreeControls');
+    var tabTree     = document.getElementById('mpTabTree');
+    var tabDir      = document.getElementById('mpTabDir');
+    var tabFeedback = document.getElementById('mpTabFeedback');
+
+    // Reset all panels + tab styles
+    if (treeVp)      treeVp.style.display      = 'none';
+    if (dirPanel)    dirPanel.style.display     = 'none';
+    if (feedPanel)   feedPanel.style.display    = 'none';
+    if (treeCtrl)    treeCtrl.style.display     = 'none';
+    if (tabTree)     { tabTree.style.borderBottom     = '2px solid transparent'; tabTree.style.color     = 'var(--text-light)'; }
+    if (tabDir)      { tabDir.style.borderBottom      = '2px solid transparent'; tabDir.style.color      = 'var(--text-light)'; }
+    if (tabFeedback) { tabFeedback.style.borderBottom = '2px solid transparent'; tabFeedback.style.color = 'var(--text-light)'; }
 
     if (tab === 'tree') {
-      if (treeVp)   treeVp.style.display    = '';        // restores flex:1
-      if (dirPanel) dirPanel.style.display  = 'none';
-      if (treeCtrl) treeCtrl.style.display  = 'flex';
+      if (treeVp)   treeVp.style.display   = '';        // restores flex:1
+      if (treeCtrl) treeCtrl.style.display = 'flex';
       if (tabTree)  { tabTree.style.borderBottom = '2px solid var(--gold)'; tabTree.style.color = 'var(--text)'; }
-      if (tabDir)   { tabDir.style.borderBottom  = '2px solid transparent'; tabDir.style.color  = 'var(--text-light)'; }
-    } else {
-      if (treeVp)   treeVp.style.display    = 'none';
-      if (dirPanel) dirPanel.style.display  = 'block';
-      if (treeCtrl) treeCtrl.style.display  = 'none';
-      if (tabTree)  { tabTree.style.borderBottom = '2px solid transparent'; tabTree.style.color = 'var(--text-light)'; }
-      if (tabDir)   { tabDir.style.borderBottom  = '2px solid var(--gold)'; tabDir.style.color  = 'var(--text)'; }
+    } else if (tab === 'directory') {
+      if (dirPanel) dirPanel.style.display = 'block';
+      if (tabDir)   { tabDir.style.borderBottom = '2px solid var(--gold)'; tabDir.style.color = 'var(--text)'; }
       mpDirRender();
+    } else if (tab === 'feedback') {
+      // FAM-06-FIX (2026-09-27): show accepted tree feedback
+      if (feedPanel)   feedPanel.style.display   = 'block';
+      if (tabFeedback) { tabFeedback.style.borderBottom = '2px solid var(--gold)'; tabFeedback.style.color = 'var(--text)'; }
+      _mpRenderFeedbackTab();
     }
   }
 
@@ -26376,6 +26462,51 @@
     document.getElementById('mpPersonSaveBtn').textContent = 'Save';
     document.getElementById('mpPersonModal').style.display = 'flex';
     setTimeout(function() { document.getElementById('mpPersonName').focus(); }, 50);
+  }
+
+  // ── FAM-06-FIX (2026-09-27): Feedback tab renderer ──────────────────────
+  // Renders _mpAcceptedTreeFeedback[] into #mpFeedbackList.
+  // Each card shows name, timestamp, message, and a Dismiss button to remove it.
+  function _mpRenderFeedbackTab() {
+    var listEl  = document.getElementById('mpFeedbackList');
+    var emptyEl = document.getElementById('mpFeedbackEmpty');
+    if (!listEl) return;
+
+    var items = _mpAcceptedTreeFeedback;
+    if (!items.length) {
+      listEl.innerHTML  = '';
+      if (emptyEl) emptyEl.style.display = 'block';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    listEl.innerHTML = items.map(function(fb) {
+      var timeAgo = formatTimeAgo(fb.created_at);
+      return '<div id="mp-tree-fb-' + escHtml(fb.id) + '" style="background:var(--surface2);border-radius:10px;padding:14px 16px">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
+          '<div>' +
+            '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(fb.commenter_name) + '</span>' +
+            '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
+          '</div>' +
+          '<button data-action="dismiss-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
+            'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap;flex-shrink:0">' +
+            'Dismiss' +
+          '</button>' +
+        '</div>' +
+        (fb.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0">' + escHtml(fb.text) + '</p>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  // Remove a single accepted tree-feedback card from the in-memory store + DOM
+  function _mpDismissTreeFeedback(feedbackId) {
+    _mpAcceptedTreeFeedback = _mpAcceptedTreeFeedback.filter(function(fb) { return fb.id !== feedbackId; });
+    var card = document.getElementById('mp-tree-fb-' + feedbackId);
+    if (card) card.remove();
+    // Show empty state if nothing left
+    var listEl  = document.getElementById('mpFeedbackList');
+    var emptyEl = document.getElementById('mpFeedbackEmpty');
+    if (listEl && !listEl.children.length && emptyEl) emptyEl.style.display = 'block';
   }
 
   // Render the directory list (filtered by search + bucket)
@@ -30445,6 +30576,7 @@
     on('respCloseBtn',         'click', closeResponsesOverlay);
     on('mpTabTree',            'click', function() { mpSwitchTab('tree'); });
     on('mpTabDir',             'click', function() { mpSwitchTab('directory'); });
+    on('mpTabFeedback',        'click', function() { mpSwitchTab('feedback'); }); // FAM-06-FIX (2026-09-27)
     on('mpAddFirstPersonBtn',  'click', mpOpenAddPerson);
     on('mpDirSearch',          'input', mpDirRender);
     on('mpDirBucketFilter',    'change',mpDirRender);
@@ -30803,9 +30935,13 @@
           break;
         }
         case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
+        case 'accept-tree-feedback':    if (fbId) acceptTreeFeedback(fbId, name); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
         case 'open-piece-from-feedback': { var _cid = btn.dataset.componentId || null; if (_cid) _openLibraryToPiece(_cid); break; }
+        case 'open-tree-from-feedback':  { openMyPeople(); mpSwitchTab('feedback'); break; }
+        // FAM-06-FIX (2026-09-27): dismiss a tree feedback card from within the Feedback tab
+        case 'dismiss-tree-feedback': { if (fbId) _mpDismissTreeFeedback(fbId); break; }
         // ── AI Review panel actions (PRV-09 extension) ──
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
