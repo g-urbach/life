@@ -1294,6 +1294,11 @@
     /* dTree pan/zoom container */
     #mpDTree .zoom { cursor: grab; }
     #mpDTree .zoom:active { cursor: grabbing; }
+    /* FAM-06-FIXES continuation (2026-09-27): same cursor styling for the public
+       share-page tree's own dTree instance — see _spRenderTree's wheel.zoom
+       strip comment for why this ".zoom" class shows up here too. */
+    #shareTreeCanvas .zoom { cursor: grab; }
+    #shareTreeCanvas .zoom:active { cursor: grabbing; }
     #mpDTree foreignObject { overflow: visible; }
     /* Hidden dummy spouse node (used for single-parent families — dTree requires a spouse
        object to draw parent→child lines but we don't want to display it) */
@@ -2635,11 +2640,53 @@
            elsewhere in this file) rather than parameterising the in-app
            functions, so nothing about the just-fixed in-app tree is touched. -->
       <div id="shareTreeCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:28px">
-        <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin-bottom:4px">🌳 Family Tree</div>
-        <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:14px">Read-only — pinch or scroll to explore.</div>
-        <div id="shareTreeViewport" style="width:100%;height:60vh;min-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+        <!-- FAM-06-FIXES continuation (2026-09-27): header row now matches the in-app
+             My People tree controls (mpTreeControls, ~line 15840) — explicit zoom
+             +/-/fit buttons instead of relying on pinch/scroll, and the old
+             "Read-only — pinch or scroll to explore." helper line is removed (it
+             described behaviour visitors no longer need to be told about now that
+             there are buttons, and was misleading once ctrl+wheel/pinch got
+             redirected into the same explicit-scale system as the buttons — see
+             _spInitTreeZoom below). Expand button opens the tree full-screen for
+             more room on small/cramped share-page layouts — see #shareTreeFullscreen
+             below and "more space" note in FAM-06-FIXES DEPLOY_NOTES entry. -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text)">🌳 Family Tree</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button id="spZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="spZoomInBtn" title="Zoom in" aria-label="Zoom in" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#43;</button>
+            <button id="spRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <button id="spExpandBtn" title="View full screen" aria-label="View tree full screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#9974;</button>
+          </div>
+        </div>
+        <div id="shareTreeViewport" style="width:100%;height:60vh;min-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg);touch-action:pan-x pan-y">
           <div id="shareTreeCanvas" style="width:100%;height:100%"></div>
         </div>
+      </div>
+
+      <!-- FAM-06-FIXES continuation (2026-09-27): full-screen tree view, opened from
+           spExpandBtn above (and closed back to the same spot). Deliberately reuses
+           the SAME #shareTreeViewport/#shareTreeCanvas nodes rather than rendering
+           a second dTree instance — spOpenTreeFullscreen()/spCloseTreeFullscreen()
+           just reparent the existing viewport div between here and shareTreeCard via
+           appendChild (moves the node, event listeners survive the move, so the
+           wheel/gesture zoom wiring below only ever needs to be attached once).
+           Gives visitors a real amount of room to explore a large tree on a page
+           that's otherwise a narrow centered reading column — addresses the "more
+           space to see more" ask directly instead of just enlarging the inline card,
+           which would have pushed the feedback form far down the page on mobile. -->
+      <div id="shareTreeFullscreen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:2000;flex-direction:column">
+        <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)">
+          <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text)">🌳 Family Tree</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button id="spfZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="spfZoomInBtn" title="Zoom in" aria-label="Zoom in" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#43;</button>
+            <button id="spfRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <button id="spfCloseBtn" title="Close" aria-label="Close full screen tree" style="width:32px;height:32px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);margin-left:6px">&#10005;</button>
+          </div>
+        </div>
+        <!-- shareTreeViewport is moved in here on expand; this is just its parked slot -->
+        <div id="shareTreeFsSlot" style="flex:1;display:flex;flex-direction:column;min-height:0;padding:16px"></div>
       </div>
       <div id="shareEntryCard" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
@@ -5314,7 +5361,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.212';
+  const APP_VERSION = 'v7.213';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6001,9 +6048,166 @@
     return roots.map(function(r) { return nodeMap[r.id]; });
   }
 
-  // Simplified read-only render: no pan/zoom framework, no node-click wiring
-  // (see FAM-06 note above on _spBuildTreeData for why this isn't _mpRender()
-  // reused directly). Plain overflow:auto div + native browser scroll/pinch.
+  // FAM-06-FIXES continuation (2026-09-27): share-page tree now has its own
+  // explicit-scale zoom system, mirroring the in-app one (_mpApplyZoomState/
+  // _mpFitTree/mpZoomIn/mpZoomOut/mpRecentre, ~line 38428) instead of the
+  // old "render once at 1:1 and let native pinch/scroll handle it" approach.
+  // Reasoning for the switch: the old approach relied on ctrl+wheel/pinch
+  // triggering the whole BROWSER page's native zoom (fine since this is
+  // normal document flow, not a fixed overlay — no risk of the in-app
+  // overlay's desync bug) — but the client asked for the buttons and
+  // scroll-wheel behaviour to match the in-app tree, and plain "let the
+  // browser handle it" also meant ctrl+wheel zoomed the WHOLE share page
+  // (header, feedback form, everything) rather than just the tree, which
+  // isn't actually what "zoom the tree" should do either way. Same
+  // architecture as the in-app version: grow/shrink the SVG's real
+  // width/height attributes (not a CSS transform) so the overflow:auto
+  // container's native scrollbars track correctly at every zoom level.
+  var _spZoomScale = 1;
+  var _spTreeBBox  = null;
+  var SP_ZOOM_PAD = 40, SP_ZOOM_MIN = 0.2, SP_ZOOM_MAX = 3, SP_ZOOM_STEP = 1.25;
+
+  function _spApplyZoomState() {
+    var canvasEl = document.getElementById('shareTreeCanvas');
+    var vp       = document.getElementById('shareTreeViewport');
+    var svg      = canvasEl ? canvasEl.querySelector('svg') : null;
+    var g        = svg ? svg.querySelector('g') : null;
+    if (!svg || !g || !_spTreeBBox || !vp) return;
+
+    var bb   = _spTreeBBox;
+    var rawW = bb.width  + SP_ZOOM_PAD * 2;
+    var rawH = bb.height + SP_ZOOM_PAD * 2;
+    var pxW  = rawW * _spZoomScale;
+    var pxH  = rawH * _spZoomScale;
+
+    g.setAttribute('transform', 'translate(' + (SP_ZOOM_PAD - bb.x) + ',' + (SP_ZOOM_PAD - bb.y) + ')');
+    svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
+    svg.setAttribute('width',  Math.ceil(pxW));
+    svg.setAttribute('height', Math.ceil(pxH));
+    svg.style.maxWidth = 'none';
+
+    // Same "safe center" pattern as the in-app tree (~line 38460) — stays
+    // centred until content genuinely overflows an axis, then scrolls from
+    // a sane edge on that axis only, instead of jumping at the fit threshold.
+    canvasEl.style.display        = 'flex';
+    canvasEl.style.alignItems     = 'safe center';
+    canvasEl.style.justifyContent = 'safe center';
+  }
+
+  // Recompute a fit-to-viewport zoom level and reset scroll. Called on first
+  // render, on the Fit-to-screen button, and whenever the tree is moved
+  // between the inline card and the full-screen overlay (~line 42985) since
+  // those two viewports are different sizes.
+  function _spFitTree() {
+    try {
+      var canvasEl = document.getElementById('shareTreeCanvas');
+      var vp       = document.getElementById('shareTreeViewport');
+      var svg      = canvasEl ? canvasEl.querySelector('svg') : null;
+      var g        = svg ? svg.querySelector('g') : null;
+      if (!svg || !g || !vp) return;
+
+      var bb = g.getBBox();
+      if (!bb.width || !bb.height) return;
+      _spTreeBBox = bb;
+
+      var vpr  = vp.getBoundingClientRect();
+      var rawW = bb.width  + SP_ZOOM_PAD * 2;
+      var rawH = bb.height + SP_ZOOM_PAD * 2;
+      var fitScale = 0.94 * Math.min(vpr.width / rawW, vpr.height / rawH);
+      _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(fitScale, 1)); // cap at 100%
+
+      _spApplyZoomState();
+      vp.scrollLeft = 0;
+      vp.scrollTop  = 0;
+    } catch(e) {
+      dbgErr('SHARE', '_spFitTree error: ' + e.message);
+    }
+  }
+
+  function spZoomIn()  { _spZoomScale = Math.min(SP_ZOOM_MAX, _spZoomScale * SP_ZOOM_STEP); _spApplyZoomState(); }
+  function spZoomOut() { _spZoomScale = Math.max(SP_ZOOM_MIN, _spZoomScale / SP_ZOOM_STEP); _spApplyZoomState(); }
+  function spRecentre() { _spFitTree(); }
+
+  // Move the (already-rendered) tree viewport into the full-screen overlay, or
+  // back to its home inside #shareTreeCard. Re-parents the SAME DOM node
+  // (appendChild moves rather than clones) so wheel/gesture listeners bound to
+  // #shareTreeViewport in _spInitTreeZoom below stay attached across the move,
+  // and no second dTree instance is ever created.
+  function spOpenTreeFullscreen() {
+    var vp   = document.getElementById('shareTreeViewport');
+    var slot = document.getElementById('shareTreeFsSlot');
+    var fs   = document.getElementById('shareTreeFullscreen');
+    if (!vp || !slot || !fs) return;
+    vp.style.height   = '100%';
+    vp.style.flex     = '1';
+    slot.appendChild(vp);
+    fs.style.display  = 'flex';
+    document.body.style.overflow = 'hidden'; // match in-app overlay's scroll-lock behaviour
+    _spFitTree(); // viewport size just changed — refit
+  }
+
+  function spCloseTreeFullscreen() {
+    var vp   = document.getElementById('shareTreeViewport');
+    var home = document.getElementById('shareTreeCard');
+    var fs   = document.getElementById('shareTreeFullscreen');
+    if (!vp || !home || !fs) return;
+    vp.style.height = '60vh';
+    vp.style.flex   = '';
+    home.appendChild(vp); // re-insert as last child, after the controls row — same as original markup order
+    fs.style.display = 'none';
+    document.body.style.overflow = '';
+    _spFitTree(); // viewport size just changed back — refit
+  }
+
+  // Wires the zoom buttons (inline + full-screen sets), expand/close, and
+  // ctrl+wheel/pinch interception on #shareTreeViewport — same pattern as the
+  // in-app tree's listener (~line 42891), redirecting the browser's native
+  // page-zoom gesture into our own _spZoomScale system instead of zooming the
+  // whole share page. Plain scroll wheel is explicitly let through untouched.
+  // Idempotent: guarded so re-running (e.g. if loadSharePage ever re-fires)
+  // doesn't double-bind.
+  var _spZoomWired = false;
+  function _spInitTreeZoom() {
+    if (_spZoomWired) return;
+    _spZoomWired = true;
+
+    function on(id, evt, fn) { var el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
+    on('spZoomOutBtn',  'click', spZoomOut);
+    on('spZoomInBtn',   'click', spZoomIn);
+    on('spRecentreBtn', 'click', spRecentre);
+    on('spExpandBtn',   'click', spOpenTreeFullscreen);
+    on('spfZoomOutBtn', 'click', spZoomOut);
+    on('spfZoomInBtn',  'click', spZoomIn);
+    on('spfRecentreBtn','click', spRecentre);
+    on('spfCloseBtn',   'click', spCloseTreeFullscreen);
+
+    var vp = document.getElementById('shareTreeViewport');
+    if (!vp) return;
+
+    vp.addEventListener('wheel', function(e) {
+      if (!e.ctrlKey) return; // plain scroll — let it through untouched, scrolls the viewport
+      e.preventDefault();
+      var factor = Math.exp(-e.deltaY * 0.01);
+      _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, _spZoomScale * factor));
+      _spApplyZoomState();
+    }, { passive: false });
+
+    if ('ongesturestart' in window) { // Safari trackpad pinch
+      var gestureStartScale = 1;
+      vp.addEventListener('gesturestart', function(e) { e.preventDefault(); gestureStartScale = _spZoomScale; });
+      vp.addEventListener('gesturechange', function(e) {
+        e.preventDefault();
+        _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, gestureStartScale * e.scale));
+        _spApplyZoomState();
+      });
+      vp.addEventListener('gestureend', function(e) { e.preventDefault(); });
+    }
+  }
+
+  // Simplified read-only render: no node-click wiring (see FAM-06 note above on
+  // _spBuildTreeData for why this isn't _mpRender() reused directly) — pan is
+  // native overflow:auto scroll/touch-scroll, zoom is the explicit-scale system
+  // above (buttons + ctrl-wheel/pinch), same division of labour as the in-app tree.
   function _spRenderTree(canvasEl, viewportEl, data) {
     if (!canvasEl || !data || !data.length) return;
     var vpW = viewportEl ? (viewportEl.offsetWidth  || 360) : 360;
@@ -6042,30 +6246,24 @@
       requestAnimationFrame(function() {
         var svg = canvasEl.querySelector('svg');
         if (!svg) return;
-        // FAM-06 fix (2026-09-27): dTree's own width/height init options don't
-        // constrain real layout size (see BUG 2 in PROJECT MEMORY, same root
-        // cause already fixed for the in-app tree via _mpApplyZoomState/
-        // _mpFitTree) — the SVG's actual width/height attributes stay at
-        // whatever small size dTree started with, so #shareTreeViewport's
-        // overflow:auto has nothing real to scroll into past that boundary.
-        // Same fix here, simplified: no zoom UI on the read-only page, so just
-        // measure the tree's real bounding box once and size the SVG to match
-        // at 1:1 scale, padded, so native scroll (and pinch, unblocked here
-        // unlike the in-app overlay) actually reaches the whole tree.
-        var g = svg.querySelector('g');
-        if (g) {
-          var bb = g.getBBox();
-          if (bb.width && bb.height) {
-            var pad  = 40;
-            var rawW = bb.width  + pad * 2;
-            var rawH = bb.height + pad * 2;
-            g.setAttribute('transform', 'translate(' + (pad - bb.x) + ',' + (pad - bb.y) + ')');
-            svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
-            svg.setAttribute('width',  Math.ceil(rawW));
-            svg.setAttribute('height', Math.ceil(rawH));
-          }
+
+        // Same dTree-internal-zoom strip as the in-app tree (~line 38396) — the
+        // vendored dtree.min.js applies a "zoom" class to whatever element it
+        // binds its own d3.zoom() to, independent of which container it's
+        // rendering into (confirmed in-app via the `#mpDTree .zoom` grab-cursor
+        // CSS we added, ~line 13164 — same underlying library behaviour applies
+        // here even though we never styled `#shareTreeCanvas .zoom` to match).
+        // That internal zoom's default wheel handler zooms on ANY scroll,
+        // fighting the explicit-scale system above and defeating "scroll wheel
+        // should scroll." Strip only the wheel listener; leave drag-to-pan
+        // alone (not broken, and this page has no alternative click-drag
+        // panning to fall back to).
+        if (window.d3 && typeof d3.select === 'function') {
+          var _spZoomEl = svg.querySelector('.zoom') || svg;
+          d3.select(_spZoomEl).on('wheel.zoom', null);
+          if (_spZoomEl !== svg) d3.select(svg).on('wheel.zoom', null);
         }
-        svg.style.maxWidth = 'none'; // let it render at natural size; container scrolls
+
         svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
           el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
         });
@@ -6075,6 +6273,9 @@
         svg.querySelectorAll('.mpDTreeMarriage circle, .marriage circle').forEach(function(el) {
           el.style.fill = borderColor;
         });
+
+        _spInitTreeZoom(); // idempotent — safe to call on every render
+        _spFitTree();      // replaces the old fixed 1:1 sizing with a fit-to-viewport start scale
       });
     } catch(e) {
       dbgErr('SHARE', 'tree share render error: ' + e.message);
@@ -26056,6 +26257,31 @@
     requestAnimationFrame(function() {
       var svg = container.querySelector('svg');
       if (!svg) return;
+
+      // FAM-06-FIXES (2026-09-27) — "scroll wheel zooms instead of scrolls" bug.
+      // ROOT CAUSE: the vendored /dtree.min.js still binds its OWN d3.zoom()
+      // behavior internally — confirmed by the `#mpDTree .zoom` grab/grabbing-cursor
+      // CSS (~line 13164), a class name we never added ourselves, so dTree must be
+      // the one applying it via d3.zoom's default styling hook. d3.zoom's default
+      // wheel handler zooms on ANY wheel scroll, not just ctrl+wheel — completely
+      // separate from, and fought with, our own explicit-scale system
+      // (_mpApplyZoomState/mpZoomIn/mpZoomOut) and our own ctrl+wheel-only listener
+      // on #mpCanvasViewport (~line 42891, which already correctly lets plain
+      // scroll through — that listener was never the bug). dTree's internal zoom
+      // is bound to an element INSIDE the SVG, so it saw plain wheel events first
+      // and zoomed before they ever bubbled out to our listener.
+      // FIX: strip dTree's own wheel-zoom listener (d3's 'wheel.zoom' namespace)
+      // every render. Deliberately NOT touching mousedown/touchstart('.zoom') —
+      // that's dTree's drag-to-pan, not reported broken, and removing it would
+      // leave desktop click-drag panning with no replacement (native overflow:auto
+      // scrollbar-drag is not the same gesture). If dTree's zoom was never actually
+      // bound (matches the zoomToFit-mismatch note above), this is a harmless no-op.
+      if (window.d3 && typeof d3.select === 'function') {
+        var _mpZoomEl = svg.querySelector('.zoom') || svg;
+        d3.select(_mpZoomEl).on('wheel.zoom', null);
+        if (_mpZoomEl !== svg) d3.select(svg).on('wheel.zoom', null);
+      }
+
       // Connector lines
       svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
         el.style.stroke = borderColor;
