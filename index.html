@@ -5294,7 +5294,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.208';
+  const APP_VERSION = 'v7.209';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6022,6 +6022,29 @@
       requestAnimationFrame(function() {
         var svg = canvasEl.querySelector('svg');
         if (!svg) return;
+        // FAM-06 fix (2026-09-27): dTree's own width/height init options don't
+        // constrain real layout size (see BUG 2 in PROJECT MEMORY, same root
+        // cause already fixed for the in-app tree via _mpApplyZoomState/
+        // _mpFitTree) — the SVG's actual width/height attributes stay at
+        // whatever small size dTree started with, so #shareTreeViewport's
+        // overflow:auto has nothing real to scroll into past that boundary.
+        // Same fix here, simplified: no zoom UI on the read-only page, so just
+        // measure the tree's real bounding box once and size the SVG to match
+        // at 1:1 scale, padded, so native scroll (and pinch, unblocked here
+        // unlike the in-app overlay) actually reaches the whole tree.
+        var g = svg.querySelector('g');
+        if (g) {
+          var bb = g.getBBox();
+          if (bb.width && bb.height) {
+            var pad  = 40;
+            var rawW = bb.width  + pad * 2;
+            var rawH = bb.height + pad * 2;
+            g.setAttribute('transform', 'translate(' + (pad - bb.x) + ',' + (pad - bb.y) + ')');
+            svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
+            svg.setAttribute('width',  Math.ceil(rawW));
+            svg.setAttribute('height', Math.ceil(rawH));
+          }
+        }
         svg.style.maxWidth = 'none'; // let it render at natural size; container scrolls
         svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
           el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
