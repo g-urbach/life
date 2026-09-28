@@ -5365,13 +5365,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.215';
+  const APP_VERSION = 'v7.216';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11869},{"maxLine":1954,"offset":11870},{"maxLine":2750,"offset":11871},{"maxLine":2802,"offset":11874},{"maxLine":3206,"offset":11875},{"maxLine":3386,"offset":11876},{"maxLine":5364,"offset":11877},{"maxLine":5727,"offset":11885},{"maxLine":6871,"offset":11895},{"maxLine":7153,"offset":11896},{"maxLine":7620,"offset":11897},{"maxLine":8547,"offset":11898},{"maxLine":10080,"offset":11900},{"maxLine":11232,"offset":11901},{"maxLine":11403,"offset":11902},{"maxLine":12125,"offset":11903},{"maxLine":12143,"offset":11905},{"maxLine":14002,"offset":11907},{"maxLine":14929,"offset":11908},{"maxLine":14931,"offset":11909},{"maxLine":15627,"offset":11910},{"maxLine":16504,"offset":11911},{"maxLine":18360,"offset":11914},{"maxLine":18680,"offset":11915},{"maxLine":18946,"offset":11916},{"maxLine":19564,"offset":11917},{"maxLine":19757,"offset":11918},{"maxLine":19949,"offset":11919},{"maxLine":20361,"offset":11920},{"maxLine":20611,"offset":11921},{"maxLine":21362,"offset":11922},{"maxLine":21404,"offset":11923},{"maxLine":21558,"offset":11924},{"maxLine":23440,"offset":11925},{"maxLine":23735,"offset":11926},{"maxLine":26597,"offset":12338},{"maxLine":27634,"offset":12339},{"maxLine":29783,"offset":12341},{"maxLine":null,"offset":12342}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11869},{"maxLine":1954,"offset":11870},{"maxLine":2754,"offset":11871},{"maxLine":2806,"offset":11874},{"maxLine":3210,"offset":11875},{"maxLine":3390,"offset":11876},{"maxLine":5368,"offset":11877},{"maxLine":5731,"offset":11885},{"maxLine":6877,"offset":11895},{"maxLine":7159,"offset":11896},{"maxLine":7626,"offset":11897},{"maxLine":8553,"offset":11898},{"maxLine":10086,"offset":11900},{"maxLine":11238,"offset":11901},{"maxLine":11409,"offset":11902},{"maxLine":12131,"offset":11903},{"maxLine":12149,"offset":11905},{"maxLine":14008,"offset":11907},{"maxLine":14935,"offset":11908},{"maxLine":14937,"offset":11909},{"maxLine":15633,"offset":11910},{"maxLine":16510,"offset":11911},{"maxLine":18366,"offset":11914},{"maxLine":18686,"offset":11915},{"maxLine":18952,"offset":11916},{"maxLine":19570,"offset":11917},{"maxLine":19763,"offset":11918},{"maxLine":19955,"offset":11919},{"maxLine":20367,"offset":11920},{"maxLine":20617,"offset":11921},{"maxLine":21368,"offset":11922},{"maxLine":21410,"offset":11923},{"maxLine":21564,"offset":11924},{"maxLine":23446,"offset":11925},{"maxLine":23741,"offset":11926},{"maxLine":26603,"offset":12338},{"maxLine":27640,"offset":12339},{"maxLine":29789,"offset":12341},{"maxLine":null,"offset":12342}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -31279,7 +31279,19 @@
     // are injected into memSpellPanel and improve-* panels outside the entry lists.
     // _entryCardDelegate checks btn.closest('[data-action]') so non-matching clicks are no-ops.
     var _appShell = document.getElementById('appShell');
-    if (_appShell) _appShell.addEventListener('click', _entryCardDelegate);
+    // BUGFIX [DELEGATE-DBLFIRE]: reviewEntryList/dashChapterDetailList/chapterDetailList
+    // are all descendants of appShell, so a click inside any of them was bubbling up and
+    // running _entryCardDelegate a SECOND time here — every delegated action fired twice
+    // per click. Mostly invisible (a second deleteEntry/editEntryText on an already-
+    // handled id just no-ops), but for a pure toggle like toggle-voice-archives, running
+    // it twice is a no-op overall (open then immediately close), which looked like the
+    // button did nothing. Fix: skip here if the click originated inside one of the three
+    // containers that already have their own direct listener — this appShell listener now
+    // only handles delegate actions injected elsewhere (e.g. memSpellPanel, improve-* panels).
+    if (_appShell) _appShell.addEventListener('click', function(e) {
+      if (e.target.closest('#reviewEntryList, #dashChapterDetailList, #chapterDetailList')) return;
+      _entryCardDelegate(e);
+    });
 
     // PRV-09 Phase 9: Audiobook builder delegation
     var _abPickerListEl = document.getElementById('abPickerList');
