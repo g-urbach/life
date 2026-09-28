@@ -777,6 +777,9 @@
       gap: 12px;
       max-width: 100%;
       box-sizing: border-box;
+      position: sticky;
+      top: var(--uat-banner-offset, 0px);
+      z-index: 101; /* above #navBar (100), so nothing can visually slip between them */
     }
     @media (max-width: 700px) {
       header { padding: 14px 16px; gap: 8px; }
@@ -846,6 +849,9 @@
       padding: 0 40px;
       display: flex;
       overflow-x: auto;
+      position: sticky;
+      top: calc(var(--uat-banner-offset, 0px) + var(--header-height, 64px));
+      z-index: 100;
     }
     @media (max-width: 700px) { #navBar { display: none; } }
 
@@ -1288,6 +1294,11 @@
     /* dTree pan/zoom container */
     #mpDTree .zoom { cursor: grab; }
     #mpDTree .zoom:active { cursor: grabbing; }
+    /* FAM-06-FIXES continuation (2026-09-27): same cursor styling for the public
+       share-page tree's own dTree instance — see _spRenderTree's wheel.zoom
+       strip comment for why this ".zoom" class shows up here too. */
+    #shareTreeCanvas .zoom { cursor: grab; }
+    #shareTreeCanvas .zoom:active { cursor: grabbing; }
     #mpDTree foreignObject { overflow: visible; }
     /* Hidden dummy spouse node (used for single-parent families — dTree requires a spouse
        object to draw parent→child lines but we don't want to display it) */
@@ -2569,7 +2580,12 @@
 
     <!-- Header -->
     <div style="text-align:center;margin-bottom:28px">
-      <div style="font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold-dark);letter-spacing:0.04em;margin-bottom:4px">LifeTold</div>
+      <!-- FAM-06-FOLLOWUP (2026-09-27): header brand now links to prod so a
+           share-page visitor who isn't the recipient's owner (i.e. a brand-new
+           person) can find their way to sign-up. target=_blank + rel=noopener
+           so clicking mid-form doesn't blow away an unsent name/message —
+           matches the change made to the footer "lifetold.app" link below. -->
+      <a href="https://lifetold.app" target="_blank" rel="noopener" style="font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold-dark);letter-spacing:0.04em;margin-bottom:4px;text-decoration:none;display:inline-block">LifeTold</a>
       <div id="shareSubheading" style="font-size:0.9rem;color:var(--text-light)">A memory shared with you</div>
     </div>
 
@@ -2611,6 +2627,71 @@
         <div id="shareStoryMeta" style="margin-top:16px;font-size:0.78rem;color:var(--text-light);border-top:1px solid var(--border);padding-top:12px"></div>
         <div id="shareListenStatus" style="margin-top:8px;font-size:0.78rem;color:var(--text-light);display:none"></div>
       </div>
+      <!-- FAM-06 (2026-09-26): read-only family tree share card. Deliberately NOT
+           reusing #mpDTree/#mpCanvasViewport or _mpBuildDTreeData()/_mpRender() —
+           those are the in-app pan/zoom canvas that took three sessions to get
+           right (see FAM-04) and are wired to a position:fixed full-screen
+           overlay with its own custom zoom system. This page is normal document
+           flow, not a fixed overlay, so plain browser scroll/pinch works with no
+           custom zoom code needed at all — simpler AND zero regression risk to
+           the in-app tree. _spBuildTreeData()/_spRenderTree() below duplicate
+           the layout algorithm (kept deliberately in sync via the comment on
+           each function — same pattern as _agpBuildStoryMap()/renderDashboard()
+           elsewhere in this file) rather than parameterising the in-app
+           functions, so nothing about the just-fixed in-app tree is touched. -->
+      <div id="shareTreeCard" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:28px">
+        <!-- FAM-06-FIXES continuation (2026-09-27): header row now matches the in-app
+             My People tree controls (mpTreeControls, ~line 15840) — explicit zoom
+             +/-/fit buttons instead of relying on pinch/scroll, and the old
+             "Read-only — pinch or scroll to explore." helper line is removed (it
+             described behaviour visitors no longer need to be told about now that
+             there are buttons, and was misleading once ctrl+wheel/pinch got
+             redirected into the same explicit-scale system as the buttons — see
+             _spInitTreeZoom below). Expand button opens the tree full-screen for
+             more room on small/cramped share-page layouts — see #shareTreeFullscreen
+             below and "more space" note in FAM-06-FIXES DEPLOY_NOTES entry. -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text)">🌳 Family Tree</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button id="spZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="spZoomInBtn" title="Zoom in" aria-label="Zoom in" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#43;</button>
+            <button id="spRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <button id="spExpandBtn" title="View full screen" aria-label="View tree full screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#9974;</button>
+          </div>
+        </div>
+        <div id="shareTreeViewport" style="width:100%;height:60vh;min-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg);touch-action:pan-x pan-y">
+          <div id="shareTreeCanvas" style="width:100%;height:100%"></div>
+        </div>
+      </div>
+
+      <!-- FAM-06-FIXES continuation (2026-09-27): full-screen tree view, opened from
+           spExpandBtn above (and closed back to the same spot). Deliberately reuses
+           the SAME #shareTreeViewport/#shareTreeCanvas nodes rather than rendering
+           a second dTree instance — spOpenTreeFullscreen()/spCloseTreeFullscreen()
+           just reparent the existing viewport div between here and shareTreeCard via
+           appendChild (moves the node, event listeners survive the move, so the
+           wheel/gesture zoom wiring below only ever needs to be attached once).
+           Gives visitors a real amount of room to explore a large tree on a page
+           that's otherwise a narrow centered reading column — addresses the "more
+           space to see more" ask directly instead of just enlarging the inline card,
+           which would have pushed the feedback form far down the page on mobile.
+           NAV-01 follow-up (2026-09-27): this is exactly the "same top-anchored
+           full-screen overlay pattern" NAV-01 flagged as not-yet-audited beyond
+           #myPeopleOverlay — the title row was sitting under the UAT banner.
+           Added the same `padding-top: var(--uat-banner-offset, 0px)` fix here. -->
+      <div id="shareTreeFullscreen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:2000;flex-direction:column;padding-top:var(--uat-banner-offset, 0px)">
+        <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)">
+          <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text)">🌳 Family Tree</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button id="spfZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="spfZoomInBtn" title="Zoom in" aria-label="Zoom in" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#43;</button>
+            <button id="spfRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.95rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <button id="spfCloseBtn" title="Close" aria-label="Close full screen tree" style="width:32px;height:32px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);margin-left:6px">&#10005;</button>
+          </div>
+        </div>
+        <!-- shareTreeViewport is moved in here on expand; this is just its parked slot -->
+        <div id="shareTreeFsSlot" style="flex:1;display:flex;flex-direction:column;min-height:0;padding:16px"></div>
+      </div>
       <div id="shareEntryCard" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px">
         <div id="shareEntryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:14px;line-height:1.3"></div>
         <div id="shareEntryPhotos" style="margin-bottom:14px"></div>
@@ -2649,8 +2730,8 @@
               <div id="shareFormQuestion" style="background:var(--surface2);border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:10px 14px;font-size:0.88rem;color:var(--text);font-style:italic;line-height:1.5"></div>
             </div>
             <!-- A label — changes between "Answer" and "Your message" -->
-            <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message</label>
-            <textarea id="shareMessage" rows="4" placeholder=""
+            <label id="shareMessageLabel" style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your message <span style="color:var(--rose)">*</span></label>
+            <textarea id="shareMessage" rows="4" placeholder="" required
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
           </div>
 
@@ -2693,7 +2774,7 @@
       <!-- Footer CTA -->
       <div style="text-align:center;padding:16px 0;border-top:1px solid var(--border)">
         <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:10px">Preserve your own memories at</p>
-        <a href="https://lifetold.app" style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold-dark);text-decoration:none;font-weight:600">lifetold.app</a>
+        <a href="https://lifetold.app" target="_blank" rel="noopener" style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold-dark);text-decoration:none;font-weight:600">lifetold.app</a>
       </div>
 
     </div><!-- /shareContent -->
@@ -3411,6 +3492,13 @@
             <option value="90">90 days</option>
           </select>
         </div>
+        <!-- FAM-06 (2026-09-26): sender-side consent checkbox, retrofitted for
+             consistency — see the matching note on shareConsentOverlay above. -->
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+          <input type="checkbox" id="storyShareConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+          <label for="storyShareConsent" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can read this story piece, and their name and comment will be stored.</label>
+        </div>
+        <p id="storyShareError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
         <!-- Share buttons — same layout as entry share -->
         <div id="storyShareBtns">
           <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
@@ -3911,7 +3999,7 @@
   </div>
 
   <!-- MY PEOPLE OVERLAY (Phase 4 — pan/zoom canvas tree) -->
-  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column">
+  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column;padding-top:var(--uat-banner-offset, 0px)">
 
     <!-- Fixed header bar -->
     <div style="flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg);z-index:2">
@@ -3919,9 +4007,17 @@
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0">
         <h2 style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);margin:0">&#128106; My People</h2>
         <div style="display:flex;align-items:center;gap:4px">
-          <!-- Tree controls (fit view button; dTree handles zoom/pan natively) -->
+          <!-- Tree controls: explicit zoom in/out + fit. Deliberately NOT relying on
+               trackpad/browser pinch-zoom or ctrl+scroll here — those act on the whole
+               page (this overlay is position:fixed) and don't reliably combine with a
+               scrollable panel, which is why "zoom" broke scrolling before. -->
           <div id="mpTreeControls" style="display:flex;align-items:center;gap:4px">
+            <button id="mpZoomOutBtn" title="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
+            <button id="mpZoomInBtn" title="Zoom in" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#43;</button>
             <button id="mpRecentreBtn" title="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
+            <!-- FAM-06 (2026-09-26): Share my tree entry point, next to the tree controls
+                 since that's naturally where the owner will be when they think to share it. -->
+            <button id="mpShareTreeBtn" title="Share my tree" aria-label="Share my tree" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#128279;</button>
           </div>
           <!-- Gethro chat button — always accessible even inside overlay -->
           <button id="mpGethroBtn" title="Chat with Gethro" aria-label="Chat with Gethro" style="width:36px;height:36px;border-radius:50%;background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
@@ -3955,11 +4051,20 @@
           style="padding:7px 18px;border:none;border-bottom:2px solid transparent;background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-light);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
           &#128101; Directory
         </button>
+        <!-- FAM-06-FIX (2026-09-27): Feedback tab — shows accepted tree-share feedback -->
+        <button id="mpTabFeedback"
+          style="padding:7px 18px;border:none;border-bottom:2px solid transparent;background:none;font-family:'Lato',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-light);cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px">
+          &#128172; Feedback
+        </button>
       </div>
     </div>
 
-    <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom -->
-    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:hidden">
+    <!-- dTree renders into this div; it creates its own SVG canvas with pan/zoom.
+         touch-action:pan-x pan-y lets one-finger drag-scroll through, but excludes
+         pinch-zoom — see mpZoomIn/mpZoomOut/mpRecentre for the intended zoom UI.
+         (This only affects touch pinch; a desktop trackpad pinch/ctrl+wheel zoom
+         is blocked separately via a wheel listener — see FAM-04 handover.) -->
+    <div id="mpCanvasViewport" style="flex:1;position:relative;overflow:auto;touch-action:pan-x pan-y">
       <div id="mpDTree" style="width:100%;height:100%"></div>
     </div>
 
@@ -4002,6 +4107,16 @@
       <div id="mpDirEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
         <div style="font-size:2rem;margin-bottom:12px">&#128101;</div>
         <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No people yet. Add family, friends, colleagues — anyone who features in your story.</p>
+      </div>
+    </div>
+
+    <!-- FAM-06-FIX (2026-09-27): Feedback panel — accepted tree-share feedback -->
+    <div id="mpFeedbackPanel" style="display:none;flex:1;overflow-y:auto;padding:16px">
+      <p style="font-size:0.78rem;color:var(--text-light);margin:0 0 14px;line-height:1.5">Feedback from people you shared your family tree with. Keep what's useful, dismiss the rest.</p>
+      <div id="mpFeedbackList" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="mpFeedbackEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128172;</div>
+        <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No accepted feedback yet. Share your family tree and accepted responses will appear here.</p>
       </div>
     </div>
 
@@ -4491,6 +4606,16 @@
       <input id="shareConsentLabel" type="text" placeholder="e.g. Family group"
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
     </div>
+    <!-- FAM-06 (2026-09-26): sender-side consent checkbox, retrofitted here for
+         consistency with the new tree-share checkbox (developer decision: if
+         it's on one share type it should be on all). Mirrors sharePrivacyConsent's
+         existing recipient-side wording/behaviour — client-side gate only, same
+         as that one; see FAM-06 backlog entry for the reasoning. -->
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="shareConsentConfirm" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+      <label for="shareConsentConfirm" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can view this memory, and their name and response will be stored.</label>
+    </div>
+    <p id="shareConsentError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
     <!-- Share buttons — each creates the link then opens the app -->
     <div id="shareConsentBtns">
       <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
@@ -4813,6 +4938,21 @@
           </ul>
           <p class="ob-bubble-body" style="margin-top:10px;font-size:0.88rem">It all starts with your first memory.</p>
         </div>
+        <!-- EML-ONB-01: story prompt email choice. Hidden unless the account has an email address.
+             Consent = tapping "Yes, email me". Nothing is pre-enabled; Weekly is only the pre-selected frequency. -->
+        <div id="obEmailAsk" style="display:none;margin-top:16px;padding:14px 16px 16px;border:1px solid rgba(201,169,110,0.22);border-radius:14px;background:rgba(255,255,255,0.04);text-align:left">
+          <p class="ob-bubble-eyebrow">&#128238; Story prompts by email</p>
+          <p class="ob-bubble-body" style="font-size:0.88rem">Would you like me to email you a personal question about your story now and then? It would go to <strong id="obEmailAddr" style="word-break:break-all"></strong>. You can stop any time with one click.</p>
+          <p class="ob-bubble-body" style="font-size:0.8rem;margin-top:10px;opacity:0.85">How often? Weekly suits most people.</p>
+          <div id="obEmailFreqRow" role="radiogroup" aria-label="How often would you like a prompt email?" style="display:flex;gap:8px;margin-top:8px">
+            <button type="button" class="ob-goal-card" id="obFreqDaily" role="radio" aria-checked="false" style="flex:1;padding:10px 6px;font-size:0.85rem">Daily</button>
+            <button type="button" class="ob-goal-card selected" id="obFreqWeekly" role="radio" aria-checked="true" style="flex:1;padding:10px 6px;font-size:0.85rem">Weekly</button>
+            <button type="button" class="ob-goal-card" id="obFreqFortnightly" role="radio" aria-checked="false" style="flex:1;padding:10px 6px;font-size:0.85rem">Fortnightly</button>
+          </div>
+          <button class="ob-btn" id="obEmailYesBtn" style="width:100%;margin-top:14px">Yes, email me &#8594;</button>
+          <p class="ob-bubble-body" style="font-size:0.74rem;margin-top:10px;opacity:0.7">We use your address only for these emails &#8212; see our <a href="/privacy" target="_blank" rel="noopener" style="color:var(--gold)">Privacy Policy</a>.</p>
+        </div>
+        <button class="ob-skip" id="obEmailNoBtn" style="display:none">No thanks, I'm ready &#8594;</button>
         <button class="ob-btn" id="obStep6Btn">I'm ready &#8594;</button>
       </div>
     </div>
@@ -5225,13 +5365,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.183';
+  const APP_VERSION = 'v7.222';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11316},{"maxLine":1943,"offset":11317},{"maxLine":2673,"offset":11318},{"maxLine":2725,"offset":11321},{"maxLine":3129,"offset":11322},{"maxLine":3309,"offset":11323},{"maxLine":5229,"offset":11324},{"maxLine":5542,"offset":11332},{"maxLine":6259,"offset":11342},{"maxLine":6541,"offset":11343},{"maxLine":6942,"offset":11344},{"maxLine":7807,"offset":11345},{"maxLine":9235,"offset":11347},{"maxLine":10372,"offset":11348},{"maxLine":10543,"offset":11349},{"maxLine":11265,"offset":11350},{"maxLine":11283,"offset":11352},{"maxLine":13142,"offset":11354},{"maxLine":13937,"offset":11355},{"maxLine":13939,"offset":11356},{"maxLine":14635,"offset":11357},{"maxLine":15512,"offset":11358},{"maxLine":17368,"offset":11361},{"maxLine":17688,"offset":11362},{"maxLine":17954,"offset":11363},{"maxLine":18572,"offset":11364},{"maxLine":18765,"offset":11365},{"maxLine":18957,"offset":11366},{"maxLine":19369,"offset":11367},{"maxLine":19619,"offset":11368},{"maxLine":20241,"offset":11369},{"maxLine":20283,"offset":11370},{"maxLine":20437,"offset":11371},{"maxLine":22319,"offset":11372},{"maxLine":22614,"offset":11373},{"maxLine":26037,"offset":11784},{"maxLine":28186,"offset":11786},{"maxLine":null,"offset":11787}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11869},{"maxLine":1954,"offset":11870},{"maxLine":2754,"offset":11871},{"maxLine":2806,"offset":11874},{"maxLine":3210,"offset":11875},{"maxLine":3390,"offset":11876},{"maxLine":5368,"offset":11877},{"maxLine":5731,"offset":11885},{"maxLine":6877,"offset":11895},{"maxLine":7159,"offset":11896},{"maxLine":7626,"offset":11897},{"maxLine":8553,"offset":11898},{"maxLine":10090,"offset":11900},{"maxLine":11302,"offset":11901},{"maxLine":11473,"offset":11902},{"maxLine":12195,"offset":11903},{"maxLine":12213,"offset":11905},{"maxLine":14072,"offset":11907},{"maxLine":14999,"offset":11908},{"maxLine":15001,"offset":11909},{"maxLine":15697,"offset":11910},{"maxLine":16574,"offset":11911},{"maxLine":18430,"offset":11914},{"maxLine":18750,"offset":11915},{"maxLine":19016,"offset":11916},{"maxLine":19634,"offset":11917},{"maxLine":19827,"offset":11918},{"maxLine":20019,"offset":11919},{"maxLine":20431,"offset":11920},{"maxLine":20681,"offset":11921},{"maxLine":21432,"offset":11922},{"maxLine":21474,"offset":11923},{"maxLine":21628,"offset":11924},{"maxLine":23510,"offset":11925},{"maxLine":23805,"offset":11926},{"maxLine":26670,"offset":12338},{"maxLine":27707,"offset":12339},{"maxLine":29856,"offset":12341},{"maxLine":null,"offset":12342}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -5316,10 +5456,31 @@
         'background:#c0392b;color:#fff;text-align:center;font:600 13px sans-serif;' +
         'padding:6px 8px;letter-spacing:.3px;pointer-events:none';
       document.body.appendChild(b);
-      document.body.style.paddingTop = (document.body.style.paddingTop ? document.body.style.paddingTop : '0px');
+      // Was previously a no-op (set paddingTop to itself / '0px'), so the fixed
+      // banner sat on top of page content instead of pushing it down. --uat-banner-
+      // offset is the source of truth for the banner's height; both the body push
+      // and the offset var must actually agree with the banner's real height.
+      document.body.style.paddingTop = '28px';
       document.documentElement.style.setProperty('--uat-banner-offset', '28px');
     });
   }
+
+  // #navBar's sticky "top" needs to sit exactly at the header's real rendered
+  // height, not a guessed constant — the header can wrap to a taller row on
+  // narrower desktop widths, or change size slightly once the sign-in-dependent
+  // buttons (Profile/Settings/Sign Out) become visible. ResizeObserver keeps
+  // --header-height correct through any of that automatically.
+  document.addEventListener('DOMContentLoaded', function() {
+    var headerEl = document.querySelector('header');
+    if (!headerEl || typeof ResizeObserver === 'undefined') return;
+    var ro = new ResizeObserver(function(entries) {
+      var h = entries[0].contentRect.height +
+        (parseFloat(getComputedStyle(headerEl).paddingTop) || 0) +
+        (parseFloat(getComputedStyle(headerEl).paddingBottom) || 0);
+      document.documentElement.style.setProperty('--header-height', h + 'px');
+    });
+    ro.observe(headerEl);
+  });
   const AI_ENDPOINT      = SUPABASE_URL + '/functions/v1/AI_PROXY';
   const GETHRO_PROXY_URL = SUPABASE_URL + '/functions/v1/GETHRO_PROXY'; // Phase 1+: JWT-authed, rate-limited AI proxy
   const NOTIFY_URL       = SUPABASE_URL + '/functions/v1/APPROVE_USER';
@@ -5648,6 +5809,12 @@
         }
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
+        // FIX (v7.186): logActivity() can't call itself to report its own DB
+        // failure, so this went completely silent — no console (in prod),
+        // no DB row, no Telegram ping. notifyDev() is independent of the DB
+        // path, so it's the only way a broken activity-log pipeline surfaces
+        // at all. Dedup'd like every other notifyDev call (10s for errors).
+        notifyDev('error', 'ACTIVITY', 'logActivity insert failed: ' + err.message);
       });
     }
     // sb is not initialised in share-page context (no auth) — use anon key directly.
@@ -5662,6 +5829,9 @@
       _doInsert(token);
     }).catch(function(err) {
       console.warn('[ACTIVITY] getSession failed:', err.message);
+      // FIX (v7.186): same reasoning as the insert-failure catch above — this
+      // is the other way logActivity() can fail before ever reaching the DB.
+      notifyDev('error', 'ACTIVITY', 'logActivity getSession failed: ' + err.message);
     });
   }
   // ── Global error net ─────────────────────────────────────────────
@@ -5762,6 +5932,375 @@
   var _shareFbVideoTimer     = null;
   var _shareEntryTitle = '';   // stored for Telegram notification
 
+  // ── FAM-06 (2026-09-26): read-only tree layout for the public share page ──
+  // Deliberate near-duplicate of _mpBuildDTreeData() (~line 37356 in the
+  // in-app My People code), parameterised to take people/rels as arguments
+  // instead of closing over the in-app _mpPeople/_mpRels globals, and with
+  // the diagnostic console logging stripped (this runs for anonymous
+  // visitors — no dbg() noise in their console). KEEP IN SYNC MANUALLY if
+  // the in-app tree-walking logic changes (marriage ownership, sibling
+  // parent propagation, grandchild_of handling, etc.) — same "two versions,
+  // commented at both sites" pattern used for the Story Health tile
+  // healthScore calc elsewhere in this file, for the same reason: the two
+  // versions have different enough surrounding code (one drives a pan/zoom
+  // canvas + profile editing, one drives a plain scrollable read-only div)
+  // that a shared function would need parameters/branches papering over
+  // that, which isn't worth it for ~150 lines of pure data transformation.
+  function _spBuildTreeData(people, rels) {
+    var childrenOf = {}, parentsOf = {}, spouseOf = {}, siblingOf = {};
+    function add(map, key, val) {
+      if (!map[key]) map[key] = [];
+      if (map[key].indexOf(val) === -1) map[key].push(val);
+    }
+    (rels || []).forEach(function(r) {
+      var a = r.person_a_id, b = r.person_b_id, t = r.relationship_type;
+      if (t === 'parent_of')  { add(childrenOf, a, b); add(parentsOf,  b, a); }
+      if (t === 'child_of')   { add(parentsOf,  a, b); add(childrenOf, b, a); }
+      if (t === 'spouse_of')  { add(spouseOf, a, b);   add(spouseOf, b, a);   }
+      if (t === 'sibling_of' || t === 'half_sibling_of') { add(siblingOf, a, b); add(siblingOf, b, a); }
+      if (t === 'grandchild_of')  { add(parentsOf, a, b);  add(childrenOf, b, a); }
+      if (t === 'grandparent_of') { add(childrenOf, a, b); add(parentsOf,  b, a); }
+    });
+    var peopleIds = (people || []).map(function(p) { return p.id; });
+    peopleIds.forEach(function(childId) {
+      (parentsOf[childId] || []).forEach(function(parentId) {
+        (siblingOf[childId] || []).forEach(function(sibId) {
+          add(childrenOf, parentId, sibId);
+          add(parentsOf,  sibId,    parentId);
+        });
+      });
+    });
+    var byId = {};
+    (people || []).forEach(function(p) { byId[p.id] = p; });
+    var selfNode = (people || []).find(function(p) { return p.relationship_type === 'self'; }) || (people || [])[0];
+    if (!selfNode) return [];
+    // Named _spMakeNode (not makeNode) specifically so it can never be flagged
+    // against _mpBuildDTreeData's own local _spMakeNode() by the duplicate-
+    // function-name regression test — they're genuinely different scopes
+    // (function-local to each of these two sibling functions) but the linter
+    // doesn't distinguish that, per the DUPE-FN-01 note in DEPLOY_NOTES.
+    function _spMakeNode(person) {
+      var isSelf = person.relationship_type === 'self';
+      var label  = isSelf ? 'The tree owner \u2605' : (person.relationship_label || MP_REL_LABEL[person.relationship_type] || '');
+      var emoji  = _mpEmojiMap[person.relationship_type] || '👤';
+      var avatarHtml = person.photo_url
+        ? '<img src="' + person.photo_url.replace(/"/g, '&quot;') + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : emoji;
+      return {
+        id: person.id, name: person.name || '\u2014',
+        extra: { isSelf: isSelf, label: label, avatarHtml: avatarHtml },
+        marriages: [], class: isSelf ? 'mpNode mpNode-self' : 'mpNode', textClass: 'mpNode-text',
+      };
+    }
+    var nodeMap = {};
+    (people || []).forEach(function(p) { var node = _spMakeNode(p); node.children = []; nodeMap[p.id] = node; });
+    var renderedAsSpouse = {}, marriageOwners = {};
+    (people || []).forEach(function(p) {
+      (spouseOf[p.id] || []).forEach(function(spouseId) {
+        var key = [p.id, spouseId].sort().join('__');
+        if (marriageOwners[key]) return;
+        var pHasParents  = !!(parentsOf[p.id]     && parentsOf[p.id].length);
+        var spHasParents = !!(parentsOf[spouseId] && parentsOf[spouseId].length);
+        var pKids  = (childrenOf[p.id]       || []).length;
+        var spKids = (childrenOf[spouseId]   || []).length;
+        var owner;
+        if      (pHasParents  && !spHasParents) owner = p.id;
+        else if (!pHasParents &&  spHasParents) owner = spouseId;
+        else if (pKids > spKids)                owner = p.id;
+        else if (spKids > pKids)                owner = spouseId;
+        else                                    owner = (p.id < spouseId) ? p.id : spouseId;
+        marriageOwners[key] = owner;
+        renderedAsSpouse[(owner === p.id) ? spouseId : p.id] = true;
+      });
+    });
+    (people || []).forEach(function(p) {
+      var mySpouses  = spouseOf[p.id]   || [];
+      var myChildren = childrenOf[p.id] || [];
+      if (mySpouses.length === 0 && myChildren.length === 0) return;
+      if (mySpouses.length > 0) {
+        mySpouses.forEach(function(spouseId) {
+          var spouse = byId[spouseId];
+          if (!spouse) return;
+          var key = [p.id, spouseId].sort().join('__');
+          if (marriageOwners[key] !== p.id) return;
+          var spouseKids   = childrenOf[spouseId] || [];
+          var sharedKids   = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
+          var spouseOnlyKids = spouseKids.filter(function(cid) { return myChildren.indexOf(cid) === -1; });
+          var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
+          var unattributed = myChildren.filter(function(cid) {
+            return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
+          });
+          var marriageKids = sharedKids.concat(isFirstSpouse ? unattributed : []).concat(spouseOnlyKids)
+            .filter(function(cid, idx, arr) { return arr.indexOf(cid) === idx; });
+          nodeMap[p.id].marriages.push({
+            spouse: nodeMap[spouseId] || _spMakeNode(spouse),
+            children: marriageKids.map(function(cid) { return nodeMap[cid] || _spMakeNode(byId[cid]); }).filter(Boolean),
+          });
+        });
+      } else {
+        myChildren.forEach(function(cid) {
+          var childNode = nodeMap[cid] || _spMakeNode(byId[cid]);
+          if (childNode) nodeMap[p.id].children.push(childNode);
+        });
+      }
+    });
+    var roots = (people || []).filter(function(p) {
+      var noParents = !parentsOf[p.id] || parentsOf[p.id].length === 0;
+      return noParents && !renderedAsSpouse[p.id];
+    });
+    if (roots.length === 0) roots = [selfNode];
+    return roots.map(function(r) { return nodeMap[r.id]; });
+  }
+
+  // FAM-06-FIXES continuation (2026-09-27): share-page tree now has its own
+  // explicit-scale zoom system, mirroring the in-app one (_mpApplyZoomState/
+  // _mpFitTree/mpZoomIn/mpZoomOut/mpRecentre, ~line 38428) instead of the
+  // old "render once at 1:1 and let native pinch/scroll handle it" approach.
+  // Reasoning for the switch: the old approach relied on ctrl+wheel/pinch
+  // triggering the whole BROWSER page's native zoom (fine since this is
+  // normal document flow, not a fixed overlay — no risk of the in-app
+  // overlay's desync bug) — but the client asked for the buttons and
+  // scroll-wheel behaviour to match the in-app tree, and plain "let the
+  // browser handle it" also meant ctrl+wheel zoomed the WHOLE share page
+  // (header, feedback form, everything) rather than just the tree, which
+  // isn't actually what "zoom the tree" should do either way. Same
+  // architecture as the in-app version: grow/shrink the SVG's real
+  // width/height attributes (not a CSS transform) so the overflow:auto
+  // container's native scrollbars track correctly at every zoom level.
+  var _spZoomScale = 1;
+  var _spTreeBBox  = null;
+  var SP_ZOOM_PAD = 40, SP_ZOOM_MIN = 0.2, SP_ZOOM_MAX = 3, SP_ZOOM_STEP = 1.25;
+
+  function _spApplyZoomState() {
+    var canvasEl = document.getElementById('shareTreeCanvas');
+    var vp       = document.getElementById('shareTreeViewport');
+    var svg      = canvasEl ? canvasEl.querySelector('svg') : null;
+    var g        = svg ? svg.querySelector('g') : null;
+    if (!svg || !g || !_spTreeBBox || !vp) return;
+
+    var bb   = _spTreeBBox;
+    var rawW = bb.width  + SP_ZOOM_PAD * 2;
+    var rawH = bb.height + SP_ZOOM_PAD * 2;
+    var pxW  = rawW * _spZoomScale;
+    var pxH  = rawH * _spZoomScale;
+
+    g.setAttribute('transform', 'translate(' + (SP_ZOOM_PAD - bb.x) + ',' + (SP_ZOOM_PAD - bb.y) + ')');
+    svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
+    svg.setAttribute('width',  Math.ceil(pxW));
+    svg.setAttribute('height', Math.ceil(pxH));
+    svg.style.maxWidth = 'none';
+
+    // Same "safe center" pattern as the in-app tree (~line 38460) — stays
+    // centred until content genuinely overflows an axis, then scrolls from
+    // a sane edge on that axis only, instead of jumping at the fit threshold.
+    canvasEl.style.display        = 'flex';
+    canvasEl.style.alignItems     = 'safe center';
+    canvasEl.style.justifyContent = 'safe center';
+  }
+
+  // Recompute a fit-to-viewport zoom level and reset scroll. Called on first
+  // render, on the Fit-to-screen button, and whenever the tree is moved
+  // between the inline card and the full-screen overlay (~line 42985) since
+  // those two viewports are different sizes.
+  function _spFitTree() {
+    try {
+      var canvasEl = document.getElementById('shareTreeCanvas');
+      var vp       = document.getElementById('shareTreeViewport');
+      var svg      = canvasEl ? canvasEl.querySelector('svg') : null;
+      var g        = svg ? svg.querySelector('g') : null;
+      if (!svg || !g || !vp) return;
+
+      var bb = g.getBBox();
+      if (!bb.width || !bb.height) return;
+      _spTreeBBox = bb;
+
+      var vpr  = vp.getBoundingClientRect();
+      var rawW = bb.width  + SP_ZOOM_PAD * 2;
+      var rawH = bb.height + SP_ZOOM_PAD * 2;
+      var fitScale = 0.94 * Math.min(vpr.width / rawW, vpr.height / rawH);
+      _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(fitScale, 1)); // cap at 100%
+
+      _spApplyZoomState();
+      vp.scrollLeft = 0;
+      vp.scrollTop  = 0;
+    } catch(e) {
+      dbgErr('SHARE', '_spFitTree error: ' + e.message);
+      notifyDev('error', 'SHARE', '_spFitTree: ' + String(e && e.message || e));
+      logActivity('share_error', '_spFitTree: ' + String(e && e.message || e), 'error', 'SHARE');
+    }
+  }
+
+  function spZoomIn()  { _spZoomScale = Math.min(SP_ZOOM_MAX, _spZoomScale * SP_ZOOM_STEP); _spApplyZoomState(); }
+  function spZoomOut() { _spZoomScale = Math.max(SP_ZOOM_MIN, _spZoomScale / SP_ZOOM_STEP); _spApplyZoomState(); }
+  function spRecentre() { _spFitTree(); }
+
+  // Move the (already-rendered) tree viewport into the full-screen overlay, or
+  // back to its home inside #shareTreeCard. Re-parents the SAME DOM node
+  // (appendChild moves rather than clones) so wheel/gesture listeners bound to
+  // #shareTreeViewport in _spInitTreeZoom below stay attached across the move,
+  // and no second dTree instance is ever created.
+  function spOpenTreeFullscreen() {
+    var vp   = document.getElementById('shareTreeViewport');
+    var slot = document.getElementById('shareTreeFsSlot');
+    var fs   = document.getElementById('shareTreeFullscreen');
+    if (!vp || !slot || !fs) return;
+    vp.style.height   = '100%';
+    vp.style.flex     = '1';
+    slot.appendChild(vp);
+    fs.style.display  = 'flex';
+    document.body.style.overflow = 'hidden'; // match in-app overlay's scroll-lock behaviour
+    _spFitTree(); // viewport size just changed — refit
+  }
+
+  function spCloseTreeFullscreen() {
+    var vp   = document.getElementById('shareTreeViewport');
+    var home = document.getElementById('shareTreeCard');
+    var fs   = document.getElementById('shareTreeFullscreen');
+    if (!vp || !home || !fs) return;
+    vp.style.height = '60vh';
+    vp.style.flex   = '';
+    home.appendChild(vp); // re-insert as last child, after the controls row — same as original markup order
+    fs.style.display = 'none';
+    document.body.style.overflow = '';
+    _spFitTree(); // viewport size just changed back — refit
+  }
+
+  // Wires the zoom buttons (inline + full-screen sets), expand/close, and
+  // ctrl+wheel/pinch interception on #shareTreeViewport — same pattern as the
+  // in-app tree's listener (~line 42891), redirecting the browser's native
+  // page-zoom gesture into our own _spZoomScale system instead of zooming the
+  // whole share page. Plain scroll wheel is explicitly let through untouched.
+  // Idempotent: guarded so re-running (e.g. if loadSharePage ever re-fires)
+  // doesn't double-bind.
+  var _spZoomWired = false;
+  function _spInitTreeZoom() {
+    if (_spZoomWired) return;
+    _spZoomWired = true;
+
+    function on(id, evt, fn) { var el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
+    on('spZoomOutBtn',  'click', spZoomOut);
+    on('spZoomInBtn',   'click', spZoomIn);
+    on('spRecentreBtn', 'click', spRecentre);
+    on('spExpandBtn',   'click', spOpenTreeFullscreen);
+    on('spfZoomOutBtn', 'click', spZoomOut);
+    on('spfZoomInBtn',  'click', spZoomIn);
+    on('spfRecentreBtn','click', spRecentre);
+    on('spfCloseBtn',   'click', spCloseTreeFullscreen);
+
+    var vp = document.getElementById('shareTreeViewport');
+    if (!vp) return;
+
+    vp.addEventListener('wheel', function(e) {
+      if (!e.ctrlKey) return; // plain scroll — let it through untouched, scrolls the viewport
+      e.preventDefault();
+      var factor = Math.exp(-e.deltaY * 0.01);
+      _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, _spZoomScale * factor));
+      _spApplyZoomState();
+    }, { passive: false });
+
+    if ('ongesturestart' in window) { // Safari trackpad pinch
+      var gestureStartScale = 1;
+      vp.addEventListener('gesturestart', function(e) { e.preventDefault(); gestureStartScale = _spZoomScale; });
+      vp.addEventListener('gesturechange', function(e) {
+        e.preventDefault();
+        _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, gestureStartScale * e.scale));
+        _spApplyZoomState();
+      });
+      vp.addEventListener('gestureend', function(e) { e.preventDefault(); });
+    }
+  }
+
+  // Simplified read-only render: no node-click wiring (see FAM-06 note above on
+  // _spBuildTreeData for why this isn't _mpRender() reused directly) — pan is
+  // native overflow:auto scroll/touch-scroll, zoom is the explicit-scale system
+  // above (buttons + ctrl-wheel/pinch), same division of labour as the in-app tree.
+  function _spRenderTree(canvasEl, viewportEl, data) {
+    if (!canvasEl || !data || !data.length) return;
+    var vpW = viewportEl ? (viewportEl.offsetWidth  || 360) : 360;
+    var vpH = viewportEl ? (viewportEl.offsetHeight || 480) : 480;
+    var rootStyle   = getComputedStyle(document.documentElement);
+    var borderColor = (rootStyle.getPropertyValue('--border') || '#e8dcc8').trim() || '#e8dcc8';
+    try {
+      dTree.init(data, {
+        target: '#shareTreeCanvas',
+        debug: false,
+        width: vpW, height: vpH,
+        nodeWidth: 120,
+        marriageNodeSize: 6,
+        hideMarriageNodes: false,
+        margin: { top: 40, right: 40, bottom: 40, left: 40 },
+        styles: { node: 'mpDTreeNode', linage: 'mpDTreeLink', marriage: 'mpDTreeMarriage', text: 'mpDTreeText' },
+        callbacks: {
+          nodeSize: function(nodes) { nodes.forEach(function(n) { n.cWidth = 120; n.cHeight = 108; }); return [120, 108]; },
+          nodeRenderer: function(name, x, y, height, width, extra, id, nodeClass) {
+            if (nodeClass === 'mpNodeHidden') return '<div style="width:100%;height:100%;opacity:0;pointer-events:none"></div>';
+            var isSelf = extra && extra.isSelf;
+            var label  = extra ? extra.label : '';
+            var avatar = extra ? extra.avatarHtml : '👤';
+            var labelStyle = isSelf ? 'color:var(--gold);font-weight:700' : 'color:var(--text-light)';
+            return [
+              '<div class="' + (isSelf ? 'mpNode mpNode-self' : 'mpNode') + '" style="width:100%;height:100%;box-sizing:border-box">',
+                '<div class="mpNode-avatar">' + avatar + '</div>',
+                '<div class="mpNode-name">' + (name || '\u2014') + '</div>',
+                '<div class="mpNode-rel" style="' + labelStyle + '">' + label + '</div>',
+              '</div>',
+            ].join('');
+          },
+          nodeClick: function() {}, // read-only — no delegated click listener attached either
+        },
+      });
+      requestAnimationFrame(function() {
+        var svg = canvasEl.querySelector('svg');
+        if (!svg) return;
+
+        // Same dTree-internal-zoom strip as the in-app tree (~line 38396) — the
+        // vendored dtree.min.js applies a "zoom" class to whatever element it
+        // binds its own d3.zoom() to, independent of which container it's
+        // rendering into (confirmed in-app via the `#mpDTree .zoom` grab-cursor
+        // CSS we added, ~line 13164 — same underlying library behaviour applies
+        // here even though we never styled `#shareTreeCanvas .zoom` to match).
+        // That internal zoom's default wheel handler zooms on ANY scroll,
+        // fighting the explicit-scale system above and defeating "scroll wheel
+        // should scroll." Strip only the wheel listener; leave drag-to-pan
+        // alone (not broken, and this page has no alternative click-drag
+        // panning to fall back to).
+        if (window.d3 && typeof d3.select === 'function') {
+          var _spZoomEl = svg.querySelector('.zoom') || svg;
+          d3.select(_spZoomEl).on('wheel.zoom', null);
+          if (_spZoomEl !== svg) d3.select(svg).on('wheel.zoom', null);
+        }
+
+        svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
+          el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
+        });
+        svg.querySelectorAll('path.mpDTreeMarriage, path.marriage').forEach(function(el) {
+          el.style.stroke = borderColor; el.style.strokeWidth = '2px'; el.style.fill = 'none';
+        });
+        svg.querySelectorAll('.mpDTreeMarriage circle, .marriage circle').forEach(function(el) {
+          el.style.fill = borderColor;
+        });
+
+        _spInitTreeZoom(); // idempotent — safe to call on every render
+        _spFitTree();      // replaces the old fixed 1:1 sizing with a fit-to-viewport start scale
+      });
+    } catch(e) {
+      dbgErr('SHARE', 'tree share render error: ' + e.message);
+      logActivity('tree_share_render_failed', String(e && e.message || e), 'error', 'SHARE');
+      canvasEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:0.85rem">Could not display the tree.</div>';
+    }
+  }
+
+  // FAM-06-FOLLOWUP (2026-09-27): shareMessage is required (submitShareFeedback
+  // already enforced this server-side-ish via client validation — see the
+  // !text check there) but the label text swaps per share type/mode (Your
+  // comment / Your message / Answer / Your feedback) via .textContent at 4
+  // call sites below, which would each need to carry the "*" separately.
+  // Centralised here so all 4 stay in sync with the Name field's asterisk.
+  function _shareSetMsgLabel(el, text) {
+    if (!el) return;
+    el.innerHTML = escHtml(text) + ' <span style="color:var(--rose)">*</span>';
+  }
+
   async function loadSharePage(token) {
     dbg('SHARE', 'Loading share page, token:', token);
     try {
@@ -5843,11 +6382,11 @@
         var shareMsgArea     = document.getElementById('shareMessage');
         if (isSong) {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
-          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          _shareSetMsgLabel(shareMessageLbl, 'Your comment');
           if (shareMsgArea)     shareMsgArea.placeholder     = '';
         } else {
           if (shareFormHeading) shareFormHeading.textContent = 'Leave a comment';
-          if (shareMessageLbl)  shareMessageLbl.textContent  = 'Your comment';
+          _shareSetMsgLabel(shareMessageLbl, 'Your comment');
           if (shareMsgArea)     shareMsgArea.placeholder     = '';
         }
         // Hide the Q/A question wrap — piece shares don't have owner questions
@@ -6125,6 +6664,57 @@
         return; // done — skip all entry-rendering code below
       } // end data.isPiece
 
+      // FAM-06 (2026-09-26): tree share path — data.people/relationships present,
+      // no data.entry. Same "guard on the flag alone first" caution as isPiece
+      // above: check isTree before touching anything entry/piece-shaped.
+      if (data.isTree) {
+        _shareEntryTitle = 'a family tree';
+        var ownerT = data.ownerName || data.ownerFirstName || 'Someone';
+        var subElT = document.getElementById('shareSubheading');
+        if (subElT) subElT.textContent = ownerT + ' has shared their family tree from LifeTold and would love your feedback.';
+
+        var ownerNoteElT = document.getElementById('shareOwnerNote');
+        if (ownerNoteElT) {
+          if (data.note) { ownerNoteElT.textContent = data.note; ownerNoteElT.style.display = 'block'; }
+          else { ownerNoteElT.style.display = 'none'; }
+        }
+
+        document.getElementById('shareEntryCard').style.display      = 'none';
+        document.getElementById('shareStoryPieceCard').style.display = 'none';
+        document.getElementById('shareTreeCard').style.display       = 'block';
+        document.getElementById('shareFeedbackSection').style.display = '';
+
+        var shareFormHeadingT = document.getElementById('shareFormHeading');
+        var shareMessageLblT  = document.getElementById('shareMessageLabel');
+        if (shareFormHeadingT) shareFormHeadingT.textContent = 'Leave feedback';
+        _shareSetMsgLabel(shareMessageLblT, 'Your message');
+        var shareQWrapT = document.getElementById('shareFormQuestionWrap');
+        if (shareQWrapT) shareQWrapT.style.display = 'none';
+
+        document.getElementById('shareLoading').style.display = 'none';
+        document.getElementById('shareContent').style.display = 'block';
+        logActivity('share_viewed', JSON.stringify({ type: 'tree', token: token }), 'info', 'SHARE');
+
+        var expiryElT  = document.getElementById('shareExpiryWarning');
+        var expiryMsgT = document.getElementById('shareExpiryMsg');
+        if (expiryElT && expiryMsgT && data.expiresAt) {
+          var expiryDateT = new Date(data.expiresAt);
+          var daysLeftT   = Math.ceil((expiryDateT - Date.now()) / 86400000);
+          if (daysLeftT >= 0 && daysLeftT <= 7) {
+            var expiryFmtT = expiryDateT.toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' });
+            expiryMsgT.textContent = daysLeftT === 0
+              ? 'This link expires today.'
+              : 'This link expires on ' + expiryFmtT + ' (' + daysLeftT + ' day' + (daysLeftT === 1 ? '' : 's') + ' left).';
+            expiryElT.style.display = 'block';
+          }
+        }
+
+        var treeData = _spBuildTreeData(data.people || [], data.relationships || []);
+        _spRenderTree(document.getElementById('shareTreeCanvas'), document.getElementById('shareTreeViewport'), treeData);
+
+        return; // done — skip all entry/piece-rendering code below
+      } // end data.isTree
+
       // Entry share path — data.entry is present
       if (!data.entry) {
         // Safety net: not a piece share but entry is missing — avoid crash on undefined.title
@@ -6171,13 +6761,13 @@
         // Question mode
         if (formQWrap)   formQWrap.style.display = 'block';
         if (formQEl)     formQEl.textContent     = data.note;
-        if (msgLabel)    msgLabel.textContent    = 'Answer';
+        _shareSetMsgLabel(msgLabel, 'Answer');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave your answer';
       } else {
         // Feedback mode — no question set
         if (formQWrap)   formQWrap.style.display = 'none';
-        if (msgLabel)    msgLabel.textContent    = 'Your feedback';
+        _shareSetMsgLabel(msgLabel, 'Your feedback');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave feedback';
       }
@@ -6589,6 +7179,10 @@
     document.getElementById('shareConsentNote').value  = '';
     var expiryEl = document.getElementById('shareConsentExpiry');
     if (expiryEl) expiryEl.value = '30';
+    var consentBoxEl0 = document.getElementById('shareConsentConfirm');
+    if (consentBoxEl0) consentBoxEl0.checked = false;
+    var consentErrEl0 = document.getElementById('shareConsentError');
+    if (consentErrEl0) consentErrEl0.style.display = 'none';
     document.getElementById('shareConsentBtns').style.display    = '';
     document.getElementById('shareConsentSpinner').style.display = 'none';
     document.getElementById('shareConsentOverlay').style.display = 'flex';
@@ -6606,6 +7200,19 @@
     var entryId = _shareConsentEntryId;
     var label   = (document.getElementById('shareConsentLabel').value || '').trim() || null;
     var note    = (document.getElementById('shareConsentNote').value  || '').trim() || null;
+
+    // FAM-06 (2026-09-26): sender-side consent gate, same pattern as the
+    // recipient-side sharePrivacyConsent check in submitShareFeedback().
+    var consentErrEl = document.getElementById('shareConsentError');
+    var consentBoxEl = document.getElementById('shareConsentConfirm');
+    if (consentBoxEl && !consentBoxEl.checked) {
+      if (consentErrEl) {
+        consentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        consentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (consentErrEl) consentErrEl.style.display = 'none';
 
     // Show spinner, hide buttons
     document.getElementById('shareConsentBtns').style.display    = 'none';
@@ -6678,7 +7285,7 @@
     });
     if (!res.ok) throw new Error(await res.text());
     var rows = await res.json();
-    return 'https://lifetold.app/?share=' + rows[0].token;
+    return location.origin + '/?share=' + rows[0].token;
   }
 
   // ── Step 6: Share link management UI ────────────────────────────
@@ -6797,7 +7404,7 @@
   }
 
   function copyShareLink(token) {
-    var link = 'https://lifetold.app/?share=' + token;
+    var link = location.origin + '/?share=' + token;
     try {
       navigator.clipboard.writeText(link).then(function() { toast('Link copied \u2713'); });
     } catch(e) {
@@ -7097,12 +7704,15 @@
       }
 
       list.innerHTML = feedback.map(function(f) {
-        var isPiece = !!f.component_id;
-        var entry = !isPiece ? entryMap[f.entry_id] : null;
+        var isTree  = !!f.is_tree_share;
+        var isPiece = !isTree && !!f.component_id;
+        var entry = (!isTree && !isPiece) ? entryMap[f.entry_id] : null;
         var piece = isPiece ? pieceMap[f.component_id] : null;
-        var contextTitle = isPiece
-          ? (piece ? (piece.title || 'a story piece') : 'a story piece')
-          : (entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory');
+        var contextTitle = isTree
+          ? 'your family tree'
+          : (isPiece
+            ? (piece ? (piece.title || 'a story piece') : 'a story piece')
+            : (entry ? (entry.title || entry.answer.substring(0, 40) + '\u2026') : 'a memory'));
         var timeAgo = formatTimeAgo(f.created_at);
         var mediaNote = '';
         if (f.photo_url) mediaNote += ' \uD83D\uDDBC\uFE0F';
@@ -7116,17 +7726,30 @@
           : '';
         var safeName = escHtml(f.commenter_name || 'Someone').replace(/'/g, "\'");
 
-        // Piece comments get a "Dismiss" action (no memory to attach to).
-        // Memory feedback gets "Accept feedback" which imports to entries.
-        var acceptBtn = isPiece
-          ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
-              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
-              '\u2713 Dismiss' +
-            '</button>'
-          : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+        // FAM-06-FIX (2026-09-27): tree feedback gets its own Accept action (no entry to attach to);
+        // piece feedback gets Dismiss; memory feedback gets full Accept (imports to entries).
+        var acceptBtn = isTree
+          ? '<button data-action="accept-tree-feedback" data-fb-id="' + escHtml(f.id) + '" data-name="' + safeName + '" ' +
               'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
               '\u2714 Accept feedback' +
-            '</button>';
+            '</button>'
+          : (isPiece
+            ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
+                '\u2713 Dismiss' +
+              '</button>'
+            : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                '\u2714 Accept feedback' +
+              '</button>');
+
+        // Context label: tree → clickable "your family tree" link (opens My People → Feedback tab);
+        //               piece → clickable title link; memory → plain italic "on …"
+        var contextLabel = isTree
+          ? '<button data-action="open-tree-from-feedback" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">your family tree</button>'
+          : (isPiece
+            ? '<button data-action="open-piece-from-feedback" data-component-id="' + escHtml(f.component_id) + '" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">\u201c' + escHtml(contextTitle) + '\u201d</button>'
+            : '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>');
 
         return '<div id="response-row-' + f.id + '" style="background:var(--surface2);border-radius:10px;padding:12px 14px">' +
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
@@ -7134,10 +7757,9 @@
               '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name) + '</span>' +
               '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
               (isPiece ? '<span style="font-size:0.7rem;color:var(--gold-dark);background:rgba(201,169,110,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">story</span>' : '') +
+              (isTree  ? '<span style="font-size:0.7rem;color:var(--sage);background:rgba(107,153,120,0.12);border-radius:4px;padding:1px 6px;margin-left:6px">family tree</span>' : '') +
             '</div>' +
-            (isPiece
-              ? '<button data-action="open-piece-from-feedback" data-component-id="' + escHtml(f.component_id) + '" style="font-size:0.72rem;color:var(--gold-dark);font-style:italic;flex-shrink:0;background:none;border:none;cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">\u201c' + escHtml(contextTitle) + '\u201d</button>'
-              : '<span style="font-size:0.72rem;color:var(--text-light);font-style:italic;flex-shrink:0">on \u201c' + escHtml(contextTitle) + '\u201d</span>') +
+            contextLabel +
           '</div>' +
           questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
@@ -7277,6 +7899,52 @@
       _importingFeedbackIds.delete(feedbackId);
       dbgWarn('DASH', 'importResponse error:', e.message);
       toast('Could not import \u2014 try again');
+      if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+    }
+  }
+
+  // ── FAM-06-FIX (2026-09-27): Accept tree feedback ────────────────────────
+  // No entry to attach to — deletes from DB (same pattern as importResponse),
+  // stores the row in _mpAcceptedTreeFeedback[], then opens My People → Feedback tab.
+  var _mpAcceptedTreeFeedback = []; // in-memory store of accepted tree feedback rows
+
+  async function acceptTreeFeedback(feedbackId, commenterName) {
+    var row = document.getElementById('response-row-' + feedbackId);
+    if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+
+    try {
+      // Fetch the full row so we have text + created_at for display
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*', { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error('fetch failed');
+      var rows = await res.json();
+      var fb = rows[0];
+      if (!fb) throw new Error('not found');
+
+      // Delete from DB (same as importResponse — no UPDATE RLS so DELETE is the path)
+      var del = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
+        method: 'DELETE', headers: getAuthHeaders()
+      });
+      if (!del.ok) throw new Error('delete failed');
+
+      // Stash accepted feedback for the Feedback tab to render
+      _mpAcceptedTreeFeedback.push({
+        id:             feedbackId,
+        commenter_name: commenterName || fb.commenter_name || 'Someone',
+        text:           fb.text || '',
+        created_at:     fb.created_at || new Date().toISOString()
+      });
+
+      toast('Feedback accepted \u2713');
+      if (row) row.remove();
+      await loadResponsesTile();
+
+      // Open My People and switch to Feedback tab
+      await openMyPeople();
+      mpSwitchTab('feedback');
+
+    } catch(e) {
+      dbgWarn('DASH', 'acceptTreeFeedback error:', e.message);
+      toast('Could not accept \u2014 try again');
       if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
     }
   }
@@ -7664,6 +8332,7 @@
         await loadFeatureUsage(); // Supabase-backed feature counters
         await loadMilestones();   // UX-NEW-05: milestone celebration state
         await loadEmailPrefs();   // weekly email nudge opt-in
+        await agpLoadRecentTopics(); // GTH-CTX-01: recent blank-session topics, for story-map rotation
         await loadAutoFillDefaultsPref(); // auto-fill title/location/date/people on memory save
         await loadSubscriptionTier(); // SUB-05: cache subscription tier for isPremium()
         await loadVoicePrefs();       // APP-53: cache gethro_voice_id + story_reader_voice_id
@@ -8391,6 +9060,19 @@
   let _gethroAudio    = null; // current Audio element (if playing)
   let _gethroAudioCtx = null; // AudioContext for TTS — created once on first gesture,
                                // reused so resume() reliably unlocks desktop Chrome autoplay.
+  // AGP-TTS-01 (2026-09-25): generation counter closing a race where two gethroSpeak()
+  // calls overlap audibly ("two questions talking over each other" — reported on Android,
+  // not noticed on desktop). gethroCancel() below only stops audio that has already
+  // started (_gethroAudio/_gethroFallback's utterance are set right before playback);
+  // if a 2nd call fires while the 1st is still mid network-fetch/decode — a window that's
+  // milliseconds on fast wifi but can be a second-plus on mobile data — gethroCancel() has
+  // nothing to stop yet, so BOTH calls eventually reach .start()/.speak() and both play.
+  // Fix: every call claims the next generation number; right before it actually starts
+  // audio, it checks it's still the latest generation and silently no-ops if a newer call
+  // has since been made, however far along its own fetch/decode already was. Newest call
+  // always wins, regardless of network timing — this is not a mobile-only fix, it closes
+  // the race everywhere, just fires far more often on the slower/more variable path.
+  let _gethroSpeakGen = 0;
   // ── Shared TTS text-cleaning and segmentation ───────────────────────────────
   // Single source of truth used by BOTH the in-app audiobook player (_abCleanForTts /
   // _abGetSegments are thin aliases below) AND the share page (loadSharePage calls
@@ -8523,7 +9205,12 @@
   function gethroSpeak(text, opts) {
     return new Promise(async function(resolve) {
       if (!text || !text.trim()) { resolve(); return; }
+      var myGen = ++_gethroSpeakGen; // AGP-TTS-01: claim this call's generation before anything async
       gethroCancel();
+      // Pre-warm the mic while TTS fetches/plays so start() can adopt a live stream
+      // instead of cold-opening. Fire-and-forget; idempotent across superseding calls
+      // (a newer call reuses the single warm/in-flight stream rather than opening another).
+      MicManager.prewarm().catch(function(){});
       dbg('TTS', 'gethroSpeak called, len=' + text.length + ', token=' + (sessionToken ? 'ok' : 'NULL'));
       try {
         // JWT ON: token sent as Authorization header. getSession() refreshes it if near-expiry.
@@ -8553,7 +9240,7 @@
             // the conversation doesn't break, just stop mislabelling it.
             dbg('TTS', 'gethroSpeak rate-limited — falling back to speechSynthesis');
             _maybeShowTtsRateLimitToast(rlParsed);
-            _gethroFallback(text, resolve);
+            _gethroFallback(text, resolve, myGen);
             return;
           }
           throw new Error('TTS_PROXY ' + res.status + ': ' + errBody.slice(0, 200));
@@ -8594,9 +9281,13 @@
           var msg = decodeErr ? decodeErr.message || String(decodeErr) : 'decodeAudioData failed';
           dbg('TTS', 'decodeAudioData error:', msg);
           notifyDev('error', 'TTS', 'decodeAudioData failed: ' + msg);
-          _gethroAudio = null; _gethroFallback(text, resolve); return;
+          _gethroAudio = null; _gethroFallback(text, resolve, myGen); return;
         }
         dbg('TTS', 'decodeAudioData ok, duration=' + decoded.duration.toFixed(1) + 's');
+        // AGP-TTS-01: a newer gethroSpeak() call has been made since this one started —
+        // don't play; this is what actually closes the overlap, everything else here is
+        // just the same fetch/decode work finishing after it stopped being needed.
+        if (myGen !== _gethroSpeakGen) { dbg('TTS', 'gethroSpeak superseded — discarding, gen=' + myGen); resolve(); return; }
         var source = ctx.createBufferSource();
         source.buffer = decoded;
         source.connect(ctx.destination);
@@ -8609,17 +9300,25 @@
         dbg('TTS', 'TTS_PROXY error:', err.message);
         notifyDev('error', 'TTS', 'gethroSpeak error: ' + err.message);
         logActivity('tts_fallback', 'gethroSpeak error: ' + err.message, 'error', 'TTS');
-        _gethroFallback(text, resolve);
+        _gethroFallback(text, resolve, myGen);
       }
     });
   }
   // _gethroFallbackNotified removed — every failure now logs individually so we
   // can see exactly which path and how often it fails.
-  function _gethroFallback(text, resolve) {
+  function _gethroFallback(text, resolve, myGen) {
     dbg('TTS', '_gethroFallback called');
     if (!window.speechSynthesis) { dbg('TTS', 'speechSynthesis unavailable'); resolve(); return; }
     // Voices may be empty on first call (Chrome loads async) — wait if needed
     function _speak() {
+      // AGP-TTS-01: same supersession check as the primary AudioContext path. Extra
+      // important here — this is the browser speechSynthesis fallback, and mobile
+      // (Android Chrome in particular) is both more likely to land on this path at all
+      // (flakier network → more TTS_PROXY failures/timeouts) AND has its own known
+      // queueing quirks where a stray .speak() call before this one fully settles can
+      // still be audible even after .cancel(). Refusing to speak once superseded is a
+      // second line of defence on top of the .cancel() call already below.
+      if (myGen !== undefined && myGen !== _gethroSpeakGen) { dbg('TTS', 'fallback speak superseded — discarding, gen=' + myGen); resolve(); return; }
       var voices = speechSynthesis.getVoices();
       dbg('TTS', '_speak voices=' + voices.length);
       speechSynthesis.cancel();
@@ -8714,6 +9413,10 @@
   var _obIceBraker    = ONBOARD_ICE_BREAKER; // always the fixed question
   var _obSelectedGoal = null;                 // memoir goal selected on step 4
   var _obCurrentStep  = 1;
+  // EML-ONB-01: step 6 story-prompt email choice. Weekly is only the pre-selected FREQUENCY —
+  // nothing is enabled until the user taps "Yes, email me".
+  var _obEmailFreq    = 'weekly';
+  var _obEmailSaidYes = false;    // true once Yes has been saved this session (lets "No thanks" revoke it)
 
   // FAM-01: who is this story about? 'self' | 'other'. Chosen on step 2 before any name field shows.
   var _obSubjectMode = 'self';
@@ -8842,6 +9545,8 @@
           if (ring5) ring5.classList.remove('speaking');
         }).catch(function() { if (ring5) ring5.classList.remove('speaking'); });
       }, 300);
+    } else if (step === 6) {
+      _obPrepareEmailAsk();
     } else if (step === 7) {
       var firstName = (document.getElementById('onboardFirstName').value || '').trim();
       var subjectName = (document.getElementById('onboardSubjectName')?.value || '').trim();
@@ -8966,6 +9671,79 @@
       } catch(err) { dbgErr('ONBOARD', 'Goal save failed (non-fatal):', err.message); notifyDev('error', 'ONBOARD', String(err && err.message || err)); logActivity('onboard_error', String(err && err.message || err), 'error', 'ONBOARD'); }
     }
     obGoStep(5);
+  }
+
+  // ── Step 6: story prompt email choice (EML-ONB-01) ───────────────────────
+  // Consent is a positive action: the person must tap "Yes, email me". Nothing is pre-enabled
+  // and skipping onboarding, or tapping "No thanks", writes nothing. Weekly is only the
+  // pre-selected frequency. If the account has no email address (e.g. Facebook without the email
+  // permission) the ask is hidden and the original "I'm ready" button shows instead.
+  function _obPrepareEmailAsk() {
+    var email  = (currentUser && currentUser.email) ? String(currentUser.email) : '';
+    var canAsk = !!email;
+    var ask    = document.getElementById('obEmailAsk');
+    var noBtn  = document.getElementById('obEmailNoBtn');
+    var goBtn  = document.getElementById('obStep6Btn');
+    var yesBtn = document.getElementById('obEmailYesBtn');
+    var addr   = document.getElementById('obEmailAddr');
+    if (addr)   addr.textContent = email;
+    if (ask)    ask.style.display   = canAsk ? 'block' : 'none';
+    if (noBtn)  noBtn.style.display = canAsk ? 'block' : 'none';
+    if (goBtn)  goBtn.style.display = canAsk ? 'none' : '';
+    if (yesBtn) { yesBtn.disabled = false; yesBtn.textContent = 'Yes, email me \u2192'; }
+    obSelectEmailFreq(_obEmailFreq);
+  }
+
+  function obSelectEmailFreq(freq) {
+    _obEmailFreq = freq;
+    [['daily', 'obFreqDaily'], ['weekly', 'obFreqWeekly'], ['fortnightly', 'obFreqFortnightly']].forEach(function(pair) {
+      var el = document.getElementById(pair[1]);
+      if (!el) return;
+      var isSel = (pair[0] === freq);
+      el.classList.toggle('selected', isSel);
+      el.setAttribute('aria-checked', isSel ? 'true' : 'false');
+    });
+  }
+
+  async function obEmailYes() {
+    var email = (currentUser && currentUser.email) ? String(currentUser.email) : '';
+    if (!email) { obGoStep(7); return; }
+    var btn = document.getElementById('obEmailYesBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    var results = await Promise.all([
+      saveEmailPrefKey('weekly_email_enabled', true),
+      saveEmailPrefKey('weekly_email_frequency', _obEmailFreq),
+      saveEmailPrefKey('user_email', email),
+      saveEmailPrefKey('weekly_email_consent_at', new Date().toISOString()),
+      saveEmailPrefKey('weekly_email_consent_source', 'onboarding')
+    ]);
+    var allOk = results.every(function(r) { return r === true; });
+    if (!allOk) {
+      // Never leave a half-written state that could send emails without a recorded address/consent.
+      await saveEmailPrefKey('weekly_email_enabled', false);
+      if (btn) { btn.disabled = false; btn.textContent = 'Yes, email me \u2192'; }
+      logActivity('email_consent_error', 'onboarding save failed - rolled back to disabled', 'warn', 'EMAIL');
+      toast('Could not save that just now \u2014 please try again, or tap No thanks and set it up later in Settings');
+      return;
+    }
+    _obEmailSaidYes = true;
+    _emailNudge.enabled = true;
+    _emailNudge.frequency = _obEmailFreq;
+    try { renderEmailPrefsUI(); } catch(e) {}
+    logActivity('email_consent', 'onboarding: ' + _obEmailFreq, 'info', 'EMAIL');
+    obGoStep(7);
+  }
+
+  async function obEmailNo() {
+    // Only writes anything if they said Yes earlier this session, went Back, and changed their mind.
+    if (_obEmailSaidYes) {
+      await saveEmailPrefKey('weekly_email_enabled', false);
+      _obEmailSaidYes = false;
+      _emailNudge.enabled = false;
+      try { renderEmailPrefsUI(); } catch(e) {}
+      logActivity('email_consent_revoked', 'onboarding: changed mind', 'info', 'EMAIL');
+    }
+    obGoStep(7);
   }
 
   // Step 6 CTA / skip-to-app: dismiss overlay, pre-fill fixed ice-breaker, start mic
@@ -9343,6 +10121,13 @@
     var _active      = false;
     var _mime        = '';
     var _callbacks   = {};
+    // Prewarm: mic stream opened silently during gethroSpeak() so the hardware is
+    // already live when start() runs (avoids the cold-open dropout on desktop
+    // Chrome). No recorder/analyser/chunks — just open tracks. start() adopts it;
+    // release() and cancelPrewarm() stop it so it never leaks.
+    var _prewarmStream  = null;
+    var _prewarmPromise = null; // in-flight getUserMedia, so overlapping prewarm() calls don't open two streams
+    var _prewarmGen     = 0;    // bumped by cancelPrewarm() so a late-resolving open gets discarded
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -9655,15 +10440,64 @@
       _silenceRAF = requestAnimationFrame(_silenceLoop);
     }
 
+    // prewarm() — open the mic stream silently, without a recorder. Fire-and-forget:
+    // any failure (no permission, unsupported) is a no-op and start() cold-opens.
+    // Uses the SAME constraints as start()'s cold open so an adopted stream behaves
+    // identically. Idempotent: no-op if recording, already warm, or a warm-up is in flight.
+    function prewarm() {
+      if (_active || _prewarmStream) return Promise.resolve();
+      if (_prewarmPromise) return _prewarmPromise;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.resolve();
+      var gen = _prewarmGen;
+      var p = (async function() {
+        try {
+          var s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Cancelled, or start() already cold-opened its own stream, while we awaited.
+          if (gen !== _prewarmGen || _active || _prewarmStream) {
+            s.getTracks().forEach(function(t){ t.stop(); });
+            return;
+          }
+          _prewarmStream = s;
+          dbg('MIC_MGR', 'Prewarm stream open — mic hardware warm and ready');
+        } catch(e) {
+          dbg('MIC_MGR', 'Prewarm failed (will cold-open on start):', e && e.message);
+        } finally {
+          if (_prewarmPromise === p) _prewarmPromise = null;
+        }
+      })();
+      _prewarmPromise = p;
+      return p;
+    }
+
+    // cancelPrewarm() — release the prewarm stream if start() never adopted it
+    // (user navigated away, TTS finished with no mic follow-up, tab lost focus).
+    // Also invalidates any in-flight warm-up. Harmless when nothing is prewarmed.
+    function cancelPrewarm() {
+      _prewarmGen++;
+      _prewarmPromise = null;
+      if (_prewarmStream) {
+        _prewarmStream.getTracks().forEach(function(t){ t.stop(); });
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Prewarm stream released (start never called)');
+      }
+    }
+
     async function start(opts) {
       if (_active) return false;
       opts = opts || {};
 
-      // Acquire stream
-      try {
-        _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch(permErr) {
-        return permErr;
+      // Acquire stream — adopt the prewarm stream if one is ready, else cold open.
+      if (_prewarmStream) {
+        _stream = _prewarmStream;
+        _prewarmStream = null;
+        dbg('MIC_MGR', 'Adopted prewarm stream — skipping cold getUserMedia open');
+      } else {
+        try {
+          _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
+        } catch(permErr) {
+          return permErr;
+        }
       }
 
       _mime      = _pickMime(opts.mime || null);
@@ -9706,6 +10540,8 @@
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
       if (_stream) { _stream.getTracks().forEach(function(t){ t.stop(); }); _stream = null; }
+      // Also clean up any prewarm stream that was never adopted by start().
+      cancelPrewarm();
       _recorder = null;
       _chunks   = [];
       _active   = false;
@@ -9720,6 +10556,8 @@
       get stream()   { return _stream; },  // read-only: AGP flush uses stream to restart its own recorder
       get mime()     { return _mime; },
       get chunks()   { return _chunks; },  // read-only access for archive accumulation (Phase 1)
+      prewarm: prewarm,             // open mic hardware silently during gethroSpeak
+      cancelPrewarm: cancelPrewarm, // release prewarm stream if start() never called
       start:   start,
       flush:   flush,
       stop:    stop,
@@ -13827,6 +14665,16 @@
   var _storyShareCurrentPieceId = null;
 
   function _storyLibSharePiece(pieceId, pieceTitle) {
+    // FAM-06 (2026-09-26) BUG FIX found while touching this function: unlike
+    // entry sharing (showShareConsent()'s isPremium() nudge, RL-06), story-piece
+    // sharing never had a client-side premium gate either — the toast nudge
+    // pattern below mirrors showShareConsent() exactly. Server-side this was
+    // also ungated until now — see SHARE_PROXY v3.75 create_story_share fix.
+    if (!isPremium()) {
+      logActivity('premium_gate_hit', 'feature=share_story_piece', 'info', 'RL');
+      toast('\uD83D\uDD10 Sharing stories is a Premium feature \u2014 upgrade to share with family.');
+      return;
+    }
     _storyShareCurrentPieceId = pieceId;
     var modal    = document.getElementById('storyShareModal');
     var titleEl  = document.getElementById('storyShareModalTitle');
@@ -13834,10 +14682,14 @@
     var expiryEl = document.getElementById('storyShareExpiry');
     var btns     = document.getElementById('storyShareBtns');
     var spinner  = document.getElementById('storyShareSpinner');
+    var consentEl0 = document.getElementById('storyShareConsent');
+    var errEl0     = document.getElementById('storyShareError');
     if (!modal) return;
     if (titleEl)  titleEl.textContent = pieceTitle ? '“' + pieceTitle + '”' : '';
     if (noteEl)   noteEl.value = '';
     if (expiryEl) expiryEl.value = '30';
+    if (consentEl0) consentEl0.checked = false;
+    if (errEl0)      errEl0.style.display = 'none';
     if (btns)    btns.style.display = '';
     if (spinner) spinner.style.display = 'none';
     modal.style.display = 'flex';
@@ -13976,6 +14828,18 @@
     var btns    = document.getElementById('storyShareBtns');
     var spinner = document.getElementById('storyShareSpinner');
 
+    // FAM-06 (2026-09-26): sender-side consent gate, same pattern as entry share.
+    var storyConsentErrEl = document.getElementById('storyShareError');
+    var storyConsentBoxEl = document.getElementById('storyShareConsent');
+    if (storyConsentBoxEl && !storyConsentBoxEl.checked) {
+      if (storyConsentErrEl) {
+        storyConsentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        storyConsentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (storyConsentErrEl) storyConsentErrEl.style.display = 'none';
+
     if (btns)    btns.style.display    = 'none';
     if (spinner) spinner.style.display = 'block';
 
@@ -13988,7 +14852,7 @@
       });
       var data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
-      link = 'https://lifetold.app/?share=' + data.token;
+      link = location.origin + '/?share=' + data.token;
       logActivity('story_shared', JSON.stringify({ component_id: pieceId }));
     } catch(err) {
       if (btns)    btns.style.display    = '';
@@ -14009,6 +14873,112 @@
       window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
     } else if (method === 'gmail') {
       window.open('mailto:?subject=' + encodeURIComponent('A story I’d love your thoughts on') +
+        '&body=' + encodeURIComponent(shareMsg + '\n\n' + link));
+    } else if (method === 'facebook') {
+      window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
+    } else { // copy
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(link);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = link; ta.style.cssText = 'position:fixed;opacity:0';
+          document.body.appendChild(ta); ta.select();
+          document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        toast('Link copied ✓');
+      } catch(copyErr) { logActivity('clipboard_fallback', copyErr.message, 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+    }
+  }
+
+  // ── FAM-06 (2026-09-26): Share my tree ──────────────────────────────────────
+  // Modelled on _storyLibSharePiece()/_storyShareVia() — same modal shape,
+  // minus per-entry Q&A (a tree has no single "question"). Creation goes
+  // through SHARE_PROXY's create_tree_share action (needs a real premium check
+  // there since this bypasses RLS via the service-role client — see SHARE_PROXY
+  // v3.75 notes), not a direct life_share_tokens insert, because a user only
+  // has one tree and there's no client-owned row (like a component_id) to
+  // scope an insert to — the server resolves "the tree" as the caller's own
+  // life_people/life_people_relationships rows.
+  function _mpOpenTreeShareModal() {
+    if (!isPremium()) {
+      logActivity('premium_gate_hit', 'feature=share_tree', 'info', 'RL');
+      toast('\uD83D\uDD10 Sharing your family tree is a Premium feature \u2014 upgrade to share with family.');
+      return;
+    }
+    var modal    = document.getElementById('treeShareModal');
+    var noteEl   = document.getElementById('treeShareNote');
+    var expiryEl = document.getElementById('treeShareExpiry');
+    var btns     = document.getElementById('treeShareBtns');
+    var spinner  = document.getElementById('treeShareSpinner');
+    var consentEl = document.getElementById('treeShareConsent');
+    var errEl     = document.getElementById('treeShareError');
+    if (!modal) return;
+    if (noteEl)    noteEl.value = '';
+    if (expiryEl)  expiryEl.value = '30';
+    if (consentEl) consentEl.checked = false;
+    if (errEl)     errEl.style.display = 'none';
+    if (btns)    btns.style.display = '';
+    if (spinner) spinner.style.display = 'none';
+    modal.style.display = 'flex';
+  }
+
+  function _treeShareModalClose() {
+    var modal = document.getElementById('treeShareModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function _treeShareVia(method) {
+    var note       = (document.getElementById('treeShareNote').value || '').trim() || null;
+    var expiryDays = parseInt((document.getElementById('treeShareExpiry') || {}).value || '30', 10);
+    if (![7,14,30,90].includes(expiryDays)) expiryDays = 30;
+    var btns    = document.getElementById('treeShareBtns');
+    var spinner = document.getElementById('treeShareSpinner');
+
+    var consentErrEl = document.getElementById('treeShareError');
+    var consentBoxEl = document.getElementById('treeShareConsent');
+    if (consentBoxEl && !consentBoxEl.checked) {
+      if (consentErrEl) {
+        consentErrEl.textContent = 'Please tick the checkbox to confirm before sharing.';
+        consentErrEl.style.display = 'block';
+      }
+      return;
+    }
+    if (consentErrEl) consentErrEl.style.display = 'none';
+
+    if (btns)    btns.style.display    = 'none';
+    if (spinner) spinner.style.display = 'block';
+
+    var link;
+    try {
+      var res  = await fetch(SHARE_PROXY_URL, {
+        method:  'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body:    JSON.stringify({ action: 'create_tree_share', note: note, expires_days: expiryDays })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
+      link = location.origin + '/?share=' + data.token;
+      logActivity('tree_shared', '', 'info', 'SHARE');
+    } catch(err) {
+      if (btns)    btns.style.display    = '';
+      if (spinner) spinner.style.display = 'none';
+      toast('Could not create link \u2014 try again');
+      dbgErr('SHARE', '_treeShareVia error: ' + (err.message || err));
+      return;
+    }
+
+    _treeShareModalClose();
+
+    var shareMsg = note
+      ? 'I\u2019d love your thoughts on our family tree: \u201c' + note + '\u201d'
+      : 'I\u2019d love your thoughts on our family tree.';
+    var fullMsg = shareMsg + '\n' + link;
+
+    if (method === 'whatsapp') {
+      window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(fullMsg), '_blank', 'noopener');
+    } else if (method === 'gmail') {
+      window.open('mailto:?subject=' + encodeURIComponent('Our family tree') +
         '&body=' + encodeURIComponent(shareMsg + '\n\n' + link));
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
@@ -19795,15 +20765,141 @@
     } catch(e) { dbgWarn('EMAIL', 'loadEmailPrefs error:', e.message); logActivity('email_warn', String(e && e.message || e), 'warn', 'EMAIL'); }
   }
 
-  async function saveEmailPrefKey(key, value) {
+  // ── GTH-CTX-01: recent blank-session topics ─────────────────────────
+  // Last 8 story-map topic keys Gethro opened a BLANK Add Memory session with (e.g.
+  // 'person:aunt joan', 'topic:first_job'), so the server-side picker in agp_seed can avoid
+  // repeating them. Stored server-side (life_settings) so it survives across sessions/devices;
+  // kept small and non-sensitive (topic keys only, never memory content).
+  var _agpRecentTopics = [];
+  async function agpLoadRecentTopics() {
     if (!currentUser) return;
     try {
-      await fetch(DB_SETTINGS_URL, {
+      var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.agp_recent_blank_topics', { headers: getAuthHeaders() });
+      if (!res.ok) return;
+      var rows = await res.json();
+      if (rows.length && rows[0].value) {
+        try { var parsed = JSON.parse(rows[0].value); if (Array.isArray(parsed)) _agpRecentTopics = parsed.slice(-8); } catch(e2) {}
+      }
+    } catch(e) { dbgWarn('GETHRO', 'agpLoadRecentTopics error:', e.message); logActivity('agp_recent_topics_warn', String(e && e.message || e), 'warn', 'GETHRO'); }
+  }
+  function agpRecordRecentTopic(topicKey) {
+    if (!topicKey) return;
+    _agpRecentTopics.push(String(topicKey));
+    _agpRecentTopics = _agpRecentTopics.slice(-8);
+    if (!currentUser) return;
+    fetch(DB_SETTINGS_URL, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: currentUser.id, key: 'agp_recent_blank_topics', value: JSON.stringify(_agpRecentTopics), updated_at: new Date().toISOString() })
+    }).catch(function(e) { dbgWarn('GETHRO', 'agpRecordRecentTopic save error:', e.message); logActivity('agp_recent_topics_warn', String(e && e.message || e), 'warn', 'GETHRO'); });
+  }
+
+  // Builds the story map sent with a BLANK-session seed question, so the opening question is
+  // pertinent to this person's own story instead of one of 10 fixed generic topics. Computed
+  // entirely client-side from data already in memory (no extra network calls); the server only
+  // re-validates and caps it (see normaliseStoryMap in GETHRO_PROXY). Never includes memory text.
+  function _agpBuildStoryMap() {
+    var real = (entries || []).filter(function(e) { return e.answer && (!e.category || !e.category.startsWith('_profile')); });
+    var peopleTally = {}, peopleTitles = {}, placeTally = {}, placeTitles = {}, chapterTally = {};
+    real.forEach(function(e) {
+      var ch = e.chapter || e.category || 'Unspecified';
+      chapterTally[ch] = (chapterTally[ch] || 0) + 1;
+      var title = (e.title || '').trim();
+      if (e.people) {
+        String(e.people).split(',').map(function(p) { return p.trim(); }).filter(Boolean).forEach(function(p) {
+          peopleTally[p] = (peopleTally[p] || 0) + 1;
+          if (title) { peopleTitles[p] = peopleTitles[p] || []; if (peopleTitles[p].length < 2) peopleTitles[p].push(title); }
+        });
+      }
+      if (e.location) {
+        var loc = String(e.location).trim();
+        if (loc) {
+          placeTally[loc] = (placeTally[loc] || 0) + 1;
+          if (title) { placeTitles[loc] = placeTitles[loc] || []; if (placeTitles[loc].length < 2) placeTitles[loc].push(title); }
+        }
+      }
+    });
+    var toCounted = function(tally, titles) {
+      return Object.keys(tally).map(function(name) { return { name: name, count: tally[name], titles: titles[name] || [] }; })
+        .sort(function(a, b) { return a.count - b.count; }).slice(0, 15);
+    };
+    var missing = _agpCommonChaptersRef.filter(function(c) { return !chapterTally[c]; });
+    // GTH-CTX-02 (2026-09-25): health/word-target numbers, duplicated here rather than
+    // shared with renderDashboard()'s "Story Health tile" block (different chapter model —
+    // dashboard uses a fixed 8-chapter list, this uses whatever chapters actually exist —
+    // so a shared function would need to paper over that mismatch). If the dashboard's
+    // formula changes, update the numbers below to match — search renderDashboard() for
+    // 'Story Health tile' and 'Words toward goal tile'.
+    var _shTotalWords = real.reduce(function(n, e) { return n + (e.answer || '').split(/\s+/).filter(Boolean).length; }, 0);
+    var _shChapterCount = Object.keys(chapterTally).length;
+    var _shNoTag = (entries || []).filter(function(e) { return (!e.category || !e.category.startsWith('_profile')) && !e.chapter; }).length;
+    var _shScore = Math.min(100, Math.round((Math.min(_shTotalWords, 3000) / 3000) * 60 + (_shChapterCount / 8) * 30 + (_shNoTag === 0 ? 10 : 0)));
+    var _shWordTarget = 5000;
+    return {
+      entryCount: real.length,
+      chapters: Object.keys(chapterTally).map(function(name) { return { name: name, count: chapterTally[name] }; }),
+      missingChapters: missing,
+      // People/places are sorted ascending by count (least-mentioned first) by toCounted()
+      // above — that ordering IS the "under-explored" list; no separate computation needed.
+      people: toCounted(peopleTally, peopleTitles),
+      places: toCounted(placeTally, placeTitles),
+      recentTopics: _agpRecentTopics,
+      purpose: userProfile.memoirGoal || '',
+      era: userProfile.goalEra || '',
+      healthScore: _shScore,
+      totalWords: _shTotalWords,
+      wordTarget: _shWordTarget
+    };
+  }
+
+  // GTH-CTX-02 (2026-09-25): renders _agpBuildStoryMap() into a short text block for
+  // EVERY chat turn (previously the story map was only built for the blank-session seed
+  // question). Kept deliberately terse — this rides along on every message, so it's a
+  // per-turn token cost, not a one-off. Callers must NOT call this while _agpMemoryMode is
+  // true: the map covers the whole memoir and would pull Gethro's attention away from the
+  // specific memory being discussed (see entriesContext's own memory-mode suppression,
+  // same pattern, just above _agpCallGethro).
+  function _agpStoryMapSummary(map) {
+    if (!map || !map.entryCount) return '';
+    var parts = [];
+    parts.push('Health ' + map.healthScore + '/100, ' + map.totalWords.toLocaleString() + '/' + map.wordTarget.toLocaleString() + ' words toward book length.');
+    if (map.chapters && map.chapters.length) {
+      parts.push('Chapters covered: ' + map.chapters.map(function(c) { return c.name + '(' + c.count + ')'; }).join(', ') + '.');
+    }
+    if (map.missingChapters && map.missingChapters.length) {
+      parts.push('Not yet covered: ' + map.missingChapters.slice(0, 6).join(', ') + '.');
+    }
+    if (map.people && map.people.length) {
+      parts.push('Least-explored people: ' + map.people.slice(0, 5).map(function(p) {
+        return p.name + ' (' + p.count + (p.count === 1 ? ' entry' : ' entries') + (p.titles.length ? ', e.g. "' + p.titles[0] + '"' : '') + ')';
+      }).join('; ') + '.');
+    }
+    if (map.places && map.places.length) {
+      parts.push('Least-explored places: ' + map.places.slice(0, 4).map(function(p) { return p.name + ' (' + p.count + ')'; }).join(', ') + '.');
+    }
+    return parts.join(' ').slice(0, 900); // hard cap — modest per-turn token cost
+  }
+  // Shared with the gap-mode chapter list further down (_agpCommonChapters) — kept as one
+  // definition so the two lists can never drift apart.
+  var _agpCommonChaptersRef = ['Childhood', 'Family', 'School', 'Career', 'Love & Relationships',
+    'Travel', 'Challenges', 'Achievements', 'Later Life', 'Reflections'];
+
+  // Returns true only if the row was actually written (EML-ONB-01: callers that record consent
+  // must be able to tell a failed write from a successful one; previously failures were silent).
+  async function saveEmailPrefKey(key, value) {
+    if (!currentUser) return false;
+    try {
+      var res = await fetch(DB_SETTINGS_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: currentUser.id, key: key, value: String(value), updated_at: new Date().toISOString() })
       });
-    } catch(e) { dbgWarn('EMAIL', 'saveEmailPrefKey error:', e.message); logActivity('email_warn', String(e && e.message || e), 'warn', 'EMAIL'); }
+      if (!res.ok) {
+        dbgWarn('EMAIL', 'saveEmailPrefKey HTTP ' + res.status + ' for key ' + key);
+        logActivity('email_warn', 'saveEmailPrefKey HTTP ' + res.status + ' key=' + key, 'warn', 'EMAIL');
+      }
+      return res.ok;
+    } catch(e) { dbgWarn('EMAIL', 'saveEmailPrefKey error:', e.message); logActivity('email_warn', String(e && e.message || e), 'warn', 'EMAIL'); return false; }
   }
 
   function renderEmailPrefsUI() {
@@ -19843,6 +20939,9 @@
     // Also save user email so the cron job can reach them
     if (_emailNudge.enabled && currentUser?.email) {
       await saveEmailPrefKey('user_email', currentUser.email);
+      // EML-ONB-01: same consent audit trail as the onboarding path.
+      await saveEmailPrefKey('weekly_email_consent_at', new Date().toISOString());
+      await saveEmailPrefKey('weekly_email_consent_source', 'settings');
     }
     var statusEl = document.getElementById('emailNudgeStatus');
     if (statusEl) {
@@ -22884,7 +23983,8 @@
         _agpIsBlankSession  = true;   // blank entry — enable gap-finding after 10 sparker questions
         _agpBlankSeedCount  = 0;
         gethroSpeak(opener).catch(function(){}).finally(function() {
-          setTimeout(function() { _agpSeedMemoryQuestion(firstName, '', ''); }, 200);
+          var storyMap = _agpBuildStoryMap(); // GTH-CTX-01: pertinent opener from their own story, not a random fixed topic
+          setTimeout(function() { _agpSeedMemoryQuestion(firstName, '', '', storyMap); }, 200);
         });
       } else {
         gethroSpeak(opener).catch(function(){}).finally(function() {
@@ -23044,7 +24144,7 @@
   // Generates a warm follow-up question about what the user has written.
   // entryTitle: optional — when set (coming from 'Edit with Gethro'), Gethro opens
   // by warmly acknowledging the title then asking one specific question about the content.
-  async function _agpSeedMemoryQuestion(firstName, entryContext, entryTitle) {
+  async function _agpSeedMemoryQuestion(firstName, entryContext, entryTitle, storyMap) {
     var typingEl = _agpAppendTyping();
     try {
       var res = await callGethro('seed_question', {
@@ -23054,8 +24154,10 @@
         entryTitle: entryTitle,
         subjectMode: userProfile.subjectMode || 'self',
         subjectName: userProfile.subjectName || '',
+        storyMap: storyMap || undefined, // GTH-CTX-01: only set for a genuinely blank session
       });
       var question = res.question;
+      if (res.topic) agpRecordRecentTopic(res.topic); // GTH-CTX-01: so the next blank session doesn't repeat it
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(question, null);
       _gethroHistory.push({ role: 'assistant', content: question });
@@ -23322,11 +24424,32 @@
       var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
       var memTitle  = (document.getElementById('memTitle')  || {}).value || '';
       var memAnswer = (document.getElementById('memAnswer') || {}).value || '';
-      // Include conversation so far so Gethro doesn't repeat covered topics
-      var convoSoFar = _gethroHistory.slice(-8).map(function(m) {
+      // Include conversation so far so Gethro doesn't repeat covered topics.
+      // GTH-CTX-02: this used to build the full string then .slice(0, 1000) it, which cuts
+      // from the END — i.e. it dropped the MOST RECENT turns and kept the oldest ones, the
+      // opposite of what "do NOT repeat" needs. Fixed the same way as sanitiseChatHistory does
+      // server-side: cap the entry snippet first, then keep the NEWEST conversation lines that
+      // fit whatever budget is left, dropping older lines instead of newer ones.
+      // GTH-CTX-03: was capped at 600 chars (~100 words) — meant "next question" never saw
+      // anything past the start of a longer entry. Raised to 8000 (~2000 tokens, well under a
+      // cent per call at Sonnet's $3/M input rate) so this effectively sends the WHOLE entry for
+      // any realistically-sized memory; the cap is now a defensive ceiling against a pathological
+      // paste, not a cost control.
+      var ENTRY_SNIPPET_MAX = 8000;
+      var SEED_CTX_MAX = 9000;
+      var convoLabel = '\n\nCONVERSATION SO FAR (do NOT repeat any of these topics):\n';
+      var entrySnippet = memAnswer.slice(0, ENTRY_SNIPPET_MAX);
+      var convoBudget = Math.max(0, SEED_CTX_MAX - entrySnippet.length - convoLabel.length);
+      var convoLines = _gethroHistory.slice(-8).map(function(m) {
         return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
-      }).join('\n');
-      var seedCtx = (memAnswer.slice(0, 600) + '\n\nCONVERSATION SO FAR (do NOT repeat any of these topics):\n' + convoSoFar).slice(0, 1000);
+      });
+      var convoSoFar = '';
+      for (var _ci = convoLines.length - 1; _ci >= 0; _ci--) {
+        var _candidate = convoLines[_ci] + (convoSoFar ? '\n' + convoSoFar : '');
+        if (_candidate.length > convoBudget) break;
+        convoSoFar = _candidate;
+      }
+      var seedCtx = entrySnippet + (convoSoFar ? convoLabel + convoSoFar : '');
       await _agpSeedMemoryQuestion(firstName, seedCtx, '');
       return;
     }
@@ -23380,12 +24503,30 @@
     var lastMsg = (_gethroHistory[_gethroHistory.length - 1] || {}).content || '';
     var stopWords = new Set(['what','do','you','think','about','my','the','a','an','is','are','was','were','have','has','had','i','me','we','us','tell','me','know','any','of','in','on','at','to','for','with','and','or','but','how','when','where','who']);
     var keywords = lastMsg.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(function(w) { return w.length > 2 && !stopWords.has(w); });
+    // GTH-CTX-02 (2026-09-25): light stemming — strips a common suffix so "doughnuts" in the
+    // message still matches an entry that only says "doughnut". Deliberately crude (no real
+    // stemmer library): just strips one trailing suffix, and only if 3+ chars remain, so it
+    // can't eat short real words down to noise. Reverse case (entry says "doughnuts", message
+    // says "doughnut") already worked before this, since "doughnut" is already a substring of
+    // "doughnuts" — only the plural/gerund-in-message direction needed help.
+    function _agpStem(w) {
+      var s = w.replace(/(ing|ies|ed|es|s)$/, '');
+      return s.length >= 3 ? s : w;
+    }
     var matchedSnippets = '';
     if (keywords.length) {
       var matched = real.filter(function(e) {
         var haystack = ((e.title || '') + ' ' + (e.answer || '') + ' ' + (e.people || '')).toLowerCase();
-        return keywords.some(function(k) { return haystack.indexOf(k) !== -1; });
+        return keywords.some(function(k) { return haystack.indexOf(k) !== -1 || haystack.indexOf(_agpStem(k)) !== -1; });
       });
+      if (!matched.length) {
+        // GTH-CTX-02: explicit "searched and found nothing" signal, so Gethro can say
+        // "we haven't talked about that yet" confidently instead of a vague non-answer
+        // or (worse) guessing. Previously an empty match just left this field blank.
+        matchedSnippets = '\n[REFERENCE DATA — a keyword search of ALL their entries for: ' +
+          keywords.slice(0, 5).join(', ') + ' — found NO matches. If asked whether this has ' +
+          'come up before, say clearly that it hasn\'t yet, rather than guessing.]\n';
+      }
       if (matched.length) {
         // Sanitise entry content before injecting into prompt — strip control chars and
         // any content that looks like a prompt injection (lines starting with keywords).
@@ -23404,7 +24545,7 @@
     }
 
     // Keep last 6 exchanges as conversation history
-    var historyToSend = _gethroHistory.slice(-12);
+    var historyToSend = _gethroHistory.slice(-40); // GTH-CTX-01: was -12; server re-validates and caps independently (sanitiseChatHistory)
 
     // Detect current screen for contextual help
     var currentScreen = 'unknown';
@@ -23423,12 +24564,24 @@
       if (_bboOv && _bboOv.classList.contains('open')) currentScreen = 'book_organiser';
     } catch(e) {}
 
+    // GTH-CTX-02 (2026-09-25): if they're looking at a specific chapter's drill-down on the
+    // Dashboard, say which one — same "tell Gethro exactly what's on screen" pattern already
+    // used for the Memories tab draft (memoryEntryTitle/memoryEntryText below).
+    var _dashDetailNote = '';
+    try {
+      var _dashDetailEl = document.getElementById('dashChapterDetail');
+      if (_dashDetailEl && _dashDetailEl.style.display !== 'none') {
+        var _dashDetailChapter = (document.getElementById('dashChapterDetailTitle') || {}).textContent || '';
+        if (_dashDetailChapter) _dashDetailNote = 'They are currently looking at the "' + _dashDetailChapter + '" chapter breakdown specifically.\n';
+      }
+    } catch(e) {}
+
     var currentScreenNote = 'USER IS CURRENTLY ON: ' + currentScreen + '\n' +
       (currentScreen === 'my_people' ? 'They are looking at their family tree. Proactively help with: adding people, setting relationships, navigating Tree vs Directory tabs, or tapping a node to edit.\n' : '') +
       (currentScreen === 'memories' ? 'They are on the Add Memory tab. Proactively help with: saving an entry, using the mic, adding details (chapter/people/photos), or using AI Review.\n' : '') +
       (currentScreen === 'entries' ? 'They are browsing their saved memories. Proactively help with: searching, filtering, editing, or sharing an entry.\n' : '') +
       (currentScreen === 'story' ? 'They are on the My Story tab. Proactively help with: generating a story, choosing a format, book details, or printing. IMPORTANT: if the user starts sharing personal memories or life experiences in conversation (even if unprompted), treat it as a memory conversation and set memory_conversation:true — people often reminisce while reviewing their story.\n' : '') +
-      (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' : '') +
+      (currentScreen === 'dashboard' ? 'They are on the Dashboard. Proactively help with: story health, word count, finding gaps in their story, or the My People tile.\n' + _dashDetailNote : '') +
       (currentScreen === 'print_preview' ? 'They are in the print preview. Proactively help with: cover styles, filling in book details, or exporting their print-ready PDF.\n' : '') +
       (currentScreen === 'book_organiser' ? 'They are in the Organise My Book screen. They can: (1) change the chapter for each memory using the dropdown, (2) set a date/year, and (3) drag the ☰ handle on any row to reorder memories within their chapter. Changes save when they tap Save All Changes.\n' : '');
 
@@ -23439,6 +24592,19 @@
       ? 'CURRENT MEMORY TOPIC: Stay focused on the current conversation — do not reference other entries or topics.'
       : ('RECENT ENTRIES (title | chapter | people | snippet):\n' + (entrySummary || 'None yet') + '\n' + matchedSnippets);
 
+    // GTH-CTX-02 (2026-09-25): whole-memoir story map (health score, chapter coverage,
+    // least-explored people/places) — same memory-mode suppression as entriesContext above,
+    // same reasoning: don't let the big picture distract Gethro from the memory at hand.
+    var storyMapContext = _agpMemoryMode ? '' : _agpStoryMapSummary(_agpBuildStoryMap());
+
+    // GTH-CTX-01: explicit flag (was inferred server-side from entriesContext text alone —
+    // that inference stays, as a fallback for any client still on the old payload shape).
+    // In memory mode also send the draft itself so Gethro can see what's already written
+    // instead of asking about it again; server strips/neutralises it before use.
+    var _onMemTabNow = !!(document.getElementById('panel-memories') && document.getElementById('panel-memories').classList.contains('active'));
+    var memoryEntryTitle = (_agpMemoryMode && _onMemTabNow) ? ((document.getElementById('memTitle')  || {}).value || '').slice(0, 200)  : '';
+    var memoryEntryText  = (_agpMemoryMode && _onMemTabNow) ? ((document.getElementById('memAnswer') || {}).value || '').slice(0, 8000) : ''; // GTH-CTX-03: was 3200, raised to match the next-question fix — cost is negligible either way
+
     // After 10 seed questions, switch Gethro into gap-finding mode
     var _agpGapMode = (_agpIsBlankSession && _agpBlankSeedCount >= 10);
     var _agpGapChapters = (entries || [])
@@ -23447,8 +24613,7 @@
     var _agpCoveredChapters = _agpGapChapters.length
       ? Array.from(new Set(_agpGapChapters)).join(', ')
       : 'none yet';
-    var _agpCommonChapters = ['Childhood', 'Family', 'School', 'Career', 'Love & Relationships',
-      'Travel', 'Challenges', 'Achievements', 'Later Life', 'Reflections'];
+    var _agpCommonChapters = _agpCommonChaptersRef; // GTH-CTX-01: single source of truth, see agpLoadRecentTopics block
     var _agpMissingChapters = _agpCommonChapters
       .filter(function(c) { return _agpGapChapters.indexOf(c) === -1; })
       .join(', ');
@@ -23482,6 +24647,10 @@
         agpCoveredChapters: _agpCoveredChapters,
         agpMissingChapters: _agpMissingChapters,
         entriesContext: entriesContext,
+        storyMapContext: storyMapContext, // GTH-CTX-02 (2026-09-25)
+        memoryMode: _agpMemoryMode,
+        memoryEntryTitle: memoryEntryTitle,
+        memoryEntryText: memoryEntryText,
       });
 
       var reply = (parsed.reply || 'I had trouble with that — could you try again?').trim();
@@ -24525,6 +25694,9 @@
   // ── Stop Add Memory dictation mic on tab/window losing focus ──────
   // Mirrors _agpHandleFocusLoss above, for the main memMicBtn dictation mic.
   function _memHandleFocusLoss() {
+    // A prewarm stream is a live getUserMedia track (OS mic-in-use indicator) even
+    // though _micState isn't 'recording' yet. No-op if nothing is prewarmed.
+    MicManager.cancelPrewarm();
     if (_micState === 'recording') {
       dbg('MIC', 'Focus lost — stopping recording');
       stopMemMic();
@@ -24703,9 +25875,17 @@
   };
 
   // ── Open overlay ─────────────────────────────────────────────────
+  var _mpBodyOverflowBeforeOpen = null; // restore point for the scroll-lock below
+
   async function openMyPeople() {
     var overlay = document.getElementById('myPeopleOverlay');
     overlay.style.display = 'flex';
+    // The overlay is position:fixed;inset:0, so it visually covers the whole page —
+    // but without this, the page BEHIND it is still scrollable. Dragging the browser's
+    // scrollbar then scrolls the hidden page while the fixed overlay on top stays put,
+    // which looks exactly like "the scrollbar moves but nothing on screen does."
+    _mpBodyOverflowBeforeOpen = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     document.getElementById('mpReviewScreen').style.display = 'none';
     // Always open on Tree tab
     _mpActiveTab = 'tree';
@@ -24716,6 +25896,7 @@
 
   function closeMyPeople() {
     document.getElementById('myPeopleOverlay').style.display = 'none';
+    document.body.style.overflow = _mpBodyOverflowBeforeOpen || '';
   }
 
   // ── Load data ────────────────────────────────────────────────────
@@ -24789,7 +25970,7 @@
   //   Each root node: { id, name, marriages: [{ spouse, children: [] }] }
   //   We root the tree at the 'self' node and build outward.
   //
-  var _mpDTreeInstance = null; // holds the dTree object for recentre/reset
+  var _mpDTreeInstance = null; // holds whatever dTree.init() returns (untrusted — see _mpFitTree)
 
   // Emoji fallback map
   var _mpEmojiMap = {
@@ -24816,6 +25997,19 @@
   };
 
   function _mpBuildDTreeData() {
+    // Dump the raw inputs before any tree-walking logic touches them. Only 3 of 10
+    // people made it into the last build, so the next thing to look at is the source
+    // data itself — names + relationship_type per person, and every (a, b, type) rel
+    // row — not the tree-walking code, until we can see what it's actually working with.
+    dbg('PEOPLE', 'RAW _mpPeople (id | name | relationship_type):');
+    console.table(_mpPeople.map(function(p) {
+      return { id: p.id, name: p.name, relationship_type: p.relationship_type };
+    }));
+    dbg('PEOPLE', 'RAW _mpRels (person_a_id | person_b_id | relationship_type):');
+    console.table(_mpRels.map(function(r) {
+      return { a: r.person_a_id, b: r.person_b_id, type: r.relationship_type };
+    }));
+
     // Build lookup maps from _mpRels
     var childrenOf  = {};  // parentId  → [childId]
     var parentsOf   = {};  // childId   → [parentId]
@@ -24967,11 +26161,19 @@
 
           var spouseKids    = childrenOf[spouseId] || [];
           var sharedKids    = myChildren.filter(function(cid) { return spouseKids.indexOf(cid) !== -1; });
+          // Kids recorded under ONLY the spouse's side (e.g. "child_of Saba" was entered
+          // but "child_of Mum" never was). There's no ambiguity about which marriage these
+          // belong to — we already know the exact spouse — so always pull them in here,
+          // regardless of which side "owns" the marriage node for layout purposes.
+          var spouseOnlyKids = spouseKids.filter(function(cid) { return myChildren.indexOf(cid) === -1; });
           var isFirstSpouse = mySpouses.indexOf(spouseId) === 0;
           var unattributed  = myChildren.filter(function(cid) {
             return mySpouses.every(function(sid) { return (childrenOf[sid] || []).indexOf(cid) === -1; });
           });
-          var marriageKids  = sharedKids.concat(isFirstSpouse ? unattributed : []);
+          var marriageKids  = sharedKids
+            .concat(isFirstSpouse ? unattributed : [])
+            .concat(spouseOnlyKids)
+            .filter(function(cid, idx, arr) { return arr.indexOf(cid) === idx; }); // dedup
 
           nodeMap[p.id].marriages.push({
             spouse:   nodeMap[spouseId] || makeNode(spouse),
@@ -25009,6 +26211,27 @@
 
     var data = _mpBuildDTreeData();
     if (!data || !data.length) return;
+
+    // Hard evidence, not another guess: walk the exact structure we're about to hand
+    // to dTree and count every named node in it (people + spouses), plus collect the
+    // names, so a "tree looks too small" or "person appears twice" symptom can be
+    // confirmed or ruled out BEFORE blaming rendering/zoom again.
+    (function() {
+      var names = [];
+      function walk(node) {
+        if (!node) return;
+        names.push(node.name);
+        (node.children || []).forEach(walk);
+        (node.marriages || []).forEach(function(m) {
+          if (m.spouse) names.push(m.spouse.name + ' (spouse)');
+          (m.children || []).forEach(walk);
+        });
+      }
+      data.forEach(walk);
+      dbg('PEOPLE', '_mpBuildDTreeData output: roots=' + data.length +
+        ' totalNamedNodes=' + names.length + ' peopleCount=' + _mpPeople.length);
+      console.log('[PEOPLE] dTree data names (in build order):', names);
+    })();
 
     var vp    = document.getElementById('mpCanvasViewport');
     var vpW   = vp ? vp.offsetWidth  || 360 : 360;
@@ -25079,20 +26302,59 @@
         });
       }
 
-      // Fit the whole tree into the viewport after a tick
-      if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
-        setTimeout(function() {
-          try { _mpDTreeInstance.zoomToFit(300); } catch(e) {}
-        }, 100);
-      }
+      // Log exactly what dTree.init() gave us back, in full — not just Object.keys,
+      // which prints nothing useful when the value isn't a plain object. This is a
+      // one-time diagnostic: if _mpDTreeVal below is ever anything other than an
+      // object with a zoomToFit function, the locally-hosted /dtree.min.js does NOT
+      // match the public d3-dtree@2.4.1 API and that mismatch — not our render
+      // logic — is the thing to chase.
+      dbg('PEOPLE', 'dTree.init returned: typeof=' + (typeof _mpDTreeInstance));
+      console.log('[PEOPLE] raw _mpDTreeInstance:', _mpDTreeInstance);
+
+      // Fit the whole tree into the viewport after render. We do NOT rely on
+      // _mpDTreeInstance.zoomToFit — see notes above on why that's unverified for
+      // this deployment. Instead we bind our OWN d3.zoom() directly to the <svg>
+      // dTree just created, and drive fit/pan/zoom entirely ourselves from here on.
+      // See _mpFitTree() for the implementation.
+      setTimeout(function() {
+        var fos = container.querySelectorAll('foreignObject');
+        var visibleCards = container.querySelectorAll('.mpNode'); // excludes the hidden dummy-spouse divs
+        dbg('PEOPLE', 'DOM after render: foreignObjects=' + fos.length + ' visibleCards=' + visibleCards.length);
+        _mpFitTree(vp, container);
+      }, 400);
     } catch(e) {
-      dbgErr('PEOPLE', 'dTree render error: ' + e.message); notifyDev('error', 'PEOPLE', String(e && e.message || e)); logActivity('people_error', String(e && e.message || e), 'error', 'PEOPLE');
+      dbgErr('PEOPLE', 'dTree render error: ' + e.message + ' | ' + (e.stack || '')); notifyDev('error', 'PEOPLE', String(e && e.message || e)); logActivity('people_error', String(e && e.message || e), 'error', 'PEOPLE');
     }
 
     // Post-render: style SVG connector paths to match design system colours
     requestAnimationFrame(function() {
       var svg = container.querySelector('svg');
       if (!svg) return;
+
+      // FAM-06-FIXES (2026-09-27) — "scroll wheel zooms instead of scrolls" bug.
+      // ROOT CAUSE: the vendored /dtree.min.js still binds its OWN d3.zoom()
+      // behavior internally — confirmed by the `#mpDTree .zoom` grab/grabbing-cursor
+      // CSS (~line 13164), a class name we never added ourselves, so dTree must be
+      // the one applying it via d3.zoom's default styling hook. d3.zoom's default
+      // wheel handler zooms on ANY wheel scroll, not just ctrl+wheel — completely
+      // separate from, and fought with, our own explicit-scale system
+      // (_mpApplyZoomState/mpZoomIn/mpZoomOut) and our own ctrl+wheel-only listener
+      // on #mpCanvasViewport (~line 42891, which already correctly lets plain
+      // scroll through — that listener was never the bug). dTree's internal zoom
+      // is bound to an element INSIDE the SVG, so it saw plain wheel events first
+      // and zoomed before they ever bubbled out to our listener.
+      // FIX: strip dTree's own wheel-zoom listener (d3's 'wheel.zoom' namespace)
+      // every render. Deliberately NOT touching mousedown/touchstart('.zoom') —
+      // that's dTree's drag-to-pan, not reported broken, and removing it would
+      // leave desktop click-drag panning with no replacement (native overflow:auto
+      // scrollbar-drag is not the same gesture). If dTree's zoom was never actually
+      // bound (matches the zoomToFit-mismatch note above), this is a harmless no-op.
+      if (window.d3 && typeof d3.select === 'function') {
+        var _mpZoomEl = svg.querySelector('.zoom') || svg;
+        d3.select(_mpZoomEl).on('wheel.zoom', null);
+        if (_mpZoomEl !== svg) d3.select(svg).on('wheel.zoom', null);
+      }
+
       // Connector lines
       svg.querySelectorAll('path.mpDTreeLink, path.linage').forEach(function(el) {
         el.style.stroke = borderColor;
@@ -25112,12 +26374,102 @@
     });
   }
 
-  function mpRecentre() {
-    if (_mpDTreeInstance && _mpDTreeInstance.zoomToFit) {
-      try { _mpDTreeInstance.zoomToFit(300); } catch(e) { _mpRender(); }
-    } else {
-      _mpRender();
+  // Native-scroll canvas with an explicit zoom LEVEL (not a drag-pan transform).
+  // Zooming works by growing/shrinking the <svg> element's own width/height
+  // attributes (while keeping viewBox fixed to the unscaled content size) — the
+  // standard SVG technique for "render this coordinate space at N× size". Because
+  // that's a real change to the element's rendered size (not a CSS transform: scale,
+  // which was tried and broken earlier in this conversation), the overflow:auto
+  // container picks it up automatically and grows/shrinks its scrollbars to match.
+  // No d3.zoom, no drag handling, no pinch/ctrl+wheel — deliberately not intercepting
+  // trackpad/browser-level zoom gestures, since this overlay is position:fixed and
+  // OS-level pinch-zoom on a fixed element is a known source of "looks broken after
+  // zooming" bugs that have nothing to do with our code.
+  var _mpTreeBBox  = null; // raw, unscaled content bounds from the last render
+  var _mpZoomScale = 1;    // current zoom level; 1 = one CSS px per SVG unit
+  var MP_ZOOM_PAD  = 40, MP_ZOOM_MIN = 0.2, MP_ZOOM_MAX = 3, MP_ZOOM_STEP = 1.25;
+
+  function _mpApplyZoomState() {
+    var container = document.getElementById('mpDTree');
+    var vp        = document.getElementById('mpCanvasViewport');
+    var svg       = container ? container.querySelector('svg') : null;
+    var g         = svg ? svg.querySelector('g') : null;
+    if (!svg || !g || !_mpTreeBBox || !vp) return;
+
+    var bb   = _mpTreeBBox;
+    var rawW = bb.width  + MP_ZOOM_PAD * 2; // unscaled viewBox size — never changes with zoom
+    var rawH = bb.height + MP_ZOOM_PAD * 2;
+    var pxW  = rawW * _mpZoomScale;         // actual rendered size — this is what changes
+    var pxH  = rawH * _mpZoomScale;
+
+    g.setAttribute('transform', 'translate(' + (MP_ZOOM_PAD - bb.x) + ',' + (MP_ZOOM_PAD - bb.y) + ')');
+    svg.setAttribute('viewBox', '0 0 ' + rawW + ' ' + rawH);
+    svg.setAttribute('width',  Math.ceil(pxW));
+    svg.setAttribute('height', Math.ceil(pxH));
+
+    // Stay centered at every zoom level using 'safe center' rather than toggling
+    // between flex/centered and block/top-left. Plain 'center' is what caused the
+    // jump the user saw: the instant content stopped fitting, we switched to
+    // block+top-left and everything visually snapped to the corner. 'safe center'
+    // keeps flex centering permanently, but on whichever axis actually overflows
+    // it automatically falls back to start-alignment for THAT axis only — so
+    // content stays centered until it doesn't fit, then scrolls from a sane edge
+    // instead of jumping. (Supported in all current major browsers.)
+    container.style.display        = 'flex';
+    container.style.alignItems     = 'safe center';
+    container.style.justifyContent = 'safe center';
+
+    var vpr = vp.getBoundingClientRect();
+    var willScroll = (pxW > vpr.width) || (pxH > vpr.height);
+
+    dbg('PEOPLE', '_mpApplyZoomState' +
+      ' scale=' + _mpZoomScale.toFixed(2) +
+      ' svg=' + Math.ceil(pxW) + 'x' + Math.ceil(pxH) +
+      ' vp=' + Math.round(vpr.width) + 'x' + Math.round(vpr.height) +
+      ' willScroll=' + willScroll
+    );
+  }
+
+  // Called once per render. Measures the fresh content, picks a starting zoom level
+  // that fits the whole tree on screen (capped at 100%, so small trees don't get
+  // blown up), and centers it — this is the "starts zoomed out and centered"
+  // behaviour from before, now compatible with real scrolling once the person
+  // zooms in past that starting level via the +/- buttons.
+  function _mpFitTree(vp, container) {
+    try {
+      var svg = container.querySelector('svg');
+      var g   = svg ? svg.querySelector('g') : null;
+      if (!svg || !g) { dbgErr('PEOPLE', '_mpFitTree: missing svg/g — cannot fit'); return; }
+
+      var bb = g.getBBox(); // NOT affected by g's own transform attribute — safe to re-measure any time
+      if (!bb.width || !bb.height) { dbgErr('PEOPLE', '_mpFitTree: zero-size bbox, skipping'); return; }
+      _mpTreeBBox = bb;
+
+      var vpr  = vp.getBoundingClientRect();
+      var rawW = bb.width  + MP_ZOOM_PAD * 2;
+      var rawH = bb.height + MP_ZOOM_PAD * 2;
+      var fitScale = 0.94 * Math.min(vpr.width / rawW, vpr.height / rawH);
+      _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(fitScale, 1)); // cap at 100% — don't blow up tiny trees
+
+      _mpApplyZoomState();
+      vp.scrollLeft = 0;
+      vp.scrollTop  = 0;
+    } catch(e) {
+      dbgErr('PEOPLE', '_mpFitTree error: ' + e.message + ' | ' + (e.stack || ''));
+      notifyDev('error', 'PEOPLE', '_mpFitTree: ' + String(e && e.message || e));
+      logActivity('people_error', '_mpFitTree: ' + String(e && e.message || e), 'error', 'PEOPLE');
     }
+  }
+
+  function mpZoomIn()  { _mpZoomScale = Math.min(MP_ZOOM_MAX, _mpZoomScale * MP_ZOOM_STEP); _mpApplyZoomState(); }
+  function mpZoomOut() { _mpZoomScale = Math.max(MP_ZOOM_MIN, _mpZoomScale / MP_ZOOM_STEP); _mpApplyZoomState(); }
+
+  // "Fit tree to screen" button — recompute the fit-to-screen zoom level fresh
+  // (viewport size may have changed) and reset scroll, same as the initial render.
+  function mpRecentre() {
+    var vp        = document.getElementById('mpCanvasViewport');
+    var container = document.getElementById('mpDTree');
+    if (vp && container && container.querySelector('svg')) _mpFitTree(vp, container);
   }
 
   // Stubs — toolbar buttons won't throw if called
@@ -25227,7 +26579,95 @@
     document.getElementById('mpPersonModal').style.display = 'flex';
   }
 
-  // Called from profile panel — delete the currently open person
+  // FAM-05: full family-tree reset — lets the client start over when old tree
+  // data can't be trusted (motivated by FAM-04 Bug 1, duplicate "Mum" rows of
+  // unclear provenance). SCOPE: only life_people + life_people_relationships.
+  // Does NOT touch life_entries' people tags — names typed into memory text
+  // are untouched; confirmation copy says so explicitly so it can't be misread
+  // as "delete every mention of my family."
+  //
+  // OPEN QUESTION from the original plan — now answered by reading the code:
+  // does wiping the tree also need to reset some auto-seed flag so re-opening
+  // My People doesn't silently recreate a stale self/subject node? No such
+  // flag exists. Both _famAutoSeedSubjectPerson() (subjectMode 'other', see
+  // ~line 19948) and the self-node creation inside mpReviewSave() (subjectMode
+  // 'self', ~line 38459) check "does a row with this name/type already exist"
+  // and create one on demand if missing — there's nothing else to reset. The
+  // self/subject node self-heals correctly on next login or next action that
+  // needs one, which is the better of the two options the plan raised (always
+  // regenerate live from the profile, rather than trying to suppress it).
+  async function mpDeleteTree() {
+    if (!currentUser) return;
+
+    var count = _mpPeople.length;
+    var noun  = count === 1 ? 'person' : 'people';
+
+    // Step 1: stern warning naming exactly what's destroyed
+    var step1 = confirm(
+      '⚠️ DELETE FAMILY TREE — This cannot be undone.\n\n' +
+      'This will permanently remove:\n' +
+      '  • All ' + count + ' ' + noun + ' in your family tree\n' +
+      '  • Every relationship between them\n\n' +
+      'This does NOT delete anything from your written memories — names ' +
+      'you\'ve typed into entries are untouched. Only the tree itself is ' +
+      'cleared.\n\n' +
+      'Are you sure you want to continue?'
+    );
+    if (!step1) return;
+
+    // Step 2: type DELETE — lighter than deleteAccount()'s typed-email check,
+    // since the blast radius here is much smaller (tree only, not the whole
+    // account), but this is still irreversible and the data's own history is
+    // already unclear, so a plain "are you sure" isn't enough on its own.
+    var typed = prompt('Type DELETE (in capitals) to confirm.');
+    if (typed === null) return;
+    if (typed.trim() !== 'DELETE') {
+      toast('Did not match — family tree deletion cancelled.');
+      return;
+    }
+
+    // Step 3: absolute last chance
+    var step3 = confirm(
+      '🔴 LAST CHANCE\n\n' +
+      'Deleting your entire family tree (' + count + ' ' + noun + ').\n\n' +
+      'Press OK to delete, Cancel to keep your tree.'
+    );
+    if (!step3) return;
+
+    notifyDev('warn', 'PEOPLE', 'Family tree deletion confirmed by user: ' + currentUser.email);
+    var headers = getAuthHeaders();
+    try {
+      // Relationships first, then people — same order as mpProfileDelete()'s
+      // single-person delete just above, and for the same reason (a
+      // relationship row left pointing at a deleted person is worse than a
+      // person row briefly outliving its relationships).
+      var relRes = await fetch(DB_PEOPLE_REL_URL + '?user_id=eq.' + currentUser.id,
+        { method: 'DELETE', headers: headers });
+      if (!relRes.ok) throw new Error('Relationship delete failed (' + relRes.status + ')');
+
+      var peopleRes = await fetch(DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id,
+        { method: 'DELETE', headers: headers });
+      if (!peopleRes.ok) throw new Error('People delete failed (' + peopleRes.status + ')');
+
+      _mpPeople = [];
+      _mpRels   = [];
+      var dt = document.getElementById('mpDTree');
+      if (dt) dt.innerHTML = '';
+      var emptyEl = document.getElementById('mpEmptyState');
+      if (emptyEl) emptyEl.style.display = 'flex';
+      if (_mpActiveTab === 'directory') mpDirRender();
+
+      logActivity('family_tree_deleted', count + ' people removed', 'warn', 'PEOPLE');
+      toast('Your family tree has been deleted.');
+      closeSettings();
+    } catch (e) {
+      dbgErr('PEOPLE', 'mpDeleteTree error: ' + e.message);
+      notifyDev('error', 'PEOPLE', 'Family tree deletion failed: ' + String(e && e.message || e));
+      logActivity('people_error', 'mpDeleteTree: ' + String(e && e.message || e), 'error', 'PEOPLE');
+      toast('Could not delete your family tree — please try again.');
+    }
+  }
+
   async function mpProfileDelete() {
     var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
     if (!person) return;
@@ -25265,29 +26705,40 @@
   function mpDeleteSelected() { mpProfileDelete(); }
 
   // ── My People — Tab switcher (Phase 5) ─────────────────────────────
-  var _mpActiveTab = 'tree';  // 'tree' | 'directory'
+  var _mpActiveTab = 'tree';  // 'tree' | 'directory' | 'feedback'
 
   function mpSwitchTab(tab) {
     _mpActiveTab = tab;
-    var treeVp   = document.getElementById('mpCanvasViewport');
-    var dirPanel = document.getElementById('mpDirPanel');
-    var treeCtrl = document.getElementById('mpTreeControls');
-    var tabTree  = document.getElementById('mpTabTree');
-    var tabDir   = document.getElementById('mpTabDir');
+    var treeVp      = document.getElementById('mpCanvasViewport');
+    var dirPanel    = document.getElementById('mpDirPanel');
+    var feedPanel   = document.getElementById('mpFeedbackPanel');
+    var treeCtrl    = document.getElementById('mpTreeControls');
+    var tabTree     = document.getElementById('mpTabTree');
+    var tabDir      = document.getElementById('mpTabDir');
+    var tabFeedback = document.getElementById('mpTabFeedback');
+
+    // Reset all panels + tab styles
+    if (treeVp)      treeVp.style.display      = 'none';
+    if (dirPanel)    dirPanel.style.display     = 'none';
+    if (feedPanel)   feedPanel.style.display    = 'none';
+    if (treeCtrl)    treeCtrl.style.display     = 'none';
+    if (tabTree)     { tabTree.style.borderBottom     = '2px solid transparent'; tabTree.style.color     = 'var(--text-light)'; }
+    if (tabDir)      { tabDir.style.borderBottom      = '2px solid transparent'; tabDir.style.color      = 'var(--text-light)'; }
+    if (tabFeedback) { tabFeedback.style.borderBottom = '2px solid transparent'; tabFeedback.style.color = 'var(--text-light)'; }
 
     if (tab === 'tree') {
-      if (treeVp)   treeVp.style.display    = '';        // restores flex:1
-      if (dirPanel) dirPanel.style.display  = 'none';
-      if (treeCtrl) treeCtrl.style.display  = 'flex';
+      if (treeVp)   treeVp.style.display   = '';        // restores flex:1
+      if (treeCtrl) treeCtrl.style.display = 'flex';
       if (tabTree)  { tabTree.style.borderBottom = '2px solid var(--gold)'; tabTree.style.color = 'var(--text)'; }
-      if (tabDir)   { tabDir.style.borderBottom  = '2px solid transparent'; tabDir.style.color  = 'var(--text-light)'; }
-    } else {
-      if (treeVp)   treeVp.style.display    = 'none';
-      if (dirPanel) dirPanel.style.display  = 'block';
-      if (treeCtrl) treeCtrl.style.display  = 'none';
-      if (tabTree)  { tabTree.style.borderBottom = '2px solid transparent'; tabTree.style.color = 'var(--text-light)'; }
-      if (tabDir)   { tabDir.style.borderBottom  = '2px solid var(--gold)'; tabDir.style.color  = 'var(--text)'; }
+    } else if (tab === 'directory') {
+      if (dirPanel) dirPanel.style.display = 'block';
+      if (tabDir)   { tabDir.style.borderBottom = '2px solid var(--gold)'; tabDir.style.color = 'var(--text)'; }
       mpDirRender();
+    } else if (tab === 'feedback') {
+      // FAM-06-FIX (2026-09-27): show accepted tree feedback
+      if (feedPanel)   feedPanel.style.display   = 'block';
+      if (tabFeedback) { tabFeedback.style.borderBottom = '2px solid var(--gold)'; tabFeedback.style.color = 'var(--text)'; }
+      _mpRenderFeedbackTab();
     }
   }
 
@@ -25310,6 +26761,51 @@
     document.getElementById('mpPersonSaveBtn').textContent = 'Save';
     document.getElementById('mpPersonModal').style.display = 'flex';
     setTimeout(function() { document.getElementById('mpPersonName').focus(); }, 50);
+  }
+
+  // ── FAM-06-FIX (2026-09-27): Feedback tab renderer ──────────────────────
+  // Renders _mpAcceptedTreeFeedback[] into #mpFeedbackList.
+  // Each card shows name, timestamp, message, and a Dismiss button to remove it.
+  function _mpRenderFeedbackTab() {
+    var listEl  = document.getElementById('mpFeedbackList');
+    var emptyEl = document.getElementById('mpFeedbackEmpty');
+    if (!listEl) return;
+
+    var items = _mpAcceptedTreeFeedback;
+    if (!items.length) {
+      listEl.innerHTML  = '';
+      if (emptyEl) emptyEl.style.display = 'block';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    listEl.innerHTML = items.map(function(fb) {
+      var timeAgo = formatTimeAgo(fb.created_at);
+      return '<div id="mp-tree-fb-' + escHtml(fb.id) + '" style="background:var(--surface2);border-radius:10px;padding:14px 16px">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
+          '<div>' +
+            '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(fb.commenter_name) + '</span>' +
+            '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
+          '</div>' +
+          '<button data-action="dismiss-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
+            'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap;flex-shrink:0">' +
+            'Dismiss' +
+          '</button>' +
+        '</div>' +
+        (fb.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0">' + escHtml(fb.text) + '</p>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  // Remove a single accepted tree-feedback card from the in-memory store + DOM
+  function _mpDismissTreeFeedback(feedbackId) {
+    _mpAcceptedTreeFeedback = _mpAcceptedTreeFeedback.filter(function(fb) { return fb.id !== feedbackId; });
+    var card = document.getElementById('mp-tree-fb-' + feedbackId);
+    if (card) card.remove();
+    // Show empty state if nothing left
+    var listEl  = document.getElementById('mpFeedbackList');
+    var emptyEl = document.getElementById('mpFeedbackEmpty');
+    if (listEl && !listEl.children.length && emptyEl) emptyEl.style.display = 'block';
   }
 
   // Render the directory list (filtered by search + bucket)
@@ -29267,6 +30763,11 @@
     on('storyShareGmailBtn',      'click', function() { _storyShareVia('gmail'); });
     on('storyShareFacebookBtn',   'click', function() { _storyShareVia('facebook'); });
     on('storyShareCopyBtn',       'click', function() { _storyShareVia('copy'); });
+    on('treeShareModalCloseBtn',  'click', _treeShareModalClose);
+    on('treeShareWhatsappBtn',    'click', function() { _treeShareVia('whatsapp'); });
+    on('treeShareGmailBtn',       'click', function() { _treeShareVia('gmail'); });
+    on('treeShareFacebookBtn',    'click', function() { _treeShareVia('facebook'); });
+    on('treeShareCopyBtn',        'click', function() { _treeShareVia('copy'); });
 
     // ── Post-generation buttons ───────────────────────────────────────────
     on('postGenListenBtn', 'click', _postGenListen);
@@ -29328,12 +30829,53 @@
 
     // ── My People ────────────────────────────────────────────────────────
     on('mpRecentreBtn',        'click', mpRecentre);
+    on('mpShareTreeBtn',       'click', _mpOpenTreeShareModal);
+    on('mpZoomInBtn',          'click', mpZoomIn);
+    on('mpZoomOutBtn',         'click', mpZoomOut);
+    // Trackpad pinch-to-zoom (and ctrl+scroll) are intercepted and redirected into
+    // our OWN zoom system, rather than blocked outright. Left unhandled, this
+    // gesture zooms the whole browser page (that's literally what desktop trackpad
+    // pinch does — Chrome/Firefox deliver it as `wheel` with ctrlKey:true, Safari
+    // as its own `gesture*` events), which desyncs from this position:fixed overlay
+    // and our own SVG-based zoom/scroll math — that's what looked like "scrolling
+    // stops working after pinching". Feeding the same gesture into mpZoomIn/Out's
+    // pathway keeps it intuitive while keeping everything in one coordinate system.
+    (function() {
+      var mpVpEl = document.getElementById('mpCanvasViewport');
+      if (!mpVpEl) return;
+
+      // Chrome / Firefox / Edge: trackpad pinch arrives as wheel+ctrlKey.
+      mpVpEl.addEventListener('wheel', function(e) {
+        if (!e.ctrlKey) return; // plain scroll — let it through untouched
+        e.preventDefault();
+        var factor = Math.exp(-e.deltaY * 0.01);
+        _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, _mpZoomScale * factor));
+        _mpApplyZoomState();
+      }, { passive: false });
+
+      // Safari: trackpad pinch arrives as non-standard gesture* events instead of
+      // wheel+ctrlKey. Feature-detected so this is a no-op elsewhere.
+      if ('ongesturestart' in window) {
+        var gestureStartScale = 1;
+        mpVpEl.addEventListener('gesturestart', function(e) {
+          e.preventDefault();
+          gestureStartScale = _mpZoomScale;
+        });
+        mpVpEl.addEventListener('gesturechange', function(e) {
+          e.preventDefault();
+          _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, gestureStartScale * e.scale));
+          _mpApplyZoomState();
+        });
+        mpVpEl.addEventListener('gestureend', function(e) { e.preventDefault(); });
+      }
+    })();
     on('mpGethroBtn',          'click', function() { openAskGethro(); });
     on('mpCloseBtn',           'click', closeMyPeople);
     on('dashResponsesTile',    'click', openResponsesOverlay);
     on('respCloseBtn',         'click', closeResponsesOverlay);
     on('mpTabTree',            'click', function() { mpSwitchTab('tree'); });
     on('mpTabDir',             'click', function() { mpSwitchTab('directory'); });
+    on('mpTabFeedback',        'click', function() { mpSwitchTab('feedback'); }); // FAM-06-FIX (2026-09-27)
     on('mpAddFirstPersonBtn',  'click', mpOpenAddPerson);
     on('mpDirSearch',          'input', mpDirRender);
     on('mpDirBucketFilter',    'change',mpDirRender);
@@ -29429,6 +30971,7 @@
     on('giftRedeemLaterBtn',      'click', dismissGiftRedemption); // GIFT-P2
     on('giftRedeemCloseBtn',      'click', dismissGiftRedemption); // GIFT-P2: X = same as "later", don't lose the code
     on('deleteAccountBtn',        'click', deleteAccount); // BUGFIX: button had no handler at all — clicking did nothing
+    on('deleteFamilyTreeBtn',     'click', mpDeleteTree);
     on('settingsSubjectSaveBtn',  'click', saveSettingsSubject); // FAM-01b
     // Email nudge toggle + frequency buttons (wired here — settings overlay is in DOM at init)
     on('emailNudgeToggle',    'click', toggleEmailNudge);
@@ -29471,6 +31014,11 @@
     on('obStep5Btn', 'click', function() { obGoStep(6); });
     on('obStep6Back','click', function() { obGoStep(5); });
     on('obStep6Btn', 'click', function() { obGoStep(7); });
+    on('obEmailYesBtn',     'click', obEmailYes);
+    on('obEmailNoBtn',      'click', obEmailNo);
+    on('obFreqDaily',       'click', function() { obSelectEmailFreq('daily'); });
+    on('obFreqWeekly',      'click', function() { obSelectEmailFreq('weekly'); });
+    on('obFreqFortnightly', 'click', function() { obSelectEmailFreq('fortnightly'); });
     on('obStep7Back','click', function() { obGoStep(6); });
     on('obStep7Btn', 'click', obEnterApp);
 
@@ -29686,9 +31234,13 @@
           break;
         }
         case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
+        case 'accept-tree-feedback':    if (fbId) acceptTreeFeedback(fbId, name); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
         case 'open-piece-from-feedback': { var _cid = btn.dataset.componentId || null; if (_cid) _openLibraryToPiece(_cid); break; }
+        case 'open-tree-from-feedback':  { openMyPeople(); mpSwitchTab('feedback'); break; }
+        // FAM-06-FIX (2026-09-27): dismiss a tree feedback card from within the Feedback tab
+        case 'dismiss-tree-feedback': { if (fbId) _mpDismissTreeFeedback(fbId); break; }
         // ── AI Review panel actions (PRV-09 extension) ──
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
@@ -29794,7 +31346,19 @@
     // are injected into memSpellPanel and improve-* panels outside the entry lists.
     // _entryCardDelegate checks btn.closest('[data-action]') so non-matching clicks are no-ops.
     var _appShell = document.getElementById('appShell');
-    if (_appShell) _appShell.addEventListener('click', _entryCardDelegate);
+    // BUGFIX [DELEGATE-DBLFIRE]: reviewEntryList/dashChapterDetailList/chapterDetailList
+    // are all descendants of appShell, so a click inside any of them was bubbling up and
+    // running _entryCardDelegate a SECOND time here — every delegated action fired twice
+    // per click. Mostly invisible (a second deleteEntry/editEntryText on an already-
+    // handled id just no-ops), but for a pure toggle like toggle-voice-archives, running
+    // it twice is a no-op overall (open then immediately close), which looked like the
+    // button did nothing. Fix: skip here if the click originated inside one of the three
+    // containers that already have their own direct listener — this appShell listener now
+    // only handles delegate actions injected elsewhere (e.g. memSpellPanel, improve-* panels).
+    if (_appShell) _appShell.addEventListener('click', function(e) {
+      if (e.target.closest('#reviewEntryList, #dashChapterDetailList, #chapterDetailList')) return;
+      _entryCardDelegate(e);
+    });
 
     // PRV-09 Phase 9: Audiobook builder delegation
     var _abPickerListEl = document.getElementById('abPickerList');
@@ -30072,6 +31636,17 @@
       <button id="voicesRecordBtn" class="btn btn-ghost" style="width:100%;font-size:0.85rem;padding:9px;margin-top:4px">&#x1F399;&#xFE0F; + Record a voice</button>
 
       <p id="voicesStatus" style="font-size:0.78rem;color:var(--text-light);margin:8px 0 0;min-height:1em"></p>
+    </div>
+
+    <!-- FAM-05: Delete Family Tree — lives here, next to Delete Account,
+         rather than inside the tree view itself, since this is a rare/severe
+         action and shouldn't sit next to the everyday tree controls. -->
+    <div style="border:2px solid var(--rose);border-radius:12px;padding:18px;background:rgba(180,60,60,0.04);margin-bottom:16px">
+      <h4 style="font-size:0.85rem;font-weight:700;color:var(--rose);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">🌳 Delete Family Tree</h4>
+      <p style="font-size:0.85rem;color:var(--text-light);line-height:1.6;margin-bottom:14px">
+        Permanently removes everyone in your family tree and the relationships between them, so you can start over. Your written memories and any names tagged in them are <strong>not</strong> affected — only the tree itself is cleared.
+      </p>
+      <button class="btn btn-danger" id="deleteFamilyTreeBtn" style="width:100%;font-size:0.88rem">🗑 Delete My Family Tree</button>
     </div>
 
     <!-- Delete Account -->
@@ -30475,6 +32050,72 @@
      (gethroSpeak/_abSpeak), voice preview (_previewVoice), and photo
      description pre-flight (describePhoto via RL-09). Final Edit keeps its
      existing #feAIPanel inline treatment — not in scope for this modal. -->
+
+  <!-- FAM-06 fix (2026-09-27): treeShareModal was originally nested inside
+       #panel-story (copy-pasted next to storyShareModal, which legitimately
+       lives there). But "Share my tree" opens from myPeopleOverlay, not the
+       Story tab, so it was silently inheriting .panel { display:none }
+       whenever Story wasn't the active tab. The click handler ran and set
+       display:flex correctly every time — the modal just stayed invisible
+       because a display:none ancestor hides all descendants regardless of
+       their own display value. Moved out here to sit alongside the other
+       always-mounted, top-level overlays (rlUpgradeModal, giftModal), never
+       nested inside any tab panel. -->
+
+    <!-- FAM-06 (2026-09-26): Share my tree modal — same shape as storyShareModal
+         minus the per-entry Q&A framing (a tree has no single "question"). -->
+    <div id="treeShareModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <h3 style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0">Share your family tree</h3>
+          <button id="treeShareModalCloseBtn" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
+        </div>
+        <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
+          Anyone with the link can view your tree (read-only — they can't edit it) and leave feedback. This includes the names and photos of people you've added, not just your own story.
+        </p>
+        <div style="margin-bottom:14px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a message (optional)</label>
+          <textarea id="treeShareNote" rows="2" placeholder="e.g. Let me know if anything looks wrong!"
+            style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Link expires after</label>
+          <select id="treeShareExpiry" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px">
+          <input type="checkbox" id="treeShareConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+          <label for="treeShareConsent" style="font-size:0.8rem;color:var(--text-light);line-height:1.5;cursor:pointer">I understand anyone with this link can view my family tree — including other people's names and photos — and that their name and any feedback they leave will be stored.</label>
+        </div>
+        <p id="treeShareError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-8px 0 14px;line-height:1.5"></p>
+        <div id="treeShareBtns">
+          <p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:12px">Share via</p>
+          <div style="display:flex;justify-content:space-around;margin-bottom:16px">
+            <button id="treeShareWhatsappBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#25D366;display:flex;align-items:center;justify-content:center;font-size:1.6rem">💬</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">WhatsApp</span>
+            </button>
+            <button id="treeShareGmailBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#EA4335;display:flex;align-items:center;justify-content:center;font-size:1.6rem">✉️</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Gmail</span>
+            </button>
+            <button id="treeShareFacebookBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:#1877F2;display:flex;align-items:center;justify-content:center;font-size:1.6rem">👤</div>
+              <span style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Facebook</span>
+            </button>
+            <button id="treeShareCopyBtn" style="display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;width:72px">
+              <div style="width:52px;height:52px;border-radius:14px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.6rem">🔗</div>
+              <span id="treeShareCopyLabel" style="font-size:0.72rem;color:var(--text);font-family:'Lato',sans-serif">Copy link</span>
+            </button>
+          </div>
+        </div>
+        <div id="treeShareSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
+      </div>
+    </div>
 <div id="rlUpgradeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9800;align-items:center;justify-content:center;padding:20px;overflow-y:auto">
   <div style="background:var(--bg);border-radius:20px;padding:32px 28px 26px;max-width:420px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);position:relative;box-sizing:border-box;margin:auto">
     <button id="rlModalCloseBtn" data-action="rl-modal-close" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:4px 8px" aria-label="Close">&#10005;</button>
