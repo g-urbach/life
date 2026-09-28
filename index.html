@@ -5365,7 +5365,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.220';
+  const APP_VERSION = 'v7.221';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -10128,6 +10128,14 @@
     var _prewarmStream  = null;
     var _prewarmPromise = null; // in-flight getUserMedia, so overlapping prewarm() calls don't open two streams
     var _prewarmGen     = 0;    // bumped by cancelPrewarm() so a late-resolving open gets discarded
+    // Single switch for getUserMedia audio constraints (prewarm AND start() cold open).
+    // `true` = browser defaults (AGC/noise suppression/echo cancellation ON). The 0227
+    // build used all three OFF; on desktop Chrome that made the 'gap' at ~1s WORSE in
+    // testing, most likely because MIC_SILENCE_THRESHOLD (15) is tuned for AGC-boosted
+    // levels — raw un-boosted speech dips below it and triggers a mid-sentence flush().
+    // To retry the 0227 behaviour, swap in:
+    //   { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+    var _MIC_AUDIO_CONSTRAINTS = true;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -10443,9 +10451,7 @@
     // prewarm() — open the mic stream silently, without a recorder. Fire-and-forget:
     // any failure (no permission, unsupported) is a no-op and start() cold-opens.
     // Uses the SAME constraints as start()'s cold open so an adopted stream behaves
-    // identically. All three browser audio-processing steps are OFF (from 0227 build):
-    // AGC and noiseSuppression garbled the first words of transcription, and the
-    // echoCancellation convergence window caused a level dip/dropout after TTS ends. Idempotent: no-op if recording, already warm, or a warm-up is in flight.
+    // identically (both read _MIC_AUDIO_CONSTRAINTS). Idempotent: no-op if recording, already warm, or a warm-up is in flight.
     function prewarm() {
       if (_active || _prewarmStream) return Promise.resolve();
       if (_prewarmPromise) return _prewarmPromise;
@@ -10454,7 +10460,7 @@
       var p = (async function() {
         try {
           var s = await navigator.mediaDevices.getUserMedia({
-            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+            audio: _MIC_AUDIO_CONSTRAINTS
           });
           // Cancelled, or start() already cold-opened its own stream, while we awaited.
           if (gen !== _prewarmGen || _active || _prewarmStream) {
@@ -10499,7 +10505,7 @@
       } else {
         try {
           _stream = await navigator.mediaDevices.getUserMedia({
-            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+            audio: _MIC_AUDIO_CONSTRAINTS
           });
           dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
         } catch(permErr) {
