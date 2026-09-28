@@ -5365,13 +5365,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.221';
+  const APP_VERSION = 'v7.222';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11869},{"maxLine":1954,"offset":11870},{"maxLine":2754,"offset":11871},{"maxLine":2806,"offset":11874},{"maxLine":3210,"offset":11875},{"maxLine":3390,"offset":11876},{"maxLine":5368,"offset":11877},{"maxLine":5731,"offset":11885},{"maxLine":6877,"offset":11895},{"maxLine":7159,"offset":11896},{"maxLine":7626,"offset":11897},{"maxLine":8553,"offset":11898},{"maxLine":10086,"offset":11900},{"maxLine":11238,"offset":11901},{"maxLine":11409,"offset":11902},{"maxLine":12131,"offset":11903},{"maxLine":12149,"offset":11905},{"maxLine":14008,"offset":11907},{"maxLine":14935,"offset":11908},{"maxLine":14937,"offset":11909},{"maxLine":15633,"offset":11910},{"maxLine":16510,"offset":11911},{"maxLine":18366,"offset":11914},{"maxLine":18686,"offset":11915},{"maxLine":18952,"offset":11916},{"maxLine":19570,"offset":11917},{"maxLine":19763,"offset":11918},{"maxLine":19955,"offset":11919},{"maxLine":20367,"offset":11920},{"maxLine":20617,"offset":11921},{"maxLine":21368,"offset":11922},{"maxLine":21410,"offset":11923},{"maxLine":21564,"offset":11924},{"maxLine":23446,"offset":11925},{"maxLine":23741,"offset":11926},{"maxLine":26603,"offset":12338},{"maxLine":27640,"offset":12339},{"maxLine":29789,"offset":12341},{"maxLine":null,"offset":12342}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11869},{"maxLine":1954,"offset":11870},{"maxLine":2754,"offset":11871},{"maxLine":2806,"offset":11874},{"maxLine":3210,"offset":11875},{"maxLine":3390,"offset":11876},{"maxLine":5368,"offset":11877},{"maxLine":5731,"offset":11885},{"maxLine":6877,"offset":11895},{"maxLine":7159,"offset":11896},{"maxLine":7626,"offset":11897},{"maxLine":8553,"offset":11898},{"maxLine":10090,"offset":11900},{"maxLine":11302,"offset":11901},{"maxLine":11473,"offset":11902},{"maxLine":12195,"offset":11903},{"maxLine":12213,"offset":11905},{"maxLine":14072,"offset":11907},{"maxLine":14999,"offset":11908},{"maxLine":15001,"offset":11909},{"maxLine":15697,"offset":11910},{"maxLine":16574,"offset":11911},{"maxLine":18430,"offset":11914},{"maxLine":18750,"offset":11915},{"maxLine":19016,"offset":11916},{"maxLine":19634,"offset":11917},{"maxLine":19827,"offset":11918},{"maxLine":20019,"offset":11919},{"maxLine":20431,"offset":11920},{"maxLine":20681,"offset":11921},{"maxLine":21432,"offset":11922},{"maxLine":21474,"offset":11923},{"maxLine":21628,"offset":11924},{"maxLine":23510,"offset":11925},{"maxLine":23805,"offset":11926},{"maxLine":26670,"offset":12338},{"maxLine":27707,"offset":12339},{"maxLine":29856,"offset":12341},{"maxLine":null,"offset":12342}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -10128,14 +10128,6 @@
     var _prewarmStream  = null;
     var _prewarmPromise = null; // in-flight getUserMedia, so overlapping prewarm() calls don't open two streams
     var _prewarmGen     = 0;    // bumped by cancelPrewarm() so a late-resolving open gets discarded
-    // Single switch for getUserMedia audio constraints (prewarm AND start() cold open).
-    // `true` = browser defaults (AGC/noise suppression/echo cancellation ON). The 0227
-    // build used all three OFF; on desktop Chrome that made the 'gap' at ~1s WORSE in
-    // testing, most likely because MIC_SILENCE_THRESHOLD (15) is tuned for AGC-boosted
-    // levels — raw un-boosted speech dips below it and triggers a mid-sentence flush().
-    // To retry the 0227 behaviour, swap in:
-    //   { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
-    var _MIC_AUDIO_CONSTRAINTS = true;
 
     // v7.87: real client-side transcode to 16kHz mono WAV/PCM.
     // Azure's short-audio REST endpoint accepts EXACTLY two formats — WAV/PCM
@@ -10451,7 +10443,7 @@
     // prewarm() — open the mic stream silently, without a recorder. Fire-and-forget:
     // any failure (no permission, unsupported) is a no-op and start() cold-opens.
     // Uses the SAME constraints as start()'s cold open so an adopted stream behaves
-    // identically (both read _MIC_AUDIO_CONSTRAINTS). Idempotent: no-op if recording, already warm, or a warm-up is in flight.
+    // identically. Idempotent: no-op if recording, already warm, or a warm-up is in flight.
     function prewarm() {
       if (_active || _prewarmStream) return Promise.resolve();
       if (_prewarmPromise) return _prewarmPromise;
@@ -10459,9 +10451,7 @@
       var gen = _prewarmGen;
       var p = (async function() {
         try {
-          var s = await navigator.mediaDevices.getUserMedia({
-            audio: _MIC_AUDIO_CONSTRAINTS
-          });
+          var s = await navigator.mediaDevices.getUserMedia({ audio: true });
           // Cancelled, or start() already cold-opened its own stream, while we awaited.
           if (gen !== _prewarmGen || _active || _prewarmStream) {
             s.getTracks().forEach(function(t){ t.stop(); });
@@ -10471,7 +10461,6 @@
           dbg('MIC_MGR', 'Prewarm stream open — mic hardware warm and ready');
         } catch(e) {
           dbg('MIC_MGR', 'Prewarm failed (will cold-open on start):', e && e.message);
-          logActivity('mic_mgr_warn', 'Prewarm failed: ' + String(e && e.message || e), 'warn', 'MIC_MGR');
         } finally {
           if (_prewarmPromise === p) _prewarmPromise = null;
         }
@@ -10504,9 +10493,7 @@
         dbg('MIC_MGR', 'Adopted prewarm stream — skipping cold getUserMedia open');
       } else {
         try {
-          _stream = await navigator.mediaDevices.getUserMedia({
-            audio: _MIC_AUDIO_CONSTRAINTS
-          });
+          _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
         } catch(permErr) {
           return permErr;
