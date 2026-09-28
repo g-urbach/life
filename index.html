@@ -5365,7 +5365,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.219';
+  const APP_VERSION = 'v7.220';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -10443,7 +10443,9 @@
     // prewarm() — open the mic stream silently, without a recorder. Fire-and-forget:
     // any failure (no permission, unsupported) is a no-op and start() cold-opens.
     // Uses the SAME constraints as start()'s cold open so an adopted stream behaves
-    // identically. Idempotent: no-op if recording, already warm, or a warm-up is in flight.
+    // identically. All three browser audio-processing steps are OFF (from 0227 build):
+    // AGC and noiseSuppression garbled the first words of transcription, and the
+    // echoCancellation convergence window caused a level dip/dropout after TTS ends. Idempotent: no-op if recording, already warm, or a warm-up is in flight.
     function prewarm() {
       if (_active || _prewarmStream) return Promise.resolve();
       if (_prewarmPromise) return _prewarmPromise;
@@ -10451,7 +10453,9 @@
       var gen = _prewarmGen;
       var p = (async function() {
         try {
-          var s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          var s = await navigator.mediaDevices.getUserMedia({
+            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+          });
           // Cancelled, or start() already cold-opened its own stream, while we awaited.
           if (gen !== _prewarmGen || _active || _prewarmStream) {
             s.getTracks().forEach(function(t){ t.stop(); });
@@ -10461,6 +10465,7 @@
           dbg('MIC_MGR', 'Prewarm stream open — mic hardware warm and ready');
         } catch(e) {
           dbg('MIC_MGR', 'Prewarm failed (will cold-open on start):', e && e.message);
+          logActivity('mic_mgr_warn', 'Prewarm failed: ' + String(e && e.message || e), 'warn', 'MIC_MGR');
         } finally {
           if (_prewarmPromise === p) _prewarmPromise = null;
         }
@@ -10493,7 +10498,9 @@
         dbg('MIC_MGR', 'Adopted prewarm stream — skipping cold getUserMedia open');
       } else {
         try {
-          _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          _stream = await navigator.mediaDevices.getUserMedia({
+            audio: { autoGainControl: false, noiseSuppression: false, echoCancellation: false }
+          });
           dbg('MIC_MGR', 'Cold getUserMedia open (no prewarm available)');
         } catch(permErr) {
           return permErr;
