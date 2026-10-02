@@ -5343,7 +5343,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.235';
+  const APP_VERSION = 'v7.236';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -26922,6 +26922,7 @@
       '<textarea id="mpV2Bio" rows="3" style="' + fs + ';resize:vertical;line-height:1.5"></textarea>' +
       '<label style="display:flex;gap:8px;align-items:center;font-size:0.9rem;color:var(--text);margin-bottom:4px"><input id="mpV2Hide" type="checkbox"> Hide from shared tree links</label>' +
       '<div style="font-size:0.75rem;color:var(--text-light);margin:0 0 14px 24px">They appear as \u201cPrivate\u201d to people you share with.</div>' +
+      '<div id="mpV2Rels" style="display:none;border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px"></div>' +
       '<div id="mpV2Err" style="display:none;color:var(--rose);font-size:0.85rem;margin-bottom:10px"></div>' +
       '<div style="display:flex;gap:10px"><button id="mpV2Cancel" style="flex:1;padding:11px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">Cancel</button>' +
       '<button id="mpV2Save" style="flex:1;padding:11px;background:var(--gold);border:none;border-radius:8px;cursor:pointer;color:#fff;font-weight:700">Save</button></div>' +
@@ -26978,7 +26979,9 @@
       $('mpV2Bio').value = person.bio || '';
       $('mpV2Hide').checked = !!person.hide_from_share;
       $('mpV2Save').textContent = 'Save changes';
+      _mpV2RenderRels(person.id);
     } else {
+      $('mpV2Rels').style.display = 'none';
       _mpV2AnchorId = person.id;
       $('mpV2Title').textContent = 'Add a relative of ' + (person.name || 'this person');
       $('mpV2RelWrap').style.display = '';
@@ -26990,6 +26993,99 @@
     }
     $('mpV2Modal').style.display = 'flex';
     setTimeout(function() { $('mpV2Name').focus(); }, 50);
+  }
+
+  // Relationship editing (edit mode): partnership status/kind and child kind.
+  var _mpV2RelRows = [];
+  function _mpV2Sel(opts, val) {
+    var s = document.createElement('select');
+    s.style.cssText = 'padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.85rem;color:var(--text);background:var(--bg)';
+    opts.forEach(function(o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; s.appendChild(op); });
+    s.value = val || '';
+    return s;
+  }
+  function _mpV2RenderRels(pid) {
+    var box = document.getElementById('mpV2Rels');
+    box.innerHTML = ''; _mpV2RelRows = [];
+    var fams = _mpV2Fams(pid).filter(function(f) { return f.partner1_id && f.partner2_id; });
+    var births = _mpV2BirthFams(pid);
+    if (!fams.length && !births.length) { box.style.display = 'none'; return; }
+    var h = document.createElement('div');
+    h.style.cssText = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px';
+    h.textContent = 'Relationships'; box.appendChild(h);
+    function row(text, controls) {
+      var r = document.createElement('div');
+      r.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;font-size:0.88rem;color:var(--text)';
+      var t = document.createElement('span'); t.style.cssText = 'flex:1 1 100%'; t.textContent = text; r.appendChild(t);
+      controls.forEach(function(c) { r.appendChild(c); });
+      box.appendChild(r);
+    }
+    fams.forEach(function(f) {
+      var other = f.partner1_id === pid ? f.partner2_id : f.partner1_id;
+      var st = _mpV2Sel([['current','Current'],['ended','Ended'],['widowed','Widowed']], f.union_status || 'current');
+      var kd = _mpV2Sel([['','Not stated'],['married','Married'],['partner','Partners']], f.union_kind || '');
+      row('Partner: ' + _mpV2Name(other), [st, kd]);
+      _mpV2RelRows.push({ type: 'union', fam: f, st: st, kd: kd });
+    });
+    births.forEach(function(f) {
+      var c = _mpChildren.find(function(x) { return x.family_id === f.id && x.child_id === pid; });
+      var ck = _mpV2Sel([['biological','Biological'],['adopted','Adopted'],['step','Step'],['foster','Foster']], (c && c.kind) || 'biological');
+      row('Child of: ' + _mpV2BirthLabel(f), [ck]);
+      _mpV2RelRows.push({ type: 'child', fam: f, child: c, ck: ck });
+    });
+    box.style.display = '';
+  }
+  async function _mpV2ApplyRels(hdr) {
+    for (var i = 0; i < _mpV2RelRows.length; i++) {
+      var r = _mpV2RelRows[i], url, body;
+      if (r.type === 'union') {
+        var ns = r.st.value, nk = r.kd.value;
+        var changed = ns !== (r.fam.union_status || 'current') || (nk && nk !== (r.fam.union_kind || ''));
+        if (!changed) continue;
+        url = SUPABASE_URL + '/rest/v1/rpc/life_tree_set_union';
+        body = { p_family_id: r.fam.id, p_status: ns, p_kind: nk || null };
+      } else {
+        var nc = r.ck.value;
+        if (!r.child || nc === (r.child.kind || 'biological')) continue;
+        url = SUPABASE_URL + '/rest/v1/rpc/life_tree_set_child_kind';
+        body = { p_family_id: r.fam.id, p_child_id: r.child.child_id, p_kind: nc };
+      }
+      var res = await fetch(url, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
+      if (!res.ok) {
+        var msg = ''; try { var j = await res.json(); msg = j.message || ''; } catch(e) {}
+        throw new Error(msg || ('Could not update relationship (' + res.status + ')'));
+      }
+    }
+  }
+
+  // Delete via RPC (also removes empty single-parent families). Owner is protected server-side.
+  async function mpV2Delete() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    if (!person) return;
+    if (person.is_owner) { toast('You cannot remove yourself from your own tree.', 4000); return; }
+    var kids = 0;
+    _mpV2Fams(person.id).forEach(function(f) { kids += _mpChildren.filter(function(c) { return c.family_id === f.id; }).length; });
+    var msg = 'Remove "' + (person.name || 'this person') + '" from your family tree? This cannot be undone.';
+    if (kids) msg += '\n\nTheir ' + kids + (kids === 1 ? ' child stays' : ' children stay') + ' in the tree, but will no longer be linked to this person.';
+    if (!confirm(msg)) return;
+    mpCloseProfile();
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_delete_person', {
+        method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ p_id: person.id })
+      });
+      if (!res.ok) {
+        var m2 = ''; try { var j2 = await res.json(); m2 = j2.message || ''; } catch(e) {}
+        throw new Error(m2 || ('Delete failed (' + res.status + ')'));
+      }
+      logActivity('people_deleted', person.name, 'info', 'PEOPLE');
+      toast((person.name || 'Person') + ' removed.');
+      await _mpLoad();
+      if (_mpActiveTab === 'directory') mpDirRender();
+    } catch(e) {
+      toast('Could not remove: ' + (e.message || 'please try again.'), 5000);
+      dbgWarn('PEOPLE', 'v2 delete error: ' + e.message);
+    }
   }
 
   function mpV2Edit() {
@@ -27029,6 +27125,7 @@
         var r = await fetch(DB_PEOPLE_URL + '?id=eq.' + _mpV2AnchorId + '&user_id=eq.' + currentUser.id,
           { method: 'PATCH', headers: Object.assign({}, hdr, { 'Prefer': 'return=minimal' }), body: JSON.stringify(fields) });
         if (!r.ok) throw new Error('Save failed (' + r.status + ')');
+        await _mpV2ApplyRels(hdr);
         logActivity('people_edited', name, 'info', 'PEOPLE');
       } else {
         var kind = $('mpV2Kind').value;
@@ -31262,7 +31359,7 @@
     on('mpProfileEditBtn',     'click', mpV2Edit);
     on('mpProfileAddRelBtn',   'click', mpV2AddRelative);
     on('mpProfileWriteMemBtn', 'click', mpProfileWriteMemory);
-    on('mpProfileDeleteBtn',   'click', mpProfileDelete);
+    on('mpProfileDeleteBtn',   'click', mpV2Delete);
     on('mpProfileWriteMemBtn2','click', mpProfileWriteMemory);
 
     // ── Duplicates / consolidate dialogs ─────────────────────────────────
