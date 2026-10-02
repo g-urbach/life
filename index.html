@@ -1264,6 +1264,11 @@
     .mpt-lb { font-size: 10.5px; fill: var(--text-light); }
     .mpt-me .mpt-lb { fill: var(--gold); font-weight: 700; }
     .mpt-late .mpt-nm { fill: var(--text-light); }
+    .mpt-private .mpt-nm { fill: var(--text-light); font-style: italic; font-weight: 400; }
+    .mpt-private { cursor: default; }
+    #shareTreeViewport { cursor: grab; }
+    #shareTreeViewport.mpt-drag { cursor: grabbing; user-select: none; }
+    #shareTreeCanvas svg.mpt { display: block; font-family: 'Lato', sans-serif; overflow: visible; }
     .mpt-lnk { fill: none; stroke: var(--border); stroke-width: 1.6; }
     .mpt-cur { stroke: #1d6f7a; stroke-width: 2.2; }
     .mpt-end { stroke: #b4533b; stroke-width: 2; stroke-dasharray: 5 4; }
@@ -5343,7 +5348,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.236';
+  const APP_VERSION = 'v7.237';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6049,7 +6054,85 @@
   var _spTreeBBox  = null;
   var SP_ZOOM_PAD = 40, SP_ZOOM_MIN = 0.2, SP_ZOOM_MAX = 3, SP_ZOOM_STEP = 1.25;
 
+  // ── FAM-07 BUILD 3A — share page draws the v2 tree (same renderer as the app) ──
+  var _spV2 = false, _spV2Token = null, _spV2Req = 0, _spV2Cache = {}, _spV2StartId = null;
+
+  function _spV2Hint() {
+    var vpEl = document.getElementById('shareTreeViewport'); if (!vpEl) return;
+    var h = document.getElementById('spV2Hint');
+    if (!h) {
+      h = document.createElement('div'); h.id = 'spV2Hint';
+      h.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:0.85rem;color:var(--text-light);margin-bottom:10px';
+      vpEl.parentNode.insertBefore(h, vpEl);
+    }
+    var v = _mpPeople.find(function(p) { return p.id === _mpViewerId; });
+    h.textContent = '';
+    var t = document.createElement('span');
+    t.textContent = (v && !v.private ? 'Viewing as ' + v.name + '. ' : '') + 'Tap anyone to see the family from their point of view.';
+    h.appendChild(t);
+    if (_spV2StartId && _mpViewerId !== _spV2StartId) {
+      var st = _mpPeople.find(function(p) { return p.id === _spV2StartId; });
+      var b = document.createElement('button');
+      b.textContent = 'Back to ' + (st && !st.private ? st.name : 'start');
+      b.style.cssText = 'background:none;border:1px solid var(--border);border-radius:14px;padding:3px 10px;font-size:0.8rem;color:var(--text);cursor:pointer';
+      b.addEventListener('click', function() { _spV2Tap(_spV2StartId); });
+      h.appendChild(b);
+    }
+  }
+
+  async function _spV2Tap(id) {
+    if (_mpSuppressClick) return;
+    var p = _mpPeople.find(function(x) { return x.id === id; });
+    if (!p || p.private || id === _mpViewerId) return;
+    var req = ++_spV2Req;
+    _mpViewerId = id;
+    _mpLabels = _spV2Cache[id] || {};
+    _mpDrawNodes(); _spV2Hint();
+    if (_spV2Cache[id]) return;
+    try {
+      var res = await fetch(SHARE_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+        body: JSON.stringify({ action: 'get_tree_labels', token: _spV2Token, viewer_id: id })
+      });
+      var j = await res.json();
+      if (req !== _spV2Req) return;
+      if (!res.ok || j.error) { var e = new Error(j && j.error ? j.error : 'HTTP ' + res.status); e.status = res.status; throw e; }
+      _spV2Cache[id] = j.labels || {};
+      _mpLabels = _spV2Cache[id];
+      if (j.viewerId) _mpViewerId = j.viewerId;
+    } catch(err) {
+      if (req !== _spV2Req) return;
+      _mpLabels = {};
+      try { toast(err && err.status === 429 ? 'Too many requests \u2014 please wait a moment and try again.' : 'Could not load relationships for that person.', 4000); } catch(e2) {}
+    }
+    _mpDrawNodes(); _spV2Hint();
+  }
+
+  function _spRenderTreeV2(data, token) {
+    _spV2 = true; _spV2Token = token;
+    _mpT = { ct: 'shareTreeCanvas', vp: 'shareTreeViewport' };
+    _mpShareCtx = { token: token };
+    _mpPeople = (data.people || []).map(function(p) {
+      return p.private ? { id: p.id, private: true, name: 'Private', bucket: 'family' }
+                       : { id: p.id, name: p.name, sex: p.sex, photo: p.photo, bucket: 'family' };
+    });
+    _mpFamilies = data.families || [];
+    _mpChildren = data.children || [];
+    _mpOwnerId = null;
+    _mpViewerId = data.viewerId || null;
+    _spV2StartId = _mpViewerId;
+    _mpLabels = data.labels || {};
+    _spV2Cache = {}; if (_mpViewerId) _spV2Cache[_mpViewerId] = _mpLabels;
+    _mpRender();
+    _spV2Hint();
+    _spInitTreeZoom();
+    _mpFitInitial();
+    _spZoomScale = _mpZoomScale;
+  }
+
   function _spApplyZoomState() {
+    if (_spV2) { _mpZoomScale = _spZoomScale; _mpApplyZoomState(); _spZoomScale = _mpZoomScale; return; }
     var canvasEl = document.getElementById('shareTreeCanvas');
     var vp       = document.getElementById('shareTreeViewport');
     var svg      = canvasEl ? canvasEl.querySelector('svg') : null;
@@ -6081,6 +6164,7 @@
   // between the inline card and the full-screen overlay (~line 42985) since
   // those two viewports are different sizes.
   function _spFitTree() {
+    if (_spV2) { _mpFitInitial(); _spZoomScale = _mpZoomScale; return; }
     try {
       var canvasEl = document.getElementById('shareTreeCanvas');
       var vp       = document.getElementById('shareTreeViewport');
@@ -6690,7 +6774,7 @@
 
         document.getElementById('shareLoading').style.display = 'none';
         document.getElementById('shareContent').style.display = 'block';
-        logActivity('share_viewed', JSON.stringify({ type: 'tree', token: token }), 'info', 'SHARE');
+        logActivity('share_viewed', JSON.stringify({ type: 'tree' }), 'info', 'SHARE');
 
         var expiryElT  = document.getElementById('shareExpiryWarning');
         var expiryMsgT = document.getElementById('shareExpiryMsg');
@@ -6706,8 +6790,12 @@
           }
         }
 
-        var treeData = _spBuildTreeData(data.people || [], data.relationships || []);
-        _spRenderTree(document.getElementById('shareTreeCanvas'), document.getElementById('shareTreeViewport'), treeData);
+        if (data.treeVersion === 2) {
+          _spRenderTreeV2(data, token);
+        } else {
+          var treeData = _spBuildTreeData(data.people || [], data.relationships || []);
+          _spRenderTree(document.getElementById('shareTreeCanvas'), document.getElementById('shareTreeViewport'), treeData);
+        }
 
         return; // done — skip all entry/piece-rendering code below
       } // end data.isTree
@@ -26100,6 +26188,11 @@
   var _mpLabelReq   = 0;    // guards against out-of-order responses
   var _mpLabelWarned = false;
   var _mpSuppressClick = false;
+  // Render target: the in-app overlay by default; the share page points these at its own elements.
+  var _mpT = { ct: 'mpDTree', vp: 'mpCanvasViewport' };
+  var _mpShareCtx = null;   // set on the share page ({ token }); null in the app
+  function _mpCt() { return document.getElementById(_mpT.ct); }
+  function _mpVp() { return document.getElementById(_mpT.vp); }
 
   // The tree only ever contains family people (plus the owner). Friends etc. stay in the Directory.
   function _mpTreePeople() {
@@ -26256,6 +26349,7 @@
   }
 
   function _mpTapPerson(id) {
+    if (_mpShareCtx) { _spV2Tap(id); return; }
     if (_mpSuppressClick) return;                // the click that ends a mouse drag
     if (id === _mpViewerId) { mpOpenProfile(id); return; }
     _mpSetViewer(id);
@@ -26509,14 +26603,14 @@
   }
 
   function _mpDrawNodes() {
-    var g = document.getElementById('mpNodes'), L = _mpLayout;
+    var ct0 = _mpCt(), g = ct0 ? ct0.querySelector('g.mpt-nodes') : null, L = _mpLayout;
     if (!g || !L) return;
     g.textContent = '';
     L.people.forEach(function(p) {
       if (L.X[p.id] == null) return;
-      var isViewer = p.id === _mpViewerId, lab = _mpLabelFor(p), nameTxt = p.name || 'Unnamed';
+      var isViewer = p.id === _mpViewerId, lab = _mpLabelFor(p), nameTxt = p.private ? 'Private' : (p.name || 'Unnamed');
       var n = _mpSvg('g', {
-        class: 'mpt-nd' + (isViewer ? ' mpt-me' : '') + (p.is_deceased ? ' mpt-late' : ''),
+        class: 'mpt-nd' + (isViewer ? ' mpt-me' : '') + (p.is_deceased ? ' mpt-late' : '') + (p.private ? ' mpt-private' : ''),
         transform: 'translate(' + (L.X[p.id] - L.W / 2) + ',' + (L.Y(p.id) - L.H / 2) + ')',
         tabindex: 0, role: 'button', 'aria-label': nameTxt + (lab ? ', ' + lab : ''),
       }, g);
@@ -26537,7 +26631,7 @@
   }
 
   function _mpRender() {
-    var container = document.getElementById('mpDTree');
+    var container = _mpCt();
     if (!container) return;
     container.innerHTML = '';
     _mpLayout = null;
@@ -26553,7 +26647,7 @@
                               'aria-label': 'Family tree. Tap a person to see everyone from their point of view.' }, container);
     var root = _mpSvg('g', { transform: 'translate(' + L.dims.tx + ',' + L.dims.ty + ')' }, svg);
     _mpDrawLinks(_mpSvg('g', {}, root));
-    _mpSvg('g', { id: 'mpNodes' }, root);
+    _mpSvg('g', { id: 'mpNodes', class: 'mpt-nodes' }, root);
     _mpDrawNodes();
     _mpBindPan();
     _mpApplyZoomState();
@@ -26567,7 +26661,7 @@
   var MP_ZOOM_MIN = 0.05, MP_ZOOM_MAX = 2.5, MP_ZOOM_STEP = 1.25;
 
   function _mpApplyZoomState() {
-    var container = document.getElementById('mpDTree');
+    var container = _mpCt();
     var svg = container ? container.querySelector('svg.mpt') : null;
     if (!svg || !_mpLayout) return;
     _mpZoomScale = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, _mpZoomScale));
@@ -26580,7 +26674,7 @@
   }
 
   function _mpFitScale() {
-    var vp = document.getElementById('mpCanvasViewport');
+    var vp = _mpVp();
     if (!vp || !_mpLayout) return 1;
     return 0.94 * Math.min(vp.clientWidth / _mpLayout.dims.w, vp.clientHeight / _mpLayout.dims.h);
   }
@@ -26595,7 +26689,7 @@
   }
 
   function _mpCentreOnPerson(id) {
-    var vp = document.getElementById('mpCanvasViewport'), L = _mpLayout;
+    var vp = _mpVp(), L = _mpLayout;
     if (!vp || !L || id == null || L.X[id] == null) return;
     vp.scrollLeft = (L.X[id] + L.dims.tx) * _mpZoomScale - vp.clientWidth / 2;
     vp.scrollTop  = (L.Y(id) + L.dims.ty) * _mpZoomScale - vp.clientHeight * 0.4;
@@ -26603,7 +26697,7 @@
   function _mpCentreOnSelf() { _mpCentreOnPerson(_mpOwnerId); }
 
   function _mpZoomBy(f) {
-    var vp = document.getElementById('mpCanvasViewport');
+    var vp = _mpVp();
     if (!vp) return;
     var cx = (vp.scrollLeft + vp.clientWidth  / 2) / _mpZoomScale;
     var cy = (vp.scrollTop  + vp.clientHeight / 2) / _mpZoomScale;
@@ -26616,7 +26710,7 @@
 
   // "Fit tree to screen" button: the whole tree, however small that makes it.
   function mpRecentre() {
-    var vp = document.getElementById('mpCanvasViewport');
+    var vp = _mpVp();
     if (!vp || !_mpLayout) return;
     _mpZoomScale = Math.min(_mpFitScale(), 1);
     _mpApplyZoomState();
@@ -26625,7 +26719,7 @@
 
   // Mouse drag-to-pan (touch uses native scrolling). Bound once.
   function _mpBindPan() {
-    var vp = document.getElementById('mpCanvasViewport');
+    var vp = _mpVp();
     if (!vp || vp._mpPanBound) return;
     vp._mpPanBound = true;
     var d = null;
