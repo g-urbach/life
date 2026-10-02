@@ -5343,7 +5343,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.231';
+  const APP_VERSION = 'v7.232';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -26378,11 +26378,17 @@
       });
       var vals = Object.keys(pos).map(function(k) { return pos[k]; });
       var out = { pos: Object.assign({}, pos), mid: {}, min: Math.min.apply(null, vals) - W / 2, max: Math.max.apply(null, vals) + W / 2, root: p };
+      var prevBlockMax = null; // right edge of the last placed child block (for overlap guard)
       links.forEach(function(l) {
         var m = (l.a && l.b) ? (pos[l.a] + pos[l.b]) / 2 : pos[l.x];
         out.mid[l.fid] = m;
         var bl = blocks[l.fid]; if (!bl || !bl.length) return;
         var tot = need(l.fid), cx = m - tot / 2;
+        // Guard: if this block would overlap the previous block (e.g. two marriages of
+        // the same person with large child groups that the couple-spacing didn't fully
+        // account for), push it right so there is at least GX of clear space between them.
+        if (prevBlockMax !== null && cx < prevBlockMax + GX) cx = prevBlockMax + GX;
+        prevBlockMax = cx + tot;
         bl.forEach(function(o) {
           var off = cx - o.b.min;
           Object.keys(o.b.pos).forEach(function(k) { out.pos[k] = o.b.pos[k] + off; });
