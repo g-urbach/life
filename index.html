@@ -5343,13 +5343,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.229';
+  const APP_VERSION = 'v7.230';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":11887},{"maxLine":1954,"offset":11888},{"maxLine":2754,"offset":11889},{"maxLine":2806,"offset":11892},{"maxLine":3210,"offset":11893},{"maxLine":3390,"offset":11894},{"maxLine":5316,"offset":11895},{"maxLine":5679,"offset":11903},{"maxLine":6844,"offset":11913},{"maxLine":7126,"offset":11914},{"maxLine":7593,"offset":11915},{"maxLine":8520,"offset":11916},{"maxLine":10068,"offset":11918},{"maxLine":11280,"offset":11919},{"maxLine":11451,"offset":11920},{"maxLine":12173,"offset":11921},{"maxLine":12191,"offset":11923},{"maxLine":14050,"offset":11925},{"maxLine":15116,"offset":11926},{"maxLine":15118,"offset":11927},{"maxLine":15815,"offset":11928},{"maxLine":16693,"offset":11929},{"maxLine":18549,"offset":11932},{"maxLine":18869,"offset":11933},{"maxLine":19135,"offset":11934},{"maxLine":19753,"offset":11935},{"maxLine":19946,"offset":11936},{"maxLine":20148,"offset":11937},{"maxLine":20560,"offset":11938},{"maxLine":20810,"offset":11939},{"maxLine":21561,"offset":11940},{"maxLine":21603,"offset":11941},{"maxLine":21757,"offset":11942},{"maxLine":23639,"offset":11943},{"maxLine":23934,"offset":11944},{"maxLine":26799,"offset":12384},{"maxLine":27836,"offset":12385},{"maxLine":29985,"offset":12387},{"maxLine":null,"offset":12388}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":12149},{"maxLine":1978,"offset":12150},{"maxLine":2778,"offset":12151},{"maxLine":2830,"offset":12154},{"maxLine":3234,"offset":12155},{"maxLine":3414,"offset":12156},{"maxLine":5346,"offset":12157},{"maxLine":5709,"offset":12165},{"maxLine":6874,"offset":12175},{"maxLine":7156,"offset":12176},{"maxLine":7630,"offset":12177},{"maxLine":8557,"offset":12178},{"maxLine":10105,"offset":12180},{"maxLine":11317,"offset":12181},{"maxLine":11488,"offset":12182},{"maxLine":12210,"offset":12183},{"maxLine":12228,"offset":12185},{"maxLine":14087,"offset":12187},{"maxLine":15164,"offset":12188},{"maxLine":15166,"offset":12189},{"maxLine":15863,"offset":12190},{"maxLine":16741,"offset":12191},{"maxLine":18597,"offset":12194},{"maxLine":18917,"offset":12195},{"maxLine":19183,"offset":12196},{"maxLine":19801,"offset":12197},{"maxLine":19994,"offset":12198},{"maxLine":20196,"offset":12199},{"maxLine":20608,"offset":12200},{"maxLine":20858,"offset":12201},{"maxLine":21609,"offset":12202},{"maxLine":21651,"offset":12203},{"maxLine":21805,"offset":12204},{"maxLine":23687,"offset":12205},{"maxLine":23982,"offset":12206},{"maxLine":26807,"offset":12646},{"maxLine":27851,"offset":12647},{"maxLine":30000,"offset":12649},{"maxLine":null,"offset":12650}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -26325,7 +26325,12 @@
           if (visited.has(fid)) return;
           visited.add(fid);
           var f = F[fid], other = partners(f).find(function(q) { return q !== x; });
-          var marry = other && !placed.has(other) && !hasParents(other);
+          // Draw person beside spouse if they have no parents in the tree, OR if this
+          // family has children (a person belongs beside their co-parent regardless of
+          // whether they also appear in their own birth family). Families with no children
+          // and a partner who has their own parents keep the dotted external connector.
+          var hasKidsHere = (kidsOf[fid] || []).length > 0;
+          var marry = other && !placed.has(other) && (!hasParents(other) || hasKidsHere);
           if (other && !marry) { external.push({ fid: fid, a: x, b: other }); links.push({ fid: fid, x: x, ext: true }); return; }
           if (!other) { links.push({ fid: fid, x: x, solo: true }); return; }
           placed.add(other);
@@ -26461,6 +26466,36 @@
           extJoin = true;
         }
       }
+      // If a partner was pulled into this row despite having their own birth family in the
+      // tree (the new marry rule), draw a dotted upward connector from their card top to
+      // the midpoint of their birth family, so the birth relationship is still visible.
+      ps.forEach(function(pid) {
+        var birthFams = L.famsOf[pid] ? [] : []; // famsOf only holds couple families; use parFams
+        // parFams isn't in L, so we reconstruct: any family whose children include pid
+        L.families.forEach(function(bf) {
+          var bkids = L.kidsOf[bf.id] || [];
+          if (bkids.some(function(c) { return c.child_id === pid; })) birthFams.push(bf.id);
+        });
+        birthFams.forEach(function(bfid) {
+          var bmx = X['fam:' + bfid];
+          if (bmx == null || X[pid] == null) return;
+          var px = X[pid], topY = Y(pid) - H / 2;
+          // Only draw if the birth family sits above (different generation) — i.e. this is
+          // a true parent link, not a weird same-gen loop.
+          var bps = L.partners(L.F[bfid]);
+          var bgenY = bps.length
+            ? 70 + Math.max.apply(null, bps.map(function(q) { return L.gen[q]; })) * MP_GY
+            : topY - 30;
+          if (bgenY >= topY) return; // birth family not above — skip
+          var midY = (bgenY + H / 2 + topY) / 2;
+          _mpSvg('path', {
+            d: 'M' + px + ' ' + topY + ' V' + midY + ' H' + bmx + ' V' + (bgenY + H / 2),
+            class: 'mpt-lnk mpt-ext',
+            'aria-label': 'birth family connection'
+          }, gl);
+        });
+      });
+
       if (!kids.length) return;
       var hy = extJoin ? Y(ps[0]) + H / 2 + 14 : y + (ps.length ? H / 2 : 0);
       var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - 26;
