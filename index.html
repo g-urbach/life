@@ -5343,7 +5343,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.230';
+  const APP_VERSION = 'v7.231';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -26356,12 +26356,25 @@
         var bl = blocks[fid]; if (!bl || !bl.length) return 0;
         return bl.reduce(function(s, o) { return s + (o.b.max - o.b.min); }, 0) + GX * (bl.length - 1);
       };
+      // Gap between adjacent people in the row.
+      // Old formula used only the left child group width, which caused a person with
+      // multiple marriages to sit very close to their earlier spouse (whose children push
+      // them apart) and very far from their later spouse (whose children are entirely on
+      // the right). New formula blends old and new at 50/50:
+      //   new = max(W+CG, leftChildWidth/2 + rightChildWidth/2 + 2*GX)
+      // so each person sits roughly equidistant between their two families.
+      // Blend keeps the old formula's no-overlap guarantee for simple cases (one marriage).
       var prevD = 0, prevW = 0;
       row.forEach(function(r, i) {
         if (i === 0) { pos[r] = 0; return; }
-        var l = links.find(function(k) { return k.a === row[i - 1] && k.b === r; }), w = l ? need(l.fid) : 0;
-        var d = i === 1 ? W + CG : Math.max(W + CG, prevW + w + 2 * GX - prevD);
-        pos[r] = pos[row[i - 1]] + d; prevD = d; prevW = w;
+        var lLink = links.find(function(k) { return k.a === row[i - 1] && k.b === r; });
+        var rLink = links.find(function(k) { return k.a === r && k.b === row[i + 1]; });
+        var wLeft  = lLink ? need(lLink.fid) : 0;
+        var wRight = rLink ? need(rLink.fid) : 0;
+        var oldD = i === 1 ? W + CG : Math.max(W + CG, prevW + wLeft + 2 * GX - prevD);
+        var newD = Math.max(W + CG, wLeft / 2 + wRight / 2 + 2 * GX);
+        var d = oldD * 0.5 + newD * 0.5;
+        pos[r] = pos[row[i - 1]] + d; prevD = d; prevW = wLeft;
       });
       var vals = Object.keys(pos).map(function(k) { return pos[k]; });
       var out = { pos: Object.assign({}, pos), mid: {}, min: Math.min.apply(null, vals) - W / 2, max: Math.max.apply(null, vals) + W / 2, root: p };
