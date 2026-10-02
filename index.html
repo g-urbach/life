@@ -5343,7 +5343,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.234';
+  const APP_VERSION = 'v7.235';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -26870,6 +26870,191 @@
     }
   }
 
+  // ── FAM-07 BUILD 2B-1 — edit details + add relative (v2 tables) ─────────────
+  // Edit  -> PATCH life_people (name, sex, birth_text/birth_year, is_deceased, bio, hide_from_share).
+  // Add   -> RPC life_tree_add_relative (person + link, atomic). Delete / unions / child kind: Build 2b-2.
+  var _mpV2Mode = null, _mpV2AnchorId = null;
+
+  function _mpV2Name(id) { var p = _mpPeople.find(function(x) { return x.id === id; }); return p ? (p.name || 'Unnamed') : 'unknown'; }
+  function _mpV2Fams(pid) { return _mpFamilies.filter(function(f) { return f.partner1_id === pid || f.partner2_id === pid; }); }
+  function _mpV2BirthFams(pid) {
+    var ids = _mpChildren.filter(function(c) { return c.child_id === pid; }).map(function(c) { return c.family_id; });
+    return _mpFamilies.filter(function(f) { return ids.indexOf(f.id) >= 0; });
+  }
+  function _mpV2FamLabel(f, anchorId) {
+    var other = f.partner1_id === anchorId ? f.partner2_id : f.partner1_id;
+    var kids = _mpChildren.filter(function(c) { return c.family_id === f.id; }).length;
+    var s = other ? 'with ' + _mpV2Name(other) : 'on their own (no other parent)';
+    var st = f.union_status === 'ended' ? ' (ended)' : f.union_status === 'widowed' ? ' (widowed)' : '';
+    return s + st + (kids ? ' \u2014 ' + kids + (kids === 1 ? ' child' : ' children') : '');
+  }
+  function _mpV2BirthLabel(f) {
+    var n = [f.partner1_id, f.partner2_id].filter(Boolean).map(_mpV2Name);
+    return n.length ? n.join(' & ') : 'unknown parents';
+  }
+
+  function _mpV2Ensure() {
+    if (document.getElementById('mpV2Modal')) return;
+    var fs = 'width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px';
+    var lb = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px';
+    var d = document.createElement('div');
+    d.id = 'mpV2Modal';
+    d.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2100;align-items:center;justify-content:center;padding:20px';
+    d.innerHTML =
+      '<div style="background:var(--surface);border-radius:16px;padding:26px 24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);max-height:90vh;overflow-y:auto">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+      '<h3 id="mpV2Title" style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0"></h3>' +
+      '<button id="mpV2Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1">&#10005;</button></div>' +
+      '<div id="mpV2RelWrap">' +
+        '<label style="' + lb + '">Add a\u2026</label>' +
+        '<select id="mpV2Kind" style="' + fs + '"><option value="parent">Parent</option><option value="child">Child</option><option value="sibling">Brother / sister</option><option value="partner">Partner / spouse</option></select>' +
+        '<div id="mpV2FamWrap" style="display:none"><label id="mpV2FamLbl" style="' + lb + '"></label><select id="mpV2Fam" style="' + fs + '"></select></div>' +
+        '<div id="mpV2CkWrap" style="display:none"><label style="' + lb + '">Relationship to the parent(s)</label><select id="mpV2ChildKind" style="' + fs + '"><option value="biological">Biological</option><option value="adopted">Adopted</option><option value="step">Step</option><option value="foster">Foster</option></select></div>' +
+      '</div>' +
+      '<label style="' + lb + '">Name <span style="color:var(--rose)">*</span></label>' +
+      '<input id="mpV2Name" type="text" autocomplete="off" style="' + fs + '">' +
+      '<label style="' + lb + '">Sex</label>' +
+      '<select id="mpV2Sex" style="' + fs + '"><option value="">Not stated</option><option value="female">Female</option><option value="male">Male</option></select>' +
+      '<label style="' + lb + '">Born <span style="text-transform:none;letter-spacing:0;font-weight:400">(optional, e.g. 1948 or 12 March 1948)</span></label>' +
+      '<input id="mpV2Birth" type="text" autocomplete="off" style="' + fs + '">' +
+      '<label style="display:flex;gap:8px;align-items:center;font-size:0.9rem;color:var(--text);margin-bottom:14px"><input id="mpV2Dec" type="checkbox"> No longer living</label>' +
+      '<label style="' + lb + '">A few words about them <span style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>' +
+      '<textarea id="mpV2Bio" rows="3" style="' + fs + ';resize:vertical;line-height:1.5"></textarea>' +
+      '<label style="display:flex;gap:8px;align-items:center;font-size:0.9rem;color:var(--text);margin-bottom:4px"><input id="mpV2Hide" type="checkbox"> Hide from shared tree links</label>' +
+      '<div style="font-size:0.75rem;color:var(--text-light);margin:0 0 14px 24px">They appear as \u201cPrivate\u201d to people you share with.</div>' +
+      '<div id="mpV2Err" style="display:none;color:var(--rose);font-size:0.85rem;margin-bottom:10px"></div>' +
+      '<div style="display:flex;gap:10px"><button id="mpV2Cancel" style="flex:1;padding:11px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">Cancel</button>' +
+      '<button id="mpV2Save" style="flex:1;padding:11px;background:var(--gold);border:none;border-radius:8px;cursor:pointer;color:#fff;font-weight:700">Save</button></div>' +
+      '</div>';
+    document.body.appendChild(d);
+    document.getElementById('mpV2Close').addEventListener('click', _mpV2Hide);
+    document.getElementById('mpV2Cancel').addEventListener('click', _mpV2Hide);
+    document.getElementById('mpV2Save').addEventListener('click', _mpV2Save);
+    document.getElementById('mpV2Kind').addEventListener('change', _mpV2KindChanged);
+  }
+  function _mpV2Hide() { var m = document.getElementById('mpV2Modal'); if (m) m.style.display = 'none'; }
+
+  // Show the family picker only when the choice is genuinely ambiguous.
+  function _mpV2KindChanged() {
+    var kind = document.getElementById('mpV2Kind').value, a = _mpV2AnchorId;
+    var wrap = document.getElementById('mpV2FamWrap'), sel = document.getElementById('mpV2Fam'), lbl = document.getElementById('mpV2FamLbl');
+    var opts = [], text = '';
+    if (kind === 'child') {
+      var fams = _mpV2Fams(a);
+      if (fams.length > 1) { text = 'Which family?'; opts = fams.map(function(f) { return [f.id, _mpV2FamLabel(f, a)]; }); }
+    } else if (kind === 'partner') {
+      var open = _mpV2Fams(a).filter(function(f) { return !(f.partner1_id && f.partner2_id); });
+      if (open.length) {
+        text = 'Partner of\u2026';
+        opts = open.map(function(f) { return [f.id, 'the other parent of their existing children (' + _mpV2FamLabel(f, a) + ')']; });
+        opts.push(['', 'a new partnership']);
+      }
+    } else {
+      var bf = _mpV2BirthFams(a);
+      if (bf.length > 1) { text = kind === 'parent' ? 'Which parents?' : 'Sibling in which family?'; opts = bf.map(function(f) { return [f.id, _mpV2BirthLabel(f)]; }); }
+    }
+    sel.innerHTML = '';
+    opts.forEach(function(o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; sel.appendChild(op); });
+    lbl.textContent = text;
+    lbl.style.cssText = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px';
+    wrap.style.display = opts.length ? '' : 'none';
+    document.getElementById('mpV2CkWrap').style.display = (kind === 'child' || kind === 'sibling') ? '' : 'none';
+  }
+
+  function _mpV2Open(mode, person) {
+    _mpV2Ensure();
+    _mpV2Mode = mode;
+    var $ = function(id) { return document.getElementById(id); };
+    $('mpV2Err').style.display = 'none';
+    $('mpV2Save').disabled = false;
+    if (mode === 'edit') {
+      _mpV2AnchorId = person.id;
+      $('mpV2Title').textContent = 'Edit ' + (person.name || 'person');
+      $('mpV2RelWrap').style.display = 'none';
+      $('mpV2Name').value = person.name || '';
+      $('mpV2Sex').value = person.sex || '';
+      $('mpV2Birth').value = person.birth_text || (person.birth_year ? String(person.birth_year) : '');
+      $('mpV2Dec').checked = !!person.is_deceased;
+      $('mpV2Bio').value = person.bio || '';
+      $('mpV2Hide').checked = !!person.hide_from_share;
+      $('mpV2Save').textContent = 'Save changes';
+    } else {
+      _mpV2AnchorId = person.id;
+      $('mpV2Title').textContent = 'Add a relative of ' + (person.name || 'this person');
+      $('mpV2RelWrap').style.display = '';
+      $('mpV2Kind').value = 'child';
+      $('mpV2Name').value = ''; $('mpV2Sex').value = ''; $('mpV2Birth').value = '';
+      $('mpV2Dec').checked = false; $('mpV2Bio').value = ''; $('mpV2Hide').checked = false;
+      $('mpV2Save').textContent = 'Add';
+      _mpV2KindChanged();
+    }
+    $('mpV2Modal').style.display = 'flex';
+    setTimeout(function() { $('mpV2Name').focus(); }, 50);
+  }
+
+  function mpV2Edit() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    if (!person) return;
+    mpCloseProfile();
+    _mpV2Open('edit', person);
+  }
+  function mpV2AddRelative() {
+    var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
+    if (!person) return;
+    mpCloseProfile();
+    _mpV2Open('add', person);
+  }
+
+  async function _mpV2Save() {
+    var $ = function(id) { return document.getElementById(id); };
+    var err = $('mpV2Err'), btn = $('mpV2Save');
+    var name = ($('mpV2Name').value || '').trim();
+    err.style.display = 'none';
+    if (!name) { err.textContent = 'Please enter a name.'; err.style.display = 'block'; return; }
+    var birthText = ($('mpV2Birth').value || '').trim();
+    var ym = birthText.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+    var fields = {
+      name: name,
+      sex: $('mpV2Sex').value || null,
+      birth_text: birthText || null,
+      birth_year: ym ? parseInt(ym[1], 10) : null,
+      is_deceased: $('mpV2Dec').checked,
+      bio: ($('mpV2Bio').value || '').trim() || null,
+      hide_from_share: $('mpV2Hide').checked
+    };
+    btn.disabled = true; btn.textContent = 'Saving\u2026';
+    var hdr = Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' });
+    try {
+      if (_mpV2Mode === 'edit') {
+        var r = await fetch(DB_PEOPLE_URL + '?id=eq.' + _mpV2AnchorId + '&user_id=eq.' + currentUser.id,
+          { method: 'PATCH', headers: Object.assign({}, hdr, { 'Prefer': 'return=minimal' }), body: JSON.stringify(fields) });
+        if (!r.ok) throw new Error('Save failed (' + r.status + ')');
+        logActivity('people_edited', name, 'info', 'PEOPLE');
+      } else {
+        var kind = $('mpV2Kind').value;
+        var famSel = $('mpV2FamWrap').style.display !== 'none' ? $('mpV2Fam').value : '';
+        var body = {
+          anchor_id: _mpV2AnchorId, kind: kind, person: Object.assign({ bucket: 'family' }, fields),
+          p_family_id: famSel || null,
+          p_child_kind: (kind === 'child' || kind === 'sibling') ? $('mpV2ChildKind').value : 'biological'
+        };
+        var r2 = await fetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_add_relative', { method: 'POST', headers: hdr, body: JSON.stringify(body) });
+        if (!r2.ok) {
+          var msg = ''; try { var j = await r2.json(); msg = j.message || ''; } catch(e2) {}
+          throw new Error(msg || ('Could not add (' + r2.status + ')'));
+        }
+        logActivity('people_added', name, 'info', 'PEOPLE');
+      }
+      _mpV2Hide();
+      toast(_mpV2Mode === 'edit' ? 'Saved.' : name + ' added.');
+      await _mpLoad();
+    } catch(e) {
+      err.textContent = e.message || 'Something went wrong.'; err.style.display = 'block';
+      btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : 'Add';
+      dbgWarn('PEOPLE', 'v2 save error: ' + e.message);
+    }
+  }
+
   // Legacy stubs — kept so any older references don't throw
   function mpEditSelected()   { mpProfileEdit(); }
   function mpDeleteSelected() { mpProfileDelete(); }
@@ -31074,8 +31259,8 @@
     on('mpPersonSaveBtn',      'click', mpSavePerson);
     on('mpProfileBackdrop',    'click', mpCloseProfile);
     on('mpProfileCloseBtn',    'click', mpCloseProfile);
-    on('mpProfileEditBtn',     'click', mpProfileEdit);
-    on('mpProfileAddRelBtn',   'click', mpProfileAddRelative);
+    on('mpProfileEditBtn',     'click', mpV2Edit);
+    on('mpProfileAddRelBtn',   'click', mpV2AddRelative);
     on('mpProfileWriteMemBtn', 'click', mpProfileWriteMemory);
     on('mpProfileDeleteBtn',   'click', mpProfileDelete);
     on('mpProfileWriteMemBtn2','click', mpProfileWriteMemory);
