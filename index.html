@@ -5413,13 +5413,13 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.243';
+  const APP_VERSION = 'v7.244';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":12149},{"maxLine":1978,"offset":12150},{"maxLine":2778,"offset":12151},{"maxLine":2830,"offset":12154},{"maxLine":3234,"offset":12155},{"maxLine":3414,"offset":12156},{"maxLine":5346,"offset":12157},{"maxLine":5709,"offset":12165},{"maxLine":6874,"offset":12175},{"maxLine":7156,"offset":12176},{"maxLine":7630,"offset":12177},{"maxLine":8557,"offset":12178},{"maxLine":10105,"offset":12180},{"maxLine":11317,"offset":12181},{"maxLine":11488,"offset":12182},{"maxLine":12210,"offset":12183},{"maxLine":12228,"offset":12185},{"maxLine":14087,"offset":12187},{"maxLine":15164,"offset":12188},{"maxLine":15166,"offset":12189},{"maxLine":15863,"offset":12190},{"maxLine":16741,"offset":12191},{"maxLine":18597,"offset":12194},{"maxLine":18917,"offset":12195},{"maxLine":19183,"offset":12196},{"maxLine":19801,"offset":12197},{"maxLine":19994,"offset":12198},{"maxLine":20196,"offset":12199},{"maxLine":20608,"offset":12200},{"maxLine":20858,"offset":12201},{"maxLine":21609,"offset":12202},{"maxLine":21651,"offset":12203},{"maxLine":21805,"offset":12204},{"maxLine":23687,"offset":12205},{"maxLine":23982,"offset":12206},{"maxLine":26861,"offset":12646},{"maxLine":27905,"offset":12647},{"maxLine":30054,"offset":12649},{"maxLine":null,"offset":12650}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":767,"offset":12294},{"maxLine":2018,"offset":12295},{"maxLine":2837,"offset":12296},{"maxLine":2892,"offset":12299},{"maxLine":3296,"offset":12300},{"maxLine":3476,"offset":12301},{"maxLine":5416,"offset":12302},{"maxLine":5779,"offset":12310},{"maxLine":6337,"offset":12320},{"maxLine":7249,"offset":12321},{"maxLine":7531,"offset":12322},{"maxLine":8034,"offset":12323},{"maxLine":9020,"offset":12324},{"maxLine":10568,"offset":12326},{"maxLine":11780,"offset":12327},{"maxLine":11951,"offset":12328},{"maxLine":12673,"offset":12329},{"maxLine":12691,"offset":12331},{"maxLine":14550,"offset":12333},{"maxLine":15670,"offset":12334},{"maxLine":15672,"offset":12335},{"maxLine":16369,"offset":12336},{"maxLine":17247,"offset":12337},{"maxLine":19103,"offset":12340},{"maxLine":19423,"offset":12341},{"maxLine":19689,"offset":12342},{"maxLine":20307,"offset":12343},{"maxLine":20500,"offset":12344},{"maxLine":20702,"offset":12345},{"maxLine":21114,"offset":12346},{"maxLine":21364,"offset":12347},{"maxLine":22120,"offset":12348},{"maxLine":22162,"offset":12349},{"maxLine":22316,"offset":12350},{"maxLine":24198,"offset":12351},{"maxLine":24493,"offset":12352},{"maxLine":27378,"offset":12797},{"maxLine":27536,"offset":12798},{"maxLine":28704,"offset":12799},{"maxLine":30853,"offset":12801},{"maxLine":null,"offset":12802}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -6601,7 +6601,7 @@
   var _shareRefreshToken = null;
   async function submitRefreshRequest() {
     var btn = document.getElementById('shareRefreshBtn'), err = document.getElementById('shareRefreshErr');
-    if (!_shareRefreshToken || !btn) return;
+    if (!_shareRefreshToken || !btn || btn.disabled) return;   // btn.disabled: ignore a second click while sending
     if (err) err.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Sending\u2026';
     try {
@@ -6621,6 +6621,12 @@
         document.getElementById('shareRefreshDone').style.display = 'block';
         return;
       }
+      // ERR-LOG-02: 429 (rate limit) and 409 (link works again) are expected; anything else is a real failure.
+      if (res.status !== 429 && res.status !== 409) {
+        var _rd = 'HTTP ' + res.status + (d && d.error ? ' - ' + d.error : '');
+        logActivity('share_refresh_request_failed', _rd, 'warn', 'SHARE');
+        notifyDev('warn', 'SHARE', 'request_refresh failed - ' + _rd);
+      }
       if (err) {
         err.textContent = res.status === 429 ? 'Too many tries \u2014 please wait a minute and try again.'
                         : res.status === 409 ? 'This link works again \u2014 please reload the page.'
@@ -6628,6 +6634,9 @@
         err.style.display = 'block';
       }
     } catch (e) {
+      // ERR-LOG-02: network failure, or something threw after the response (e.g. a missing form element).
+      logActivity('share_refresh_request_failed', 'exception: ' + String(e && e.message || e), 'warn', 'SHARE');
+      notifyDev('warn', 'SHARE', 'request_refresh exception - ' + String(e && e.message || e));
       if (err) { err.textContent = 'Sorry, we could not send your request. Please check your connection and try again.'; err.style.display = 'block'; }
     }
     btn.disabled = false; btn.textContent = 'Ask for a new link';
@@ -8059,7 +8068,13 @@
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'list_refresh_requests' })
       });
-      if (!res.ok) { tile.style.display = 'none'; return; }
+      if (!res.ok) {
+        tile.style.display = 'none';
+        // ERR-LOG-02: was silent. A failing list means an owner never sees that someone asked for a new link.
+        logActivity('link_requests_load_failed', 'HTTP ' + res.status, 'warn', 'SHARE');
+        notifyDev('warn', 'SHARE', 'list_refresh_requests failed - HTTP ' + res.status);
+        return;
+      }
       var data = await res.json();
       var reqs = (data && data.requests) || [];
       if (!reqs.length) { tile.style.display = 'none'; list.innerHTML = ''; return; }
@@ -8083,6 +8098,8 @@
       tile.style.display = 'block';
     } catch (e) {
       dbgWarn('SHARE', 'loadLinkRequestsTile error:', e.message);
+      logActivity('link_requests_load_failed', 'exception: ' + String(e && e.message || e), 'warn', 'SHARE');
+      notifyDev('warn', 'SHARE', 'loadLinkRequestsTile exception - ' + String(e && e.message || e));
     }
   }
   async function dismissLinkRequest(tokenId) {
@@ -26790,7 +26807,7 @@
   function mpViewOpenProfile() { if (_mpViewerId) mpOpenProfile(_mpViewerId); }
 
   // ── Layout ────────────────────────────────────────────────────────
-  // Families -> x/y positions. Ported from the approved render page (Ponger test tree):
+  // Families -> x/y positions. Ported from the approved render page (large test tree):
   // partners side by side (ended/widowed unions on the left, current on the right),
   // children centred under their family, a partner who belongs to another branch is
   // placed there and joined by a dotted link. Layout does not depend on who is viewing.
@@ -27688,6 +27705,9 @@
       err.textContent = e.message || 'Something went wrong.'; err.style.display = 'block';
       btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : 'Add';
       dbgWarn('PEOPLE', 'v2 save error: ' + e.message);
+      // ERR-LOG-02: the success paths are logged (people_added / people_edited); failures now are too.
+      logActivity('people_save_failed', _mpV2Mode + ': ' + String(e && e.message || e), 'warn', 'PEOPLE');
+      notifyDev('warn', 'PEOPLE', 'v2 save failed (' + _mpV2Mode + ') - ' + String(e && e.message || e));
     }
   }
 
@@ -31525,6 +31545,10 @@
     //   on('shareFbAudioBtn',  'click', toggleShareFbAudio);
     //   on('shareFbVideoBtn',  'click', toggleShareFbVideo);
     on('shareFbSubmitBtn', 'click', submitShareFeedback);
+    // ERR-LOG-02 BUG FIX: "Ask for a new link" had only data-action="share-request-refresh", but #shareScreen sits
+    // outside #appShell and the delegated click handler is only attached inside it, so the button did nothing
+    // for visitors (found by share_page_e2e_refresh.js). Bound directly, like the Send response button above.
+    on('shareRefreshBtn', 'click', function() { window.submitRefreshRequest && window.submitRefreshRequest(); });
 
     // ── Landing / auth ────────────────────────────────────────────────────
     // OBS-07: email/password removed entirely — landing auth is now three
