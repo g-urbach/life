@@ -5413,7 +5413,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.242';
+  const APP_VERSION = 'v7.243';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -6280,8 +6280,27 @@
     }
   }
 
-  function spZoomIn()  { _spZoomScale = Math.min(SP_ZOOM_MAX, _spZoomScale * SP_ZOOM_STEP); _spApplyZoomState(); }
-  function spZoomOut() { _spZoomScale = Math.max(SP_ZOOM_MIN, _spZoomScale / SP_ZOOM_STEP); _spApplyZoomState(); }
+  // FAM-11c: the lowest zoom on a v2 tree is "the whole tree fits" (capped at 50% for a small tree), so the minus button
+  // can always reach fit-all. It used to stop at a fixed 20%, which is bigger than the fit of a large tree on a phone.
+  function _spMinZoom() {
+    if (_spV2 && _mpLayout) return Math.max(MP_ZOOM_MIN, Math.min(_mpFitScale(), 0.5));
+    return SP_ZOOM_MIN;
+  }
+  // Zoom to a new scale keeping the middle of the screen where it was (v2 tree).
+  function _spZoomTo(target) {
+    var vp = document.getElementById('shareTreeViewport');
+    var lo = _spMinZoom();
+    target = Math.max(lo, Math.min(SP_ZOOM_MAX, target));
+    if (target < lo * 1.1) target = lo;              // the last step lands exactly on "fit all" instead of a tiny step short of it
+    if (_spV2 && vp && _mpLayout && _mpZoomScale) {
+      var cx = (vp.scrollLeft + vp.clientWidth / 2) / _mpZoomScale, cy = (vp.scrollTop + vp.clientHeight / 2) / _mpZoomScale;
+      _spZoomScale = target; _spApplyZoomState();
+      vp.scrollLeft = cx * _mpZoomScale - vp.clientWidth / 2; vp.scrollTop = cy * _mpZoomScale - vp.clientHeight / 2;
+      _spRecordCentre();
+    } else { _spZoomScale = target; _spApplyZoomState(); }
+  }
+  function spZoomIn()  { _spZoomTo(_spZoomScale * SP_ZOOM_STEP); }
+  function spZoomOut() { _spZoomTo(_spZoomScale / SP_ZOOM_STEP); try { sessionStorage.setItem('lt_sp_rot_off', '1'); } catch(e) {} var h = document.getElementById('spRotateHint'); if (h) h.style.display = 'none'; }   // they found the minus button: the hint has done its job
   function spRecentre() { _spFitTree(); }
 
   // Move the (already-rendered) tree viewport into the full-screen overlay, or
@@ -6372,7 +6391,7 @@
     if (!show) { if (h) h.style.display = 'none'; return; }
     if (!h) {
       h = document.createElement('div'); h.id = 'spRotateHint';
-      var t = document.createElement('span'); t.textContent = 'Turn your phone sideways for more room.';
+      var t = document.createElement('span'); t.textContent = 'Try turning your phone sideways, or pressing the minus button, to fit more on screen.';
       var x = document.createElement('button'); x.type = 'button'; x.setAttribute('aria-label', 'Dismiss'); x.innerHTML = '&times;';
       x.addEventListener('click', function() { try { sessionStorage.setItem('lt_sp_rot_off', '1'); } catch(e) {} h.style.display = 'none'; });
       h.appendChild(t); h.appendChild(x);
@@ -6404,7 +6423,7 @@
     var title = document.getElementById('spTreeTitle');
     if (title) title.textContent = '\uD83C\uDF33 ' + ownerName + '\u2019s family tree';
     var fsBtn = document.getElementById('spExpandBtn');
-    if (fsBtn && !_spFsSupported()) fsBtn.style.display = 'none';      // iPhone Safari has no full screen for pages
+    if (fsBtn) fsBtn.style.display = 'none';      // FAM-11c: the tree already fills the page, so the full screen button added almost nothing (code kept, button hidden)
 
     var card = document.getElementById('shareTreeCard'), noteBtn = document.getElementById('spNoteBtn');
     var pop = document.getElementById('spNotePop');
@@ -6473,8 +6492,7 @@
       if (!e.ctrlKey) return; // plain scroll — let it through untouched, scrolls the viewport
       e.preventDefault();
       var factor = Math.exp(-e.deltaY * 0.01);
-      _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, _spZoomScale * factor));
-      _spApplyZoomState();
+      _spZoomTo(_spZoomScale * factor);
     }, { passive: false });
 
     if ('ongesturestart' in window) { // Safari trackpad pinch
@@ -6482,8 +6500,7 @@
       vp.addEventListener('gesturestart', function(e) { e.preventDefault(); gestureStartScale = _spZoomScale; });
       vp.addEventListener('gesturechange', function(e) {
         e.preventDefault();
-        _spZoomScale = Math.max(SP_ZOOM_MIN, Math.min(SP_ZOOM_MAX, gestureStartScale * e.scale));
-        _spApplyZoomState();
+        _spZoomTo(gestureStartScale * e.scale);
       });
       vp.addEventListener('gestureend', function(e) { e.preventDefault(); });
     }
