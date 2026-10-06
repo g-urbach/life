@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-  <link rel="manifest" id="pwaManifest">
+  <link rel="manifest" href="/manifest.json">
   <title>LifeTold</title><!-- version set at runtime from APP_VERSION -->
   <!-- SEC-08 (v5.52): All static dependencies self-hosted in / — no external script src tags.
        No CDN, no SRI hashes needed. Fonts self-hosted in / — Google no longer receives user IPs.
@@ -5382,7 +5382,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.251';
+  const APP_VERSION = 'v7.252';
   // ── Line number offset for debugging (DEVX-02: segment-aware table) ────
   // See the ⚠️ DEBUG LINE NUMBER WARNING doc comment near the top of this
   // file for the full explanation. Short version: single flat offset broke
@@ -8581,7 +8581,9 @@
     document.getElementById('appShell').style.display = 'none';
 
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-      auth: { persistSession: true, autoRefreshToken: true }
+      // PKCE: OAuth redirect returns a single-use ?code= instead of putting
+      // access/refresh/provider tokens in the URL hash (implicit flow, deprecated).
+      auth: { persistSession: true, autoRefreshToken: true, flowType: 'pkce' }
     });
 
     // Explicitly restore session on init — onAuthStateChange alone has a timing
@@ -26425,32 +26427,8 @@
   // Flush queue whenever device comes back online
   window.addEventListener('online', function() { setTimeout(_offlineQueueFlush, 1000); });
 
-  // ── PWA Manifest (injected inline — no separate manifest.json file needed) ──
-  // Cloudflare Pages serves index.html only; we inject the manifest as a blob URL
-  // so Android Chrome recognises the app as installable. iOS uses the apple-mobile-
-  // web-app-* meta tags above (manifest not used on iOS).
-  (function() {
-    var manifest = {
-      name: 'LifeTold',
-      short_name: 'LifeTold',
-      description: 'Every life should be told',
-      start_url: '/',
-      display: 'standalone',
-      background_color: '#faf7f2',
-      theme_color: '#c9a96e',
-      orientation: 'any',
-      icons: [
-        { src: 'https://lifetold.app/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-        { src: 'https://lifetold.app/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
-      ]
-    };
-    try {
-      var blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-      var url  = URL.createObjectURL(blob);
-      var link = document.getElementById('pwaManifest');
-      if (link) link.href = url;
-    } catch(e) { /* non-critical — silently skip */ logActivity('pwa_manifest_blob_failed', String(e && e.message || e), 'warn', 'PWA'); }
-  })();
+  // ── PWA Manifest: served as a static file, /manifest.json (see <link rel="manifest"> in head).
+  // The old blob: URL approach was blocked by the CSP (default-src 'self').
 
   // ── Service Worker registration ─────────────────────────────────────────────
   // sw.js lives in the GitHub repo root (alongside index.html) and is served by
@@ -27510,22 +27488,35 @@
     });
     box.style.display = '';
   }
+  // Retry ONCE on a network-level failure (fetch throws TypeError: dead/stale connection,
+  // typically after the tab or phone has been idle). Only used for idempotent calls:
+  // the people PATCH and the set_union / set_child_kind RPCs. NOT used for
+  // life_tree_add_relative - a retry there could create a duplicate person.
+  async function _mpFetchRetry(url, opts) {
+    try { return await fetch(url, opts); }
+    catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+      await new Promise(function(r) { setTimeout(r, 400); });
+      return await fetch(url, opts);
+    }
+  }
   async function _mpV2ApplyRels(hdr) {
     for (var i = 0; i < _mpV2RelRows.length; i++) {
       var r = _mpV2RelRows[i], url, body;
       if (r.type === 'union') {
         var ns = r.st.value, nk = r.kd.value;
-        var changed = ns !== (r.fam.union_status || 'current') || (nk && nk !== (r.fam.union_kind || ''));
+        var changed = ns !== (r.fam.union_status || 'current') || nk !== (r.fam.union_kind || '');
         if (!changed) continue;
         url = SUPABASE_URL + '/rest/v1/rpc/life_tree_set_union';
-        body = { p_family_id: r.fam.id, p_status: ns, p_kind: nk || null };
+        // '' = clear the kind (needs the updated life_tree_set_union: null still means "leave unchanged")
+        body = { p_family_id: r.fam.id, p_status: ns, p_kind: nk };
       } else {
         var nc = r.ck.value;
         if (!r.child || nc === (r.child.kind || 'biological')) continue;
         url = SUPABASE_URL + '/rest/v1/rpc/life_tree_set_child_kind';
         body = { p_family_id: r.fam.id, p_child_id: r.child.child_id, p_kind: nc };
       }
-      var res = await fetch(url, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
+      var res = await _mpFetchRetry(url, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
       if (!res.ok) {
         var msg = ''; try { var j = await res.json(); msg = j.message || ''; } catch(e) {}
         throw new Error(msg || ('Could not update relationship (' + res.status + ')'));
@@ -27597,7 +27588,7 @@
     var hdr = Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' });
     try {
       if (_mpV2Mode === 'edit') {
-        var r = await fetch(DB_PEOPLE_URL + '?id=eq.' + _mpV2AnchorId + '&user_id=eq.' + currentUser.id,
+        var r = await _mpFetchRetry(DB_PEOPLE_URL + '?id=eq.' + _mpV2AnchorId + '&user_id=eq.' + currentUser.id,
           { method: 'PATCH', headers: Object.assign({}, hdr, { 'Prefer': 'return=minimal' }), body: JSON.stringify(fields) });
         if (!r.ok) throw new Error('Save failed (' + r.status + ')');
         await _mpV2ApplyRels(hdr);
