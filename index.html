@@ -796,6 +796,19 @@
     @media (max-width: 700px) {
       header { padding: 14px 16px; gap: 8px; }
     }
+    /* v7.258: Add Memory screen compacted on phones so Review / Save / New entry are not cut off. */
+    @media (max-width: 700px) {
+      #panel-memories > div { margin-bottom: 8px !important; }
+      #panel-memories .gethro-avatar-wrap, #panel-memories .gethro-avatar-wrap svg { width: 46px !important; height: 46px !important; }
+      #panel-memories #memSectionTitle { font-size: 1.15rem !important; line-height: 1.25 !important; }
+      #panel-memories #memTitle { padding: 9px 14px !important; font-size: 1rem !important; }
+      #panel-memories #memMicBtn { padding: 10px 16px !important; font-size: 1rem !important; }
+      #panel-memories #memMicIcon { font-size: 1.2rem !important; }
+      #panel-memories #memAnswer { min-height: 104px !important; padding: 11px 14px !important; line-height: 1.5 !important; }
+      #panel-memories #memDetailsToggle { padding: 7px 12px !important; }
+      #panel-memories .mem-action-btn { padding: 9px 14px !important; font-size: 0.95rem !important; }
+      #panel-memories #memButtons > div { margin-bottom: 8px !important; }
+    }
     /* v7.258: phone header was wrapping to 3 rows (email + AI badge pushed Settings/Sign Out down). */
     @media (max-width: 700px) {
       header h1 { font-size: 1.35rem; }
@@ -5405,7 +5418,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.258';
+  const APP_VERSION = 'v7.259';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -11969,7 +11982,7 @@
     const txt = document.getElementById('statusText');
     if (!bar) return;
     if (state === 'idle' && !text) { bar.style.display = 'none'; return; }
-    if (text && /tap to transcribe/i.test(text)) { bar.style.display = 'none'; return; } // v7.258: duplicate of the red Stop button
+    if (text && /transcrib/i.test(text)) { bar.style.display = 'none'; return; } // v7.258: "Recording... tap to transcribe" and "Transcribing..." boxes removed (the mic button already shows the state)
     bar.style.display = 'flex';
     dot.className = 'pulse ' + (state === 'listening' ? '' : state === 'speaking' ? 'red' : 'idle');
     txt.textContent = text;
@@ -18781,15 +18794,15 @@
     send.type = 'button'; send.textContent = 'Send'; send.disabled = true; send.style.opacity = '0.5';
     send.style.cssText += ';padding:10px 20px;border:none;border-radius:10px;background:var(--gold,#c9a96e);color:#fff;font-weight:700;cursor:pointer';
     send.style.opacity = '0.5';
-    function close() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
-    skip.addEventListener('click', function() { logActivity('help_question_dismissed', trigger, 'info', 'FEEDBACK'); close(); });
+    function _closeHelpQ() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
+    skip.addEventListener('click', function() { logActivity('help_question_dismissed', trigger, 'info', 'FEEDBACK'); _closeHelpQ(); });
     send.addEventListener('click', function() {
       if (!chosen) return;
       var text = (ta.value || '').trim().substring(0, 500);
       logActivity('help_question_answered', { choice: chosen, text: text, trigger: trigger }, 'warn', 'FEEDBACK');
       notifyDev('warn', 'FEEDBACK', 'Help question (' + trigger + '): ' + chosen + (text ? ' | ' + text : ''));
       card.innerHTML = '<div style="text-align:center;padding:14px 0;font-size:1rem">Thank you. That really helps. \u2764\ufe0f</div>';
-      setTimeout(close, 1600);
+      setTimeout(_closeHelpQ, 1600);
     });
     row.appendChild(skip); row.appendChild(send);
     card.appendChild(btnWrap); card.appendChild(ta); card.appendChild(row);
@@ -18812,29 +18825,25 @@
   function _fmKey() { return 'lt_first_mem_t0_' + (currentUser ? currentUser.id : ''); }
   function _fmSecs() { return _fmT0 ? Math.round((Date.now() - _fmT0) / 1000) : null; }
   function _fmRealCount() { return entries.filter(function(e) { return !(e.category || '').startsWith('_profile'); }).length; }
-  function _fmHidePrompt() { var el = document.getElementById('firstMemPrompt'); if (el && el.parentNode) el.parentNode.removeChild(el); }
   function _fmHideNudge() { var el = document.getElementById('firstMemNudge'); if (el && el.parentNode) el.parentNode.removeChild(el); }
   function _fmMarkStarted(how) {
     if (_fmT0 === null || _fmStarted) return;
     _fmStarted = true;
     logActivity('first_memory_started', { how: how, secs: _fmSecs() }, 'info', 'ONBOARD');
-    _fmHidePrompt(); _fmHideNudge();
+    _fmHideNudge();
   }
   function _firstMemOnboardingDone(question) {
     _fmT0 = Date.now(); _fmStarted = false; _fmSaved = false; _fmNudged = false;
     try { localStorage.setItem(_fmKey(), String(_fmT0)); } catch(e) {}
     logActivity('onboarding_finished', null, 'info', 'ONBOARD');
     try {
-      var micWrap = document.getElementById('memMicBtn').parentNode;
-      _fmHidePrompt();
-      var pr = document.createElement('div');
-      pr.id = 'firstMemPrompt';
-      pr.style.cssText = "margin-bottom:12px;padding:12px 14px;border-radius:12px;background:rgba(201,169,110,0.15);border:1px solid var(--gold,#c9a96e);font-family:'Playfair Display',serif;font-size:1.05rem;font-style:italic;line-height:1.4";
-      pr.textContent = question || "What's one of your earliest memories?";
-      micWrap.parentNode.insertBefore(pr, micWrap);
+      // First visit only: the question takes the place of the rotating heading. Leaving and
+      // returning to Memories brings the normal rotating headings back.
+      var hd = document.getElementById('memSectionTitle');
+      if (hd) hd.textContent = question || "What's one of your earliest memories?";
       var ma = document.getElementById('memAnswer');
       if (ma) ma.addEventListener('input', function() { _fmMarkStarted('typing'); });
-    } catch(e) { dbgWarn('ONBOARD', 'first memory prompt failed: ' + e.message); }
+    } catch(e) { dbgWarn('ONBOARD', 'first memory prompt failed: ' + e.message); logActivity('first_memory_prompt_failed', String(e && e.message || e), 'error', 'ONBOARD'); }
   }
 
   function _fmShowNudge() {
@@ -18869,7 +18878,7 @@
         box.appendChild(b);
       });
       micWrap.parentNode.insertBefore(box, micWrap);
-    } catch(e) { dbgWarn('ONBOARD', 'first memory nudge failed: ' + e.message); }
+    } catch(e) { dbgWarn('ONBOARD', 'first memory nudge failed: ' + e.message); logActivity('first_memory_nudge_failed', String(e && e.message || e), 'error', 'ONBOARD'); }
   }
 
   setInterval(function() {
@@ -18887,7 +18896,7 @@
         _fmSaved = true;
         logActivity('first_memory_saved', { secs: _fmSecs() }, 'info', 'ONBOARD');
         try { localStorage.removeItem(_fmKey()); } catch(e) {}
-        _fmHidePrompt(); _fmHideNudge();
+        _fmHideNudge();
         return;
       }
       if (_fmStarted || _fmNudged || document.visibilityState !== 'visible') return;
@@ -18936,8 +18945,8 @@
     var go = document.createElement('button');
     go.type = 'button'; go.textContent = 'Send';
     go.style.cssText = 'padding:10px 22px;border:none;border-radius:10px;background:var(--gold,#c9a96e);color:#fff;font-weight:700;cursor:pointer;font-size:0.95rem';
-    function close() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
-    no.addEventListener('click', function() { logActivity('welcome_feedback_dismissed', null, 'info', 'FEEDBACK'); close(); });
+    function _closeWelcomeFb() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
+    no.addEventListener('click', function() { logActivity('welcome_feedback_dismissed', null, 'info', 'FEEDBACK'); _closeWelcomeFb(); });
     go.addEventListener('click', function() {
       var text = (ta.value || '').trim();
       if (text.length < 3) { msg.textContent = 'Please write a few words first.'; return; }
@@ -18947,7 +18956,7 @@
         notifyDev('warn', 'CONTACT', detail);
         logActivity('user_contact', detail, 'warn', 'CONTACT');
         card.innerHTML = '<div style="text-align:center;padding:16px 0;font-size:1rem;line-height:1.6">Thank you. Your message has gone straight to us.<br>We really appreciate it. \u2764\ufe0f</div>';
-        setTimeout(close, 2200);
+        setTimeout(_closeWelcomeFb, 2200);
       } catch(e) {
         go.disabled = false; go.textContent = 'Send';
         msg.textContent = 'Something went wrong. Please try again.';
@@ -28895,7 +28904,7 @@
         try {
           const lr = await fetch(DB_URL + '?user_id=eq.' + currentUser.id + '&category=eq.' + encodeURIComponent(category) + '&select=*&order=timestamp.asc&limit=1', { headers: getAuthHeaders() });
           if (lr.ok) { const found = await lr.json(); if (found[0]) { existing = found[0]; entries.push(existing); } }
-        } catch(e) { dbgWarn('PROFILE', 'profile row lookup failed: ' + e.message); }
+        } catch(e) { dbgWarn('PROFILE', 'profile row lookup failed: ' + e.message); logActivity('profile_lookup_failed', String(e && e.message || e), 'error', 'PROFILE'); }
       }
       if (!existing && !answer) return; // nothing stored and nothing to store: don't write blank rows
       if (existing) {
