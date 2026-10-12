@@ -5418,7 +5418,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.262';
+  const APP_VERSION = 'v7.263';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -18758,13 +18758,13 @@
     _helpQShown = true;
     try { localStorage.setItem('lt_helpq_' + currentUser.id, '1'); } catch(e) {}
     logActivity('help_question_shown', trigger, 'info', 'FEEDBACK');
-    var opts = ["I'm not sure what to write about", "I'd rather talk than type", "I wanted to see how it works first", "Something wasn't working", "Just looking"];
+    var opts = ["I'm not sure what to write about", "I'd rather talk than type", "I wanted to see how it works first", "Something wasn't working", "Just having a look around"];
     var wrap = document.createElement('div');
     wrap.id = 'helpQOverlay';
     wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:16px';
     var card = document.createElement('div');
     card.style.cssText = 'background:var(--surface,#fff);color:var(--text,#222);border-radius:16px;padding:22px 20px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,0.3);font-family:Lato,sans-serif';
-    card.innerHTML = '<div style="font-family:\'Playfair Display\',serif;font-size:1.15rem;margin-bottom:6px">What would have helped?</div>' +
+    card.innerHTML = '<div style="font-family:\'Playfair Display\',serif;font-size:1.15rem;margin-bottom:6px">What would make getting started easier?</div>' +
       '<div style="font-size:0.85rem;line-height:1.5;color:var(--text-light,#666);margin-bottom:14px">Your answer goes straight to the person who built LifeTold.</div>';
     var chosen = '';
     var btnWrap = document.createElement('div');
@@ -18777,13 +18777,13 @@
         chosen = label;
         btns.forEach(function(x) { x.style.borderColor = 'var(--border,#ccc)'; x.style.background = 'transparent'; });
         b.style.borderColor = 'var(--gold,#c9a96e)'; b.style.background = 'rgba(201,169,110,0.15)';
-        send.disabled = false; send.style.opacity = '1';
+        _syncSend();
       });
       btnWrap.appendChild(b);
       return b;
     });
     var ta = document.createElement('textarea');
-    ta.placeholder = 'Anything else? (optional)'; ta.rows = 2;
+    ta.placeholder = 'Or tell us in your own words...'; ta.rows = 2;
     ta.style.cssText = 'width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid var(--border,#ccc);font-size:0.9rem;margin-bottom:12px;background:transparent;color:inherit';
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end';
@@ -18795,12 +18795,19 @@
     send.style.cssText += ';padding:10px 20px;border:none;border-radius:10px;background:var(--gold,#c9a96e);color:#fff;font-weight:700;cursor:pointer';
     send.style.opacity = '0.5';
     function _closeHelpQ() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
+    // v7.261: Send unlocks once a reason is picked OR a few words are typed; greyed out otherwise.
+    function _syncSend() {
+      var ok = !!chosen || (ta.value || '').trim().length >= 3;
+      send.disabled = !ok; send.style.opacity = ok ? '1' : '0.5';
+    }
+    ta.addEventListener('input', _syncSend);
     skip.addEventListener('click', function() { logActivity('help_question_dismissed', trigger, 'info', 'FEEDBACK'); _closeHelpQ(); });
     send.addEventListener('click', function() {
-      if (!chosen) return;
       var text = (ta.value || '').trim().substring(0, 500);
-      logActivity('help_question_answered', { choice: chosen, text: text, trigger: trigger }, 'warn', 'FEEDBACK');
-      notifyDev('warn', 'FEEDBACK', 'Help question (' + trigger + '): ' + chosen + (text ? ' | ' + text : ''));
+      if (!chosen && text.length < 3) return;
+      var pick = chosen || '(typed only)';
+      logActivity('help_question_answered', { choice: pick, text: text, trigger: trigger }, 'warn', 'FEEDBACK');
+      notifyDev('warn', 'FEEDBACK', 'Help question (' + trigger + '): ' + pick + (text ? ' | ' + text : ''));
       card.innerHTML = '<div style="text-align:center;padding:14px 0;font-size:1rem">Thank you. That really helps. \u2764\ufe0f</div>';
       setTimeout(_closeHelpQ, 1600);
     });
@@ -18912,13 +18919,18 @@
   // sign-in redirect), then a small box opens once the app is loaded. Saved like the Help tab contact
   // form: logActivity('user_contact') for the DB + notifyDev for Telegram.
   (function() {
+    // v7.261: the welcome email's feedback link needs NO login. ?feedback=welcome&u=<userId>&n=<firstName>
+    // opens the box straight away over whatever screen is showing. Nothing is read from the URL
+    // except the id and name, which only label the message.
     try {
       var qp = new URLSearchParams(window.location.search);
       if (qp.get('feedback')) {
-        localStorage.setItem('lt_pending_feedback', qp.get('feedback'));
-        qp.delete('feedback');
+        window._fbUid = (qp.get('u') || '').replace(/[^0-9a-fA-F-]/g, '').substring(0, 40);
+        window._fbName = (qp.get('n') || '').substring(0, 40);
+        ['feedback', 'u', 'n'].forEach(function(k) { qp.delete(k); });
         var qs = qp.toString();
         history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+        setTimeout(function() { try { _showWelcomeFeedback(); } catch(e) {} }, 1200);
       }
     } catch(e) {}
   })();
@@ -18952,7 +18964,8 @@
       if (text.length < 3) { msg.textContent = 'Please write a few words first.'; return; }
       go.disabled = true; go.textContent = 'Sending...';
       try {
-        var detail = '[WELCOME EMAIL FEEDBACK] ' + text;
+        var who = (window._fbName ? window._fbName + ' ' : '') + (window._fbUid ? '(user ' + window._fbUid + ')' : '(unknown user)');
+        var detail = '[WELCOME EMAIL FEEDBACK] ' + who + ': ' + text;
         notifyDev('warn', 'CONTACT', detail);
         logActivity('user_contact', detail, 'warn', 'CONTACT');
         card.innerHTML = '<div style="text-align:center;padding:16px 0;font-size:1rem;line-height:1.6">Thank you. Your message has gone straight to us.<br>We really appreciate it. \u2764\ufe0f</div>';
@@ -18970,19 +18983,7 @@
     setTimeout(function() { try { ta.focus(); } catch(e) {} }, 100);
   }
 
-  setInterval(function() {
-    try {
-      if (!localStorage.getItem('lt_pending_feedback')) return;
-      if (typeof _appFullyLoaded === 'undefined' || !_appFullyLoaded || !currentUser) return;
-      var blockers = ['onboardingOverlay', 'tourOverlay', 'disclaimerOverlay', 'pendingOverlay'];
-      for (var i = 0; i < blockers.length; i++) {
-        var el = document.getElementById(blockers[i]);
-        if (el && el.style.display && el.style.display !== 'none') return;
-      }
-      localStorage.removeItem('lt_pending_feedback');
-      _showWelcomeFeedback();
-    } catch(e) {}
-  }, 2000);
+  // (v7.261: the old wait-for-login poller was removed; the box now opens straight from the email link.)
 
   // ── v7.258: give the Add Memory text box all the spare height on this phone ─────
   // Measures the space between the Save row and the bottom nav and hands it to the text box
