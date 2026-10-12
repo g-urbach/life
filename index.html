@@ -5418,7 +5418,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.259';
+  const APP_VERSION = 'v7.260';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -10301,7 +10301,7 @@
     if (name !== 'memories' && memMicActive) { stopMemMic(); }
     if (name === 'help')     { renderEmailPrefsUI(); /* refresh toggle state */ }
     if (name === 'story' && currentStory) renderStory(currentStory.text, currentStory.photoEntries || entries.filter(function(e){ return e.photo_url; }), currentStory.mode, currentStory.funnyCaptions, currentStory.funny, currentStory.comedyStyle, currentStory.comedyIntensity);
-    if (name === 'memories') { populateTagDropdowns('rec'); _startMemHeadingRotation(); }
+    if (name === 'memories') { populateTagDropdowns('rec'); _startMemHeadingRotation(); setTimeout(_fitMemBox, 60); }
     if (name === 'story')    { renderBookDetails(); _storyLoadPrivacyFlag(); _scInit(); }
     // Autosave draft: start ticker when entering memories, stop when leaving
     if (name === 'memories') { draftStartTicker(); }
@@ -18983,6 +18983,34 @@
       _showWelcomeFeedback();
     } catch(e) {}
   }, 2000);
+
+  // ── v7.258: give the Add Memory text box all the spare height on this phone ─────
+  // Measures the space between the Save row and the bottom nav and hands it to the text box
+  // (never smaller than 104px, never taller than 60% of the screen). Phones only (<=700px).
+  var _fitMemErrLogged = false;
+  function _fitMemBox() {
+    try {
+      var ta = document.getElementById('memAnswer');
+      var panel = document.getElementById('panel-memories');
+      var btns = document.getElementById('memButtons');
+      var nav = document.getElementById('navBar');
+      if (!ta || !panel || !btns || !nav || !panel.classList.contains('active')) return;
+      if (window.innerWidth > 700) { ta.style.removeProperty('height'); return; }
+      var vh = window.innerHeight; // stays put when the keyboard opens, so typing does not shrink the box
+      var nr = nav.getBoundingClientRect();
+      var navTop = (nr.height > 0 && nr.top > 0 && nr.top < vh) ? nr.top : vh;
+      var contentBottom = btns.getBoundingClientRect().bottom + window.scrollY; // page position, ignores scrolling
+      var free = navTop - contentBottom - 16;
+      var cur = ta.getBoundingClientRect().height;
+      var next = Math.max(104, Math.min(Math.round(cur + free), Math.round(vh * 0.6)));
+      if (Math.abs(next - cur) >= 2) ta.style.setProperty('height', next + 'px', 'important');
+    } catch(e) {
+      if (!_fitMemErrLogged) { _fitMemErrLogged = true; logActivity('fit_mem_box_failed', String(e && e.message || e), 'error', 'UI'); }
+    }
+  }
+  window.addEventListener('resize', function() { setTimeout(_fitMemBox, 80); });
+  window.addEventListener('orientationchange', function() { setTimeout(_fitMemBox, 300); });
+  setInterval(_fitMemBox, 1000); // catches banners, panels and fonts changing the layout
 
   function renderDashboard() {
     // Remove skeleton shimmer once entries have loaded
