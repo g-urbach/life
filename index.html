@@ -29,7 +29,10 @@
   <script src="/supabase.min.js"></script>
   <!-- jsPDF for PDF generation -->
   <script src="/jspdf.umd.min.js"></script>
-  <!-- FAM-08 (2026-10-13): d3, lodash and dtree were removed. They only fed the old dTree tree renderer; the app now draws its own SVG tree. -->
+  <!-- dTree: MIT-licensed family tree library built on D3 v4 -->
+  <script src="/d3.min.js"></script>
+  <script src="/lodash.min.js"></script>
+  <script src="/dtree.min.js"></script>
   <!-- SEC-05: DOMPurify for sanitising AI-generated HTML before DOM insertion -->
   <!-- SEC-08 NOTE: Peecho script loaded dynamically via document.createElement — SRI not applicable to
        dynamic injection; risk accepted and documented. Mitigation: only loads on print flow, and
@@ -5296,7 +5299,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.274';
+  const APP_VERSION = 'v7.275';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5307,7 +5310,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":779,"offset":12382},{"maxLine":2050,"offset":12383},{"maxLine":2838,"offset":12384},{"maxLine":2893,"offset":12387},{"maxLine":3301,"offset":12388},{"maxLine":3481,"offset":12389},{"maxLine":5426,"offset":12390},{"maxLine":5789,"offset":12398},{"maxLine":6318,"offset":12408},{"maxLine":6330,"offset":12410},{"maxLine":7218,"offset":12411},{"maxLine":7500,"offset":12412},{"maxLine":8003,"offset":12413},{"maxLine":9019,"offset":12414},{"maxLine":10568,"offset":12416},{"maxLine":11780,"offset":12417},{"maxLine":11951,"offset":12418},{"maxLine":12674,"offset":12419},{"maxLine":12692,"offset":12421},{"maxLine":14551,"offset":12423},{"maxLine":15671,"offset":12424},{"maxLine":15673,"offset":12425},{"maxLine":16370,"offset":12426},{"maxLine":17248,"offset":12427},{"maxLine":19386,"offset":12430},{"maxLine":19708,"offset":12431},{"maxLine":19974,"offset":12432},{"maxLine":20592,"offset":12433},{"maxLine":20785,"offset":12434},{"maxLine":20987,"offset":12435},{"maxLine":21399,"offset":12436},{"maxLine":21649,"offset":12437},{"maxLine":22405,"offset":12438},{"maxLine":22447,"offset":12439},{"maxLine":22601,"offset":12440},{"maxLine":24483,"offset":12441},{"maxLine":24778,"offset":12442},{"maxLine":27641,"offset":12889},{"maxLine":27799,"offset":12890},{"maxLine":28993,"offset":12891},{"maxLine":31142,"offset":12893},{"maxLine":null,"offset":12894}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":779,"offset":12411},{"maxLine":2054,"offset":12412},{"maxLine":2842,"offset":12413},{"maxLine":2897,"offset":12416},{"maxLine":3305,"offset":12417},{"maxLine":3485,"offset":12418},{"maxLine":5307,"offset":12419},{"maxLine":5670,"offset":12427},{"maxLine":6079,"offset":12437},{"maxLine":6091,"offset":12439},{"maxLine":6899,"offset":12440},{"maxLine":7181,"offset":12441},{"maxLine":7684,"offset":12442},{"maxLine":8700,"offset":12443},{"maxLine":10242,"offset":12445},{"maxLine":11454,"offset":12446},{"maxLine":11625,"offset":12447},{"maxLine":12348,"offset":12448},{"maxLine":12366,"offset":12450},{"maxLine":14225,"offset":12452},{"maxLine":15345,"offset":12453},{"maxLine":15347,"offset":12454},{"maxLine":16044,"offset":12455},{"maxLine":16922,"offset":12456},{"maxLine":19061,"offset":12459},{"maxLine":19383,"offset":12460},{"maxLine":19649,"offset":12461},{"maxLine":20267,"offset":12462},{"maxLine":20460,"offset":12463},{"maxLine":20662,"offset":12464},{"maxLine":21074,"offset":12465},{"maxLine":21324,"offset":12466},{"maxLine":22080,"offset":12467},{"maxLine":22122,"offset":12468},{"maxLine":22276,"offset":12469},{"maxLine":24158,"offset":12470},{"maxLine":24453,"offset":12471},{"maxLine":27211,"offset":12918},{"maxLine":27411,"offset":12919},{"maxLine":28361,"offset":12920},{"maxLine":30510,"offset":12922},{"maxLine":null,"offset":12923}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -8216,7 +8219,7 @@
     } else if (_giftParam && /^[a-zA-Z0-9]{32}$/.test(_giftParam)) {
       window._pendingGiftCode = _giftParam;
       history.replaceState(null, '', window.location.pathname);
-      dbg('GIFT', 'Pending gift code detected from URL:', _giftParam);
+      dbg('GIFT', 'Pending gift code detected from URL: ref=' + _giftRef(_giftParam));
       // BUGFIX (2026-09-18): also stash to sessionStorage immediately, not just
       // on "I'll do this later". window._pendingGiftCode alone does NOT survive
       // an OAuth redirect (Google/Apple/Facebook all use a full-page redirectTo
@@ -18948,12 +18951,27 @@
       const date   = new Date(e.timestamp).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
       const title  = e.title ? '<strong>' + escHtml(e.title) + '</strong> — ' : '';
       const text   = e.answer.substring(0,70) + (e.answer.length>70?'\u2026':'');
-      return '<div ' +
+      return '<div class="dash-recent-row" ' +
         'style="font-size:0.85rem;padding:6px 0;border-bottom:1px solid var(--border);color:var(--text);cursor:pointer">' +
         '<span style="color:var(--text-light);font-size:0.75rem;margin-right:8px">' + date + '</span>' +
         title + text +
       '</div>';
     }).join('');
+    // v7.274: rows had cursor:pointer but no handler. Same open-entry pattern as the This Day tile.
+    var _recentOpen = function(en) {
+      _entriesTypeFilter = null; _entriesPersonFilter = null; _entriesLocationFilter = null;
+      showPanel('entries', null, 2);
+      if (!en) return;
+      setTimeout(function() {
+        var el = document.getElementById('rev-' + (en.id || (en.timestamp || '').replace(/[:.+]/g, '-')));
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.click(); }
+      }, 300);
+    };
+    recentEl.querySelectorAll('.dash-recent-row').forEach(function(row, i) {
+      row.onclick = function(ev) { ev.stopPropagation(); _recentOpen(recent[i]); };
+    });
+    var _recentTile = recentEl.closest('.dash-tile');
+    if (_recentTile) _recentTile.onclick = function() { _recentOpen(null); };
 
     // Greeting — FAM-01b: subject-aware
     const name = entries.find(e=>e.category==='_profile_name')?.answer;
@@ -28785,7 +28803,7 @@
     if (step2) step2.style.display = 'block';
     if (confirmMsg) {
       var recipName = (pending && pending.recipientName) ? pending.recipientName : 'your recipient';
-      confirmMsg.textContent = 'We\'ve received your gift for ' + recipName + '. They\'ll receive an email with everything they need to get started. Thank you for sharing LifeTold.';
+      confirmMsg.textContent = 'Thank you, your payment went through. We are emailing ' + recipName + ' their gift now, with a link to claim a year of Premium. If it has not arrived in a few minutes, ask them to check spam, or contact us at gethro@lifetold.app. Thank you for sharing LifeTold.';
     }
     notifyDev('info', 'GIFT', 'Gift checkout completed (returned with ?gift=success)');
     logActivity('gift_purchased', pending ? JSON.stringify(pending) : '', 'info', 'GIFT');
@@ -28799,11 +28817,16 @@
 
   // Shared between the preview fetch and the claim call — both hit the same
   // three known error states from GIFT_REDEEM.
-  function _giftErrorMessage(errCode) {
+  // v7.274: logs carry only an 8-char reference, never the full code (a live code is a
+  // bearer secret, and the debug trail is attached to every error row). Support can find the
+  // gift with: where code like '<ref>%'.
+  function _giftRef(code) { return code ? String(code).slice(0, 8) : '?'; }
+
+  function _giftErrorMessage(errCode, code) {
     if (errCode === 'expired_code') {
       return 'This gift link has expired — ask the gifter to send a new one, or contact us at gethro@lifetold.app';
     } else if (errCode === 'already_redeemed') {
-      return 'This gift has already been claimed. If you think that\'s wrong, contact us at gethro@lifetold.app';
+      return 'This gift has already been claimed. If you think that\'s wrong, contact us at gethro@lifetold.app and quote reference ' + _giftRef(code) + '.';
     } else if (errCode === 'invalid_code') {
       return 'We couldn\'t find this gift. Check the link and try again, or contact us at gethro@lifetold.app';
     }
@@ -28833,9 +28856,9 @@
         window._pendingGiftCode = null;
         try { localStorage.removeItem('lifetold_pending_gift_code'); } catch(e) {}
         try { sessionStorage.removeItem('lifetold_pending_gift_code_session'); } catch(e) {}
-        _showGiftRedeemError(_giftErrorMessage(data.error));
-        dbgWarn('GIFT', 'redeemGiftCode preview failed:', data.error);
-        logActivity('gift_redeem_preview_rejected', data.error, 'info', 'GIFT');
+        _showGiftRedeemError(_giftErrorMessage(data.error, code));
+        dbgWarn('GIFT', 'redeemGiftCode preview failed: ref=' + _giftRef(code) + ' ' + data.error);
+        logActivity('gift_redeem_preview_rejected', 'ref=' + _giftRef(code) + ' ' + data.error, data.error === 'already_redeemed' ? 'warn' : 'info', 'GIFT');
       }
     } catch(e) {
       // Network hiccup, not a dead code — keep the pending code so a retry
@@ -28928,7 +28951,7 @@
         await loadSubscriptionTier();
         refreshPremiumGates();
         toast('Welcome to Premium — your year starts now.');
-        var successDetail = 'code=' + code + ' user=' + (currentUser ? currentUser.email : '?');
+        var successDetail = 'ref=' + _giftRef(code) + ' user=' + (currentUser ? currentUser.email : '?');
         notifyDev('info', 'GIFT', 'Gift redeemed: ' + successDetail);
         logActivity('gift_redeemed', successDetail, 'info', 'GIFT');
       } else {
@@ -28937,17 +28960,17 @@
         window._pendingGiftCode = null;
         try { localStorage.removeItem('lifetold_pending_gift_code'); } catch(e) {}
         try { sessionStorage.removeItem('lifetold_pending_gift_code_session'); } catch(e) {}
-        _showGiftRedeemError(_giftErrorMessage(data.error));
-        dbgWarn('GIFT', 'claimGiftCode failed:', data.error);
-        logActivity('gift_claim_rejected', 'code=' + code + ' ' + data.error, 'warn', 'GIFT');
+        _showGiftRedeemError(_giftErrorMessage(data.error, code));
+        dbgWarn('GIFT', 'claimGiftCode failed: ref=' + _giftRef(code) + ' ' + data.error);
+        logActivity('gift_claim_rejected', 'ref=' + _giftRef(code) + ' ' + data.error, 'warn', 'GIFT');
       }
     } catch(e) {
       if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'Claim my gift ›'; }
       var errEl = document.getElementById('giftRedeemError');
       if (errEl) { errEl.textContent = 'Could not reach the server — please try again.'; errEl.style.display = 'block'; }
       dbgWarn('GIFT', 'claimGiftCode error:', e.message);
-      notifyDev('error', 'GIFT', 'claimGiftCode failed for code=' + code + ': ' + e.message);
-      logActivity('gift_claim_failed', 'code=' + code + ' ' + e.message, 'error', 'GIFT');
+      notifyDev('error', 'GIFT', 'claimGiftCode failed for ref=' + _giftRef(code) + ': ' + e.message);
+      logActivity('gift_claim_failed', 'ref=' + _giftRef(code) + ' ' + e.message, 'error', 'GIFT');
     }
   }
 
