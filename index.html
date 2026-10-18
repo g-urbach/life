@@ -5301,7 +5301,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.278';
+  const APP_VERSION = 'v7.279';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5442,6 +5442,87 @@
   const VOICE_ARCHIVE_URL  = SUPABASE_URL + '/storage/v1/object/life-voice-archive';
   const VOICE_ARCHIVE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-voice-archive';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
+  // SHARE-LOG-02: every call to SHARE_PROXY goes through shareFetch, so a failure always leaves a usable trail:
+  // which action, how long it took, the HTTP status or the browser-level error, and whether the browser thought it
+  // was online or in the background. Never logs the request body, the share token or the link (privacy).
+  // Behaviour is otherwise identical to fetch(): same Response returned, same errors thrown.
+  var _SHARE_CREATE_ACTIONS = { create_share: 1, create_story_share: 1, create_tree_share: 1 };
+  // SHARE-RETRY-01: one quiet retry when a request never got a reply from the server (browser-level "Failed to fetch":
+  // a dropped Wi-Fi, a network switch, a laptop waking up). Only for actions where a second attempt is harmless:
+  // reads, idempotent actions, and link creation (worst case two links, never a wrong result). NOT for submit_feedback
+  // (a visitor's response would be posted twice) or get_tts (rate limited and billed per call).
+  var _SHARE_RETRY_SAFE = { get_entry: 1, get_tree_labels: 1, list_refresh_requests: 1, dismiss_refresh_request: 1,
+                            create_share: 1, create_story_share: 1, create_tree_share: 1, request_refresh: 1 };
+  function _shareNow() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function _shareNetCtx() {
+    var c = navigator.connection || {};
+    return { online: navigator.onLine, visible: document.visibilityState, focused: document.hasFocus && document.hasFocus(),
+             net: c.effectiveType || null, rtt: c.rtt || null, saveData: c.saveData || false };
+  }
+  // Wait ~1.5 s, or, if the browser says it is offline, until it is back online (at most 5 s).
+  function _shareWaitForRetry() {
+    return new Promise(function (resolve) {
+      var done = false;
+      var go = function () { if (done) return; done = true; try { window.removeEventListener('online', onOnline); } catch (e) {} resolve(); };
+      var onOnline = function () { setTimeout(go, 300); };
+      if (navigator.onLine === false) { try { window.addEventListener('online', onOnline); } catch (e) {} setTimeout(go, 5000); }
+      else setTimeout(go, 1500);
+    });
+  }
+  // One attempt. Logs HTTP failures and (on the first attempt) the full browser-level failure, then rethrows.
+  async function _shareFetchOnce(url, init, action, isRetry) {
+    var t0 = _shareNow();
+    try {
+      var res = await fetch(url, init);
+      var took = Math.round(_shareNow() - t0);
+      if (!res.ok) {
+        // 404/410 on a visit just mean "link not found / expired" and are logged separately as share_load_failed.
+        var lvl = res.status >= 500 ? 'error' : (res.status === 404 || res.status === 410) ? 'info' : 'warn';
+        logActivity('share_call_failed', JSON.stringify({ action: action, status: res.status, ms: took, retry: isRetry }), lvl, 'SHARE');
+      } else if (_SHARE_CREATE_ACTIONS[action]) {
+        logActivity('share_call_ok', JSON.stringify({ action: action, ms: took, retry: isRetry }), 'info', 'SHARE');
+      } else if (took > 4000) {
+        logActivity('share_call_slow', JSON.stringify({ action: action, ms: took, retry: isRetry }), 'warn', 'SHARE');
+      }
+      return res;
+    } catch (e) {
+      e._shareMs = Math.round(_shareNow() - t0);
+      var willRetry = !isRetry && !!_SHARE_RETRY_SAFE[action] && !(e && e.name === 'AbortError');
+      if (!isRetry) {
+        var d = _shareNetCtx(); d.action = action; d.ms = e._shareMs; d.err = (e && e.name) + ': ' + (e && e.message); d.willRetry = willRetry;
+        logActivity('share_call_network_error', JSON.stringify(d), 'error', 'SHARE');
+      }
+      throw e;
+    }
+  }
+  // Behaves like fetch(): same Response, same errors. Never logs the request body, the share token or the link.
+  async function shareFetch(url, init) {
+    var action = '?';
+    try { if (init && typeof init.body === 'string') action = (JSON.parse(init.body).action) || '?'; } catch (e) {}
+    try {
+      return await _shareFetchOnce(url, init, action, false);
+    } catch (e1) {
+      if (!_SHARE_RETRY_SAFE[action] || (e1 && e1.name === 'AbortError')) throw e1;
+      await _shareWaitForRetry();
+      var t1 = _shareNow();
+      try {
+        var res = await _shareFetchOnce(url, init, action, true);
+        logActivity('share_call_retry_ok', JSON.stringify({ action: action, firstFailMs: e1._shareMs, retryMs: Math.round(_shareNow() - t1) }), 'info', 'SHARE');
+        return res;
+      } catch (e2) {
+        var d2 = _shareNetCtx(); d2.action = action; d2.err = (e2 && e2.name) + ': ' + (e2 && e2.message);
+        logActivity('share_call_retry_failed', JSON.stringify(d2), 'error', 'SHARE');
+        throw e2;
+      }
+    }
+  }
+  // SHARE-LOG-02: why did the copy fail? Chrome refuses clipboard writes unless the page has focus; record that.
+  function _clipFallbackLog(err) {
+    var m = (err && err.message) || String(err);
+    logActivity('clipboard_fallback', JSON.stringify({
+      err: m, focused: document.hasFocus && document.hasFocus(), visible: document.visibilityState, secure: window.isSecureContext
+    }), 'warn', 'SHARE');
+  }
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
   // GIFT-P1C: redeem a gift code — POST { code }, auth required (JWT).
   const GIFT_REDEEM_URL = SUPABASE_URL + '/functions/v1/GIFT_REDEEM';
@@ -5936,7 +6017,7 @@
     _mpDrawNodes(); _spV2Hint();
     if (_spV2Cache[id]) return;
     try {
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
         body: JSON.stringify({ action: 'get_tree_labels', token: _spV2Token, viewer_id: id })
@@ -6248,7 +6329,7 @@
     if (err) err.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Sending\u2026';
     try {
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
         body: JSON.stringify({
@@ -6290,7 +6371,7 @@
   async function loadSharePage(token) {
     dbg('SHARE', 'Loading share page, token:', token);
     try {
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
         body: JSON.stringify({ action: 'get_entry', token: token })
@@ -6559,7 +6640,7 @@
               // no narration and no error, looking like the player silently broke.
               var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
               var timeoutId = controller ? setTimeout(function() { controller.abort(); }, 15000) : null;
-              return fetch(SHARE_PROXY_URL, {
+              return shareFetch(SHARE_PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
                 body: JSON.stringify(spBody),
@@ -7153,7 +7234,7 @@
         _hp:           document.getElementById('shareHoneypot')?.value || '', // Spam prevention
       };
 
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
         body: JSON.stringify(payload)
@@ -7284,7 +7365,7 @@
         }
         toast('Link copied \u2713');
       } catch(copyErr) {
-        logActivity('clipboard_fallback', copyErr.message, 'warn', 'SHARE');
+        _clipFallbackLog(copyErr);
         window.prompt('Copy this link:', link);
       }
     }
@@ -7299,7 +7380,7 @@
     // the exact same creation path as story pieces and the tree (JWT +
     // server-side premium check + server-side expires_days allow-list,
     // rather than a client-computed expires_at with only RLS behind it).
-    var res = await fetch(SHARE_PROXY_URL, {
+    var res = await shareFetch(SHARE_PROXY_URL, {
       method: 'POST',
       headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -7468,7 +7549,7 @@
     try {
       navigator.clipboard.writeText(link).then(function() { toast('Link copied \u2713'); });
     } catch(e) {
-      logActivity('clipboard_fallback', e.message, 'warn', 'SHARE');
+      _clipFallbackLog(e);
       window.prompt('Copy this link:', link);
     }
   }
@@ -7706,7 +7787,7 @@
     var tile = document.getElementById('dashLinkRequestsTile'), list = document.getElementById('dashLinkRequestsList');
     if (!tile || !list) return;
     try {
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'list_refresh_requests' })
@@ -7747,7 +7828,7 @@
   }
   async function dismissLinkRequest(tokenId) {
     try {
-      var res = await fetch(SHARE_PROXY_URL, {
+      var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'dismiss_refresh_request', token_id: tokenId })
@@ -10392,7 +10473,8 @@
         var wavBlob = await _blobToWav16kMono(blob);
         return { blob: wavBlob, mime: 'audio/wav', ext: 'wav' };
       } catch (e) {
-        dbgErr('MIC_MGR', 'WAV transcode failed — sending original blob (server will use its fallback transcription path):', e); notifyDev('error', 'MIC_MGR', String(e && e.message || e)); logActivity('mic_mgr_error', String(e && e.message || e), 'error', 'MIC_MGR');
+        // MIC-QUIET-01: handled fallback (the original blob is sent instead), so a warning, not an error.
+        dbgWarn('MIC_MGR', 'WAV transcode failed — sending original blob (server will use its fallback transcription path):', String(e && e.message || e));
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
       }
     }
@@ -10789,6 +10871,11 @@
       // one direct, confirmable signal for tonight's test.
       if (_rec) {
         dbgErr(logTag, 'start() called while a recorder was already active — discarding the stale one. This should not happen after AGP-MIC-REENTRANT; if it fires, there is still a re-entrant call path into ' + logTag + '.start().');
+        // MIC-REENTRANT-02: detach FIRST. stop() makes the stale recorder fire one last dataavailable AFTER
+        // _chunks is reset below; with its handler still attached that whole stale recording was pushed into the
+        // new recording's chunk list, giving two complete files in one blob (undecodable, so the integrity check
+        // failed and the turn's audio was discarded).
+        try { _rec.ondataavailable = null; _rec.onerror = null; } catch(e) {}
         try { if (_rec.state !== 'inactive') _rec.stop(); } catch(e) {}
       }
       _chunks = [];
@@ -11045,7 +11132,23 @@
   // Called at recorder-creation time so mimeType is captured in closure.
   // _makeMicOnstop removed v7.19 — final blob now handled by
   // MicManager.flush(isFinal=true) → onChunk(isFinal=true) in startMemMic().
+  // MIC-REENTRANT-02: _micState only becomes 'recording' AFTER MicManager.start() has finished opening the
+  // microphone (a cold open can take a few hundred ms). A second startMemMic() arriving in that gap used to
+  // pass the _micState check and start a second recorder. This flag is up for the whole start and is always
+  // cleared in the finally, so a failed or throwing start can never leave the mic button dead.
+  let _memMicStarting = false;
   async function startMemMic() {
+    if (_memMicStarting) {
+      var _who = '';
+      try { _who = ((new Error().stack || '').split('\n')[2] || '').trim().slice(0, 80); } catch (e) {}
+      dbg('MIC', 'startMemMic ignored — a start is already in progress' + (_who ? ' (caller: ' + _who + ')' : ''));
+      return;
+    }
+    _memMicStarting = true;
+    try { return await _startMemMicInner(); }
+    finally { _memMicStarting = false; }
+  }
+  async function _startMemMicInner() {
     if (_micState !== 'idle') return; // guard double-tap
 
     if (!_mediaRecordingSupported()) {
@@ -11145,13 +11248,20 @@
           if (!el2 || !el2.value.trim()) toast('No speech detected — try again');
         }
       } catch(err) {
-        dbgErr('MIC', (isFinal ? 'Final' : 'Chunk') + ' transcription failed:', err.message);
         if (!isFinal) {
-          toast('Chunk transcription failed — keep speaking, or tap stop to retry', 4000);
-          _micFlushCooldown = true;
-          setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
+          // MIC-QUIET-01: a live chunk is only a preview. The whole recording is transcribed again in one pass when
+          // the person taps stop (_vaLcRunFullPassCorrection) and that text replaces everything dictated in this
+          // session, so a failed chunk loses nothing and there is nothing for the person to do. No message, no
+          // "retry" instruction, and no error-level alarm: it is logged as a warning for us only. The short pause
+          // before the next flush is kept only for rate limits, where hammering the server would make it worse.
+          dbgWarn('MIC', 'Live chunk skipped (' + err.message + ') — full pass at stop will cover it');
+          if (/rate limit|too many|429/i.test(String(err.message))) {
+            _micFlushCooldown = true;
+            setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
+          }
         } else {
-          toast('Transcription unavailable — ' + err.message, 6000);
+          dbgErr('MIC', 'Final transcription failed:', err.message);
+          toast('We couldn\u2019t turn that into text just now. Please try again, or type it in.', 6000);
         }
       }
       return null; // nothing appended (filtered, empty, or errored)
@@ -11220,6 +11330,13 @@
         dbg('VA_LC', 'Full-pass correction applied — ' + before + ' → ' + improved.length + ' chars');
       } catch(e) {
         dbgErr('VA_LC', 'Full-pass correction failed:', e.message); notifyDev('error', 'VA_LC', String(e && e.message || e)); logActivity('va_lc_error', String(e && e.message || e), 'error', 'VA_LC');
+        // MIC-QUIET-01: live chunks are previews, so a failed full pass is only a problem for the person if no
+        // text from this recording reached the box. Only then do we say so, in plain words.
+        try {
+          var _fpEl = document.getElementById('memAnswer');
+          var _fpBase = (turn && turn.baselineSnapshot ? turn.baselineSnapshot.length : 0);
+          if (_fpEl && _fpEl.value.slice(_fpBase).trim() === '') toast('We couldn\u2019t turn that recording into text just now. Please try again, or type it in.', 6000);
+        } catch (_e) {}
       }
     }
 
@@ -11599,6 +11716,12 @@
     _micChunkMimeType = MicManager.mime;
     memMicActive      = true;
     _setMicState('recording');
+    // MIC-QUIET-01: _micRecordStart was set at the top of this function, BEFORE the microphone finished opening.
+    // Anything between (a cold open on a laptop with no prewarmed stream) counted as recorded audio, so the first
+    // live flush could fire with well under MIC_MIN_CHUNK_MS of real audio, giving a tiny, often undecodable chunk.
+    // Restart the clock now that audio is really being captured.
+    _micRecordStart = Date.now();
+    _micSilenceStart = null;
     setMemStatus('listening', '\uD83C\uDF99\uFE0F Recording\u2026 tap to transcribe');
     dbg('MIC', 'Started via MicManager — mime=' + MicManager.mime);
 
@@ -15153,7 +15276,7 @@
 
     var link;
     try {
-      var res  = await fetch(SHARE_PROXY_URL, {
+      var res  = await shareFetch(SHARE_PROXY_URL, {
         method:  'POST',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
         body:    JSON.stringify({ action: 'create_story_share', component_id: pieceId, note: note, expires_days: expiryDays })
@@ -15205,7 +15328,7 @@
           document.execCommand('copy'); document.body.removeChild(ta);
         }
         toast('Link copied ✓');
-      } catch(copyErr) { logActivity('clipboard_fallback', copyErr.message, 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+      } catch(copyErr) { _clipFallbackLog(copyErr); window.prompt('Copy this link:', link); }
     }
   }
 
@@ -15312,7 +15435,7 @@
       var bdBox = document.getElementById('treeShareBirthdays');
       var withBirthdays = !!(bdBox && bdBox.checked);
       if (withBirthdays) treeBody.include_birthdays = true;
-      var res  = await fetch(SHARE_PROXY_URL, {
+      var res  = await shareFetch(SHARE_PROXY_URL, {
         method:  'POST',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
         body:    JSON.stringify(treeBody)
@@ -15357,7 +15480,7 @@
           document.execCommand('copy'); document.body.removeChild(ta);
         }
         toast('Link copied ✓');
-      } catch(copyErr) { logActivity('clipboard_fallback', copyErr.message, 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+      } catch(copyErr) { _clipFallbackLog(copyErr); window.prompt('Copy this link:', link); }
     }
   }
 
