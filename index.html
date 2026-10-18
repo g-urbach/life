@@ -5301,7 +5301,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.279';
+  const APP_VERSION = 'v7.280';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5517,11 +5517,9 @@
     }
   }
   // SHARE-LOG-02: why did the copy fail? Chrome refuses clipboard writes unless the page has focus; record that.
-  function _clipFallbackLog(err) {
+  function _clipFallbackDetail(err) {
     var m = (err && err.message) || String(err);
-    logActivity('clipboard_fallback', JSON.stringify({
-      err: m, focused: document.hasFocus && document.hasFocus(), visible: document.visibilityState, secure: window.isSecureContext
-    }), 'warn', 'SHARE');
+    return JSON.stringify({ err: m, focused: document.hasFocus && document.hasFocus(), visible: document.visibilityState, secure: window.isSecureContext });
   }
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
   // GIFT-P1C: redeem a gift code — POST { code }, auth required (JWT).
@@ -7365,7 +7363,7 @@
         }
         toast('Link copied \u2713');
       } catch(copyErr) {
-        _clipFallbackLog(copyErr);
+        logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE');
         window.prompt('Copy this link:', link);
       }
     }
@@ -7549,7 +7547,7 @@
     try {
       navigator.clipboard.writeText(link).then(function() { toast('Link copied \u2713'); });
     } catch(e) {
-      _clipFallbackLog(e);
+      logActivity('clipboard_fallback', _clipFallbackDetail(e), 'warn', 'SHARE');
       window.prompt('Copy this link:', link);
     }
   }
@@ -10474,7 +10472,8 @@
         return { blob: wavBlob, mime: 'audio/wav', ext: 'wav' };
       } catch (e) {
         // MIC-QUIET-01: handled fallback (the original blob is sent instead), so a warning, not an error.
-        dbgWarn('MIC_MGR', 'WAV transcode failed — sending original blob (server will use its fallback transcription path):', String(e && e.message || e));
+        dbg('MIC_MGR', 'WAV transcode failed — sending original blob (server will use its fallback transcription path):', String(e && e.message || e));
+        logActivity('mic_transcode_fallback', String(e && e.message || e), 'warn', 'MIC_MGR');
         return { blob: blob, mime: fallbackMime, ext: _ext(fallbackMime) };
       }
     }
@@ -10969,7 +10968,7 @@
   //   iosTranscript, iOS getUserMedia priming, all SR restart-loop logic.
   // _agpStartMic (Ask Gethro panel) left on SpeechRecognition for now — Phase 4.
 
-  let _micState    = 'idle';    // 'idle' | 'recording' | 'transcribing' | 'error'
+  let _micState    = 'idle';    // 'idle' | 'starting' | 'recording' | 'transcribing' | 'error'  (MIC-READY-01: 'starting' = tapped, mic still opening)
   // (removed v7.19 — now internal to MicManager)
   // (removed v7.19 — now internal to MicManager)
   let _micChunks   = [];        // chunks for CURRENT segment — reset after each flush (v6.07+ restart strategy)
@@ -11074,8 +11073,18 @@
       btn.style.borderColor = 'var(--rose)';
       btn.style.color       = 'white';
       if (icon)  icon.textContent  = '⏹';
-      if (label) label.textContent = 'Tap to stop recording';
+      if (label) label.textContent = 'Speak now \u2014 tap to stop';
       if (textarea) textarea.style.borderColor = 'var(--rose)';
+    } else if (state === 'starting') {
+      // MIC-READY-01: the person has tapped but the browser is still opening the microphone (on some laptops this
+      // takes seconds). Nothing is being recorded yet, so say so, instead of looking idle and letting them talk
+      // into a mic that is not open.
+      btn.style.background  = 'rgba(201,169,110,0.35)';
+      btn.style.borderColor = 'var(--gold)';
+      btn.style.color       = 'var(--gold-dark)';
+      if (icon)  icon.textContent  = '\u23F3';
+      if (label) label.textContent = 'Getting your microphone ready\u2026 wait a moment';
+      if (textarea) textarea.style.borderColor = 'var(--gold)';
     } else if (state === 'transcribing') {
       btn.style.background  = 'var(--amber, #f59e0b)';
       btn.style.borderColor = 'var(--amber, #f59e0b)';
@@ -11146,7 +11155,7 @@
     }
     _memMicStarting = true;
     try { return await _startMemMicInner(); }
-    finally { _memMicStarting = false; }
+    finally { _memMicStarting = false; if (_micState === 'starting') _setMicState('idle'); }
   }
   async function _startMemMicInner() {
     if (_micState !== 'idle') return; // guard double-tap
@@ -11254,7 +11263,8 @@
           // session, so a failed chunk loses nothing and there is nothing for the person to do. No message, no
           // "retry" instruction, and no error-level alarm: it is logged as a warning for us only. The short pause
           // before the next flush is kept only for rate limits, where hammering the server would make it worse.
-          dbgWarn('MIC', 'Live chunk skipped (' + err.message + ') — full pass at stop will cover it');
+          dbg('MIC', 'Live chunk skipped (' + err.message + ') — full pass at stop will cover it');
+          logActivity('mic_live_chunk_skipped', String(err.message), 'warn', 'MIC');
           if (/rate limit|too many|429/i.test(String(err.message))) {
             _micFlushCooldown = true;
             setTimeout(function() { _micFlushCooldown = false; dbg('MIC', 'Flush cooldown lifted'); }, MIC_COOLDOWN_MS);
@@ -11588,6 +11598,8 @@
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
+    var _tTap = Date.now();            // MIC-READY-01: for the mic_open_timing log below
+    _setMicState('starting');          // MIC-READY-01: show "getting ready" immediately, not after the mic has opened
     var err = await MicManager.start({
       onChunk: async function(blob, mime, ext, isFinal, wavBlob, wavMime, wavExt) {
         // isFinal=false: chunk flush (silence or periodic timer)
@@ -11701,6 +11713,7 @@
     });
 
     if (err) {
+      _setMicState('idle');  // MIC-READY-01: leave the "getting ready" look
       // err is an Error object from getUserMedia or MediaRecorder creation
       notifyDev('warn', 'MIC', 'MicManager.start failed (memory recording): ' + err.name + ' — ' + err.message);
       logActivity('mic_start_failed', err.name + ': ' + err.message, 'warn', 'MIC');
@@ -11715,6 +11728,9 @@
 
     _micChunkMimeType = MicManager.mime;
     memMicActive      = true;
+    // MIC-READY-01: how long the browser took to open the microphone after the tap (about 0 when it was prewarmed).
+    // This is the time during which anything the person said was not being recorded.
+    logActivity('mic_open_timing', JSON.stringify({ ms: Date.now() - _tTap }), 'info', 'MIC');
     _setMicState('recording');
     // MIC-QUIET-01: _micRecordStart was set at the top of this function, BEFORE the microphone finished opening.
     // Anything between (a cold open on a laptop with no prewarmed stream) counted as recorded audio, so the first
@@ -15328,7 +15344,7 @@
           document.execCommand('copy'); document.body.removeChild(ta);
         }
         toast('Link copied ✓');
-      } catch(copyErr) { _clipFallbackLog(copyErr); window.prompt('Copy this link:', link); }
+      } catch(copyErr) { logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
     }
   }
 
@@ -15480,7 +15496,7 @@
           document.execCommand('copy'); document.body.removeChild(ta);
         }
         toast('Link copied ✓');
-      } catch(copyErr) { _clipFallbackLog(copyErr); window.prompt('Copy this link:', link); }
+      } catch(copyErr) { logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
     }
   }
 
