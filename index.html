@@ -5301,7 +5301,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.286';
+  const APP_VERSION = 'v7.287';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5312,7 +5312,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":776,"offset":12436},{"maxLine":2051,"offset":12437},{"maxLine":2839,"offset":12438},{"maxLine":2894,"offset":12441},{"maxLine":3307,"offset":12442},{"maxLine":3487,"offset":12443},{"maxLine":5309,"offset":12444},{"maxLine":5751,"offset":12452},{"maxLine":6160,"offset":12462},{"maxLine":6172,"offset":12464},{"maxLine":6980,"offset":12465},{"maxLine":7262,"offset":12466},{"maxLine":7765,"offset":12467},{"maxLine":8797,"offset":12468},{"maxLine":10339,"offset":12470},{"maxLine":11599,"offset":12471},{"maxLine":11782,"offset":12472},{"maxLine":12505,"offset":12473},{"maxLine":12523,"offset":12475},{"maxLine":14382,"offset":12477},{"maxLine":15502,"offset":12478},{"maxLine":15504,"offset":12479},{"maxLine":16201,"offset":12480},{"maxLine":17079,"offset":12481},{"maxLine":19233,"offset":12484},{"maxLine":19555,"offset":12485},{"maxLine":19821,"offset":12486},{"maxLine":20439,"offset":12487},{"maxLine":20632,"offset":12488},{"maxLine":20834,"offset":12489},{"maxLine":21246,"offset":12490},{"maxLine":21496,"offset":12491},{"maxLine":22252,"offset":12492},{"maxLine":22294,"offset":12493},{"maxLine":22448,"offset":12494},{"maxLine":24330,"offset":12495},{"maxLine":24625,"offset":12496},{"maxLine":27383,"offset":12944},{"maxLine":27583,"offset":12945},{"maxLine":28533,"offset":12946},{"maxLine":30687,"offset":12948},{"maxLine":null,"offset":12949}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":779,"offset":12411},{"maxLine":2054,"offset":12412},{"maxLine":2842,"offset":12413},{"maxLine":2897,"offset":12416},{"maxLine":3305,"offset":12417},{"maxLine":3485,"offset":12418},{"maxLine":5307,"offset":12419},{"maxLine":5670,"offset":12427},{"maxLine":6079,"offset":12437},{"maxLine":6091,"offset":12439},{"maxLine":6899,"offset":12440},{"maxLine":7181,"offset":12441},{"maxLine":7684,"offset":12442},{"maxLine":8700,"offset":12443},{"maxLine":10242,"offset":12445},{"maxLine":11454,"offset":12446},{"maxLine":11625,"offset":12447},{"maxLine":12348,"offset":12448},{"maxLine":12366,"offset":12450},{"maxLine":14225,"offset":12452},{"maxLine":15345,"offset":12453},{"maxLine":15347,"offset":12454},{"maxLine":16044,"offset":12455},{"maxLine":16922,"offset":12456},{"maxLine":19061,"offset":12459},{"maxLine":19383,"offset":12460},{"maxLine":19649,"offset":12461},{"maxLine":20267,"offset":12462},{"maxLine":20460,"offset":12463},{"maxLine":20662,"offset":12464},{"maxLine":21074,"offset":12465},{"maxLine":21324,"offset":12466},{"maxLine":22080,"offset":12467},{"maxLine":22122,"offset":12468},{"maxLine":22276,"offset":12469},{"maxLine":24158,"offset":12470},{"maxLine":24453,"offset":12471},{"maxLine":27211,"offset":12918},{"maxLine":27411,"offset":12919},{"maxLine":28361,"offset":12920},{"maxLine":30510,"offset":12922},{"maxLine":null,"offset":12923}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -5610,7 +5610,7 @@
   var _dbgTrail = [];
   function _dbgTrailPush(area, args) {
     try {
-      var msg = args.map(function(a) { return (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
+      var msg = _redactTokens(args.map(function(a) { return (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' '));
       _dbgTrail.push('[' + new Date().toISOString().slice(11, 23) + '][' + area + '] ' + msg);
       if (_dbgTrail.length > _DBG_TRAIL_MAX) _dbgTrail.shift();
     } catch(e) {}
@@ -5618,11 +5618,22 @@
   function _dbgTrailSnapshot() {
     return _dbgTrail.join('\n');
   }
-  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args); _dbgTrailPush(area, args); }
+  // LOG-REDACT-01 (2026-10-19): signed storage URLs carry a one-hour bearer
+  // token in their query string (?token=eyJ...). DBG-PLAY logged the full URL,
+  // and every dbg() line is kept in the breadcrumb trail that dbgErr/dbgWarn
+  // attach to life_activity_log rows (and dbgErr sends to Telegram), so the
+  // token could be stored or forwarded. Redact it at every sink: console,
+  // trail, activity log and Telegram. Anything shaped like a JWT is masked too.
+  function _redactTokens(v) {
+    if (typeof v !== 'string') return v;
+    return v.replace(/([?&]token=)[^&"'\s]+/gi, '$1[redacted]')
+            .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[redacted-jwt]');
+  }
+  function dbg(area, ...args) { console.log(`%c[${new Date().toLocaleTimeString('en-AU',{hour12:false})}] [${area}]`,'color:#c9a96e;font-weight:bold',...args.map(_redactTokens)); _dbgTrailPush(area, args); }
   function dbgErr(area,...args){
-    console.error(`[${area}] ERROR`,...args);
+    console.error(`[${area}] ERROR`,...args.map(_redactTokens));
     try {
-      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      const msg = _redactTokens(args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
       const trail = _dbgTrailSnapshot();
       const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
       notifyDev('error', area, msg);                       // Telegram — keep concise, no trail (avoid spam/length limits)
@@ -5660,9 +5671,9 @@
     'DISCLAIMER'                              // disclaimer DB failures (legal relevance)
   ];
   function dbgWarn(area,...args){
-    console.warn(`[${area}] WARN`,...args);
+    console.warn(`[${area}] WARN`,...args.map(_redactTokens));
     try {
-      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      const msg = _redactTokens(args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
       const trail = _dbgTrailSnapshot();
       const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
       logActivity('app_warning', msgWithTrail, 'warn', area); // Supabase — all warnings, now with breadcrumb trail
@@ -5680,6 +5691,7 @@
   var _notifyCache = {};
   function notifyDev(level, area, detail, srcLine) {
     if (!NOTIFY_PROXY_URL) return;
+    detail = _redactTokens(detail); // LOG-REDACT-01
     var key   = area + '|' + detail.substring(0, 80);
     var now   = Date.now();
     var dedupMs = (level === 'error') ? 10000 : 60000; // errors dedup 10s, others 60s
@@ -5797,7 +5809,7 @@
       user_id:      currentUser ? currentUser.id    : null,
       email:        currentUser ? (currentUser.email || null) : null,
       action:       action,
-      detail:       detail  || null,
+      detail:       _redactTokens(detail) || null,
       level:        level   || 'info',
       area:         area    || 'APP',
       platform:     platform,
