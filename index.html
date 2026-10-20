@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.288">
+  <meta name="lifetold-version" content="v7.289">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -947,12 +947,33 @@
     .tab-btn.tab-danger .tab-label { color: rgba(201,123,110,0.5); }
     .tab-btn.tab-danger.active .tab-label { color: var(--rose); }
 
+    /* ── NAV-01: account menu replaces the header icons and the Help tab ──
+       The old buttons stay in the page (hidden) so their existing code keeps working;
+       the menu items click them. Help is opened with showPanel('help'). */
+    #editProfileBtn, #settingsBtn, #signOutBtn, #themeBtn, #tab-4, #navHelp { display: none !important; }
+    #acctWrap { position: relative; display: none; margin-left: auto; }
+    #acctBtn { display: flex; align-items: center; gap: 6px; }
+    @media (max-width: 700px) { #acctBtn .acct-label { display: none; } #acctBtn { padding: 6px 11px; font-size: 1rem; } }
+    #acctMenu { position: absolute; right: 0; top: calc(100% + 8px); min-width: 220px; max-width: calc(100vw - 24px); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.3); padding: 6px; z-index: 1300; display: none; }
+    #acctMenu.open { display: block; }
+    #acctMenu .acct-who { padding: 8px 12px 10px; font-size: 0.72rem; color: var(--text-light); border-bottom: 1px solid var(--border); margin-bottom: 4px; word-break: break-all; }
+    #acctMenu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; background: none; border: none; border-radius: 8px; font-family: 'Lato', sans-serif; font-size: 0.9rem; color: var(--text); cursor: pointer; text-align: left; }
+    #acctMenu button:hover, #acctMenu button:focus-visible { background: rgba(201,169,110,0.14); outline: none; }
+    #acctMenu .acct-sep { height: 1px; background: var(--border); margin: 4px 0; }
+    #acctMenu .acct-out { color: var(--rose); }
+
     /* ── MAIN ── */
     main { max-width: 860px; margin: 0 auto; padding: 40px 24px; }
     @media (max-width: 700px) { main { padding: 20px 16px; } }
 
     .panel { display: none; }
     .panel.active { display: block; }
+    /* NAV-03 step 2: My People is a real panel. It fills the space between the header/nav and the phone tab bar
+       (--mp-top / --mp-bottom are set by _mpDock) and uses the full width, so main loses its padding while it is open. */
+    main:has(#panel-people.active) { padding: 0; max-width: none; }
+    #panel-people.active { display: flex; flex-direction: column; position: relative; background: var(--bg);
+      height: calc(100vh - var(--mp-top, 0px) - var(--mp-bottom, 0px));
+      height: calc(100dvh - var(--mp-top, 0px) - var(--mp-bottom, 0px)); min-height: 0; overflow: hidden; }
 
     .section-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 400; margin-bottom: 8px; color: var(--text); }
     .section-sub { color: var(--text-light); font-size: 0.9rem; margin-bottom: 28px; }
@@ -3031,6 +3052,10 @@
       </svg>
     </span>
     <div id="userStatus">Not signed in</div>
+    <div id="acctWrap">
+      <button type="button" class="theme-toggle" id="acctBtn" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false" title="Account menu">👤<span class="acct-label">Account</span></button>
+      <div id="acctMenu" role="menu" aria-label="Account"></div>
+    </div>
     <button class="btn btn-ghost" id="editProfileBtn" style="display:none;font-size:0.78rem;padding:8px 14px">✏️ Profile</button>
     <button class="btn btn-ghost" id="settingsBtn" style="display:none;font-size:0.78rem;padding:8px 14px">⚙️ Settings</button>
     <button class="btn btn-ghost" id="signOutBtn" style="display:none;font-size:0.78rem;padding:8px 14px">Sign Out</button>
@@ -3064,11 +3089,13 @@
 </div>
 
 <div id="navBar">
-  <button class="nav-btn active" id="navDashboard">🏠 Dashboard</button>
-  <button class="nav-btn" id="navMemories">✨ Add Memory</button>
-  <button class="nav-btn" id="navEntries">📋 My Memories</button>
-  <button class="nav-btn" id="navStory">📖 My Story</button>
-  <button class="nav-btn" id="navHelp">❓ Help</button>
+  <button class="nav-btn active" id="navDashboard" data-tab="0">🏠 Dashboard</button>
+  <button class="nav-btn" id="navMemories" data-tab="1">✨ Add Memory</button>
+  <button class="nav-btn" id="navEntries" data-tab="2">📋 My Memories</button>
+  <!-- NAV-03 step 1: My People tab (data-tab 5 so the existing 0-4 numbers do not move) -->
+  <button class="nav-btn" id="navPeople" data-tab="5">👪 My People</button>
+  <button class="nav-btn" id="navStory" data-tab="3">📖 My Story</button>
+  <button class="nav-btn" id="navHelp" data-tab="4">❓ Help</button>
 </div>
 
 <!-- Mobile bottom tab bar -->
@@ -3085,6 +3112,10 @@
     <button class="tab-btn" id="tab-2">
       <span class="tab-icon">📋</span>
       <span class="tab-label">My Memories</span>
+    </button>
+    <button class="tab-btn" id="tab-5">
+      <span class="tab-icon">👪</span>
+      <span class="tab-label">My People</span>
     </button>
     <button class="tab-btn" id="tab-3">
       <span class="tab-icon">📖</span>
@@ -4051,7 +4082,7 @@
   </div>
 
   <!-- MY PEOPLE OVERLAY (Phase 4 — pan/zoom canvas tree) -->
-  <div id="myPeopleOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1500;flex-direction:column;padding-top:var(--uat-banner-offset, 0px)">
+  <div class="panel" id="panel-people">
 
     <!-- Fixed header bar -->
     <div style="flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg);z-index:2">
@@ -5302,7 +5333,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.288';
+  const APP_VERSION = 'v7.289';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -6126,7 +6157,7 @@
     var hid = {};
     (data.people || []).forEach(function(p) { if (p.private) hid[p.id] = true; });
     _mpPeople = (data.people || []).filter(function(p) { return !p.private; }).map(function(p) {
-      return { id: p.id, name: p.name, sex: p.sex, photo: p.photo, is_deceased: !!p.deceased, birth: p.birth || '', bucket: 'family' };
+      return { id: p.id, name: p.name, sex: p.sex, photo: (data.sharePhotos === false ? '' : p.photo), is_deceased: !!p.deceased, birth: p.birth || '', bucket: 'family' };
     });
     _mpChildren = (data.children || []).filter(function(c) { return !hid[c.child_id]; });
     _mpFamilies = (data.families || []).map(function(f) {
@@ -7591,7 +7622,7 @@
             '<div style="display:flex;gap:6px">' + copyBtn + revokeBtn + '</div>' +
           '</div>' +
           (t.note ? '<p style="font-size:0.8rem;color:var(--text-light);font-style:italic;margin:0 0 6px;line-height:1.5">\u201c' + escHtml(t.note) + '\u201d</p>' : '') +
-          '<div style="display:flex;gap:10px;flex-wrap:wrap">' + daysLabel + respLabel + (isTreeScope ? '<span style="color:var(--text-light);font-size:0.75rem">' + (t.share_birthdays ? 'Birthdays shown' : 'No birthdays') + '</span>' : '') + '</div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap">' + daysLabel + respLabel + (isTreeScope ? '<span style="color:var(--text-light);font-size:0.75rem">' + (t.share_birthdays ? 'Birthdays shown' : 'No birthdays') + (t.share_photos === false ? ' \u00b7 No photos' : '') + '</span>' : '') + '</div>' +
           // FAM-07 3A-REFRESH: a visitor asked for a new link (needs SHARE_PROXY v3.82 + SHARE_v3_82 SQL)
           (t.refresh_requested_at
             ? '<p style="font-size:0.78rem;color:var(--gold-dark);margin:8px 0 0;line-height:1.5">\uD83D\uDD04 ' +
@@ -10127,8 +10158,8 @@
     if (tabIndex !== undefined) {
       var tab = document.getElementById('tab-' + tabIndex);
       if (tab) tab.classList.add('active');
-      var navBtns = document.querySelectorAll('.nav-btn');
-      if (navBtns[tabIndex]) navBtns[tabIndex].classList.add('active');
+      var navBtn = document.querySelector('.nav-btn[data-tab="' + tabIndex + '"]'); // NAV-03: by data-tab, not DOM order
+      if (navBtn) navBtn.classList.add('active');
     }
     // Scroll to top — belt AND braces: scroll window, docEl, body
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -10150,6 +10181,9 @@
       if (_scStorySelectMode) _entriesHideStoryBar();
     }
     if (name === 'prompts')   { renderPrompts(); }
+    // NAV-03 step 1: My People is a tab. Opening the panel shows the tree; leaving it hides the tree.
+    if (name === 'people') { _mpOpenPromise = _mpShowDocked(); }
+    else { _mpHideDocked(); }
     // End AI session and dictation mic when navigating away from memories
     if (name !== 'memories' && recActive) { recActive = false; stopListening(); }
     if (name !== 'memories' && memMicActive) { stopMemMic(); }
@@ -15461,6 +15495,8 @@
     if (btns)    btns.style.display = '';
     if (spinner) spinner.style.display = 'none';
     _treeShareFillPicker();
+    var phEl = document.getElementById('treeSharePhotos');   // FAM-15: default ON, remembers the last choice
+    if (phEl) { var remP = true; try { remP = localStorage.getItem('lifetold_tree_share_photos') !== '0'; } catch(e) {} phEl.checked = remP; }
     var bdEl = document.getElementById('treeShareBirthdays');
     if (bdEl) { var rem = false; try { rem = localStorage.getItem('lifetold_tree_share_birthdays') === '1'; } catch(e) {} bdEl.checked = rem; }
     _treeShareFillConsent();
@@ -15488,9 +15524,18 @@
     var shown = _mpTreePeople().filter(function(p) { return p.hide_from_share !== true; }).length;
     if (!textEl || !shown) return;
     var who = 'the ' + shown + (shown === 1 ? ' person' : ' people') + ' in my family tree';
-    textEl.textContent = withBd
-      ? 'I understand anyone with this link can see the names, photos and dates of birth (where I\u2019ve entered them) of ' + who + ', and that visitors\u2019 names and feedback will be stored.'
-      : 'I understand anyone with this link can see the names and photos of ' + who + ', but not their dates of birth, and that visitors\u2019 names and feedback will be stored.';
+    var ph = document.getElementById('treeSharePhotos');
+    var withPh = !(ph && !ph.checked);
+    var seen = withPh ? 'names and photos' : 'names (no photos)';
+    if (withBd) seen = withPh ? 'names, photos and dates of birth (where I\u2019ve entered them)' : 'names and dates of birth (where I\u2019ve entered them), but not photos,';
+    if (!withBd && !withPh) seen = 'names only (no photos or dates of birth)';
+    textEl.textContent = 'I understand anyone with this link can see the ' + seen + ' ' + 'of ' + who +
+      (withBd || !withPh ? '' : ', but not their dates of birth') + ', and that visitors\u2019 names and feedback will be stored.';
+  }
+  function _treeSharePhotosChanged() {
+    var ph = document.getElementById('treeSharePhotos');
+    try { localStorage.setItem('lifetold_tree_share_photos', ph && ph.checked ? '1' : '0'); } catch(e) {}
+    _treeShareFillConsent();
   }
   function _treeShareBirthdaysChanged() {
     var bd = document.getElementById('treeShareBirthdays');
@@ -15534,6 +15579,9 @@
       var bdBox = document.getElementById('treeShareBirthdays');
       var withBirthdays = !!(bdBox && bdBox.checked);
       if (withBirthdays) treeBody.include_birthdays = true;
+      var phBox = document.getElementById('treeSharePhotos');
+      var withPhotos = !(phBox && !phBox.checked);
+      if (!withPhotos) treeBody.include_photos = false;   // FAM-15: omitted = photos on, so old servers keep working
       var res  = await shareFetch(SHARE_PROXY_URL, {
         method:  'POST',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
@@ -15542,7 +15590,7 @@
       var data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
       link = location.origin + '/?share=' + data.token;
-      logActivity('tree_shared', JSON.stringify({ expires_days: expiryDays, for_other_person: !!viewerPersonId, birthdays: withBirthdays }), 'info', 'SHARE');
+      logActivity('tree_shared', JSON.stringify({ expires_days: expiryDays, for_other_person: !!viewerPersonId, birthdays: withBirthdays, photos: withPhotos }), 'info', 'SHARE');
       notifyDev('info', 'SHARE', 'Family tree shared — ' + (expiryDays === 0 ? 'no expiry' : 'expires in ' + expiryDays + 'd'));
     } catch(err) {
       if (btns)    btns.style.display    = '';
@@ -24702,6 +24750,54 @@
   })();
 
   // ── Toast ────────────────────────────────────────────────────────
+  // ── NAV-01: account menu (2026-10-19) ───────────────────────────────────────
+  // One button in the header opens: Profile, Settings, Help & contact, Dark/Light mode, Sign out.
+  // The original buttons are still in the page (hidden by CSS) and the menu clicks them, so
+  // none of their existing behaviour had to change. Help calls showPanel('help') directly.
+  (function _acctInit() {
+    var wrap = document.getElementById('acctWrap'), btn = document.getElementById('acctBtn');
+    var menu = document.getElementById('acctMenu'), outBtn = document.getElementById('signOutBtn');
+    if (!wrap || !btn || !menu || !outBtn) return;
+    function signedIn() { return outBtn.style.display !== 'none'; }
+    function closeMenu() { menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+    function sync() { wrap.style.display = signedIn() ? 'block' : 'none'; if (!signedIn()) closeMenu(); }
+    function build() {
+      var st = document.getElementById('userStatus');
+      var who = st ? st.textContent.replace(/^\s*\u2713\s*/, '').trim() : '';
+      var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      menu.innerHTML =
+        (who && who !== 'Not signed in' ? '<div class="acct-who">' + escHtml(who) + '</div>' : '') +
+        '<button type="button" role="menuitem" data-acct="profile">\u270F\uFE0F Profile</button>' +
+        '<button type="button" role="menuitem" data-acct="settings">\u2699\uFE0F Settings</button>' +
+        '<button type="button" role="menuitem" data-acct="help">\u2753 Help &amp; contact</button>' +
+        '<button type="button" role="menuitem" data-acct="theme">' + (dark ? '\u2600\uFE0F Light mode' : '\uD83C\uDF19 Dark mode') + '</button>' +
+        '<div class="acct-sep"></div>' +
+        '<button type="button" role="menuitem" class="acct-out" data-acct="signout">Sign out</button>';
+    }
+    function openMenu() {
+      build(); menu.classList.add('open'); btn.setAttribute('aria-expanded', 'true');
+      var first = menu.querySelector('button'); if (first) first.focus();
+    }
+    btn.addEventListener('click', function(e) { e.stopPropagation(); if (menu.classList.contains('open')) closeMenu(); else openMenu(); });
+    menu.addEventListener('click', function(e) {
+      var t = e.target.closest ? e.target.closest('button[data-acct]') : null;
+      if (!t) return;
+      var which = t.getAttribute('data-acct');
+      closeMenu();
+      logActivity('account_menu', which, 'info', 'NAV');
+      if (which === 'help') { showPanel('help', null, 4); return; }
+      var target = { profile: 'editProfileBtn', settings: 'settingsBtn', theme: 'themeBtn', signout: 'signOutBtn' }[which];
+      var el = target ? document.getElementById(target) : null;
+      if (el) el.click();
+    });
+    document.addEventListener('click', function(e) { if (!wrap.contains(e.target)) closeMenu(); });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && menu.classList.contains('open')) { closeMenu(); btn.focus(); }
+    });
+    new MutationObserver(sync).observe(outBtn, { attributes: true, attributeFilter: ['style'] });
+    sync();
+  })();
+
   // ── VER-STAMP-01: stale-tab guard (2026-10-19) ─────────────────────────────
   // A tab left open through a release keeps running the old code, and two app versions
   // then fight over one login (session_resumed rows from v7.271 and v7.287 side by side).
@@ -25556,14 +25652,13 @@
     // Detect current screen for contextual help
     var currentScreen = 'unknown';
     try {
-      var _screenPanels = ['memories','entries','story','dashboard','help'];
+      var _screenPanels = ['memories','entries','story','dashboard','help','people'];
       for (var _si = 0; _si < _screenPanels.length; _si++) {
         var _spEl = document.getElementById('panel-' + _screenPanels[_si]);
         if (_spEl && _spEl.classList.contains('active')) { currentScreen = _screenPanels[_si]; break; }
       }
       // Check if an overlay is covering everything
-      var _mpOv = document.getElementById('myPeopleOverlay');
-      if (_mpOv && _mpOv.style.display !== 'none') currentScreen = 'my_people';
+      if (currentScreen === 'people') currentScreen = 'my_people';   // NAV-03 step 2: My People is a panel now
       var _ppOv = document.getElementById('printPreviewOverlay');
       if (_ppOv && _ppOv.classList.contains('visible')) currentScreen = 'print_preview';
       var _bboOv = document.getElementById('bulkBookOverlay');
@@ -26845,13 +26940,38 @@
   // ── Open overlay ─────────────────────────────────────────────────
   var _mpBodyOverflowBeforeOpen = null; // restore point for the scroll-lock below
 
+  // NAV-03 step 1: every caller (Gethro, dashboard, onboarding, feedback) still calls openMyPeople(); it now
+  // goes through the My People tab so the tab highlight, last-tab memory and tab switching all behave.
+  var _mpOpenPromise = null;
   async function openMyPeople() {
-    var overlay = document.getElementById('myPeopleOverlay');
-    overlay.style.display = 'flex';
-    // The overlay is position:fixed;inset:0, so it visually covers the whole page —
-    // but without this, the page BEHIND it is still scrollable. Dragging the browser's
-    // scrollbar then scrolls the hidden page while the fixed overlay on top stays put,
-    // which looks exactly like "the scrollbar moves but nothing on screen does."
+    var pnl = document.getElementById('panel-people');
+    if (!(pnl && pnl.classList.contains('active'))) showPanel('people', null, 5);
+    return _mpOpenPromise;
+  }
+
+  // NAV-03 step 2: size the panel to the space between the sticky header/nav (top) and the phone tab bar (bottom).
+  var _mpIsOpen = false;
+  function _mpDock() {
+    var pnl = document.getElementById('panel-people');
+    if (!pnl) return;
+    var top = 0, bottom = 0;
+    var nav = document.getElementById('navBar'), hdr = document.querySelector('header'), tb = document.getElementById('mobileTabBar');
+    var navVis = nav && nav.offsetParent !== null;
+    var el = navVis ? nav : hdr;
+    if (el) top = Math.max(0, Math.round(el.getBoundingClientRect().bottom));
+    if (tb && getComputedStyle(tb).display !== 'none') bottom = Math.max(0, Math.round(window.innerHeight - tb.getBoundingClientRect().top));
+    pnl.style.setProperty('--mp-top', top + 'px');
+    pnl.style.setProperty('--mp-bottom', bottom + 'px');
+  }
+  window.addEventListener('resize', function() { if (_mpIsOpen) _mpDock(); });
+  window.addEventListener('orientationchange', function() { if (_mpIsOpen) setTimeout(_mpDock, 200); });
+
+  async function _mpShowDocked() {
+    if (_mpIsOpen) return; // tapping the tab again keeps where you are
+    _mpIsOpen = true;
+    _mpDock();
+    // The panel fills the screen exactly; the page behind it must not scroll (a scrolling page behind a fixed-height
+    // panel looks like "the scrollbar moves but nothing on screen does").
     _mpBodyOverflowBeforeOpen = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     document.getElementById('mpReviewScreen').style.display = 'none';
@@ -26862,9 +26982,18 @@
     await _mpLoad();
   }
 
+  // Leaving My People: give the page its scrolling back. (The panel itself is hidden by showPanel.)
   function closeMyPeople() {
-    document.getElementById('myPeopleOverlay').style.display = 'none';
+    if (!_mpIsOpen) return;
+    _mpIsOpen = false;
     document.body.style.overflow = _mpBodyOverflowBeforeOpen || '';
+  }
+  function _mpHideDocked() { closeMyPeople(); }   // called by showPanel when another tab is chosen
+  // The X button: back to the Dashboard.
+  function mpCloseToDashboard() {
+    var pnl = document.getElementById('panel-people');
+    if (pnl && pnl.classList.contains('active')) showPanel('dashboard', null, 0);
+    else closeMyPeople();
   }
 
   // ── FAM-07 BUILD 2A (2026-10-01) — family tree v2, VIEW ONLY ─────────
@@ -31826,6 +31955,7 @@
     on('navEntries',  'click', function() { _entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries', this, 2); });
     on('navStory',    'click', function() { showPanel('story', this, 3); });
     on('navHelp',     'click', function() { showPanel('help', this, 4); });
+    on('navPeople',   'click', function() { showPanel('people', this, 5); });
 
     // ── Mobile tab bar ────────────────────────────────────────────────────
     on('tab-0','click', function() { showPanel('dashboard', null, 0); });
@@ -31833,6 +31963,7 @@
     on('tab-2','click', function() { _entriesTypeFilter=null;_entriesPersonFilter=null;showPanel('entries', null, 2); });
     on('tab-3','click', function() { showPanel('story', null, 3); });
     on('tab-4','click', function() { showPanel('help', null, 4); });
+    on('tab-5','click', function() { showPanel('people', null, 5); });
 
     // ── Gethro avatar (memories tab) ──────────────────────────────────────
     document.querySelectorAll('.gethro-avatar-wrap').forEach(function(el) {
@@ -32044,7 +32175,7 @@
       }
     })();
     on('mpGethroBtn',          'click', function() { openAskGethro(); });
-    on('mpCloseBtn',           'click', closeMyPeople);
+    on('mpCloseBtn',           'click', mpCloseToDashboard);
     on('dashResponsesTile',    'click', openResponsesOverlay);
     on('respCloseBtn',         'click', closeResponsesOverlay);
     on('mpTabTree',            'click', function() { mpSwitchTab('tree'); });
@@ -32164,6 +32295,7 @@
     });
     on('mpTreeLinksBtn',       'click', showTreeShareLinks);
     on('treeShareBirthdays',   'change', _treeShareBirthdaysChanged);
+    on('treeSharePhotos',      'change', _treeSharePhotosChanged);
     on('treeShareSeeLinksBtn', 'click', function() { _treeShareModalClose(); showTreeShareLinks(); });
     // disclaimerAgreeBtn handler set dynamically by _checkDisclaimerVersion() — not bound here
 
@@ -33328,7 +33460,7 @@
 
   <!-- FAM-06 fix (2026-09-27): treeShareModal was originally nested inside
        #panel-story (copy-pasted next to storyShareModal, which legitimately
-       lives there). But "Share my tree" opens from myPeopleOverlay, not the
+       lives there). But "Share my tree" opens from the My People panel (was myPeopleOverlay), not the
        Story tab, so it was silently inheriting .panel { display:none }
        whenever Story wasn't the active tab. The click handler ran and set
        display:flex correctly every time — the modal just stayed invisible
@@ -33370,6 +33502,10 @@
             <option value="90">90 days</option>
             <option value="0">No expiry</option>
           </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <input type="checkbox" id="treeSharePhotos" checked style="width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
+          <label for="treeSharePhotos" style="font-size:0.85rem;color:var(--text);cursor:pointer">Show photos</label>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
           <input type="checkbox" id="treeShareBirthdays" style="width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
