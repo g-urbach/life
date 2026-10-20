@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.293">
+  <meta name="lifetold-version" content="v7.294">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -4209,11 +4209,11 @@
 
     <!-- FAM-06-FIX (2026-09-27): Feedback panel — accepted tree-share feedback -->
     <div id="mpFeedbackPanel" style="display:none;flex:1;overflow-y:auto;padding:16px">
-      <p style="font-size:0.78rem;color:var(--text-light);margin:0 0 14px;line-height:1.5">Feedback from people you shared your family tree with. Keep what's useful, dismiss the rest.</p>
+      <p style="font-size:0.78rem;color:var(--text-light);margin:0 0 14px;line-height:1.5">Feedback from people you shared your family tree with. New feedback can be accepted to keep it, or deleted. Accepted feedback stays here.</p>
       <div id="mpFeedbackList" style="display:flex;flex-direction:column;gap:10px"></div>
       <div id="mpFeedbackEmpty" style="display:none;text-align:center;padding:48px 20px;color:var(--text-light)">
         <div style="font-size:2rem;margin-bottom:12px">&#128172;</div>
-        <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No accepted feedback yet. Share your family tree and accepted responses will appear here.</p>
+        <p style="font-size:0.9rem;line-height:1.6;margin:0 auto;max-width:280px">No feedback yet. Share your family tree and responses will appear here.</p>
       </div>
     </div>
 
@@ -5340,7 +5340,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.293';
+  const APP_VERSION = 'v7.294';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5535,7 +5535,43 @@
     }
   }
   // Behaves like fetch(): same Response, same errors. Never logs the request body, the share token or the link.
+  // SHARE-AUTH-01 (2026-10-20): "Unauthorised" when creating a tree link, three times in a row, on a laptop that was
+  // otherwise working. getAuthHeaders() sends the sessionToken variable, which can be stale (the login token only lives
+  // about an hour and the variable is only refreshed by auth events). Signed-in share calls now (1) fetch the live
+  // session token just before sending, and (2) on a 401 refresh the session and retry once. Visitor calls (no login) are
+  // untouched. Every step is time-limited so a stuck auth call can never hang a share.
+  function _shareAuthTimeout(p, ms) {
+    return Promise.race([p, new Promise(function(res) { setTimeout(function() { res(null); }, ms); })]);
+  }
+  function _shareIsSignedInCall(init) {
+    var h = init && init.headers;
+    var cur = h && (h['Authorization'] || h['authorization']);
+    return !!(sessionToken && cur && cur === 'Bearer ' + sessionToken);
+  }
+  function _shareWithToken(init, token) {
+    return Object.assign({}, init, { headers: Object.assign({}, init.headers, { 'Authorization': 'Bearer ' + token }) });
+  }
   async function shareFetch(url, init) {
+    var signedIn = false;
+    try { signedIn = typeof sb !== 'undefined' && sb && _shareIsSignedInCall(init); } catch (e) {}
+    if (!signedIn) return _shareFetchCore(url, init);
+    try {
+      var r = await _shareAuthTimeout(sb.auth.getSession(), 5000);
+      var t = r && r.data && r.data.session && r.data.session.access_token;
+      if (t) { sessionToken = t; init = _shareWithToken(init, t); }
+    } catch (e) {}
+    var res = await _shareFetchCore(url, init);
+    if (res.status === 401) {
+      try {
+        var rr = await _shareAuthTimeout(sb.auth.refreshSession(), 8000);
+        var t2 = rr && rr.data && rr.data.session && rr.data.session.access_token;
+        logActivity('share_auth_retry', 'got 401; refreshed=' + !!t2, 'warn', 'SHARE');
+        if (t2) { sessionToken = t2; res = await _shareFetchCore(url, _shareWithToken(init, t2)); }
+      } catch (e) {}
+    }
+    return res;
+  }
+  async function _shareFetchCore(url, init) {
     var action = '?';
     try { if (init && typeof init.body === 'string') action = (JSON.parse(init.body).action) || '?'; } catch (e) {}
     try {
@@ -8054,9 +8090,9 @@
               '\u2714 Accept feedback' +
             '</button>'
           : (isPiece
-            ? '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
-                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;">' +
-                '\u2713 Dismiss' +
+            ? '<button data-action="accept-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+                'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                '\u2714 Accept feedback' +
               '</button>'
             : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
                 'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
@@ -8223,51 +8259,53 @@
     }
   }
 
-  // ── FAM-06-FIX (2026-09-27): Accept tree feedback ────────────────────────
-  // No entry to attach to — deletes from DB (same pattern as importResponse),
-  // stores the row in _mpAcceptedTreeFeedback[], then opens My People → Feedback tab.
-  var _mpAcceptedTreeFeedback = []; // in-memory store of accepted tree feedback rows
+  // ── FEEDBACK-PERSIST-01/02 (2026-10-20): Accept = keep it, Delete = remove it ─────────────
+  // Tree and story-piece feedback now work like memory feedback: Accept keeps it permanently and takes it
+  // off the dashboard "new responses" list; Delete removes it for good (after a confirm). Memory feedback
+  // keeps its own Accept (it becomes a "From <name>" entry under the memory).
+  //  - Accepted tree feedback lives in My People > Feedback; accepted piece feedback stays on its Library card.
+  //  - Accept is a PATCH of life_share_feedback.imported = true. That needs the UPDATE permission from
+  //    "FEEDBACK-PERSIST-02.sql". Until it is applied the PATCH changes 0 rows; we check for that and say so
+  //    (nothing is deleted or lost either way).
+  var _mpTreeFeedback = [];   // last rows loaded from life_share_feedback (is_tree_share = true)
 
-  async function acceptTreeFeedback(feedbackId, commenterName) {
-    var row = document.getElementById('response-row-' + feedbackId);
+  async function acceptKeptFeedback(feedbackId, kind) {
+    var row = document.getElementById('response-row-' + feedbackId) || document.getElementById('mp-tree-fb-' + feedbackId);
     if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
-
     try {
-      // Fetch the full row so we have text + created_at for display
-      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*', { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error('fetch failed');
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&owner_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify({ imported: true })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       var rows = await res.json();
-      var fb = rows[0];
-      if (!fb) throw new Error('not found');
-
-      // Delete from DB (same as importResponse — no UPDATE RLS so DELETE is the path)
-      var del = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, {
-        method: 'DELETE', headers: getAuthHeaders()
-      });
-      if (!del.ok) throw new Error('delete failed');
-
-      // Stash accepted feedback for the Feedback tab to render
-      _mpAcceptedTreeFeedback.push({
-        id:             feedbackId,
-        commenter_name: commenterName || fb.commenter_name || 'Someone',
-        text:           fb.text || '',
-        created_at:     fb.created_at || new Date().toISOString()
-      });
-
-      toast('Feedback accepted \u2713');
-      if (row) row.remove();
-      await loadResponsesTile();
-
-      // Open My People and switch to Feedback tab
-      await openMyPeople();
-      mpSwitchTab('feedback');
-
-    } catch(e) {
-      dbgWarn('DASH', 'acceptTreeFeedback error:', e.message);
+      if (!Array.isArray(rows) || rows.length !== 1) throw new Error('0 rows updated (is the UPDATE permission applied?)');
+    } catch (e) {
       toast('Could not accept \u2014 try again');
+      logActivity('feedback_accept_failed', kind + ': ' + String(e && e.message || e), 'warn', 'SHARE');
       if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+      return;
     }
+    logActivity('feedback_accepted', kind, 'info', 'SHARE');
+    toast(kind === 'tree' ? 'Saved to My People \u203A Feedback \u2713' : 'Saved with your story piece \u2713');
+    _mpTreeFeedback.forEach(function(fb) { if (fb.id === feedbackId) fb.imported = true; });
+    if (row && row.closest('#dashResponsesList')) {
+      row.remove();                                   // leaves the dashboard list
+    } else if (kind === 'piece' && row) {             // Library card: swap the button for a "Saved" tick
+      var ab = row.querySelector('[data-action="accept-piece-feedback"]');
+      if (ab) {
+        var sp = document.createElement('span');
+        sp.textContent = '\u2713 Saved';
+        sp.style.cssText = 'font-size:0.72rem;padding:2px 8px;color:var(--sage);font-weight:700';
+        ab.replaceWith(sp);
+      }
+      row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+    }
+    if (typeof _mpActiveTab !== 'undefined' && _mpActiveTab === 'feedback') _mpRenderFeedbackTab();
+    loadResponsesTile();
   }
+  async function acceptTreeFeedback(feedbackId) { return acceptKeptFeedback(feedbackId, 'tree'); }
 
   // Permanently delete a feedback response
   async function deleteResponse(feedbackId) {
@@ -8543,10 +8581,22 @@
           currentUser  = refreshed.user;
           sessionToken = refreshed.access_token;
           dbg('AUTH', 'Token refreshed on init');
+        } else if (rErr && !/AuthRetryableFetchError/.test(String(rErr.name || '')) && !/fetch|network|timeout/i.test(String(rErr.message || ''))) {
+          // SESSION-GUARD-01 (2026-10-20): the saved login can no longer be renewed (revoked, expired or
+          // already used). The old code carried on with the dead token: the app looked signed in but every
+          // call was rejected or came back empty, and no amount of refreshing fixed it because a reload
+          // re-reads the same saved login. Now: clear it and show the sign-in screen.
+          dbgWarn('AUTH', 'Saved login could not be renewed: ' + rErr.message);
+          try { await Promise.race([sb.auth.signOut({ scope: 'local' }), new Promise(function(res) { setTimeout(res, 3000); })]); } catch (e) {}
+          try { Object.keys(localStorage).forEach(function(k) { if (/^sb-.+-auth-token/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
+          currentUser = null; sessionToken = null;
+          logActivity('session_expired_on_load', String(rErr.name || '') + ': ' + String(rErr.message || ''), 'warn', 'AUTH');
+          try { showAuthError('Your session expired. Please sign in again.'); } catch (e) {}
         } else {
+          // offline / network blip: keep the cached login and try again later
           currentUser  = initSession.user;
           sessionToken = initSession.access_token;
-          dbgWarn('AUTH', 'Token refresh failed, using cached token');
+          dbgWarn('AUTH', 'Token refresh failed (network), using cached token');
         }
       } else {
         currentUser  = initSession.user;
@@ -14958,10 +15008,12 @@
           (f.text ? '<p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0 0 6px">' + escHtml(f.text) + '</p>' : '') +
           (mediaNote ? '<p style="font-size:0.75rem;color:var(--text-light);margin:0 0 6px">Attachments:' + mediaNote + '</p>' : '') +
           '<div style="display:flex;gap:6px">' +
-            '<button data-action="dismiss-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
-              'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif">' +
-              '\u2713 Dismiss' +
-            '</button>' +
+            (f.imported
+              ? '<span style="font-size:0.72rem;padding:2px 8px;color:var(--sage);font-weight:700">\u2713 Saved</span>'
+              : '<button data-action="accept-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+                  'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
+                  '\u2714 Accept' +
+                '</button>') +
             '<button data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
               'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
               'Delete' +
@@ -15623,7 +15675,7 @@
     } catch(err) {
       if (btns)    btns.style.display    = '';
       if (spinner) spinner.style.display = 'none';
-      toast('Could not create link \u2014 try again');
+      toast(err && err.message === 'Unauthorised' ? 'Your login has expired \u2014 please sign out and back in, then try again' : 'Could not create link \u2014 try again');
       dbgErr('SHARE', '_treeShareVia error: ' + (err.message || err));
       logActivity('share_create_failed', 'tree — ' + (err && err.message || err), 'warn', 'SHARE');
       notifyDev('warn', 'SHARE', 'Family tree share creation failed — ' + (err && err.message || err));
@@ -24923,6 +24975,26 @@
     if (document.visibilityState === 'hidden' && _vcStale && !_vcUnsafeReason()) _vcReload('hidden-tab');
     else _vcCheck();
   });
+  // SESSION-GUARD-01: getAuthHeaders() sends the sessionToken variable, which only changed when an auth event
+  // arrived. Re-read the real session when the tab comes back and every 45s, so the variable cannot go stale
+  // (stale = rejected "Unauthorised" or silently empty lists). getSession() renews a near-expiry token itself.
+  var _tokSyncBusy = false, _tokLostLogged = false;
+  async function _syncSessionToken() {
+    if (_tokSyncBusy || !sb || !currentUser) return;
+    _tokSyncBusy = true;
+    try {
+      var r = await Promise.race([sb.auth.getSession(), new Promise(function(res) { setTimeout(function() { res(null); }, 6000); })]);
+      var sess = r && r.data && r.data.session;
+      if (sess && sess.access_token) { sessionToken = sess.access_token; _tokLostLogged = false; }
+      else if (r && !sess && !_tokLostLogged) {
+        _tokLostLogged = true;
+        logActivity('session_lost', 'signed in on screen but no stored session', 'warn', 'AUTH');
+      }
+    } catch (e) {} finally { _tokSyncBusy = false; }
+  }
+  document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') _syncSessionToken(); });
+  window.addEventListener('online', _syncSessionToken);
+  setInterval(_syncSessionToken, 45000);
   window.addEventListener('online', _vcCheck);
   setInterval(_vcCheck, 300000);
   setTimeout(_vcCheck, 30000);
@@ -27163,6 +27235,7 @@
     if (viewerId && _mpLabelCache[viewerId]) return _mpLabelCache[viewerId];
     var body = { action: 'get_labels' };
     if (viewerId) body.viewer_id = viewerId;
+    await _syncSessionToken();   // SESSION-GUARD-01: send the live token, not a possibly stale one
     var res = await fetch(TREE_PROXY_URL, {
       method: 'POST',
       headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
@@ -28333,15 +28406,36 @@
   }
 
   // ── My People — Directory render (Phase 5) ──────────────────────────
-  // ── FAM-06-FIX (2026-09-27): Feedback tab renderer ──────────────────────
-  // Renders _mpAcceptedTreeFeedback[] into #mpFeedbackList.
-  // Each card shows name, timestamp, message, and a Dismiss button to remove it.
-  function _mpRenderFeedbackTab() {
+  // ── FEEDBACK-PERSIST-01: Feedback tab renderer ──────────────────────────
+  // Loads this owner's tree feedback from life_share_feedback every time the tab opens, so it survives
+  // reloads, and shows a visible "could not load" message with a retry instead of looking empty.
+  async function _mpRenderFeedbackTab() {
     var listEl  = document.getElementById('mpFeedbackList');
     var emptyEl = document.getElementById('mpFeedbackEmpty');
-    if (!listEl) return;
+    if (!listEl || !currentUser) return;
+    var hadItems = _mpTreeFeedback.length > 0;
+    if (!hadItems) {
+      listEl.innerHTML = '<p style="font-size:0.85rem;color:var(--text-light);text-align:center;margin:24px 0">Loading feedback\u2026</p>';
+      if (emptyEl) emptyEl.style.display = 'none';
+    }
+    try {
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id +
+        '&is_tree_share=eq.true&select=*&order=created_at.desc', { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var rows = await res.json();
+      if (!Array.isArray(rows)) throw new Error('unexpected response');
+      _mpTreeFeedback = rows;
+    } catch (e) {
+      logActivity('tree_feedback_load_failed', String(e && e.message || e), 'warn', 'SHARE');
+      if (!hadItems) {
+        listEl.innerHTML = '<div style="text-align:center;padding:32px 12px;color:var(--text-light);font-size:0.88rem">' +
+          'Couldn\u2019t load your feedback. It hasn\u2019t been lost \u2014 please try again.<br>' +
+          '<button data-action="retry-tree-feedback" style="margin-top:12px;padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:\'Lato\',sans-serif">Try again</button></div>';
+        return;
+      }
+    }
 
-    var items = _mpAcceptedTreeFeedback;
+    var items = _mpTreeFeedback;
     if (!items.length) {
       listEl.innerHTML  = '';
       if (emptyEl) emptyEl.style.display = 'block';
@@ -28354,28 +28448,43 @@
       return '<div id="mp-tree-fb-' + escHtml(fb.id) + '" style="background:var(--surface2);border-radius:10px;padding:14px 16px">' +
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
           '<div>' +
-            '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(fb.commenter_name) + '</span>' +
+            '<span style="font-size:0.88rem;font-weight:700;color:var(--text)">' + escHtml(fb.commenter_name || 'Someone') + '</span>' +
             '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
           '</div>' +
-          '<button data-action="dismiss-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
-            'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap;flex-shrink:0">' +
-            'Dismiss' +
-          '</button>' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+            (fb.imported
+              ? '<span style="font-size:0.72rem;color:var(--sage);font-weight:700">\u2713 Saved</span>'
+              : '<button data-action="accept-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
+                  'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600;white-space:nowrap">\u2714 Accept</button>') +
+            '<button data-action="dismiss-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
+              'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">' +
+              'Delete' +
+            '</button>' +
+          '</div>' +
         '</div>' +
         (fb.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0">' + escHtml(fb.text) + '</p>' : '') +
       '</div>';
     }).join('');
   }
 
-  // Remove a single accepted tree-feedback card from the in-memory store + DOM
-  function _mpDismissTreeFeedback(feedbackId) {
-    _mpAcceptedTreeFeedback = _mpAcceptedTreeFeedback.filter(function(fb) { return fb.id !== feedbackId; });
+  // Delete one tree-feedback row for good (asks first), then update the screen and the dashboard tile
+  async function _mpDismissTreeFeedback(feedbackId) {
+    if (!confirm('Delete this feedback? It cannot be undone.')) return;
+    try {
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId, { method: 'DELETE', headers: getAuthHeaders() });
+      if (!res.ok) throw new Error('delete failed');
+    } catch (e) {
+      toast('Could not delete \u2014 try again');
+      return;
+    }
+    _mpTreeFeedback = _mpTreeFeedback.filter(function(fb) { return fb.id !== feedbackId; });
     var card = document.getElementById('mp-tree-fb-' + feedbackId);
     if (card) card.remove();
-    // Show empty state if nothing left
     var listEl  = document.getElementById('mpFeedbackList');
     var emptyEl = document.getElementById('mpFeedbackEmpty');
     if (listEl && !listEl.children.length && emptyEl) emptyEl.style.display = 'block';
+    toast('Feedback deleted');
+    loadResponsesTile();
   }
 
   // Render the directory list (filtered by search + bucket)
@@ -32574,13 +32683,15 @@
         case 'link-request-dismiss':    dismissLinkRequest(btn.dataset.tid); break;
         case 'link-request-renew':      _showRateLimitModal({ msg: 'Renew Premium to turn your shared links back on', sub: 'Your shared links are paused while Premium is not active. They start working again as soon as you renew.' }); break;
         case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
-        case 'accept-tree-feedback':    if (fbId) acceptTreeFeedback(fbId, name); break;
+        case 'accept-tree-feedback':    if (fbId) acceptKeptFeedback(fbId, 'tree'); break;
+        case 'accept-piece-feedback':   if (fbId) acceptKeptFeedback(fbId, 'piece'); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
         case 'open-piece-from-feedback': { var _cid = btn.dataset.componentId || null; if (_cid) _openLibraryToPiece(_cid); break; }
         case 'open-tree-from-feedback':  { openMyPeople(); mpSwitchTab('feedback'); break; }
         // FAM-06-FIX (2026-09-27): dismiss a tree feedback card from within the Feedback tab
         case 'dismiss-tree-feedback': { if (fbId) _mpDismissTreeFeedback(fbId); break; }
+        case 'retry-tree-feedback': _mpRenderFeedbackTab(); break;
         // ── AI Review panel actions (PRV-09 extension) ──
         // data flows only through data-* attributes — no user content in executable position
         case 'accept-spell-fix':     acceptSpellFix(id || null);                           break;
@@ -33499,8 +33610,8 @@
 
     <!-- FAM-06 (2026-09-26): Share my tree modal — same shape as storyShareModal
          minus the per-entry Q&A framing (a tree has no single "question"). -->
-    <div id="treeShareModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:20px">
-      <div style="background:var(--surface);border-radius:16px;padding:28px 24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+    <div id="treeShareModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:12px">
+      <div style="background:var(--surface);border-radius:16px;padding:20px 20px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);box-sizing:border-box;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <h3 style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0">Share your family tree</h3>
           <button id="treeShareModalCloseBtn" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
