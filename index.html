@@ -1,6 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="lifetold-version" content="v7.288">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5301,7 +5302,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.287';
+  const APP_VERSION = 'v7.288';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5798,6 +5799,74 @@
     return os + '/' + browser;
   }
 
+  // LOG-OUTBOX-01 (2026-10-19): when the network is down or stalled, the log insert fails
+  // too, so the very failures we most want to see vanished (a photo save that hung and
+  // ended in "Failed to fetch" left no row at all). A failed insert is now kept on this
+  // device (localStorage, newest 60) and sent when the connection returns, on the next
+  // successful log write, and shortly after the app starts. Late rows keep their
+  // original timestamp and gain " [delivered late]" in the detail.
+  var _logFlushing = false;
+  function _logOutboxPush(payload) {
+    try {
+      var q = JSON.parse(localStorage.getItem('lt_log_outbox') || '[]');
+      q.push(payload);
+      if (q.length > 60) q = q.slice(-60);
+      localStorage.setItem('lt_log_outbox', JSON.stringify(q));
+    } catch (e) { notifyDev('warn', 'ACTIVITY', 'log outbox write failed: ' + e.message); }
+  }
+  function _logOutboxFlush() {
+    if (_logFlushing || !navigator.onLine || typeof sb === 'undefined' || !sb || typeof sb.auth === 'undefined') return;
+    var q = [];
+    try {
+      var raw = localStorage.getItem('lt_log_outbox');
+      if (!raw) return;
+      q = JSON.parse(raw);
+    } catch (e) {
+      notifyDev('warn', 'ACTIVITY', 'log outbox unreadable: ' + e.message);
+      return;
+    }
+    if (!q.length) return;
+    _logFlushing = true;
+    sb.auth.getSession().then(function(r) {
+      var token = (r.data && r.data.session) ? r.data.session.access_token : null;
+      if (!token) { _logFlushing = false; return null; }
+      var rows = q.map(function(p) { return Object.assign({}, p, { detail: (p.detail || '') + ' [delivered late]' }); });
+      return fetch(DB_ACTIVITY_LOG_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + token, 'Prefer': 'return=minimal' },
+        body: JSON.stringify(rows)
+      }).then(function(res) {
+        // keep the rows on a network/server problem; drop them if the server refuses them outright
+        if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408 && res.status !== 429)) {
+          try { localStorage.removeItem('lt_log_outbox'); } catch (e) { notifyDev('warn', 'ACTIVITY', 'log outbox clear failed: ' + e.message); }
+        }
+        _logFlushing = false;
+      });
+    }).catch(function(err) {
+      _logFlushing = false;
+      notifyDev('warn', 'ACTIVITY', 'log outbox flush failed: ' + err.message);
+    });
+  }
+  window.addEventListener('online', _logOutboxFlush);
+  setTimeout(_logOutboxFlush, 6000);
+
+  // One-line network picture for log rows (Chrome-only fields show ? elsewhere).
+  function _netSnap() {
+    var c = navigator.connection || {};
+    return 'online=' + navigator.onLine + ' net=' + (c.effectiveType || '?') + '/rtt' + (c.rtt != null ? c.rtt : '?') + '/dl' + (c.downlink != null ? c.downlink : '?') + ' vis=' + document.visibilityState;
+  }
+  // The browser's own record of the most recent request whose URL contains `part` (URL itself is not logged).
+  function _lastReq(part) {
+    var es = (performance.getEntriesByType ? performance.getEntriesByType('resource') : []);
+    for (var i = es.length - 1; i >= 0; i--) {
+      if (es[i].name.indexOf(part) !== -1) {
+        var e = es[i];
+        return part + ' dur=' + Math.round(e.duration) + 'ms status=' + (e.responseStatus != null ? e.responseStatus : '?') + ' proto=' + (e.nextHopProtocol || '?');
+      }
+    }
+    return part + ' no-entry';
+  }
+
   function logActivity(action, detail, level, area, srcLine) {
     var ua = navigator.userAgent || '';
     var platform = /iPhone|iPad|iPod|Android/i.test(ua)
@@ -5827,6 +5896,7 @@
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + token, 'Prefer': 'return=minimal' },
         body:    JSON.stringify(payload)
       }).then(function(res) {
+        if (res.ok) _logOutboxFlush();   // LOG-OUTBOX-01: connection is working, send anything held back
         // BUG FIX v6.72: fetch only rejects on network failure, never on HTTP error
         // status — a 400/403/500 response was previously swallowed completely
         // (invisible to console, Supabase, and Telegram alike). Surface it now.
@@ -5841,6 +5911,7 @@
         }
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
+        _logOutboxPush(payload);   // LOG-OUTBOX-01: keep the row, send it when the network is back
         // FIX (v7.186): logActivity() can't call itself to report its own DB
         // failure, so this went completely silent — no console (in prod),
         // no DB row, no Telegram ping. notifyDev() is independent of the DB
@@ -24631,6 +24702,107 @@
   })();
 
   // ── Toast ────────────────────────────────────────────────────────
+  // ── VER-STAMP-01: stale-tab guard (2026-10-19) ─────────────────────────────
+  // A tab left open through a release keeps running the old code, and two app versions
+  // then fight over one login (session_resumed rows from v7.271 and v7.287 side by side).
+  // The deployer stamps the release into <meta name="lifetold-version"> (and tests that it
+  // did). Every few minutes, and when the tab is shown, hidden or back online, the app
+  // reads the first few KB of the live page and compares that stamp with its own.
+  //   - tab hidden + nothing unsaved  -> reloads itself
+  //   - tab visible                   -> a bar: "A new version is ready", user taps Update now
+  //   - something unsaved/in progress -> never reloads; the bar asks them to save first
+  // It compares the loaded stamp with the live stamp (not APP_VERSION), so an old deployer
+  // that does not stamp can never cause a reload loop, and it reloads at most once every 10 min.
+  var _vcLoaded = (function() { var m = document.querySelector('meta[name="lifetold-version"]'); return m ? m.getAttribute('content') : ''; })();
+  var _vcStale = '', _vcLastCheck = 0, _vcFailLogged = false, _vcLogged = false;
+  function _vcUnsafeReason() {
+    if (typeof _micState !== 'undefined' && _micState !== 'idle') return 'a recording is in progress';
+    var ma = document.getElementById('memAnswer');
+    if (ma && ma.value && ma.value.trim()) return 'you have an unsaved memory';
+    var pm = document.getElementById('mpV2Modal');
+    if (pm && pm.style.display === 'flex') return 'you are editing a person';
+    if (document.getElementById('mpCropVp')) return 'you are adjusting a photo';
+    var gp = document.getElementById('askGethroPanel');
+    if (gp && gp.classList.contains('open')) return 'you are chatting with Gethro';
+    var ob = document.getElementById('onboardingOverlay');
+    if (ob && ob.style.display === 'flex') return 'you are setting up';
+    if (typeof currentStory !== 'undefined' && currentStory && currentStory.text) {
+      var sb2 = document.getElementById('saveToLibBtn');
+      if (!(sb2 && sb2.textContent === '\u2713 Saved')) return 'you have an unsaved story';
+    }
+    var ae = document.activeElement;
+    if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && ae.type !== 'range' && ae.type !== 'checkbox' && ae.value && ae.value.trim()) return 'you are typing';
+    return '';
+  }
+  async function _vcServerVersion() {
+    var ctl = new AbortController();
+    var timer = setTimeout(function() { ctl.abort(); }, 8000);
+    try {
+      var res = await fetch('/?vc=' + Date.now(), { cache: 'no-store', signal: ctl.signal });
+      var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
+      while (buf.length < 49152) {
+        var r = await reader.read();
+        if (r.done) break;
+        buf += dec.decode(r.value, { stream: true });
+        var m = buf.match(/<meta name="lifetold-version" content="([^"]*)"/);
+        if (m) { reader.cancel(); return m[1]; }
+      }
+      reader.cancel();
+      return '';
+    } finally { clearTimeout(timer); }
+  }
+  function _vcReload(why) {
+    var last = 0;
+    try { last = parseInt(sessionStorage.getItem('lt_vc_reload') || '0', 10); } catch (e) { notifyDev('warn', 'APP', 'update guard storage read failed: ' + e.message); }
+    if (Date.now() - last < 600000) return;   // at most one automatic reload per 10 minutes
+    try { sessionStorage.setItem('lt_vc_reload', String(Date.now())); } catch (e) { notifyDev('warn', 'APP', 'update guard storage write failed: ' + e.message); }
+    logActivity('app_update', 'reload ' + why + ' loaded=' + _vcLoaded + ' live=' + _vcStale, 'info', 'APP');
+    setTimeout(function() { location.reload(); }, 500);   // short pause so the log row can be sent
+  }
+  function _vcShowBar() {
+    if (document.getElementById('ltUpdateBar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'ltUpdateBar';
+    bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9700;max-width:460px;margin:0 auto;background:var(--surface);border:1px solid var(--gold);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,0.25);display:flex;gap:10px;align-items:center';
+    bar.innerHTML = '<div style="flex:1;font-size:0.85rem;color:var(--text)">A new version of LifeTold is ready.<div style="font-size:0.74rem;color:var(--text-light);margin-top:2px">Save anything you are working on, then update.</div></div>' +
+      '<button type="button" id="ltUpdateBtn" style="padding:9px 14px;background:var(--gold);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer">Update now</button>' +
+      '<button type="button" id="ltUpdateLater" aria-label="Later" style="padding:6px 8px;background:none;border:none;color:var(--text-light);cursor:pointer;font-size:1rem">\u2715</button>';
+    document.body.appendChild(bar);
+    document.getElementById('ltUpdateBtn').addEventListener('click', function() {
+      var why = _vcUnsafeReason();
+      if (why) { toast('Please save first: ' + why + '.', 4000); return; }
+      logActivity('app_update', 'reload by user loaded=' + _vcLoaded + ' live=' + _vcStale, 'info', 'APP');
+      setTimeout(function() { location.reload(); }, 400);
+    });
+    document.getElementById('ltUpdateLater').addEventListener('click', function() { bar.remove(); });
+  }
+  async function _vcCheck() {
+    if (!_vcLoaded || Date.now() - _vcLastCheck < 60000) return;
+    _vcLastCheck = Date.now();
+    try {
+      var live = await _vcServerVersion();
+      if (!live || live === _vcLoaded) { _vcStale = ''; return; }
+      _vcStale = live;
+      var hidden = document.visibilityState === 'hidden';
+      var why = _vcUnsafeReason();
+      if (!_vcLogged) {
+        _vcLogged = true;
+        logActivity('app_update', 'stale loaded=' + _vcLoaded + ' live=' + live + ' tab=' + (hidden ? 'hidden' : 'visible') + (why ? ' blocked: ' + why : ''), 'info', 'APP');
+      }
+      if (hidden && !why) _vcReload('hidden-tab');
+      else if (!hidden) _vcShowBar();
+    } catch (e) {
+      if (!_vcFailLogged) { _vcFailLogged = true; logActivity('app_update_check_failed', e.name + ': ' + e.message, 'warn', 'APP'); }
+    }
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden' && _vcStale && !_vcUnsafeReason()) _vcReload('hidden-tab');
+    else _vcCheck();
+  });
+  window.addEventListener('online', _vcCheck);
+  setInterval(_vcCheck, 300000);
+  setTimeout(_vcCheck, 30000);
+
   function toast(msg, duration = 3000) {
     const t = document.getElementById('toast');
     t.textContent = msg; t.classList.add('show');
@@ -27470,22 +27642,157 @@
     document.getElementById('mpV2PhotoFile').addEventListener('change', _mpV2PhotoPick);
   }
   // Photo picker for the add/edit form: show a round preview of the chosen file.
+  // PEOPLE-08 (2026-10-19): choosing a photo now opens a drag-and-zoom step. The
+  // person drags the photo and zooms so the face fills the circle (a small figure
+  // in a big photo is fine). The crop is cut from the ORIGINAL photo, scaled to a
+  // 512px square JPEG (about 40-80 KB) and that alone is uploaded: no 1500px
+  // original, and no AI description call (the tree never used it).
+  var _mpV2CroppedBlob = null;
+  // PEOPLE-09: one trace per photo save. A "people_photo_start" row is written the moment Save
+  // is pressed and a "people_photo_save" row when it ends (ok / ok-no-photo / FAIL), joined by
+  // the #id. A start row with no matching end row means the save stalled or the tab was closed.
+  // The end row carries the time of each step, the network picture and, on failure, the
+  // browser's own timing for the last storage and people requests.
+  function _mpTraceNew(size) {
+    var t = { id: Math.random().toString(36).slice(2, 6), t0: performance.now(), marks: [], size: size, upErr: null };
+    t.mark = function(n) { t.marks.push(n + '=' + Math.round(performance.now() - t.t0)); };
+    return t;
+  }
+  function _mpTraceLog(t, outcome, e) {
+    var d = '#' + t.id + ' ' + outcome + ' total=' + Math.round(performance.now() - t.t0) + 'ms size=' + Math.round(t.size / 1024) + 'KB [' + t.marks.join(' ') + '] ' + _netSnap();
+    if (e) d += ' err=' + (e.name || 'Error') + ': ' + (e.message || e);
+    if (outcome !== 'ok') d += ' | ' + _lastReq('/storage/v1/object/') + ' | ' + _lastReq('life_people');
+    logActivity('people_photo_save', d, outcome === 'ok' ? 'info' : 'warn', 'PEOPLE');
+  }
   function _mpV2PhotoPick() {
-    var f = document.getElementById('mpV2PhotoFile').files[0];
-    var prev = document.getElementById('mpV2PhotoPrev'), st = document.getElementById('mpV2PhotoStatus');
+    var fi = document.getElementById('mpV2PhotoFile');
+    var f = fi.files[0];
+    var st = document.getElementById('mpV2PhotoStatus');
     if (!f) return;
-    st.textContent = f.name;
-    var rd = new FileReader();
-    rd.onload = function(ev) {
+    _mpV2CroppedBlob = null;
+    _mpCropOpen(f, function(blob, dataUrl) {
+      if (!blob) { fi.value = ''; st.textContent = ''; return; }
+      _mpV2CroppedBlob = blob;
+      var prev = document.getElementById('mpV2PhotoPrev');
       prev.innerHTML = '';
-      var im = document.createElement('img'); im.src = ev.target.result;
+      var im = document.createElement('img'); im.src = dataUrl;
       im.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
       prev.appendChild(im);
+      st.textContent = 'Photo ready (' + Math.max(1, Math.round(blob.size / 1024)) + ' KB). Save to keep it.';
+    }, function(msg) { fi.value = ''; st.textContent = msg; });
+  }
+
+  // The crop dialog. onDone(blob, dataUrl) on "Use photo", onDone(null) on Cancel.
+  function _mpCropOpen(file, onDone, onFail) {
+    var V = Math.min(280, Math.floor(window.innerWidth - 80));   // viewport (CSS px)
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onerror = function() {
+      URL.revokeObjectURL(url);
+      onFail('This photo format is not supported here. Please choose a JPEG or PNG.');
     };
-    rd.readAsDataURL(f);
+    img.onload = function() {
+      var W = img.naturalWidth, H = img.naturalHeight;
+      var s0 = V / Math.min(W, H);        // scale at which the photo just covers the circle
+      var z = 1, ox = 0, oy = 0;           // zoom (1-5) and pan offset of the photo centre, CSS px
+      var ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2200;display:flex;align-items:center;justify-content:center;padding:16px';
+      ov.innerHTML =
+        '<div style="background:var(--surface);border-radius:16px;padding:20px;max-width:360px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.35);text-align:center">' +
+          '<div style="font-weight:700;color:var(--text);margin-bottom:4px">Adjust the photo</div>' +
+          '<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px">Drag to move it. Zoom so the face fills the circle.</div>' +
+          '<div id="mpCropVp" style="position:relative;width:' + V + 'px;height:' + V + 'px;margin:0 auto;border-radius:50%;overflow:hidden;background:#222;touch-action:none;cursor:grab;border:2px solid var(--gold)">' +
+            '<img id="mpCropImg" alt="" draggable="false" style="position:absolute;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none">' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;margin:14px 4px 4px">' +
+            '<span style="font-size:0.8rem;color:var(--text-light)">&minus;</span>' +
+            '<input id="mpCropZoom" type="range" min="1" max="5" step="0.01" value="1" style="flex:1" aria-label="Zoom">' +
+            '<span style="font-size:0.8rem;color:var(--text-light)">+</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:10px;margin-top:14px">' +
+            '<button type="button" id="mpCropCancel" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">Cancel</button>' +
+            '<button type="button" id="mpCropOk" style="flex:1;padding:11px;background:var(--gold);border:none;border-radius:8px;cursor:pointer;color:#fff;font-weight:700">Use photo</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      var vp = ov.querySelector('#mpCropVp'), im = ov.querySelector('#mpCropImg'), zr = ov.querySelector('#mpCropZoom');
+      im.src = url;
+      function clampPan() {
+        var s = s0 * z, mx = Math.max(0, (W * s - V) / 2), my = Math.max(0, (H * s - V) / 2);
+        ox = Math.min(mx, Math.max(-mx, ox)); oy = Math.min(my, Math.max(-my, oy));
+      }
+      function paint() {
+        clampPan();
+        var s = s0 * z;
+        im.style.width = (W * s) + 'px'; im.style.height = (H * s) + 'px';
+        im.style.left = (V / 2 - W * s / 2 + ox) + 'px'; im.style.top = (V / 2 - H * s / 2 + oy) + 'px';
+        zr.value = z;
+      }
+      function setZoom(nz) { z = Math.min(5, Math.max(1, nz)); paint(); }
+      paint();
+      // drag, plus two-finger pinch
+      var ptrs = {}, pinchD = 0;
+      vp.addEventListener('pointerdown', function(e) {
+        ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if (vp.setPointerCapture) vp.setPointerCapture(e.pointerId);
+        pinchD = 0; vp.style.cursor = 'grabbing';
+      });
+      vp.addEventListener('pointermove', function(e) {
+        var p = ptrs[e.pointerId]; if (!p) return;
+        var ids = Object.keys(ptrs);
+        if (ids.length === 2) {
+          p.x = e.clientX; p.y = e.clientY;
+          var a = ptrs[ids[0]], b = ptrs[ids[1]], d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (pinchD) setZoom(z * d / pinchD);
+          pinchD = d;
+        } else {
+          ox += e.clientX - p.x; oy += e.clientY - p.y;
+          p.x = e.clientX; p.y = e.clientY; paint();
+        }
+      });
+      function endPtr(e) { delete ptrs[e.pointerId]; pinchD = 0; vp.style.cursor = 'grab'; }
+      vp.addEventListener('pointerup', endPtr); vp.addEventListener('pointercancel', endPtr);
+      vp.addEventListener('wheel', function(e) { e.preventDefault(); setZoom(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }, { passive: false });
+      zr.addEventListener('input', function() { setZoom(parseFloat(zr.value)); });
+      function close() { ov.remove(); URL.revokeObjectURL(url); }
+      ov.querySelector('#mpCropCancel').addEventListener('click', function() { close(); onDone(null); });
+      ov.querySelector('#mpCropOk').addEventListener('click', function() {
+        var s = s0 * z;
+        var sw = V / s;                                   // square of the ORIGINAL photo that is inside the circle
+        var sx = W / 2 - ox / s - sw / 2, sy = H / 2 - oy / s - sw / 2;
+        var OUT = Math.max(256, Math.min(512, Math.round(sw)));
+        var cv = document.createElement('canvas'); cv.width = OUT; cv.height = OUT;
+        cv.getContext('2d').drawImage(img, sx, sy, sw, sw, 0, 0, OUT, OUT);
+        cv.toBlob(function(blob) {
+          close();
+          if (!blob) { onFail('Could not prepare the photo. Please try another one.'); return; }
+          onDone(blob, cv.toDataURL('image/jpeg', 0.85));
+        }, 'image/jpeg', 0.88);
+      });
+    };
+    img.src = url;
+  }
+
+  // Upload the already-cropped square. No resize, no AI description, 40 s limit so a
+  // stalled connection ends in a clear message instead of hanging.
+  async function _mpUploadPersonPhoto(blob) {
+    if (!blob || !currentUser) return null;
+    var path = currentUser.id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '.jpg';
+    var ctl = new AbortController(), t0 = performance.now();
+    var timer = setTimeout(function() { ctl.abort(); }, 40000);
+    try {
+      var res = await fetch(STORAGE_URL + '/' + path, {
+        method: 'POST', signal: ctl.signal,
+        headers: { 'Authorization': 'Bearer ' + sessionToken, 'apikey': SUPABASE_ANON, 'Content-Type': 'image/jpeg', 'x-upsert': 'true' },
+        body: blob
+      });
+      if (!res.ok) throw new Error('storage upload HTTP ' + res.status);
+      return { path: path };
+    } finally { clearTimeout(timer); }
   }
   function _mpV2PhotoReset(person) {
     var prev = document.getElementById('mpV2PhotoPrev'), fi = document.getElementById('mpV2PhotoFile'), st = document.getElementById('mpV2PhotoStatus');
+    _mpV2CroppedBlob = null;
     if (fi) fi.value = ''; if (st) st.textContent = '';
     if (!prev) return;
     prev.innerHTML = '&#128100;';
@@ -27637,13 +27944,20 @@
   // typically after the tab or phone has been idle). Only used for idempotent calls:
   // the people PATCH and the set_union / set_child_kind RPCs. NOT used for
   // life_tree_add_relative - a retry there could create a duplicate person.
+  // PEOPLE-09: every tree save request now has a 30 s limit, so a stalled connection ends
+  // in a clear message instead of an endless "Saving...".
+  function _mpTimedFetch(url, opts) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function() { ctl.abort(); }, 30000);
+    return fetch(url, Object.assign({}, opts, { signal: ctl.signal })).finally(function() { clearTimeout(timer); });
+  }
   async function _mpFetchRetry(url, opts) {
-    try { return await fetch(url, opts); }
+    try { return await _mpTimedFetch(url, opts); }
     catch (e) {
       if (!(e instanceof TypeError)) throw e;
       logActivity('people_network_retry', String(e && e.message || e), 'info', 'PEOPLE');
       await new Promise(function(r) { setTimeout(r, 400); });
-      return await fetch(url, opts);
+      return await _mpTimedFetch(url, opts);
     }
   }
   async function _mpV2ApplyRels(hdr) {
@@ -27716,7 +28030,7 @@
   // FAM-08: the two ways a person is created. Used by the add form, the memory review and the story-subject auto-add.
   // Family relative: the database function places them in the tree (and links the family) in one step.
   async function _mpAddViaRpc(anchorId, kind, person, famId, childKind) {
-    var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_add_relative', {
+    var res = await _mpTimedFetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_add_relative', {
       method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ anchor_id: anchorId, kind: kind, person: Object.assign({ bucket: 'family' }, person), p_family_id: famId || null, p_child_kind: childKind || 'biological' })
     });
@@ -27727,7 +28041,7 @@
   }
   // Friend / colleague / other (and the owner row): a plain row that is not placed in the tree.
   async function _mpAddPlain(bucket, person) {
-    var res = await fetch(DB_PEOPLE_URL, {
+    var res = await _mpTimedFetch(DB_PEOPLE_URL, {
       method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
       body: JSON.stringify(Object.assign({ user_id: currentUser.id, bucket: bucket }, person))
     });
@@ -27756,16 +28070,20 @@
     btn.disabled = true; btn.textContent = 'Saving\u2026';
     var hdr = Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' });
     // v7.261 (PEOPLE-06): upload the chosen photo first; only the storage PATH is saved (never an expiring link).
-    var photoFile = $('mpV2PhotoFile') ? $('mpV2PhotoFile').files[0] : null, photoPath = null;
+    var photoFile = _mpV2CroppedBlob, photoPath = null;
+    var _tr = photoFile ? _mpTraceNew(photoFile.size) : null;
+    if (_tr) logActivity('people_photo_start', '#' + _tr.id + ' size=' + Math.round(photoFile.size / 1024) + 'KB ' + _netSnap(), 'info', 'PEOPLE');
     if (photoFile) {
       $('mpV2PhotoStatus').textContent = 'Uploading photo\u2026';
       try {
-        var upl = await uploadPhotoFile(photoFile);
+        var upl = await _mpUploadPersonPhoto(photoFile);
         if (!upl || !upl.path) throw new Error('upload returned nothing');
         photoPath = upl.path;
+        if (_tr) _tr.mark('upload_ok');
         $('mpV2PhotoStatus').textContent = '';
       } catch(pe) {
-        $('mpV2PhotoStatus').textContent = 'Photo upload failed \u2014 saved without the photo';
+        if (_tr) { _tr.mark('upload_fail'); _tr.upErr = pe; }
+        $('mpV2PhotoStatus').textContent = (pe && pe.name === 'AbortError' ? 'Photo upload timed out ' : 'Photo upload failed ') + '\u2014 saved without the photo';
         logActivity('people_warn', 'photo upload: ' + String(pe && pe.message || pe), 'warn', 'PEOPLE');
       }
     }
@@ -27802,13 +28120,15 @@
       if (photoNeedsAttach) {
         var np = (_mpPeople || []).find(function(q) { return !_idsBefore[q.id] && (q.name || '') === name; });
         if (np) {
-          var rp = await fetch(DB_PEOPLE_URL + '?id=eq.' + np.id + '&user_id=eq.' + currentUser.id, { method: 'PATCH', headers: Object.assign({}, hdr, { 'Prefer': 'return=minimal' }), body: JSON.stringify({ photo_path: photoPath }) });
+          var rp = await _mpTimedFetch(DB_PEOPLE_URL + '?id=eq.' + np.id + '&user_id=eq.' + currentUser.id, { method: 'PATCH', headers: Object.assign({}, hdr, { 'Prefer': 'return=minimal' }), body: JSON.stringify({ photo_path: photoPath }) });
           if (rp.ok) await _mpLoad();
           else { toast('Person added, but the photo could not be saved.', 5000); logActivity('people_warn', 'photo attach HTTP ' + rp.status, 'warn', 'PEOPLE'); }
         } else { logActivity('people_warn', 'photo attach: new person not found', 'warn', 'PEOPLE'); }
       }
+      if (_tr) { _tr.mark('done'); _mpTraceLog(_tr, _tr.upErr ? 'ok-no-photo' : 'ok', _tr.upErr); }
     } catch(e) {
-      err.textContent = e.message || 'Something went wrong.'; err.style.display = 'block';
+      if (_tr) { _tr.mark('failed'); _mpTraceLog(_tr, 'FAIL', e); }
+      err.textContent = (e && e.name === 'AbortError') ? 'That took too long. Please check your connection and try again.' : (e.message || 'Something went wrong.'); err.style.display = 'block';
       btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : 'Add';
       dbgWarn('PEOPLE', 'v2 save error: ' + e.message);
       // ERR-LOG-02: the success paths are logged (people_added / people_edited); failures now are too.
