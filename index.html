@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.292">
+  <meta name="lifetold-version" content="v7.293">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5340,7 +5340,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.292';
+  const APP_VERSION = 'v7.293';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -9019,6 +9019,11 @@
   }
 
   async function signOut() {
+    // SIGNOUT-01 (2026-10-20): Sign out must ALWAYS sign out. On a phone the Sign Out tap did nothing
+    // (still signed in): the old code waited on sb.auth.signOut() with no limit, so one stuck auth call
+    // (or any earlier line throwing) left the person signed in. Now: tidy-up can fail without blocking,
+    // the Supabase call gets 4 seconds, and the local login is cleared by hand either way.
+    try {
     if (recActive) { recActive = false; stopListening(); }
     gethroCancel();
     // Close AudioContext to free OS audio resources — a new one will be created
@@ -9036,12 +9041,28 @@
     _agpPendingMemoryConvo = false;
     var agpLog = document.getElementById('agpLog');
     if (agpLog) agpLog.innerHTML = '';
-    await sb.auth.signOut();
+    } catch (e) { notifyDev('warn', 'AUTH', 'signOut tidy-up failed (continuing): ' + (e && e.message || e)); }
+    var _soTimedOut = false;
+    try {
+      await Promise.race([
+        sb.auth.signOut(),
+        new Promise(function(res) { setTimeout(function() { _soTimedOut = true; res(); }, 4000); })
+      ]);
+    } catch (e) { _soTimedOut = true; notifyDev('warn', 'AUTH', 'signOut call failed: ' + (e && e.message || e)); }
+    // Always clear the local login ourselves, in case Supabase's own SIGNED_OUT event never arrives.
+    try {
+      Object.keys(localStorage).forEach(function(k) { if (/^sb-.+-auth-token/.test(k)) localStorage.removeItem(k); });
+    } catch (e) {}
+    if (_soTimedOut) logActivity('sign_out_forced', 'Supabase signOut did not finish; cleared local session', 'warn', 'AUTH');
+    currentUser = null; sessionToken = null;
+    _appFullyLoaded = false; _subscriptionTier = 'free';
+    try { sessionStorage.removeItem('_lastTab'); } catch (e) {}
     entries = []; _invalidateSortCache();
     // SEC-11/B: clear memoir content from localStorage on sign-out so shared-device
     // users don't leave memoir drafts or queued edits accessible to the next person.
     draftClear();
     try { localStorage.removeItem(OFFLINE_QUEUE_KEY); } catch(e) {}
+    updateAuthUI();
     toast('Signed out');
   }
 
