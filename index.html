@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.298">
+  <meta name="lifetold-version" content="v7.299">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5339,7 +5339,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.298';
+  const APP_VERSION = 'v7.299';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28573,6 +28573,8 @@
     if (dirPanel)    dirPanel.style.display     = 'none';
     if (feedPanel)   feedPanel.style.display    = 'none';
     if (treeCtrl)    treeCtrl.style.display     = 'none';
+    var shareBtn    = document.getElementById('mpShareTreeBtn');   // Share belongs to the tree, so it only shows on the Tree tab
+    if (shareBtn)    shareBtn.style.display     = (tab === 'tree') ? 'flex' : 'none';
     if (tabTree)     { tabTree.style.borderBottom     = '2px solid transparent'; tabTree.style.color     = 'var(--text-light)'; }
     if (tabDir)      { tabDir.style.borderBottom      = '2px solid transparent'; tabDir.style.color      = 'var(--text-light)'; }
     if (tabFeedback) { tabFeedback.style.borderBottom = '2px solid transparent'; tabFeedback.style.color = 'var(--text-light)'; }
@@ -28631,7 +28633,7 @@
     }
     if (emptyEl) emptyEl.style.display = 'none';
 
-    listEl.innerHTML = items.map(function(fb) {
+    var _cardHtml = function(fb) {
       var timeAgo = formatTimeAgo(fb.created_at);
       return '<div id="mp-tree-fb-' + escHtml(fb.id) + '" style="background:var(--surface2);border-radius:10px;padding:14px 16px">' +
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">' +
@@ -28650,8 +28652,34 @@
             '</button>' +
           '</div>' +
         '</div>' +
-        _fbQuestionHtml(_fbQuestionOf(fb), 6) +
         (fb.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0">' + escHtml(fb.text) + '</p>' : '') +
+      '</div>';
+    };
+
+    // FB-GROUP-01 (2026-10-22): replies to the same question are grouped under that question (newest group first).
+    // Grouped by the question text; replies with no question sit together under General feedback.
+    var _grp = {}, _order = [];
+    items.forEach(function(fb) {
+      var q = _fbQuestionOf(fb), key = q.toLowerCase().replace(/\s+/g, ' ');
+      if (!_grp[key]) { _grp[key] = { q: q, rows: [] }; _order.push(key); }
+      _grp[key].rows.push(fb);
+    });
+    _order.sort(function(x, y) {
+      return new Date(_grp[y].rows[0].created_at) - new Date(_grp[x].rows[0].created_at);   // items arrive newest first
+    });
+    listEl.innerHTML = _order.map(function(key) {
+      var g = _grp[key], newCount = g.rows.filter(function(r) { return !r.imported; }).length;
+      return '<div style="margin-bottom:6px">' +
+        '<div style="padding:2px 2px 8px">' +
+          (g.q
+            ? '<p style="font-size:0.95rem;color:var(--text);font-style:italic;margin:0 0 2px;line-height:1.4">\u201c' + escHtml(g.q) + '\u201d</p>'
+            : '<p style="font-size:0.95rem;color:var(--text);font-weight:700;margin:0 0 2px">General feedback</p>') +
+          '<span style="font-size:0.72rem;color:var(--text-light)">' + g.rows.length + (g.rows.length === 1 ? ' reply' : ' replies') +
+            (newCount ? ' \u00b7 ' + newCount + ' new' : '') + '</span>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px;border-left:3px solid var(--gold);padding-left:10px">' +
+          g.rows.map(_cardHtml).join('') +
+        '</div>' +
       '</div>';
     }).join('');
   }
@@ -28667,11 +28695,7 @@
       return;
     }
     _mpTreeFeedback = _mpTreeFeedback.filter(function(fb) { return fb.id !== feedbackId; });
-    var card = document.getElementById('mp-tree-fb-' + feedbackId);
-    if (card) card.remove();
-    var listEl  = document.getElementById('mpFeedbackList');
-    var emptyEl = document.getElementById('mpFeedbackEmpty');
-    if (listEl && !listEl.children.length && emptyEl) emptyEl.style.display = 'block';
+    _mpRenderFeedbackTab();   // FB-GROUP-01: redraw so the group header counts (and an emptied group) stay right
     toast('Feedback deleted');
     loadResponsesTile();
   }
