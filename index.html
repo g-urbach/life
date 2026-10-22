@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.294">
+  <meta name="lifetold-version" content="v7.295">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5340,7 +5340,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.294';
+  const APP_VERSION = 'v7.295';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -8561,14 +8561,42 @@
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
       // PKCE: OAuth redirect returns a single-use ?code= instead of putting
       // access/refresh/provider tokens in the URL hash (implicit flow, deprecated).
-      auth: { persistSession: true, autoRefreshToken: true, flowType: 'pkce' }
+      auth: { persistSession: true, autoRefreshToken: true, flowType: 'pkce', lock: _ltAuthLock }
     });
 
     // Explicitly restore session on init — onAuthStateChange alone has a timing
     // gap where sessionToken is null. We also force-refresh if the cached token
     // is expired or near-expired (Supabase auto-refresh is async and may not
     // have run yet — root cause of the 401 Invalid JWT on the proxy).
-    const { data: { session: initSession } } = await sb.auth.getSession();
+    // AUTH-ROBUST-01 (2026-10-22): never let startup wait forever on the auth library.
+    const _gsRes = await Promise.race([
+      sb.auth.getSession(),
+      new Promise(function(res) { setTimeout(function() { res({ _timeout: true }); }, 10000); })
+    ]);
+    const initSession = (_gsRes && _gsRes.data && _gsRes.data.session) || null;
+    if (_gsRes && _gsRes._timeout) {
+      if (_ltAuthTrouble('startup_timeout', 'getSession did not answer in 10s') >= 2) _ltAutoRepairAuth('startup timed out twice');
+    }
+    // Just auto-repaired on this device? Say so (the page was reloaded clean).
+    try {
+      var _ra = +localStorage.getItem('lt_auth_repair_at') || 0;
+      if (_ra && Date.now() - _ra < 120000 && !initSession) showAuthError('We reset sign-in on this device. Please tap Continue with Google to continue.');
+    } catch (e) {}
+    // Coming back from Google: if it failed, say so (and clear the one-time leftovers) instead of
+    // silently showing the sign-in page again.
+    try {
+      var _oq = new URLSearchParams(window.location.search);
+      var _oh = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      var _oErr = _oq.get('error_description') || _oq.get('error') || _oh.get('error_description') || _oh.get('error');
+      var _oCode = _oq.get('code');
+      if (_oErr || (_oCode && !initSession)) {
+        var _rfN = _ltAuthTrouble('google_return_failed', _oErr ? String(_oErr).slice(0, 160) : 'code present but no session (exchange failed)');
+        _ltClearAuthStorage();
+        history.replaceState(null, '', window.location.pathname);
+        if (_rfN >= 2) _ltAutoRepairAuth('Google return failed twice');
+        else showAuthError('Sign-in did not complete. Please tap Continue with Google to try again.');
+      }
+    } catch (e) {}
     if (initSession) {
       const expiresAt    = initSession.expires_at ?? 0;
       const secsLeft     = expiresAt - Math.floor(Date.now() / 1000);
@@ -8692,6 +8720,7 @@
       // pattern already used just below to detect new-user sign-up.
       if (event === 'SIGNED_IN' && session) {
         var _u2 = session.user;
+        _ltReportRecovery(_u2);
         var _signInAgeMs = _u2.last_sign_in_at ? (Date.now() - new Date(_u2.last_sign_in_at).getTime()) : Infinity;
         var _isFreshLogin = _signInAgeMs < 15000; // signed in server-side within the last 15s
         if (_isFreshLogin) {
@@ -8817,6 +8846,123 @@
     el.style.display = 'block';
   }
 
+  // ── AUTH-ROBUST-01 (2026-10-22): sign-in that cannot hang ─────────────────────────────────
+  // Symptom: on an Android phone the Google button sat on "Redirecting…" forever, and only reinstalling
+  // the app fixed it. supabase-js serialises every auth call behind a browser lock (navigator.locks); if
+  // anything on the device holds it (another tab/installed-app window, a refresh that never finished),
+  // signInWithOAuth() simply waits - no error, no timeout. Reinstalling cleared the lock and any stale
+  // saved sign-in data. Defences below: (1) a lock that gives up waiting after 5s, (2) a timeout + one
+  // automatic retry with clean saved auth data on the Google button, (3) if trouble repeats, an automatic
+  // repair that does what reinstalling did (once per 30 min, never loops), (4) every step is logged AND sent to
+  // Telegram (_ltAuthTrouble / _ltAutoRepairAuth / _ltReportRecovery) so we know it is happening.
+  function _ltAuthLock(name, acquireTimeout, fn) {
+    if (!(typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request)) return fn();
+    if (acquireTimeout === 0) {   // "try once, skip if busy" (background refresh tick) - same as the default
+      return navigator.locks.request(name, { mode: 'exclusive', ifAvailable: true }, async function(lock) {
+        if (lock) return await fn();
+        var err = new Error('Lock "' + name + '" is busy'); err.isAcquireTimeout = true; throw err;
+      });
+    }
+    var ac = new AbortController(), acquired = false;
+    var waitMs = acquireTimeout > 0 ? Math.min(acquireTimeout, 5000) : 5000;
+    var timer = setTimeout(function() { ac.abort(); }, waitMs);
+    return navigator.locks.request(name, { signal: ac.signal }, function() {
+      acquired = true; clearTimeout(timer); return fn();
+    }).catch(function(e) {
+      if (!acquired && e && e.name === 'AbortError') {      // never got the lock: carry on without it
+        try { logActivity('auth_lock_stolen', 'waited ' + waitMs + 'ms for ' + name, 'warn', 'AUTH'); notifyDev('warn', 'AUTH', 'Auth lock was held >' + waitMs + 'ms, continued without it (' + _ltAuthEnv() + ')'); } catch (_) {}
+        return fn();
+      }
+      throw e;
+    });
+  }
+  function _ltClearAuthStorage() {
+    [localStorage, sessionStorage].forEach(function(st) {
+      try { Object.keys(st).forEach(function(k) { if (/^sb-.+-auth-token/.test(k)) st.removeItem(k); }); } catch (e) {}
+    });
+  }
+  async function _ltOAuth(provider) {
+    var opts = { provider: provider, options: { redirectTo: window.location.origin + window.location.pathname } };
+    function limit(p, ms) {
+      return Promise.race([p, new Promise(function(res) { setTimeout(function() { res({ error: { message: 'no answer after ' + ms + 'ms', _timeout: true } }); }, ms); })]);
+    }
+    var r;
+    try { r = await limit(sb.auth.signInWithOAuth(opts), 7000); } catch (e) { r = { error: e }; }
+    if (!r || !r.error) return r || {};
+    logActivity('oauth_retry', provider + ': ' + String(r.error.message || r.error), 'warn', 'AUTH');
+    try {   // second try: clean saved auth data + a fresh client that does not use the stuck one
+      _ltClearAuthStorage();
+      var tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+        auth: { persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'pkce', lock: _ltAuthLock }
+      });
+      r = await limit(tmp.auth.signInWithOAuth(opts), 7000);
+    } catch (e) { r = { error: e }; }
+    if (r && r.error) {
+      var _bn = _ltAuthTrouble('button_no_answer', provider + ': ' + String(r.error.message || r.error));
+      if (_bn >= 2) _ltAutoRepairAuth('sign-in button failed twice');
+    } else {
+      logActivity('oauth_recovered', provider, 'warn', 'AUTH');
+      notifyDev('warn', 'AUTH', 'Sign-in button was stuck; recovered by automatic retry (' + _ltAuthEnv() + ')');
+    }
+    return r || {};
+  }
+  // Coarse, non-identifying device description for alerts (no user agent string - PRV-12).
+  function _ltAuthEnv() {
+    var standalone = false;
+    try { standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; } catch (e) {}
+    var mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') ? 'mobile' : 'desktop';
+    return mobile + (standalone ? ', installed app' : ', browser');
+  }
+  // Records one sign-in problem: activity log + Telegram, and returns how many happened in the last 10 min.
+  function _ltAuthTrouble(kind, detail) {
+    var now = Date.now(), recent = [];
+    try { recent = JSON.parse(localStorage.getItem('lt_auth_trouble') || '[]').filter(function(t) { return now - t < 600000; }); } catch (e) {}
+    recent.push(now);
+    try { localStorage.setItem('lt_auth_trouble', JSON.stringify(recent.slice(-10))); } catch (e) {}
+    var env = _ltAuthEnv();
+    try { logActivity('auth_trouble', kind + ': ' + detail + ' [' + env + '] n=' + recent.length, 'warn', 'AUTH'); } catch (e) {}
+    try { notifyDev('warn', 'AUTH', 'Sign-in trouble: ' + kind + ' - ' + detail + ' (' + env + ', ' + recent.length + ' in 10 min)'); } catch (e) {}
+    return recent.length;
+  }
+  // The automatic version of "uninstall and reinstall": clears saved sign-in data, the service worker and the
+  // app cache, then reloads. Runs at most once per 30 minutes so it can never loop; if trouble comes back
+  // inside that window the person is told plainly and we get an error-level alert.
+  async function _ltAutoRepairAuth(reason) {
+    var KEY = 'lt_auth_repair_at', last = 0, stamp = String(Date.now()), canRecord = false;
+    try { last = +localStorage.getItem(KEY) || 0; } catch (e) {}
+    if (last && Date.now() - last < 30 * 60 * 1000) {
+      try { logActivity('auth_repair_failed', 'trouble again within 30 min of a repair: ' + reason, 'error', 'AUTH'); } catch (e) {}
+      try { notifyDev('error', 'AUTH', 'Sign-in STILL failing after auto-repair (' + _ltAuthEnv() + '): ' + reason); } catch (e) {}
+      try { showAuthError('We could not sign you in on this device. Please close and reopen the app, or try again in a few minutes. Still stuck? Email <a href="mailto:hello@lifetold.app" style="color:inherit">hello@lifetold.app</a>.'); } catch (e) {}
+      return false;
+    }
+    try { localStorage.setItem(KEY, stamp); canRecord = (localStorage.getItem(KEY) === stamp); } catch (e) {}
+    if (!canRecord) {   // cannot remember that we repaired, so do not risk a reload loop
+      try { notifyDev('error', 'AUTH', 'Sign-in trouble but storage is unusable, so no auto-repair (' + _ltAuthEnv() + '): ' + reason); } catch (e) {}
+      return false;
+    }
+    try { logActivity('auth_auto_repair', reason, 'warn', 'AUTH'); } catch (e) {}
+    try { notifyDev('warn', 'AUTH', 'Auto-repairing sign-in on a device (' + _ltAuthEnv() + '): ' + reason); } catch (e) {}
+    try { localStorage.removeItem('lt_auth_trouble'); } catch (e) {}
+    _ltClearAuthStorage();
+    try { var regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function(r) { return r.unregister(); })); } catch (e) {}
+    try { var ks = await caches.keys(); await Promise.all(ks.map(function(k) { return caches.delete(k); })); } catch (e) {}
+    setTimeout(function() { window.location.replace(window.location.origin + window.location.pathname); }, 500);
+    return true;
+  }
+  // Called on every real sign-in: if we auto-repaired recently, tell Telegram it worked; reset the counter.
+  function _ltReportRecovery(u) {
+    try {
+      var ra = +localStorage.getItem('lt_auth_repair_at') || 0;
+      if (ra && Date.now() - ra < 30 * 60 * 1000 && !sessionStorage.getItem('lt_auth_recovery_reported')) {
+        sessionStorage.setItem('lt_auth_recovery_reported', '1');
+        logActivity('auth_repair_worked', 'signed in after auto-repair', 'warn', 'AUTH');
+        notifyDev('warn', 'AUTH', 'Sign-in recovered after auto-repair (' + _ltAuthEnv() + '): ' + ((u && u.email) || ''));
+      }
+      localStorage.removeItem('lt_auth_trouble');
+    } catch (e) {}
+  }
+
   // AUTH-01/02/03: Google / Apple / Facebook OAuth sign-in/sign-up.
   // All three share one shape: disable + relabel the button, clear any prior
   // error, call signInWithOAuth, and restore the button only on error/throw
@@ -8831,12 +8977,7 @@
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/><path d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z" fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 6.294C4.672 4.169 6.656 3.58 9 3.58z" fill="#EA4335"/></svg> Redirecting…';
     document.getElementById('landingAuthError').style.display = 'none';
     try {
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin + window.location.pathname
-        }
-      });
+      const { error } = await _ltOAuth('google');
       if (error) {
         showAuthError('Google sign-in failed. Please try again.');
         notifyDev('error', 'AUTH', 'Google OAuth error: ' + error.message);
@@ -8865,12 +9006,7 @@
     btn.innerHTML = 'Redirecting…';
     document.getElementById('landingAuthError').style.display = 'none';
     try {
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'apple',
-        options: {
-          redirectTo: window.location.origin + window.location.pathname
-        }
-      });
+      const { error } = await _ltOAuth('apple');
       if (error) {
         showAuthError('Apple sign-in failed. Please try again.');
         notifyDev('error', 'AUTH', 'Apple OAuth error: ' + error.message);
@@ -8899,12 +9035,7 @@
     btn.innerHTML = 'Redirecting…';
     document.getElementById('landingAuthError').style.display = 'none';
     try {
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'facebook',
-        options: {
-          redirectTo: window.location.origin + window.location.pathname
-        }
-      });
+      const { error } = await _ltOAuth('facebook');
       if (error) {
         showAuthError('Facebook sign-in failed. Please try again.');
         notifyDev('error', 'AUTH', 'Facebook OAuth error: ' + error.message);
@@ -12090,9 +12221,13 @@
     if (_draftSaving) return;
     var title  = document.getElementById('memTitle')  ? document.getElementById('memTitle').value  : '';
     var answer = document.getElementById('memAnswer') ? document.getElementById('memAnswer').value : '';
-    // Only persist if there is real user-typed content
-    if (!title.trim() && !answer.trim()) { draftClear(); return; }
+    // DRAFT-01 (2026-10-22): the empty-form check used to come BEFORE the "has the user typed" check, so on
+    // the Add Memory tab with an empty form this sent a DELETE to life_drafts every 3 seconds, forever (the
+    // endless 204s in the API logs). It could also delete a draft saved from another device before it was
+    // restored here. Now nothing is touched until this session has typed something, and an emptied form
+    // clears the saved draft once (then waits for the next typing).
     if (!_userHasTyped) return;
+    if (!title.trim() && !answer.trim()) { _userHasTyped = false; draftClear(); return; }
     var draft = {
       title:         title,
       answer:        answer,
