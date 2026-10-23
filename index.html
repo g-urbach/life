@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.299">
+  <meta name="lifetold-version" content="v7.300">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -2766,6 +2766,7 @@
         <div id="shareStoryTitle" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:18px;line-height:1.3"></div>
         <div id="shareStoryContent" style="font-size:0.93rem;color:var(--text);line-height:1.85;white-space:pre-wrap;font-family:'Lato',sans-serif"></div>
         <div id="shareStoryMeta" style="margin-top:16px;font-size:0.78rem;color:var(--text-light);border-top:1px solid var(--border);padding-top:12px"></div>
+        <div id="shareStoryOthers" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:14px"></div>
         <div id="shareListenStatus" style="margin-top:8px;font-size:0.78rem;color:var(--text-light);display:none"></div>
       </div>
       <!-- FAM-06 (2026-09-26): read-only family tree share card. Deliberately NOT
@@ -4099,7 +4100,7 @@
         <h2 class="section-title mp-title" style="margin:0">My People</h2>
         <div class="mp-head-right" style="display:flex;align-items:center;gap:4px">
           <!-- FAM-06 Share my tree: the main action on this screen, so it lives in the header (was in the tree toolbar) -->
-          <button id="mpShareTreeBtn" type="button" title="Share my tree" aria-label="Share my tree" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gold);border-radius:999px;background:none;color:var(--gold-dark);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;flex-shrink:0;margin-right:4px">&#128279; Share</button>
+          <button id="mpShareTreeBtn" type="button" title="Share or collaborate with your people" aria-label="Share my tree. Share or collaborate with your people" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gold);border-radius:999px;background:none;color:var(--gold-dark);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;flex-shrink:0;margin-right:4px">&#128279; Share</button>
           <!-- Gethro chat button — always accessible even inside overlay -->
           <button id="mpGethroBtn" title="Chat with Gethro" aria-label="Chat with Gethro" style="width:36px;height:36px;border-radius:50%;background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
             <div class="gethro-avatar-wrap gethro-avatar-all" style="width:32px;height:32px;pointer-events:none">
@@ -4561,7 +4562,7 @@
       <button id="shareConsentCloseBtn" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
     </div>
     <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
-      Anyone with the link can view this memory and leave a response.
+      Share or collaborate with your people: anyone with the link can view this memory and leave a response.
     </p>
     <div style="margin-bottom:14px">
       <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Link expires after</label>
@@ -4579,9 +4580,10 @@
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
     </div>
     <div style="margin-bottom:20px">
-      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Label (optional)</label>
-      <input id="shareConsentLabel" type="text" placeholder="e.g. Family group"
+      <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Name this share (optional)</label>
+      <input id="shareConsentLabel" type="text" maxlength="80" placeholder="e.g. For the cousins: what they remember about Nan’s kitchen"
         style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+      <p style="font-size:0.74rem;color:var(--text-light);margin:5px 0 0;line-height:1.4">Only you see this. It helps you find the share later.</p>
     </div>
     <!-- FAM-06 (2026-09-26): sender-side consent checkbox, retrofitted here for
          consistency with the new tree-share checkbox (developer decision: if
@@ -5339,7 +5341,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.299';
+  const APP_VERSION = 'v7.300';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -6668,6 +6670,17 @@
         document.getElementById('shareFeedbackSection').style.display = '';    // show — was 'none'
         document.getElementById('shareStoryPieceCard').style.display  = 'block';
 
+        // FB-PUBLISH-01: replies the owner chose to publish show with the piece, credited by name
+        var othersEl = document.getElementById('shareStoryOthers');
+        if (othersEl && Array.isArray(data.publishedReplies) && data.publishedReplies.length) {
+          othersEl.innerHTML = '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:10px">What others have said</div>' +
+            data.publishedReplies.map(function(r) {
+              return '<div style="margin-bottom:12px"><p style="font-size:0.9rem;color:var(--text);line-height:1.6;margin:0 0 3px;white-space:pre-wrap">\u201c' + escHtml(r.text) + '\u201d</p>' +
+                '<span style="font-size:0.78rem;color:var(--text-light)">\u2014 ' + escHtml(r.name) + '</span></div>';
+            }).join('');
+          othersEl.style.display = 'block';
+        }
+
         // Customise feedback form for piece type
         var shareFormHeading = document.getElementById('shareFormHeading');
         var shareMessageLbl  = document.getElementById('shareMessageLabel');
@@ -6681,6 +6694,15 @@
           _shareSetMsgLabel(shareMessageLbl, 'Your comment');
           if (shareMsgArea)     shareMsgArea.placeholder     = '';
         }
+        // FB-PUBLISH-01: tell the visitor their comment may be shown with the piece
+        var pubNote = document.getElementById('sharePublishNote');
+        if (!pubNote && shareMsgArea && shareMsgArea.parentNode) {
+          pubNote = document.createElement('p');
+          pubNote.id = 'sharePublishNote';
+          pubNote.style.cssText = 'font-size:0.74rem;color:var(--text-light);margin:5px 0 0;line-height:1.4';
+          shareMsgArea.parentNode.appendChild(pubNote);
+        }
+        if (pubNote) pubNote.textContent = (data.ownerFirstName || data.ownerName || 'The owner') + ' may share your comment with your name alongside this.';
         // Hide the Q/A question wrap — piece shares don't have owner questions
         var shareQWrap = document.getElementById('shareFormQuestionWrap');
         if (shareQWrap) shareQWrap.style.display = 'none';
@@ -7651,6 +7673,16 @@
     await loadShareLinksPanel(TREE_LINKS_SCOPE);
   }
 
+  // SHARE-LABEL-04: library shares are for groups of people, each link can be named, timed and removed on its own.
+  var PIECE_LINKS_PREFIX = '__piece__:';
+  async function showPieceShareLinks(pieceId, title) {
+    _shareLinksEntryId = PIECE_LINKS_PREFIX + pieceId;
+    var titleEl = document.getElementById('shareLinksEntryTitle');
+    if (titleEl) titleEl.textContent = title ? '\u201c' + title + '\u201d' : 'This story';
+    document.getElementById('shareLinksOverlay').style.display = 'flex';
+    await loadShareLinksPanel(_shareLinksEntryId);
+  }
+
   function hideShareLinks() {
     document.getElementById('shareLinksOverlay').style.display = 'none';
     _shareLinksEntryId = null;
@@ -7665,7 +7697,9 @@
       var res = await fetch(
         DB_SHARE_TOKENS_URL + (isTreeScope
           ? '?is_tree_share=eq.true&user_id=eq.' + currentUser.id
-          : '?entry_id=eq.' + entryId) + '&order=created_at.desc',
+          : (String(entryId).indexOf(PIECE_LINKS_PREFIX) === 0
+            ? '?component_id=eq.' + String(entryId).slice(PIECE_LINKS_PREFIX.length) + '&user_id=eq.' + currentUser.id
+            : '?entry_id=eq.' + entryId)) + '&order=created_at.desc',
         { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error('fetch failed');
@@ -7691,16 +7725,22 @@
         var respLabel = t.feedback_count ? '<span style="color:var(--sage);font-size:0.75rem">' + t.feedback_count + (t.feedback_count === 1 ? ' response' : ' responses') + '</span>' : '<span style="color:var(--text-light);font-size:0.75rem">No responses</span>';
         // FAM-07 3B: these two buttons had no click handler at all; now wired through data-action (see shareLinksBody listener).
         var copyBtn = isExpired ? '' : '<button data-action="share-link-copy" data-token="' + escHtml(t.token || '') + '" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Copy link</button>';
+        // SHARE-LABEL-01: rename (needs SHARE_PROXY v3.92)
+        var renameBtn = '<button data-action="share-link-rename" data-token-id="' + escHtml(t.id || '') + '" data-scope="' + escHtml(entryId) + '" data-label="' + escHtml(t.label || '') + '" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">Rename</button>';
+        // SHARE-LABEL-05: New link from this (same label and message prefilled, new link so replies stay separate)
+        var newBtn = '<button data-action="share-link-new" data-scope="' + escHtml(entryId) + '" data-label="' + escHtml(t.label || '') + '" data-note="' + escHtml(t.note || '') + '" title="Make another link with the same name and message" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">New link</button>';
         var revokeBtn = '<button data-action="share-link-revoke" data-token-id="' + escHtml(t.id || '') + '" data-scope="' + escHtml(entryId) + '" style="font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer">' + (isExpired ? 'Remove' : 'Revoke') + '</button>';
-        var rowLabel = t.label || '(no label)';
+        // SHARE-LABEL-01: the owner's own name for the share comes first; without one, show the date it was shared.
+        var rowLabel = t.label || (t.created_at ? 'Shared ' + new Date(t.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Shared link');
         if (isTreeScope) {
           var vp = t.viewer_person_id ? _mpPeople.find(function(p) { return p.id === t.viewer_person_id; }) : null;
-          rowLabel = t.viewer_person_id ? ('For ' + (vp ? (vp.name || 'Unnamed') : 'someone no longer in your tree')) : 'Unspecified (shown from your perspective)';
+          var forWho = t.viewer_person_id ? ('For ' + (vp ? (vp.name || 'Unnamed') : 'someone no longer in your tree')) : 'Unspecified (shown from your perspective)';
+          rowLabel = t.label ? (t.label + ' \u00b7 ' + forWho) : forWho;
         }
         return '<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;' + (isExpired ? 'opacity:0.5' : '') + '">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
             '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + escHtml(rowLabel) + '</span>' +
-            '<div style="display:flex;gap:6px">' + copyBtn + revokeBtn + '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">' + copyBtn + renameBtn + newBtn + revokeBtn + '</div>' +
           '</div>' +
           (t.note ? '<p style="font-size:0.8rem;color:var(--text-light);font-style:italic;margin:0 0 6px;line-height:1.5">\u201c' + escHtml(t.note) + '\u201d</p>' : '') +
           '<div style="display:flex;gap:10px;flex-wrap:wrap">' + daysLabel + respLabel + (isTreeScope ? '<span style="color:var(--text-light);font-size:0.75rem">' + (t.share_birthdays ? 'Birthdays shown' : 'No birthdays') + (t.share_photos === false ? ' \u00b7 No photos' : '') + '</span>' : '') + '</div>' +
@@ -7747,12 +7787,58 @@
     }
   }
 
+  // SHARE-LABEL-05: start a new link from an existing one. Opens the normal share dialog with the same name and message
+  // filled in. A new link (not the same one again) keeps replies from a new group apart; Copy sends the same link again.
+  function newShareLinkFrom(scope, label, note) {
+    hideShareLinks();
+    function fill(labelId, noteId) {
+      setTimeout(function() {
+        var l = document.getElementById(labelId), n = document.getElementById(noteId);
+        if (l && !l.value) l.value = label;
+        if (n && !n.value) n.value = note;
+      }, 120);
+    }
+    if (scope === TREE_LINKS_SCOPE) {
+      _mpOpenTreeShareModal();
+      fill('treeShareLabel', 'treeShareNote');
+    } else if (String(scope).indexOf(PIECE_LINKS_PREFIX) === 0) {
+      var pid = String(scope).slice(PIECE_LINKS_PREFIX.length);
+      _storyLibSharePiece(pid, ((_libPieceMap[pid] || {}).title) || '');
+      fill('storyShareLabel', 'storyShareNote');
+    } else {
+      showShareConsent(scope);
+      fill('shareConsentLabel', 'shareConsentNote');
+    }
+  }
+
+  // SHARE-LABEL-01: rename a share. Private to the owner; needs SHARE_PROXY v3.92 (update_share_label).
+  async function renameShareLink(tokenId, entryId, currentLabel) {
+    var input = prompt('Name this share (only you see this). Leave empty to clear it.', currentLabel || '');
+    if (input === null) return;   // cancelled
+    var label = input.replace(/\s+/g, ' ').trim().slice(0, 80);
+    try {
+      var res = await shareFetch(SHARE_PROXY_URL, {
+        method: 'POST',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'update_share_label', token_id: tokenId, label: label })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
+      toast(label ? 'Name saved' : 'Name cleared');
+      await loadShareLinksPanel(entryId);
+    } catch(e) {
+      toast('Could not save the name \u2014 try again');
+      dbgWarn('SHARE', 'renameShareLink error:', e.message);
+      logActivity('share_rename_failed', 'token_id=' + tokenId + ' - ' + (e && e.message || e), 'warn', 'SHARE');
+    }
+  }
+
   async function revokeShareLink(tokenId, entryId) {
     // APP-02(3): count unimported responses before confirming, so user knows what will be lost
     var responseCount = 0;
     try {
       var countRes = await fetch(
-        DB_SHARE_FEEDBACK_URL + '?share_token_id=eq.' + tokenId + '&imported=eq.false&select=id',
+        DB_SHARE_FEEDBACK_URL + '?token_id=eq.' + tokenId + '&imported=eq.false&select=id',   // FIX 2026-10-22: the column is token_id, share_token_id does not exist so the count was always 0
         { headers: getAuthHeaders() }
       );
       if (countRes.ok) {
@@ -7763,7 +7849,7 @@
 
     var msg = responseCount > 0
       ? 'Remove this link? ' + responseCount + ' unimported response' + (responseCount === 1 ? '' : 's') + ' will also be deleted. This cannot be undone.'
-      : 'Remove this link? Anyone with it will no longer be able to view ' + (entryId === TREE_LINKS_SCOPE ? 'your family tree' : 'the memory') + '.';
+      : 'Remove this link? Anyone with it will no longer be able to view ' + (entryId === TREE_LINKS_SCOPE ? 'your family tree' : (String(entryId).indexOf(PIECE_LINKS_PREFIX) === 0 ? 'the story' : 'the memory')) + '.';
     if (!confirm(msg)) return;
 
     try {
@@ -7774,7 +7860,7 @@
       if (!res.ok) throw new Error('delete failed');
       toast('Link removed');
       await loadShareLinksPanel(entryId);
-      if (entryId !== TREE_LINKS_SCOPE) await refreshShareIndicator(entryId);
+      if (entryId !== TREE_LINKS_SCOPE && String(entryId).indexOf(PIECE_LINKS_PREFIX) !== 0) await refreshShareIndicator(entryId);
     } catch(e) {
       toast('Could not remove link \u2014 try again');
       dbgWarn('SHARE', 'revokeShareLink error:', e.message);
@@ -8045,6 +8131,14 @@
     var q = String((cr && cr.question) || '').trim();
     return (!q || /^Response from /i.test(q)) ? '' : q;
   }
+  // SHARE-LABEL-01: the owner's own name for the share a reply came in on (saved on the reply, else the link's label).
+  function _fbLabelOf(f) {
+    return String((f && f.share_label) || (f && f.life_share_tokens && f.life_share_tokens.label) || '').trim();
+  }
+  function _fbLabelHtml(f) {
+    var l = _fbLabelOf(f);
+    return l ? '<span title="Your name for this share" style="display:inline-block;font-size:0.7rem;color:var(--gold-dark);border:1px solid var(--gold);border-radius:999px;padding:1px 8px;margin:0 0 6px">\uD83D\uDCCC ' + escHtml(l) + '</span>' : '';
+  }
   function _fbQuestionHtml(q, mb) {
     return q ? '<p style="font-size:0.78rem;color:var(--text-light);font-style:italic;margin:0 0 ' + (mb || 8) + 'px">\u201c' + escHtml(q) + '\u201d</p>' : '';
   }
@@ -8069,7 +8163,7 @@
         DB_SHARE_FEEDBACK_URL +
         '?owner_id=eq.' + currentUser.id +
         '&imported=eq.false' +
-        '&select=*,life_share_tokens(note)' +
+        '&select=*,life_share_tokens(note,label)' +
         '&order=created_at.desc',
         { headers: getAuthHeaders() }
       );
@@ -8145,19 +8239,17 @@
 
         // FAM-06-FIX (2026-09-27): tree feedback gets its own Accept action (no entry to attach to);
         // piece feedback gets Dismiss; memory feedback gets full Accept (imports to entries).
+        // FB-RULES-01: feedback on the LIVE family tree is delete only (read happens automatically, delete once actioned).
         var acceptBtn = isTree
-          ? '<button data-action="accept-tree-feedback" data-fb-id="' + escHtml(f.id) + '" data-name="' + safeName + '" ' +
-              'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-              '\u2714 Accept feedback' +
-            '</button>'
+          ? ''
           : (isPiece
-            ? '<button data-action="accept-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+            ? '<button data-action="publish-piece-feedback" data-fb-id="' + escHtml(f.id) + '" title="Show this comment, with the writer\u2019s name, on the share page" ' +
                 'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                '\u2714 Accept feedback' +
+                'Publish' +
               '</button>'
-            : '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
+            : '<button data-action="incorporate-feedback" title="Add this to the end of your memory" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(f.entry_id) + '" data-name="' + safeName + '" ' +
                 'style="font-size:0.75rem;padding:4px 12px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                '\u2714 Accept feedback' +
+                'Incorporate' +
               '</button>');
 
         // Context label: tree → clickable "your family tree" link (opens My People → Feedback tab);
@@ -8178,6 +8270,7 @@
             '</div>' +
             contextLabel +
           '</div>' +
+          (_fbLabelOf(f) ? '<div>' + _fbLabelHtml(f) + '</div>' : '') +
           questionHtml +
           (f.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 8px">' + escHtml(f.text) + '</p>' : '') +
           (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + ' <em>(media upload coming soon)</em></p>' : '') +
@@ -8211,7 +8304,7 @@
     // Get the full feedback row including share note from token
     try {
       var res = await fetch(
-        DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*,life_share_tokens(note)',
+        DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&select=*,life_share_tokens(note,label)',
         { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error('fetch failed');
@@ -8367,6 +8460,142 @@
     loadResponsesTile();
   }
   async function acceptTreeFeedback(feedbackId) { return acceptKeptFeedback(feedbackId, 'tree'); }
+
+  // ── FB-INCORP-01: Incorporate a reply into a memory ─────────────────────────────────────────────────────────────
+  // The owner sees the reply and a suggested few sentences for the END of the memory, edits them, and adds them. The reply
+  // is then deleted (it has been actioned). No link back: the sentences are simply part of the memory.
+  // The suggestion comes from Gethro (GETHRO_PROXY action incorporate_reply). If that action is not available yet, or the
+  // call fails, a plain editable draft is used instead, so the feature works either way.
+  function _incorpFallbackDraft(name, text) {
+    var first = String(name || 'Someone').trim().split(/\s+/)[0] || 'Someone';
+    var t = String(text || '').replace(/\s+/g, ' ').trim();
+    return t ? first + ' remembered: \u201c' + t + '\u201d' : '';
+  }
+  function _incorpClose() {
+    var o = document.getElementById('incorpOverlay');
+    if (o) o.remove();
+  }
+  async function openIncorporateDialog(feedbackId, entryId, commenterName) {
+    var entry = entries.find(function(e) { return e.id === entryId; });
+    var row = document.getElementById('response-row-' + feedbackId);
+    var fb = null;
+    try {
+      var r = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&owner_id=eq.' + currentUser.id + '&select=*,life_share_tokens(note,label)', { headers: getAuthHeaders() });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      fb = (await r.json())[0];
+    } catch (e) { toast('Could not load the reply \u2014 try again'); return; }
+    if (!fb || !entry) { toast('Could not find that memory or reply'); return; }
+    var name = fb.commenter_name || commenterName || 'Someone';
+    var replyText = (fb.text || '').trim();
+    if (!replyText) { toast('This reply has no text to add. You can delete it.'); return; }
+
+    _incorpClose();
+    var ov = document.createElement('div');
+    ov.id = 'incorpOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2100;display:flex;align-items:center;justify-content:center;padding:20px';
+    ov.innerHTML =
+      '<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:480px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25)">' +
+        '<h3 style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0 0 4px">Add to your memory</h3>' +
+        '<p style="font-size:0.8rem;color:var(--text-light);margin:0 0 12px">These sentences go at the end of \u201c' + escHtml(entry.title || 'this memory') + '\u201d. Change them however you like.</p>' +
+        '<p style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin:0 0 4px">' + escHtml(name) + ' wrote</p>' +
+        '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0 0 14px;padding:8px 10px;background:var(--surface2);border-radius:8px;white-space:pre-wrap">' + escHtml(replyText) + '</p>' +
+        '<label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:4px">Suggested sentences</label>' +
+        '<textarea id="incorpText" rows="5" disabled placeholder="Gethro is thinking\u2026" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.92rem;line-height:1.6;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical"></textarea>' +
+        '<p id="incorpNote" style="font-size:0.74rem;color:var(--text-light);margin:5px 0 14px;min-height:1em"></p>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button id="incorpCancel" type="button" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-family:Lato,sans-serif">Cancel</button>' +
+          '<button id="incorpAdd" type="button" disabled style="padding:8px 16px;border-radius:8px;border:none;background:var(--gold);color:#fff;cursor:pointer;font-family:Lato,sans-serif;font-weight:700;opacity:0.6">Add to memory</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var ta = document.getElementById('incorpText'), addBtn = document.getElementById('incorpAdd'), noteEl = document.getElementById('incorpNote');
+    document.getElementById('incorpCancel').onclick = _incorpClose;
+    ov.addEventListener('click', function(ev) { if (ev.target === ov) _incorpClose(); });
+
+    // Suggestion: Gethro first, plain draft if that is not possible
+    var suggestion = '', usedFallback = false;
+    try {
+      var question = (fb.question || (fb.life_share_tokens && fb.life_share_tokens.note) || '').trim();
+      var out = await callGethro('incorporate_reply', {
+        memoryTitle: entry.title || '',
+        memoryEnd: String(entry.answer || '').slice(-1200),
+        replyName: name,
+        replyText: replyText,
+        question: question
+      });
+      suggestion = String((out && (out.suggestion || out.text)) || out || '').trim();
+    } catch (e) {
+      logActivity('incorporate_suggest_failed', String(e && e.message || e), 'info', 'SHARE');
+    }
+    if (!suggestion) { suggestion = _incorpFallbackDraft(name, replyText); usedFallback = true; }
+    if (!document.getElementById('incorpOverlay')) return;   // closed while waiting
+    ta.value = suggestion; ta.disabled = false; ta.focus();
+    addBtn.disabled = false; addBtn.style.opacity = '1';
+    noteEl.textContent = usedFallback ? 'This is a simple draft (Gethro\u2019s suggestion was not available). Edit it before adding.' : 'Gethro suggested this. Edit it before adding.';
+
+    addBtn.onclick = async function() {
+      var add = (ta.value || '').trim();
+      if (!add) { noteEl.textContent = 'Write at least a sentence, or press Cancel.'; return; }
+      addBtn.disabled = true; addBtn.style.opacity = '0.6'; addBtn.textContent = 'Adding\u2026';
+      try {
+        var newAnswer = String(entry.answer || '').replace(/\s+$/, '') + '\n\n' + add;
+        var up = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
+          method: 'PATCH',
+          headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ answer: newAnswer })
+        });
+        if (!up.ok) throw new Error('memory save failed: HTTP ' + up.status);
+        entry.answer = newAnswer;   // local copy
+        // The reply has been actioned, so it goes. A failure here must not hide that the memory was saved.
+        var del = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&owner_id=eq.' + currentUser.id, { method: 'DELETE', headers: getAuthHeaders() });
+        if (!del.ok) toast('Added to your memory, but the reply could not be removed. You can delete it yourself.');
+        else toast('Added to your memory \u2713');
+        logActivity('feedback_incorporated', 'entry=' + entryId, 'info', 'SHARE');
+        _incorpClose();
+        if (row) row.remove();
+        try { renderReviewEntries(); } catch (_) {}
+        loadResponsesTile();
+      } catch (e) {
+        addBtn.disabled = false; addBtn.style.opacity = '1'; addBtn.textContent = 'Add to memory';
+        noteEl.textContent = 'Could not save \u2014 try again.';
+        logActivity('feedback_incorporate_failed', String(e && e.message || e), 'warn', 'SHARE');
+      }
+    };
+  }
+
+  // FB-PUBLISH-01: publish (or take back) a comment on a library piece. A published comment shows on that piece's share
+  // pages as "What others have said", with the writer's name. Needs FEEDBACK_v1_rules.sql and SHARE_PROXY v3.92.
+  async function setPieceFeedbackPublished(feedbackId, publish) {
+    if (publish && !confirm('Publish this comment? It will show, with the writer\u2019s name, to anyone who opens a share link for this piece.')) return;
+    var row = document.getElementById('response-row-' + feedbackId);
+    if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+    try {
+      var body = publish ? { published_at: new Date().toISOString(), imported: true } : { published_at: null };
+      var res = await fetch(DB_SHARE_FEEDBACK_URL + '?id=eq.' + feedbackId + '&owner_id=eq.' + currentUser.id, {
+        method: 'PATCH',
+        headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var rows = await res.json();
+      if (!Array.isArray(rows) || rows.length !== 1) throw new Error('0 rows updated (is the UPDATE permission applied?)');
+    } catch (e) {
+      toast('Could not ' + (publish ? 'publish' : 'unpublish') + ' \u2014 try again');
+      logActivity('feedback_publish_failed', (publish ? 'publish: ' : 'unpublish: ') + String(e && e.message || e), 'warn', 'SHARE');
+      if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+      return;
+    }
+    toast(publish ? 'Published \u2713' : 'Unpublished');
+    var panel = row && row.closest('[id^="piece-fb-panel-"]');
+    if (row && row.closest('#dashResponsesList')) {
+      row.remove();                                    // leaves the dashboard list (read and published)
+    } else if (panel && panel.parentNode) {            // library card: draw the panel again with the new state
+      var card = panel.parentNode, pid = panel.id.replace('piece-fb-panel-', '');
+      panel.remove();
+      _loadLibraryCardFeedback(pid, card);
+    }
+    loadResponsesTile();
+  }
 
   // Permanently delete a feedback response
   async function deleteResponse(feedbackId) {
@@ -15201,15 +15430,16 @@
             '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
             '<span style="font-size:0.72rem;color:var(--text-light)">' + fbDate + '</span>' +
           '</div>' +
+          (_fbLabelOf(f) ? '<div>' + _fbLabelHtml(f) + '</div>' : '') +   // SHARE-LABEL-01
           (f.text ? '<p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0 0 6px">' + escHtml(f.text) + '</p>' : '') +
           (mediaNote ? '<p style="font-size:0.75rem;color:var(--text-light);margin:0 0 6px">Attachments:' + mediaNote + '</p>' : '') +
           '<div style="display:flex;gap:6px">' +
-            (f.imported
-              ? '<span style="font-size:0.72rem;padding:2px 8px;color:var(--sage);font-weight:700">\u2713 Saved</span>'
-              : '<button data-action="accept-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
-                  'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                  '\u2714 Accept' +
-                '</button>') +
+            (f.published_at
+              ? '<span style="font-size:0.72rem;padding:2px 8px;color:var(--sage);font-weight:700">\u2713 Published</span>' +
+                '<button data-action="unpublish-piece-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
+                  'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:\'Lato\',sans-serif">Unpublish</button>'
+              : '<button data-action="publish-piece-feedback" data-fb-id="' + escHtml(f.id) + '" title="Show this comment, with the writer\u2019s name, on the share page" ' +
+                  'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">Publish</button>') +
             '<button data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
               'style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">' +
               'Delete' +
@@ -15329,6 +15559,14 @@
       _aShare.setAttribute('data-title', piece.title || 'Audio recording');
       card.appendChild(_aPlayer);
       actions.appendChild(_aShare);
+      var _aLinks = document.createElement('button');   // SHARE-LABEL-04
+      _aLinks.style.cssText = _aShare.style.cssText;
+      _aLinks.textContent = '\uD83D\uDCCB Links';
+      _aLinks.title = 'See the links you have shared for this recording';
+      _aLinks.setAttribute('data-action', 'lib-share-links');
+      _aLinks.setAttribute('data-id', piece.id);
+      _aLinks.setAttribute('data-title', piece.title || 'Audio recording');
+      actions.appendChild(_aLinks);
       actions.appendChild(_aDel);
       card.appendChild(actions);
       return card;
@@ -15365,6 +15603,15 @@
     actions.appendChild(editBtn);
 
     actions.appendChild(shareBtn);
+    // SHARE-LABEL-04: see, rename, time-box and remove the links already sent for this piece
+    var linksBtn = document.createElement('button');
+    linksBtn.style.cssText = shareBtn.style.cssText;
+    linksBtn.textContent = '\uD83D\uDCCB Links';
+    linksBtn.title = 'See the links you have shared for this piece';
+    linksBtn.setAttribute('data-action', 'lib-share-links');
+    linksBtn.setAttribute('data-id', piece.id);
+    linksBtn.setAttribute('data-title', piece.title || _autoStoryTitle(meta, dateStr));
+    actions.appendChild(linksBtn);
     // Phase 2: Listen button — queues piece and starts audiobook player immediately
     var listenBtn = document.createElement('button');
     listenBtn.id = 'listenBtn_' + piece.id;
@@ -15519,6 +15766,7 @@
     var modal    = document.getElementById('storyShareModal');
     var titleEl  = document.getElementById('storyShareModalTitle');
     var noteEl   = document.getElementById('storyShareNote');
+    var lblEl0   = document.getElementById('storyShareLabel'); if (lblEl0) lblEl0.value = '';   // SHARE-LABEL-01
     var expiryEl = document.getElementById('storyShareExpiry');
     var btns     = document.getElementById('storyShareBtns');
     var spinner  = document.getElementById('storyShareSpinner');
@@ -15663,6 +15911,7 @@
     if (!_storyShareCurrentPieceId) return;
     var pieceId    = _storyShareCurrentPieceId;
     var note       = (document.getElementById('storyShareNote').value || '').trim() || null;
+    var shareLabel = ((document.getElementById('storyShareLabel') || {}).value || '').trim().slice(0, 80) || null;   // SHARE-LABEL-01
     var expiryDays = parseInt((document.getElementById('storyShareExpiry') || {}).value || '30', 10);
     if (![0,7,14,30,90].includes(expiryDays)) expiryDays = 30;
     var btns    = document.getElementById('storyShareBtns');
@@ -15688,7 +15937,7 @@
       var res  = await shareFetch(SHARE_PROXY_URL, {
         method:  'POST',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
-        body:    JSON.stringify({ action: 'create_story_share', component_id: pieceId, note: note, expires_days: expiryDays })
+        body:    JSON.stringify({ action: 'create_story_share', component_id: pieceId, note: note, label: shareLabel, expires_days: expiryDays })
       });
       var data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
@@ -15713,10 +15962,8 @@
     _storyShareModalClose();
 
     var shareMsg = _storyShareIsAudio
-      ? (note ? 'I’d love you to listen to a recording of mine: “' + note + '”' : 'I’d love you to listen to a recording of mine.')
-      : (note
-        ? 'I’d love your thoughts on a story I wrote: “' + note + '”'
-        : 'I’d love your thoughts on a story I wrote.');
+      ? 'I’d love you to listen to a recording of mine.' + (note ? '\n' + note : '')
+      : 'I’d love your thoughts on a story I wrote.' + (note ? '\n' + note : '');   // library shares: the message is a personal note, not a question
     var fullMsg = shareMsg + '\n' + link;
 
     if (method === 'whatsapp') {
@@ -15758,6 +16005,7 @@
     }
     var modal    = document.getElementById('treeShareModal');
     var noteEl   = document.getElementById('treeShareNote');
+    var lblEl1   = document.getElementById('treeShareLabel'); if (lblEl1) lblEl1.value = '';   // SHARE-LABEL-01
     var expiryEl = document.getElementById('treeShareExpiry');
     var btns     = document.getElementById('treeShareBtns');
     var spinner  = document.getElementById('treeShareSpinner');
@@ -15826,6 +16074,7 @@
 
   async function _treeShareVia(method) {
     var note       = (document.getElementById('treeShareNote').value || '').trim() || null;
+    var shareLabel = ((document.getElementById('treeShareLabel') || {}).value || '').trim().slice(0, 80) || null;   // SHARE-LABEL-01
     var expiryDays = parseInt((document.getElementById('treeShareExpiry') || {}).value || '30', 10);
     if (![0,7,14,30,90].includes(expiryDays)) expiryDays = 30;
     var btns    = document.getElementById('treeShareBtns');
@@ -15850,7 +16099,7 @@
 
     var link;
     try {
-      var treeBody = { action: 'create_tree_share', note: note, expires_days: expiryDays };
+      var treeBody = { action: 'create_tree_share', note: note, label: shareLabel, expires_days: expiryDays };
       if (viewerPersonId) treeBody.viewer_person_id = viewerPersonId;
       var bdBox = document.getElementById('treeShareBirthdays');
       var withBirthdays = !!(bdBox && bdBox.checked);
@@ -16484,6 +16733,47 @@
     await _renderBookBuilder();
   }
 
+  // FB-PUBLISH-02 (2026-10-23): replies the owner PUBLISHED on a library piece travel with the piece into the Book Builder (preview, PDF and
+  // HTML export) and the audiobook. Same rule as the share page: published_at set, name and text only, oldest first, at most 50 per piece.
+  // The heading matches the share page. Replies are read fresh each time a book is built or the audiobook starts, so an Unpublish takes effect.
+  var _PUB_REPLIES_HEADING = 'What others have said';
+  var _pubRepliesByPiece = {};
+  async function _pubRepliesLoad() {
+    _pubRepliesByPiece = {};
+    if (!currentUser) return _pubRepliesByPiece;
+    try {
+      var res = await fetch(
+        DB_SHARE_FEEDBACK_URL + '?select=component_id,commenter_name,text,published_at&owner_id=eq.' + currentUser.id +
+        '&published_at=not.is.null&component_id=not.is.null&order=published_at.asc&limit=1000',
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var rows = await res.json();
+      (rows || []).forEach(function(r) {
+        var txt = (r.text || '').toString().trim();
+        if (!txt || !r.component_id) return;
+        var list = _pubRepliesByPiece[r.component_id] || (_pubRepliesByPiece[r.component_id] = []);
+        if (list.length < 50) list.push({ name: String(r.commenter_name || 'Someone').slice(0, 60), text: txt.slice(0, 4000) });
+      });
+    } catch (e) {
+      _pubRepliesByPiece = {};
+      logActivity('published_replies_load_failed', String(e && e.message || e), 'warn', 'BOOK');
+      toast('Could not load published replies \u2014 continuing without them.');
+    }
+    return _pubRepliesByPiece;
+  }
+
+  // Static form for the book, PDF and HTML export (plain paragraphs, so the jsPDF text builder prints them too).
+  function _pubRepliesHtml(piece) {
+    var list = piece && _pubRepliesByPiece[piece.id];
+    if (!list || !list.length) return '';
+    return '<div class="book-others" style="margin:8px 0 40px">' +
+      '<p style="font-weight:700;font-style:italic;margin:0 0 0.6em">' + escHtml(_PUB_REPLIES_HEADING) + '</p>' +
+      list.map(function(r) {
+        return '<p>\u201c' + escHtml(r.text) + '\u201d \u2014 ' + escHtml(r.name) + '</p>';
+      }).join('') + '</div>';
+  }
+
   // ── APP-42 Phase 3: multi-section print/PDF ──────────────────────────────────
 
   // Build combined sanitised HTML from all _bookSections.
@@ -16534,6 +16824,7 @@
         }).join('');
       }
       html += '<div class="book-section-content" style="margin-bottom:48px">' + contentHtml + '</div>';
+      html += _pubRepliesHtml(piece);   // FB-PUBLISH-02
     });
 
     var text = html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
@@ -16541,7 +16832,8 @@
   }
 
   // Export multi-section book as downloadable HTML file
-  function exportBookPDF() {
+  async function exportBookPDF() {
+    await _pubRepliesLoad();   // FB-PUBLISH-02
     var built = _buildBookHtmlContent();
     if (!built) return toast('No enabled sections to export — add pieces to your book first.');
     var name = userProfile.name || 'My';
@@ -16569,8 +16861,9 @@
   }
 
   // Open the print preview overlay with all enabled book sections
-  function _bookPreview() {
+  async function _bookPreview() {
     if (_bookSections.length === 0) { toast('Add pieces to your book first.'); return; }
+    await _pubRepliesLoad();   // FB-PUBLISH-02
     var built = _buildBookHtmlContent();
     if (!built) { toast('No pieces in your book — add some from the left column.'); return; }
 
@@ -17056,6 +17349,7 @@
     _abPlayer.curIdx   = startIdx || 0;
     _abUpdatePlayBtn();
     logActivity('audiobook_started', JSON.stringify({ pieces: _abQueue.filter(function(q){return q.enabled!==false;}).length }), 'info', 'AUDIOBOOK');
+    await _pubRepliesLoad();   // FB-PUBLISH-02: published replies are read after each piece
 
     // APP-46 Phase 3a: start background music based on first enabled piece genre.
     // Pass piece so _abFetchAndPlayMusic can use/persist bg_music_url for consistency.
@@ -17108,6 +17402,24 @@
           // so the music stays at full volume across the entire gap + fetch wait.
           _abSwell();
           await new Promise(function(r) { setTimeout(r, seg.pause_after_ms); });
+        }
+      }
+
+      // FB-PUBLISH-02: published replies are read after the piece, each as: NAME said: text
+      var _pubReps = _pubRepliesByPiece[piece.id] || [];
+      if (_pubReps.length && !_abPlayer.stopFlag) {
+        _abSwell();
+        await new Promise(function(r) { setTimeout(r, 800); });
+        await _abSpeak(_PUB_REPLIES_HEADING + '.');
+        for (var k = 0; k < _pubReps.length && !_abPlayer.stopFlag; k++) {
+          var _repSegs = _getSegments({ content: _pubReps[k].name + ' said: ' + _pubReps[k].text, type: 'prose' });
+          for (var m = 0; m < _repSegs.length; m++) {
+            if (_abPlayer.stopFlag) break;
+            while (_abPlayer.paused && !_abPlayer.stopFlag) {
+              await new Promise(function(r) { setTimeout(r, 150); });
+            }
+            await _abSpeak(_repSegs[m].text);
+          }
         }
       }
 
@@ -20584,7 +20896,7 @@
         try {
           var fbRes = await fetch(
             DB_SHARE_FEEDBACK_URL + '?entry_id=eq.' + entryId + '&owner_id=eq.' + currentUser.id +
-            '&select=*,life_share_tokens(note)&order=created_at.asc',
+            '&select=*,life_share_tokens(note,label)&order=created_at.asc',
             { headers: getAuthHeaders() }
           );
           // Remove loading placeholder regardless
@@ -20616,7 +20928,7 @@
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">' +
                 '<span style="font-size:0.82rem;font-weight:700;color:var(--text)">' + escHtml(f.commenter_name || 'Someone') + '</span>' +
                 '<div style="display:flex;gap:6px">' +
-                  '<button data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(entryId) + '" data-name="' + safeName + '" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">\u2714 Accept feedback</button>' +
+                  '<button data-action="incorporate-feedback" title="Add this to the end of your memory" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(entryId) + '" data-name="' + safeName + '" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">Incorporate</button>' +
                   '<button data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' +
                 '</div>' +
               '</div>' +
@@ -20958,7 +21270,7 @@
     let _pendingFeedbackByEntry = {};
     try {
       var fbRes = await fetch(
-        DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id + '&imported=eq.false&select=*,life_share_tokens(note)&order=created_at.asc',
+        DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id + '&imported=eq.false&select=*,life_share_tokens(note,label)&order=created_at.asc',
         { headers: getAuthHeaders() }
       );
       if (fbRes.ok) {
@@ -21216,9 +21528,9 @@
                 (mediaNote ? '<p style="font-size:0.78rem;color:var(--text-light);margin:0 0 8px">Attachments:' + mediaNote + '</p>' : '') +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                   '<button ' +
-                    'data-action="accept-feedback" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(e.id) + '" data-name="' + safeName + '" ' +
+                    'data-action="incorporate-feedback" title="Add this to the end of your memory" data-fb-id="' + escHtml(f.id) + '" data-entry-id="' + escHtml(e.id) + '" data-name="' + safeName + '" ' +
                     'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600">' +
-                    '\u2714 Accept feedback' +
+                    'Incorporate' +
                   '</button>' +
                   '<button ' +
                     'data-action="delete-feedback" data-fb-id="' + escHtml(f.id) + '" ' +
@@ -21276,7 +21588,7 @@
           vaButtonHtml +
           '<button data-action="edit-text" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">✏️ Edit text</button>' +
           '<button data-action="edit-with-gethro" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--gold);color:var(--gold-dark);cursor:pointer">✍️ Edit with Gethro</button>' +
-          '<button data-action="share-entry" data-id="' + escHtml(e.id) + '" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (isPremium() ? '🔗 Share' : '🔒 Share (Premium)') + '</button>' +
+          '<button data-action="share-entry" data-id="' + escHtml(e.id) + '" title="Share or collaborate with your people" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer">' + (isPremium() ? '🔗 Share' : '🔒 Share (Premium)') + '</button>' +
         '</div>' : '') +
         (!_selectMode && !isStoryMode ? vaPanelHtml : '') +
         '<div id="sharelinks-indicator-' + e.id + '"></div>' +
@@ -28610,7 +28922,7 @@
     }
     try {
       var res = await fetch(DB_SHARE_FEEDBACK_URL + '?owner_id=eq.' + currentUser.id +
-        '&is_tree_share=eq.true&select=*,life_share_tokens(note)&order=created_at.desc', { headers: getAuthHeaders() });
+        '&is_tree_share=eq.true&select=*,life_share_tokens(note,label)&order=created_at.desc', { headers: getAuthHeaders() });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var rows = await res.json();
       if (!Array.isArray(rows)) throw new Error('unexpected response');
@@ -28642,16 +28954,14 @@
             '<span style="font-size:0.75rem;color:var(--text-light);margin-left:8px">' + timeAgo + '</span>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
-            (fb.imported
-              ? '<span style="font-size:0.72rem;color:var(--sage);font-weight:700">\u2713 Saved</span>'
-              : '<button data-action="accept-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
-                  'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:var(--sage);color:#fff;border:none;cursor:pointer;font-family:\'Lato\',sans-serif;font-weight:600;white-space:nowrap">\u2714 Accept</button>') +
+            (fb.imported ? '' : '<span style="font-size:0.7rem;color:var(--gold-dark);font-weight:700;letter-spacing:0.04em">NEW</span>') +
             '<button data-action="dismiss-tree-feedback" data-fb-id="' + escHtml(fb.id) + '" ' +
               'style="font-size:0.72rem;padding:3px 10px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif;white-space:nowrap">' +
               'Delete' +
             '</button>' +
           '</div>' +
         '</div>' +
+        (_fbLabelOf(fb) ? '<div>' + _fbLabelHtml(fb) + '</div>' : '') +
         (fb.text ? '<p style="font-size:0.88rem;color:var(--text);line-height:1.6;margin:0">' + escHtml(fb.text) + '</p>' : '') +
       '</div>';
     };
@@ -28682,6 +28992,23 @@
         '</div>' +
       '</div>';
     }).join('');
+
+    // FB-RULES-01: opening the tab counts as reading. Unread rows are marked read (imported = true) so the
+    // dashboard badge clears; the NEW tags above were drawn first, so this view still shows them once.
+    var unreadIds = items.filter(function(r) { return !r.imported; }).map(function(r) { return r.id; });
+    if (unreadIds.length) {
+      try {
+        var rd = await fetch(DB_SHARE_FEEDBACK_URL + '?id=in.(' + unreadIds.join(',') + ')', {
+          method: 'PATCH',
+          headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ imported: true })
+        });
+        if (rd.ok) {
+          items.forEach(function(r) { r.imported = true; });
+          loadResponsesTile();
+        }
+      } catch (e) { logActivity('tree_feedback_mark_read_failed', String(e && e.message || e), 'warn', 'SHARE'); }
+    }
   }
 
   // Delete one tree-feedback row for good (asks first), then update the screen and the dashboard tile
@@ -32642,6 +32969,8 @@
       if (!b) return;
       if (b.dataset.action === 'share-link-copy' && b.dataset.token) copyShareLink(b.dataset.token);
       if (b.dataset.action === 'share-link-revoke' && b.dataset.tokenId) revokeShareLink(b.dataset.tokenId, b.dataset.scope || _shareLinksEntryId);
+      if (b.dataset.action === 'share-link-new') newShareLinkFrom(b.dataset.scope || _shareLinksEntryId, b.dataset.label || '', b.dataset.note || '');
+      if (b.dataset.action === 'share-link-rename' && b.dataset.tokenId) renameShareLink(b.dataset.tokenId, b.dataset.scope || _shareLinksEntryId, b.dataset.label || '');
     });
     on('mpTreeLinksBtn',       'click', showTreeShareLinks);
     on('treeShareBirthdays',   'change', _treeShareBirthdaysChanged);
@@ -32895,9 +33224,12 @@
         case 'share-request-refresh':   window.submitRefreshRequest && window.submitRefreshRequest(); break;
         case 'link-request-dismiss':    dismissLinkRequest(btn.dataset.tid); break;
         case 'link-request-renew':      _showRateLimitModal({ msg: 'Renew Premium to turn your shared links back on', sub: 'Your shared links are paused while Premium is not active. They start working again as soon as you renew.' }); break;
-        case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;
+        case 'accept-feedback':         if (fbId && entryId) importResponse(fbId, entryId, name); break;   // retired button, kept for old pages
+        case 'incorporate-feedback':    if (fbId && entryId) openIncorporateDialog(fbId, entryId, name); break;   // FB-INCORP-01
         case 'accept-tree-feedback':    if (fbId) acceptKeptFeedback(fbId, 'tree'); break;
         case 'accept-piece-feedback':   if (fbId) acceptKeptFeedback(fbId, 'piece'); break;
+        case 'publish-piece-feedback':   if (fbId) setPieceFeedbackPublished(fbId, true); break;     // FB-PUBLISH-01
+        case 'unpublish-piece-feedback': if (fbId) setPieceFeedbackPublished(fbId, false); break;
         case 'delete-feedback':          if (fbId) deleteResponse(fbId);                       break;
         case 'dismiss-piece-feedback':   if (fbId) deleteResponse(fbId);                       break;
         case 'open-piece-from-feedback': { var _cid = btn.dataset.componentId || null; if (_cid) _openLibraryToPiece(_cid); break; }
@@ -33170,6 +33502,8 @@
         }
       } else if (action === 'lib-share') {
         if (id) _storyLibSharePiece(id, btn.dataset.title || '');
+      } else if (action === 'lib-share-links') {
+        if (id) showPieceShareLinks(id, btn.dataset.title || '');
       } else if (action === 'lib-listen') {
         if (_abPlayer && _abPlayer.playing && _abQueue.length === 1 && _abQueue[0].component_id === id) {
           _abStop();
@@ -33761,9 +34095,15 @@
       <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:18px">
         <span id="storyShareModalBlurb">Anyone with the link can read this story piece and leave a comment.</span>
       </p>
+      <div style="margin-bottom:14px">
+        <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Name this share (optional)</label>
+        <input id="storyShareLabel" type="text" maxlength="80" placeholder="e.g. Book club, or Cousins in Perth"
+          style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+        <p style="font-size:0.74rem;color:var(--text-light);margin:5px 0 0;line-height:1.4">Only you see this. Name the group so you can remove it or set a different expiry later.</p>
+      </div>
       <!-- Comment field -->
       <div style="margin-bottom:14px">
-        <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a message (optional)</label>
+        <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a personal message (optional)</label>
         <textarea id="storyShareNote" rows="2" placeholder=""
           style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
       </div>
@@ -33830,12 +34170,18 @@
           <button id="treeShareModalCloseBtn" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">✕</button>
         </div>
         <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin-bottom:10px">
-          Anyone with the link can view your family tree (read-only) and reply with feedback.
+          Share or collaborate with your people: anyone with the link can view your family tree (read-only) and reply with feedback.
         </p>
         <div style="margin-bottom:10px">
           <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Add a message or question (optional)</label>
           <textarea id="treeShareNote" rows="2" placeholder="e.g. Who is missing? Does anything look wrong?"
             style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);resize:none;line-height:1.5;box-sizing:border-box"></textarea>
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Name this share (optional)</label>
+          <input id="treeShareLabel" type="text" maxlength="80" placeholder="e.g. For Mum’s side: who is missing?"
+            style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.9rem;color:var(--text);background:var(--bg);box-sizing:border-box">
+          <p style="font-size:0.74rem;color:var(--text-light);margin:5px 0 0;line-height:1.4">Only you see this. It helps you find the share later.</p>
         </div>
         <!-- FAM-07 3B: who is this link for -->
         <div style="margin-bottom:10px">
