@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.303">
+  <meta name="lifetold-version" content="v7.304">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -4641,6 +4641,20 @@
       </div>
     </div>
     <div id="shareConsentSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
+    <p style="text-align:center;margin:10px 0 0"><button id="shareConsentSeeLinksBtn" style="background:none;border:none;color:var(--gold-dark);font-size:0.8rem;text-decoration:underline;cursor:pointer;font-family:'Lato',sans-serif">See or manage your existing links</button></p>
+  </div>
+</div>
+
+<!-- COPY-LINK-01: shown only when the browser refuses to copy automatically -->
+<div id="copyLinkOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9700;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:16px;padding:24px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+    <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin:0 0 6px">Your link is ready</h3>
+    <p style="font-size:0.82rem;color:var(--text-light);line-height:1.5;margin:0 0 12px">Your browser would not copy it automatically. Tap Copy link, then paste it where you want to send it.</p>
+    <input id="copyLinkInput" type="text" readonly style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.85rem;color:var(--text);background:var(--bg);box-sizing:border-box;margin-bottom:14px">
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button id="copyLinkCloseBtn" style="font-size:0.85rem;padding:8px 16px;border-radius:8px;background:none;border:1px solid var(--border);color:var(--text-light);cursor:pointer;font-family:inherit">Close</button>
+      <button id="copyLinkCopyBtn" style="font-size:0.85rem;padding:8px 16px;border-radius:8px;background:var(--gold);border:none;color:#fff;cursor:pointer;font-family:inherit;font-weight:700">Copy link</button>
+    </div>
   </div>
 </div>
 
@@ -5364,7 +5378,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.303';
+  const APP_VERSION = 'v7.304';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5619,6 +5633,50 @@
   function _clipFallbackDetail(err) {
     var m = (err && err.message) || String(err);
     return JSON.stringify({ err: m, focused: document.hasFocus && document.hasFocus(), visible: document.visibilityState, secure: window.isSecureContext });
+  }
+  // COPY-LINK-01 (2026-10-26): Copy link used to create the link first and only then ask the browser to copy it. By then the
+  // click was too old, so Chrome refused and a plain browser box (window.prompt) appeared, and nothing was copied.
+  // Now the copy is started INSIDE the click, with the link still to come (a promise the browser waits for), which is
+  // allowed. If the browser still refuses, an in-app "Your link" box with a Copy button appears instead of the prompt.
+  function _ltCopyDeferred() {
+    var d = { done: Promise.resolve(false) };
+    var linkP = new Promise(function(res, rej) { d.resolve = res; d.reject = function() { rej(new Error('no link')); }; });
+    linkP.catch(function() {});
+    try {
+      if (window.isSecureContext && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        var item = new ClipboardItem({ 'text/plain': linkP.then(function(l) { return new Blob([l], { type: 'text/plain' }); }) });
+        d.done = navigator.clipboard.write([item]).then(function() { return true; }, function(e) {
+          logActivity('clipboard_fallback', _clipFallbackDetail(e), 'info', 'SHARE'); return false;
+        });
+      }
+    } catch (e) { d.done = Promise.resolve(false); }
+    return d;
+  }
+  async function _ltCopyTextNow(text) {
+    try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch (e) {}
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand('copy'); document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) { return false; }
+  }
+  var _ltCopyDialogLink = '';
+  function _ltShowCopyDialog(link) {
+    _ltCopyDialogLink = link;
+    var ov = document.getElementById('copyLinkOverlay'), inp = document.getElementById('copyLinkInput');
+    if (!ov || !inp) { window.prompt('Copy this link:', link); return; }
+    inp.value = link; ov.style.display = 'flex';
+    setTimeout(function() { try { inp.focus(); inp.select(); } catch (e) {} }, 50);
+  }
+  function _ltHideCopyDialog() { var ov = document.getElementById('copyLinkOverlay'); if (ov) ov.style.display = 'none'; }
+  // After a share link exists: toast if it was copied, otherwise try once more, otherwise show the in-app box.
+  async function _ltFinishCopy(link, alreadyCopied) {
+    if (alreadyCopied) { toast('Link copied \u2713'); return; }
+    if (await _ltCopyTextNow(link)) { toast('Link copied \u2713'); return; }
+    logActivity('clipboard_fallback', 'in-app copy box shown', 'info', 'SHARE');
+    _ltShowCopyDialog(link);
   }
   const STRIPE_CHECKOUT_URL = SUPABASE_URL + '/functions/v1/STRIPE_CHECKOUT'; // SUB-03/05
   // GIFT-P1C: redeem a gift code — POST { code }, auth required (JWT).
@@ -6057,6 +6115,7 @@
     'network changed',                // mobile network transitions — harmless
     'Load failed',                    // Safari network blip — harmless
     'fetch is aborted',               // intentional abort — harmless
+    'auth-token" is busy',           // 2026-10-26: supabase auth lock held by another tick/tab; the app carries on (AUTH-ROBUST-01), no need to log or alert
   ];
   function _isKnownNoise(msg) {
     if (!msg) return false;
@@ -7557,6 +7616,8 @@
     }
     if (consentErrEl) consentErrEl.style.display = 'none';
 
+    var _cp = (method === 'copy') ? _ltCopyDeferred() : null;   // COPY-LINK-01: start the copy inside the click, link to follow
+
     // Show spinner, hide buttons
     document.getElementById('shareConsentBtns').style.display    = 'none';
     document.getElementById('shareConsentSpinner').style.display = 'block';
@@ -7564,7 +7625,9 @@
     var link;
     try {
       link = await _createShareLink(entryId, label, note);
+      if (_cp) _cp.resolve(link);
     } catch(e) {
+      if (_cp) _cp.reject();
       document.getElementById('shareConsentBtns').style.display    = '';
       document.getElementById('shareConsentSpinner').style.display = 'none';
       toast('Could not create link \u2014 try again');
@@ -7592,20 +7655,7 @@
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
     } else { // copy
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(link);
-        } else {
-          var ta = document.createElement('textarea');
-          ta.value = link; ta.style.cssText = 'position:fixed;opacity:0';
-          document.body.appendChild(ta); ta.select();
-          document.execCommand('copy'); document.body.removeChild(ta);
-        }
-        toast('Link copied \u2713');
-      } catch(copyErr) {
-        logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE');
-        window.prompt('Copy this link:', link);
-      }
+      await _ltFinishCopy(link, _cp ? await _cp.done : false);   // COPY-LINK-01
     }
   }
 
@@ -7677,33 +7727,22 @@
     '</div>';
   }
 
+  // SHARES-MGR-01: the per-item Links list was replaced by the one My shares manager, filtered to this item.
   async function showShareLinks(entryId) {
-    _shareLinksEntryId = entryId;
     var entry = entries.find(function(e) { return e.id === entryId; });
-    var titleEl = document.getElementById('shareLinksEntryTitle');
-    if (titleEl) titleEl.textContent = (entry && entry.title) ? '\u201c' + entry.title + '\u201d' : 'This memory';
-    document.getElementById('shareLinksOverlay').style.display = 'flex';
-    await loadShareLinksPanel(entryId);
+    openMySharesOverlay({ scope: entryId, title: (entry && entry.title) ? entry.title : 'This memory' });
   }
 
-  // FAM-07 3B: the same panel lists the family tree's links (scope id '__tree__').
   var TREE_LINKS_SCOPE = '__tree__';
   async function showTreeShareLinks() {
-    _shareLinksEntryId = TREE_LINKS_SCOPE;
-    var titleEl = document.getElementById('shareLinksEntryTitle');
-    if (titleEl) titleEl.textContent = 'Your family tree';
-    document.getElementById('shareLinksOverlay').style.display = 'flex';
-    await loadShareLinksPanel(TREE_LINKS_SCOPE);
+    openMySharesOverlay({ scope: TREE_LINKS_SCOPE, title: 'Your family tree' });
   }
 
   // SHARE-LABEL-04: library shares are for groups of people, each link can be named, timed and removed on its own.
   var PIECE_LINKS_PREFIX = '__piece__:';
   async function showPieceShareLinks(pieceId, title) {
-    _shareLinksEntryId = PIECE_LINKS_PREFIX + pieceId;
-    var titleEl = document.getElementById('shareLinksEntryTitle');
-    if (titleEl) titleEl.textContent = title ? '\u201c' + title + '\u201d' : 'This story';
-    document.getElementById('shareLinksOverlay').style.display = 'flex';
-    await loadShareLinksPanel(_shareLinksEntryId);
+    var p = _libPieceMap && _libPieceMap[pieceId];
+    openMySharesOverlay({ scope: PIECE_LINKS_PREFIX + pieceId, title: title || (p && p.title) || 'This story' });
   }
 
   function hideShareLinks() {
@@ -7802,12 +7841,7 @@
 
   function copyShareLink(token) {
     var link = location.origin + '/?share=' + token;
-    try {
-      navigator.clipboard.writeText(link).then(function() { toast('Link copied \u2713'); });
-    } catch(e) {
-      logActivity('clipboard_fallback', _clipFallbackDetail(e), 'warn', 'SHARE');
-      window.prompt('Copy this link:', link);
-    }
+    _ltFinishCopy(link, false);   // COPY-LINK-01: in-app box instead of the browser prompt
   }
 
   // SHARE-LABEL-05: start a new link from an existing one. Opens the normal share dialog with the same name and message
@@ -8150,6 +8184,8 @@
   // ══════════════════════════════════════════════════════════════════
   var _mySharesRows = [];
   var _mySharesBusy = false;
+  var _mySharesFilter = null;          // null = all shares, or { scope, title } = the links of one memory / story / the tree
+  var _mySharesReplyCache = {};        // token id -> replies already fetched for the expander
 
   function _mySharesInfo(t, nowMs) {
     var exp = new Date(t.expires_at).getTime();
@@ -8168,6 +8204,13 @@
   }
   function _mySharesScope(t) {
     return t.is_tree_share ? TREE_LINKS_SCOPE : (t.component_id ? PIECE_LINKS_PREFIX + t.component_id : t.entry_id);
+  }
+  function _mySharesVisible() {
+    if (!_mySharesFilter) return _mySharesRows;
+    return _mySharesRows.filter(function(t) { return _mySharesScope(t) === _mySharesFilter.scope; });
+  }
+  function _mySharesDate(iso) {
+    try { return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return ''; }
   }
 
   async function loadMySharesTile() {
@@ -8209,9 +8252,12 @@
     tile.style.display = '';
   }
 
-  function openMySharesOverlay() {
+  // The one place to see and manage share links. Opened from the Dashboard card (all links) and from every share dialog,
+  // memory chip, library Links button and tree Links button (the links of that one item): filter = { scope, title }.
+  function openMySharesOverlay(filter) {
     var ov = document.getElementById('mySharesOverlay');
     if (!ov) return;
+    _mySharesFilter = (filter && filter.scope) ? { scope: filter.scope, title: filter.title || '' } : null;
     ov.style.display = 'flex';
     try { document.body.style.overflow = 'hidden'; } catch (e) {}   // one scrollbar only: the page behind stays still
     _mySharesRenderList();
@@ -8221,14 +8267,28 @@
     var ov = document.getElementById('mySharesOverlay');
     if (ov) ov.style.display = 'none';
     try { document.body.style.overflow = ''; } catch (e) {}
+    _mySharesFilter = null;
   }
 
   function _mySharesRenderList() {
     var body = document.getElementById('mySharesBody');
     if (!body) return;
     var now = Date.now();
-    var rows = _mySharesRows;
-    if (!rows.length) { body.innerHTML = '<p style="text-align:center;color:var(--text-light);font-size:0.9rem;padding:24px 0">You have no share links.</p>'; return; }
+    var rows = _mySharesVisible();
+    var bar = 'font-size:0.78rem;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;';
+    var html = '';
+    if (_mySharesFilter) {
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px;padding:10px 12px;background:var(--surface2);border-radius:10px">' +
+        '<div style="font-size:0.85rem;color:var(--text);min-width:0;word-break:break-word">Links for <b>' + escHtml(_mySharesFilter.title || 'this item') + '</b></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-mys-act="new-link" style="' + bar + 'background:var(--gold);border:none;color:#fff">＋ New link</button>' +
+          '<button data-mys-act="show-all" style="' + bar + 'background:none;border:1px solid var(--border);color:var(--text-light)">Show all my shares</button>' +
+        '</div></div>';
+    }
+    if (!rows.length) {
+      body.innerHTML = html + '<p style="text-align:center;color:var(--text-light);font-size:0.9rem;padding:24px 0">' + (_mySharesFilter ? 'No links for this yet.' : 'You have no share links.') + '</p>';
+      return;
+    }
     var active = rows.filter(function(t) { return !_mySharesInfo(t, now).expired; });
     var expired = rows.filter(function(t) { return _mySharesInfo(t, now).expired; });
     var btn = 'font-size:0.72rem;padding:3px 8px;border-radius:5px;background:none;cursor:pointer;border:1px solid var(--border);color:var(--text-light)';
@@ -8236,29 +8296,34 @@
     function _mysRow(t) {
       var inf = _mySharesInfo(t, now), tg = _mySharesTarget(t);
       var heading = t.label || tg.title;
-      var sub = tg.kind + (t.label ? ' · ' + tg.title : '');
+      var sub = tg.kind + (t.label ? ' · ' + tg.title : '') + (t.created_at ? ' · shared ' + _mySharesDate(t.created_at) : '');
       var when = inf.expired ? '<span style="color:var(--rose);font-size:0.75rem">Expired</span>'
         : inf.noExpiry ? '<span style="color:var(--gold-dark);font-size:0.75rem;font-weight:700">No expiry</span>'
         : '<span style="color:var(--text-light);font-size:0.75rem">' + inf.daysLeft + ' day' + (inf.daysLeft === 1 ? '' : 's') + ' left</span>';
-      var rep = t.feedback_count ? '<span style="color:var(--sage);font-size:0.75rem">' + t.feedback_count + (t.feedback_count === 1 ? ' reply' : ' replies') + '</span>'
-        : '<span style="color:var(--text-light);font-size:0.75rem">No replies</span>';
+      var n = t.feedback_count || 0;
       var id = escHtml(String(t.id));
-      return '<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start' + (inf.expired ? ';opacity:0.6' : '') + '">' +
+      var rep = '<button data-mys-act="toggle-replies" data-mys-id="' + id + '" aria-expanded="false" title="Show the replies sent to this link" ' +
+        'style="background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:0.75rem;color:' + (n ? 'var(--sage)' : 'var(--text-light)') + ';text-decoration:underline">' +
+        '▸ ' + (n ? n + (n === 1 ? ' reply' : ' replies') : 'No replies') + '</button>';
+      return '<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start' + (inf.expired ? ';opacity:0.7' : '') + '">' +
         '<input type="checkbox" data-mys-id="' + id + '" aria-label="Select this link" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">' +
         '<div style="flex:1;min-width:0">' +
           '<div style="font-size:0.88rem;color:var(--text);font-weight:600;word-break:break-word">' + escHtml(heading) + '</div>' +
           '<div style="font-size:0.74rem;color:var(--text-light);margin:2px 0 6px;word-break:break-word">' + escHtml(sub) + '</div>' +
+          (t.note ? '<div style="font-size:0.8rem;color:var(--text-light);font-style:italic;margin:0 0 6px;line-height:1.5">“' + escHtml(t.note) + '”</div>' : '') +
           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">' + when + rep + '</div>' +
+          '<div id="mys-replies-' + id + '" style="display:none;margin:0 0 10px"></div>' +
           '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+            (inf.expired ? '' : '<button data-mys-act="view" data-mys-id="' + id + '" title="Open exactly what the person sees" style="' + btn + '">View</button>') +
             (inf.expired ? '' : '<button data-mys-act="copy" data-mys-id="' + id + '" style="' + btn + '">Copy link</button>') +
             '<button data-mys-act="rename" data-mys-id="' + id + '" style="' + btn + '">Rename</button>' +
+            '<button data-mys-act="new-from" data-mys-id="' + id + '" title="Make another link with the same name and message" style="' + btn + '">New link from this</button>' +
             (inf.expired ? '' : '<button data-mys-act="expire-one" data-mys-id="' + id + '" style="' + btn + '">Expire</button>') +
             '<button data-mys-act="remove-one" data-mys-id="' + id + '" style="' + btnRose + '">Remove</button>' +
           '</div>' +
         '</div></div>';
     }
-    var bar = 'font-size:0.78rem;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;';
-    var html = '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">' +
+    html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">' +
       '<label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text);cursor:pointer"><input type="checkbox" id="mysSelAll" style="width:16px;height:16px;accent-color:var(--gold)"> Select all</label>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         '<button data-mys-act="expire-sel" disabled style="' + bar + 'background:none;border:1px solid var(--gold);color:var(--gold-dark);opacity:0.5">Expire selected</button>' +
@@ -8271,6 +8336,43 @@
         '<div style="display:flex;flex-direction:column;gap:10px">' + expired.map(_mysRow).join('') + '</div>';
     }
     body.innerHTML = html;
+  }
+
+  // Replies expander: tap "N replies" to read them in place (name, date, text; Published is marked).
+  async function _mySharesToggleReplies(id, btn) {
+    var panel = document.getElementById('mys-replies-' + id);
+    if (!panel) return;
+    var open = panel.style.display !== 'none';
+    var label = btn ? btn.textContent.replace(/^[▸▾]\s*/, '') : '';
+    if (open) { panel.style.display = 'none'; if (btn) { btn.textContent = '▸ ' + label; btn.setAttribute('aria-expanded', 'false'); } return; }
+    panel.style.display = 'block';
+    if (btn) { btn.textContent = '▾ ' + label; btn.setAttribute('aria-expanded', 'true'); }
+    var list = _mySharesReplyCache[id];
+    if (!list) {
+      panel.innerHTML = '<div style="font-size:0.78rem;color:var(--text-light)">Loading…</div>';
+      try {
+        var safeId = _mySharesIdList([id]);
+        var res = await fetch(DB_SHARE_FEEDBACK_URL + '?token_id=eq.' + safeId + '&owner_id=eq.' + currentUser.id +
+          '&order=created_at.asc&select=id,commenter_name,text,created_at,published_at', { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        list = await res.json();
+        _mySharesReplyCache[id] = list;
+      } catch (e) {
+        panel.innerHTML = '<div style="font-size:0.78rem;color:var(--rose)">Could not load the replies — tap again to retry.</div>';
+        panel.style.display = 'none'; if (btn) { btn.textContent = '▸ ' + label; btn.setAttribute('aria-expanded', 'false'); }
+        logActivity('my_shares_replies_failed', String(e && e.message || e), 'warn', 'SHARE');
+        return;
+      }
+    }
+    if (!list.length) { panel.innerHTML = '<div style="font-size:0.78rem;color:var(--text-light)">No replies yet.</div>'; return; }
+    panel.innerHTML = list.map(function(r) {
+      return '<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
+        '<div style="font-size:0.75rem;color:var(--text-light);margin-bottom:3px"><b style="color:var(--text)">' + escHtml(r.commenter_name || 'Someone') + '</b>' +
+          (r.created_at ? ' · ' + _mySharesDate(r.created_at) : '') +
+          (r.published_at ? ' · <span style="color:var(--gold-dark)">Published</span>' : '') + '</div>' +
+        '<div style="font-size:0.84rem;color:var(--text);line-height:1.5;white-space:pre-wrap;word-break:break-word">' + (r.text ? escHtml(r.text) : '<i style="color:var(--text-light)">(no text)</i>') + '</div>' +
+      '</div>';
+    }).join('');
   }
 
   function _mySharesSelected() {
@@ -8290,6 +8392,7 @@
     return ids.filter(function(i) { return /^[A-Za-z0-9_-]+$/.test(i); }).join(',');
   }
   function _mySharesAfter(affected) {
+    affected.forEach(function(t) { delete _mySharesReplyCache[String(t.id)]; });
     // the green chips on memory cards, then the Responses tile and its badge
     affected.forEach(function(t) { if (t.entry_id && !t.is_tree_share && !t.component_id) { try { refreshShareIndicator(t.entry_id); } catch (e) {} } });
     try { if (typeof loadResponsesTile === 'function') loadResponsesTile(); } catch (e) {}
@@ -8358,9 +8461,15 @@
     var b = e.target.closest ? e.target.closest('[data-mys-act]') : null;
     if (!b || b.disabled) return;
     var act = b.getAttribute('data-mys-act'), id = b.getAttribute('data-mys-id');
+    var t = id ? _mySharesById([id])[0] : null;
     switch (act) {
-      case 'copy': { var t = _mySharesById([id])[0]; if (t && t.token) copyShareLink(t.token); break; }
-      case 'rename': { var r = _mySharesById([id])[0]; if (r) renameShareLink(r.id, _mySharesScope(r), r.label || '', loadMySharesTile); break; }
+      case 'toggle-replies': _mySharesToggleReplies(id, b); break;
+      case 'view': if (t && t.token) window.open(location.origin + '/?share=' + encodeURIComponent(t.token), '_blank', 'noopener'); break;
+      case 'copy': if (t && t.token) copyShareLink(t.token); break;
+      case 'rename': if (t) renameShareLink(t.id, _mySharesScope(t), t.label || '', loadMySharesTile); break;
+      case 'new-from': if (t) { var sc = _mySharesScope(t); closeMySharesOverlay(); newShareLinkFrom(sc, t.label || '', t.note || ''); } break;
+      case 'new-link': if (_mySharesFilter) { var sc2 = _mySharesFilter.scope; closeMySharesOverlay(); newShareLinkFrom(sc2, '', ''); } break;
+      case 'show-all': _mySharesFilter = null; _mySharesRenderList(); break;
       case 'expire-one': _mySharesExpire([id]); break;
       case 'remove-one': _mySharesRemove([id]); break;
       case 'expire-sel': _mySharesExpire(_mySharesSelected()); break;
@@ -16189,6 +16298,8 @@
     }
     if (storyConsentErrEl) storyConsentErrEl.style.display = 'none';
 
+    var _cp = (method === 'copy') ? _ltCopyDeferred() : null;   // COPY-LINK-01: start the copy inside the click, link to follow
+
     if (btns)    btns.style.display    = 'none';
     if (spinner) spinner.style.display = 'block';
 
@@ -16213,12 +16324,14 @@
       if (btns)    btns.style.display    = '';
       if (spinner) spinner.style.display = 'none';
       toast('Could not create link \u2014 try again');
+      if (_cp) _cp.reject();
       dbgErr('SHARE', '_storyShareVia error: ' + (err.message || err));
       logActivity('share_create_failed', 'component_id=' + pieceId + ' — ' + (err && err.message || err), 'warn', 'SHARE');
       notifyDev('warn', 'SHARE', 'Story/recording share creation failed — component_id=' + pieceId + ' — ' + (err && err.message || err));
       return;
     }
 
+    if (_cp) _cp.resolve(link);
     _storyShareModalClose();
 
     var shareMsg = _storyShareIsAudio
@@ -16234,17 +16347,7 @@
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
     } else { // copy
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(link);
-        } else {
-          var ta = document.createElement('textarea');
-          ta.value = link; ta.style.cssText = 'position:fixed;opacity:0';
-          document.body.appendChild(ta); ta.select();
-          document.execCommand('copy'); document.body.removeChild(ta);
-        }
-        toast('Link copied ✓');
-      } catch(copyErr) { logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+      await _ltFinishCopy(link, _cp ? await _cp.done : false);   // COPY-LINK-01
     }
   }
 
@@ -16351,6 +16454,8 @@
     }
     if (consentErrEl) consentErrEl.style.display = 'none';
 
+    var _cp = (method === 'copy') ? _ltCopyDeferred() : null;   // COPY-LINK-01: start the copy inside the click, link to follow
+
     if (btns)    btns.style.display    = 'none';
     if (spinner) spinner.style.display = 'block';
 
@@ -16381,12 +16486,14 @@
       if (btns)    btns.style.display    = '';
       if (spinner) spinner.style.display = 'none';
       toast(err && err.message === 'Unauthorised' ? 'Your login has expired \u2014 please sign out and back in, then try again' : 'Could not create link \u2014 try again');
+      if (_cp) _cp.reject();
       dbgErr('SHARE', '_treeShareVia error: ' + (err.message || err));
       logActivity('share_create_failed', 'tree — ' + (err && err.message || err), 'warn', 'SHARE');
       notifyDev('warn', 'SHARE', 'Family tree share creation failed — ' + (err && err.message || err));
       return;
     }
 
+    if (_cp) _cp.resolve(link);
     _treeShareModalClose();
 
     var shareMsg = note
@@ -16402,17 +16509,7 @@
     } else if (method === 'facebook') {
       window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link), '_blank', 'noopener');
     } else { // copy
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(link);
-        } else {
-          var ta = document.createElement('textarea');
-          ta.value = link; ta.style.cssText = 'position:fixed;opacity:0';
-          document.body.appendChild(ta); ta.select();
-          document.execCommand('copy'); document.body.removeChild(ta);
-        }
-        toast('Link copied ✓');
-      } catch(copyErr) { logActivity('clipboard_fallback', _clipFallbackDetail(copyErr), 'warn', 'SHARE'); window.prompt('Copy this link:', link); }
+      await _ltFinishCopy(link, _cp ? await _cp.done : false);   // COPY-LINK-01
     }
   }
 
@@ -33114,7 +33211,7 @@
     on('mpGethroBtn',          'click', function() { openAskGethro(); });
     on('mpCloseBtn',           'click', mpCloseToDashboard);
     on('dashResponsesTile',    'click', openResponsesOverlay);
-    on('dashMySharesTile',     'click', openMySharesOverlay);   // SHARES-MGR-01
+    on('dashMySharesTile',     'click', function() { openMySharesOverlay(); });   // SHARES-MGR-01
     on('mySharesCloseBtn',     'click', closeMySharesOverlay);
     var _mysBody = document.getElementById('mySharesBody');
     if (_mysBody) { _mysBody.addEventListener('click', _mySharesClick); _mysBody.addEventListener('change', _mySharesChange); }
@@ -33217,6 +33314,15 @@
 
     // ── Share consent / links ─────────────────────────────────────────────
     on('shareConsentCloseBtn', 'click', hideShareConsent);
+    on('copyLinkCloseBtn', 'click', _ltHideCopyDialog);
+    on('copyLinkCopyBtn',  'click', async function() {
+      var ok = await _ltCopyTextNow(_ltCopyDialogLink);
+      if (ok) { toast('Link copied \u2713'); _ltHideCopyDialog(); }
+      else { var i = document.getElementById('copyLinkInput'); if (i) { i.focus(); i.select(); } toast('Press Ctrl+C (or touch and hold) to copy'); }
+    });
+    // SHARES-MGR-01: the same footer link in all three share dialogs opens My shares, filtered to this item
+    on('shareConsentSeeLinksBtn', 'click', function() { var id = _shareConsentEntryId; hideShareConsent(); if (id) showShareLinks(id); });
+    on('storyShareSeeLinksBtn',   'click', function() { var id = _storyShareCurrentPieceId; _storyShareModalClose(); if (id) showPieceShareLinks(id, ((_libPieceMap[id] || {}).title) || ''); });
     on('shareViaWhatsappBtn',  'click', function() { shareVia('whatsapp'); });
     on('shareViaGmailBtn',     'click', function() { shareVia('gmail'); });
     on('shareViaFacebookBtn',  'click', function() { shareVia('facebook'); });
@@ -34411,6 +34517,7 @@
         </div>
       </div>
       <div id="storyShareSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
+      <p style="text-align:center;margin:10px 0 0"><button id="storyShareSeeLinksBtn" style="background:none;border:none;color:var(--gold-dark);font-size:0.8rem;text-decoration:underline;cursor:pointer;font-family:'Lato',sans-serif">See or manage your existing links</button></p>
     </div>
   </div>
 
@@ -34502,7 +34609,7 @@
           </div>
         </div>
         <div id="treeShareSpinner" style="display:none;text-align:center;padding:12px 0;color:var(--text-light);font-size:0.88rem">Creating link…</div>
-        <p style="text-align:center;margin:4px 0 0"><button id="treeShareSeeLinksBtn" style="background:none;border:none;color:var(--gold-dark);font-size:0.8rem;text-decoration:underline;cursor:pointer;font-family:'Lato',sans-serif">See or remove your existing tree links</button></p>
+        <p style="text-align:center;margin:4px 0 0"><button id="treeShareSeeLinksBtn" style="background:none;border:none;color:var(--gold-dark);font-size:0.8rem;text-decoration:underline;cursor:pointer;font-family:'Lato',sans-serif">See or manage your existing links</button></p>
       </div>
     </div>
 <div id="rlUpgradeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9800;align-items:center;justify-content:center;padding:20px;overflow-y:auto">
