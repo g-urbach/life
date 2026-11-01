@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.309">
+  <meta name="lifetold-version" content="v7.310">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5384,7 +5384,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.309';
+  const APP_VERSION = 'v7.310';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28430,8 +28430,12 @@
       var ps = L.partners(f), st = f.union_status || 'current', mx = X['fam:' + f.id];
       if (mx == null) return;
       var kids = (L.kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
+      // 2026-11-01: a family with no known parents whose children sit on the TOP row has no row above it, so rowY[-1] is
+      // undefined. That made the hub height NaN, the whole bar path invalid, and the browser drew no line across the
+      // top-level brothers/sisters. y stays null in that case and the bar code below puts the hub on the bar itself.
       var y = ps.length ? L.rowY[Math.max.apply(null, ps.map(function(p) { return gen[p]; }))]
                         : (kids.length ? L.rowY[Math.min.apply(null, kids.map(function(c) { return gen[c.child_id]; })) - 1] : 0);
+      if (y == null || !isFinite(y)) y = null;
       var cls = st === 'ended' ? 'mpt-end' : st === 'widowed' ? 'mpt-wid' : 'mpt-cur';
       var pl = { f: f, ps: ps, st: st, mx: mx, kids: kids, y: y, cls: cls, near: null, ext: null, bar: null };
       if (ps.length === 2 && X[ps[0]] != null && X[ps[1]] != null) {
@@ -28454,9 +28458,10 @@
         }
       }
       if (kids.length) {
-        var hy = pl.ext ? pl.ext.yy : y + (ps.length ? H / 2 : 0);
+        var hy = pl.ext ? pl.ext.yy : (y == null ? null : y + (ps.length ? H / 2 : 0));
         var lane = (L.lane && L.lane[f.id]) || 0;   // FAM-16a: 0 unless this bar overlaps another in the same gap
         var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - MP_BAR_TOP - lane * MP_LANE_H;
+        if (hy == null) hy = busY;   // no row above: the "parents not known" dot sits on the bar, no stem
         var cxs = kids.map(function(c) { return X[c.child_id]; });
         pl.bar = { hy: hy, busY: busY, lane: lane, lo: Math.min.apply(null, [mx].concat(cxs)), hi: Math.max.apply(null, [mx].concat(cxs)) };
         V.push({ x: mx, y1: hy, y2: busY, fid: f.id });
