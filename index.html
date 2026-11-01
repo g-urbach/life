@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.306">
+  <meta name="lifetold-version" content="v7.307">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5384,7 +5384,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.306';
+  const APP_VERSION = 'v7.307';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28393,17 +28393,37 @@
     return lines.length ? lines : [''];
   }
 
+  // FAM-16c: where one family's horizontal line crosses another family's vertical line, the horizontal line hops over it with a
+  // small bridge (r = 5px) so the two do not read as joined. Joins inside one family are never hopped.
+  var MP_HOP_R = 5;
+  function _mpHopTo(V, y, x1, x2, fid) {
+    var r = MP_HOP_R, dir = x2 >= x1 ? 1 : -1, xs = [];
+    V.forEach(function(v) {
+      if (v.fid === fid || !(v.y1 + 1 < y && y < v.y2 - 1)) return;
+      var d = (v.x - x1) * dir;
+      if (d > r + 1 && d < Math.abs(x2 - x1) - r - 1) xs.push(d);
+    });
+    xs.sort(function(p, q) { return p - q; });
+    var out = '', last = -1e9, sweep = dir > 0 ? 1 : 0;
+    xs.forEach(function(d) {
+      if (d - last < 2 * r + 2) return;   // two crossings too close for two bridges: skip the second
+      out += ' H' + (x1 + dir * (d - r)) + ' a' + r + ' ' + r + ' 0 0 ' + sweep + ' ' + (dir * 2 * r) + ' 0';
+      last = d;
+    });
+    return out + ' H' + x2;
+  }
+
   function _mpDrawLinks(gl) {
     var L = _mpLayout, X = L.X, Y = L.Y, W = L.W, H = L.H, gen = L.gen;
+    var plans = [], V = [];   // pass 1: work out every line; pass 2: draw (so a bridge knows what it crosses)
     L.families.forEach(function(f) {
       var ps = L.partners(f), st = f.union_status || 'current', mx = X['fam:' + f.id];
       if (mx == null) return;
-      var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': f.id }, gl);   // FAM-16b: one group per family so its lines can be lit or faded together
       var kids = (L.kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
       var y = ps.length ? L.rowY[Math.max.apply(null, ps.map(function(p) { return gen[p]; }))]
                         : (kids.length ? L.rowY[Math.min.apply(null, kids.map(function(c) { return gen[c.child_id]; })) - 1] : 0);
       var cls = st === 'ended' ? 'mpt-end' : st === 'widowed' ? 'mpt-wid' : 'mpt-cur';
-      var dropY = y + H / 2, extJoin = false, extY = 0;
+      var pl = { f: f, ps: ps, st: st, mx: mx, kids: kids, y: y, cls: cls, near: null, ext: null, bar: null };
       if (ps.length === 2 && X[ps[0]] != null && X[ps[1]] != null) {
         var a = X[ps[0]], b = X[ps[1]];
         // Straight line whenever the partners share a row and no other card sits between them;
@@ -28416,36 +28436,52 @@
           });
         })();
         if (near) {
-          var l = Math.min(a, b) + W / 2, r = Math.max(a, b) - W / 2;
-          _mpSvg('line', { x1: l, y1: y, x2: r, y2: y, class: cls }, fg);
-          if (st !== 'current') {
-            var t = _mpSvg('text', { x: (l + r) / 2, y: y - 4, 'text-anchor': 'middle', class: 'mpt-mk ' + (st === 'ended' ? 'mpt-mk-end' : 'mpt-mk-wid') }, fg);
-            t.textContent = st === 'ended' ? 'ended' : '\u2020';
-          }
+          pl.near = { l: Math.min(a, b) + W / 2, r: Math.max(a, b) - W / 2 };
         } else {
           var yy = Y(ps[0]) + H / 2 + MP_EXT_TOP + ((L.extLane && L.extLane[f.id]) || 0) * MP_EXT_LANE_H;   // FAM-16a: lane, not a guessed offset
-          extY = yy;
-          _mpSvg('path', { d: 'M' + a + ' ' + (Y(ps[0]) + H / 2) + ' V' + yy + ' H' + b + ' V' + (Y(ps[1]) + H / 2), class: 'mpt-lnk mpt-ext' }, fg);
-          extJoin = true;
+          pl.ext = { a: a, b: b, y0: Y(ps[0]) + H / 2, yy: yy, y1: Y(ps[1]) + H / 2 };
+          V.push({ x: a, y1: Math.min(pl.ext.y0, yy), y2: Math.max(pl.ext.y0, yy), fid: f.id }, { x: b, y1: Math.min(yy, pl.ext.y1), y2: Math.max(yy, pl.ext.y1), fid: f.id });
         }
       }
-      if (!kids.length) return;
-      var hy = extJoin ? extY : y + (ps.length ? H / 2 : 0);
-      var lane = (L.lane && L.lane[f.id]) || 0;   // FAM-16a: 0 unless this bar overlaps another in the same gap
-      var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - MP_BAR_TOP - lane * MP_LANE_H;
-      var cxs = kids.map(function(c) { return X[c.child_id]; });
-      var lo = Math.min.apply(null, [mx].concat(cxs)), hi = Math.max.apply(null, [mx].concat(cxs));
-      _mpSvg('path', { d: 'M' + mx + ' ' + hy + ' V' + busY + ' M' + lo + ' ' + busY + ' H' + hi, class: 'mpt-lnk' }, fg);
-      if (!ps.length && !_mpShareCtx) _mpSvg('circle', { cx: mx, cy: busY, r: 4, class: 'mpt-unk' }, fg);   // parents not known (app only)
+      if (kids.length) {
+        var hy = pl.ext ? pl.ext.yy : y + (ps.length ? H / 2 : 0);
+        var lane = (L.lane && L.lane[f.id]) || 0;   // FAM-16a: 0 unless this bar overlaps another in the same gap
+        var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - MP_BAR_TOP - lane * MP_LANE_H;
+        var cxs = kids.map(function(c) { return X[c.child_id]; });
+        pl.bar = { hy: hy, busY: busY, lane: lane, lo: Math.min.apply(null, [mx].concat(cxs)), hi: Math.max.apply(null, [mx].concat(cxs)) };
+        V.push({ x: mx, y1: hy, y2: busY, fid: f.id });
+        kids.forEach(function(c) { V.push({ x: X[c.child_id], y1: busY, y2: Y(c.child_id) - H / 2, fid: f.id }); });
+      }
+      plans.push(pl);
+    });
+    plans.forEach(function(pl) {
+      var f = pl.f, ps = pl.ps, st = pl.st, mx = pl.mx, kids = pl.kids, y = pl.y, cls = pl.cls;
+      var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': f.id }, gl);   // FAM-16b: one group per family so its lines can be lit or faded together
+      if (pl.near) {
+        var l = pl.near.l, r = pl.near.r, hop = _mpHopTo(V, y, l, r, f.id);
+        if (hop === ' H' + r) _mpSvg('line', { x1: l, y1: y, x2: r, y2: y, class: cls }, fg);
+        else _mpSvg('path', { d: 'M' + l + ' ' + y + hop, class: cls, fill: 'none' }, fg);
+        if (st !== 'current') {
+          var t = _mpSvg('text', { x: (l + r) / 2, y: y - 4, 'text-anchor': 'middle', class: 'mpt-mk ' + (st === 'ended' ? 'mpt-mk-end' : 'mpt-mk-wid') }, fg);
+          t.textContent = st === 'ended' ? 'ended' : '\u2020';
+        }
+      } else if (pl.ext) {
+        var e = pl.ext;
+        _mpSvg('path', { d: 'M' + e.a + ' ' + e.y0 + ' V' + e.yy + _mpHopTo(V, e.yy, e.a, e.b, f.id) + ' V' + e.y1, class: 'mpt-lnk mpt-ext' }, fg);
+      }
+      if (!pl.bar) return;
+      var B = pl.bar;
+      _mpSvg('path', { d: 'M' + mx + ' ' + B.hy + ' V' + B.busY + ' M' + B.lo + ' ' + B.busY + _mpHopTo(V, B.busY, B.lo, B.hi, f.id), class: 'mpt-lnk' }, fg);
+      if (!ps.length && !_mpShareCtx) _mpSvg('circle', { cx: mx, cy: B.busY, r: 4, class: 'mpt-unk' }, fg);   // parents not known (app only)
       kids.forEach(function(c) {
         var cx = X[c.child_id], k = c.kind || 'biological';
-        _mpSvg('path', { d: 'M' + cx + ' ' + busY + ' V' + (Y(c.child_id) - H / 2), class: 'mpt-lnk' + (k !== 'biological' ? ' mpt-kind' : '') }, fg);
-        if (k !== 'biological') { var t2 = _mpSvg('text', { x: cx + 4, y: lane ? (Y(c.child_id) - H / 2 - 6) : busY + 12, class: 'mpt-mk mpt-mk-kind' }, fg); t2.textContent = k; }
+        _mpSvg('path', { d: 'M' + cx + ' ' + B.busY + ' V' + (Y(c.child_id) - H / 2), class: 'mpt-lnk' + (k !== 'biological' ? ' mpt-kind' : '') }, fg);
+        if (k !== 'biological') { var t2 = _mpSvg('text', { x: cx + 4, y: B.lane ? (Y(c.child_id) - H / 2 - 6) : B.busY + 12, class: 'mpt-mk mpt-mk-kind' }, fg); t2.textContent = k; }
       });
     });
   }
 
-  // FAM-16b: tap to highlight. The tapped person, their parents, siblings, partners and children stay bright
+  // FAM-16b: tap to highlight. The tapped person, their parents, siblings (and half siblings), partners and children stay bright
   // together with the lines joining them; everyone else fades. The layout is not touched, so nothing moves.
   function _mpHighlightSets(id) {
     var L = _mpLayout;
@@ -28459,6 +28495,17 @@
       fs[f.id] = true;
       pp.forEach(function(q) { ps[q] = true; });
       kids.forEach(function(c) { ps[c.child_id] = true; });
+      if (asChild) {
+        // half brothers and sisters: the other families of this person's parents (children of the same parent and someone else)
+        pp.forEach(function(par) {
+          L.families.forEach(function(f2) {
+            if (f2.id === f.id || L.partners(f2).indexOf(par) < 0) return;
+            fs[f2.id] = true;
+            L.partners(f2).forEach(function(q) { ps[q] = true; });
+            (L.kidsOf[f2.id] || []).forEach(function(c) { ps[c.child_id] = true; });
+          });
+        });
+      }
     });
     return { p: ps, f: fs };
   }
