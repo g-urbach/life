@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.308">
+  <meta name="lifetold-version" content="v7.309">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5384,7 +5384,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.308';
+  const APP_VERSION = 'v7.309';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28190,7 +28190,17 @@
     for (var it = 0; it < 80; it++) {
       var ch = false;
       families.forEach(function(f) {
-        var ps = partners(f); if (!ps.length) return;
+        var ps = partners(f);
+        if (!ps.length) {
+          // Family with no known parents: its children are siblings, so they share one generation
+          // (the deepest any of them already sits, e.g. via marriage). Without this, siblings drift apart.
+          var ks0 = kidsOf[f.id] || [];
+          if (ks0.length > 1) {
+            var g0 = Math.max.apply(null, ks0.map(function(c) { return gen[c.child_id]; }));
+            ks0.forEach(function(c) { if (gen[c.child_id] < g0) { gen[c.child_id] = g0; ch = true; } });
+          }
+          return;
+        }
         var g = Math.max.apply(null, ps.map(function(p) { return gen[p]; }));
         ps.forEach(function(p) { if (gen[p] < g) { gen[p] = g; ch = true; } });
         (kidsOf[f.id] || []).forEach(function(c) { if (gen[c.child_id] < g + 1) { gen[c.child_id] = g + 1; ch = true; } });
