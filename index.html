@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.310">
+  <meta name="lifetold-version" content="v7.311">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5384,7 +5384,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.310';
+  const APP_VERSION = 'v7.311';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28210,7 +28210,10 @@
     var maxGen = Math.max.apply(null, Object.keys(gen).map(function(k) { return gen[k]; }));
 
     var placed = new Set(), visited = new Set(), external = [];
-    var hasParents = function(id) { return !!parFams[id]; };
+    // 2026-11-01: only a family with at least one known partner counts as "parents". A child of a family with no known
+    // parents (e.g. Philip and his Urbach brother) is a top-of-tree person: it must be built before the in-laws that marry in,
+    // otherwise the in-law (Zalie) is placed first and is joined to her husband (Ezra) by a dotted line.
+    var hasParents = function(id) { return (parFams[id] || []).some(function(fid) { return partners(F[fid]).length > 0; }); };
 
     function build(p) {
       placed.add(p);
@@ -28299,6 +28302,19 @@
     var absorbed = function(id) { return (famsOf[id] || []).some(function(fid) { return partners(F[fid]).some(function(q) { return q !== id && hasParents(q); }); }); };
     // Anything still unplaced (e.g. children of a family with no known parents) becomes its own root.
     var order = roots.filter(function(r) { return !absorbed(r); }).concat(roots.filter(absorbed));
+    // Brothers and sisters of a family with no known parents are placed one after another, so their sibling bar stays short.
+    // A sibling who is only reached through a partner who has parents (a "marry-in") is left to be placed beside that partner.
+    var seenSib = new Set(), orderSib = [];
+    function addSib(id) {
+      if (seenSib.has(id)) return;
+      seenSib.add(id); orderSib.push(id);
+      (parFams[id] || []).forEach(function(fid) {
+        if (partners(F[fid]).length) return;
+        (kidsOf[fid] || []).forEach(function(c) { if (roots.indexOf(c.child_id) >= 0 && !absorbed(c.child_id)) addSib(c.child_id); });
+      });
+    }
+    order.forEach(addSib);
+    order = orderSib;
     var X = {}, cursor = 0;
     function place(r) {
       if (placed.has(r)) return;
