@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.305">
+  <meta name="lifetold-version" content="v7.306">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -1340,6 +1340,12 @@
     .mpt-kind { stroke-dasharray: 3 3; }
     .mpt-ext { stroke: #1d6f7a; stroke-width: 2; stroke-dasharray: 1 5; stroke-linecap: round; }
     .mpt-unk { fill: var(--bg); stroke: var(--border); }
+    /* FAM-16b: tap to highlight (the tapped person's parents, siblings, partners and children stay bright) */
+    .mpt-fam { transition: opacity .18s; }
+    .mpt-hl .mpt-fam:not(.mpt-on) { opacity: .12; }
+    .mpt-hl .mpt-nd:not(.mpt-on) { opacity: .3; }
+    .mpt-hl .mpt-nd.mpt-on:not(.mpt-me) .mpt-card { stroke: var(--gold); stroke-width: 1.5; }
+    .mpt-hl .mpt-fam.mpt-on .mpt-lnk { stroke: var(--gold); stroke-width: 2.2; }
     .mpt-mk { font-size: 10px; } .mpt-mk-end { fill: #b4533b; } .mpt-mk-wid { fill: #5f5a8a; } .mpt-mk-kind { fill: var(--text-light); }
 
     /* ── MY PEOPLE TREE — dTree integration (in-app tree no longer uses dTree; share page still does) ── */
@@ -5378,7 +5384,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.305';
+  const APP_VERSION = 'v7.306';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5389,7 +5395,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":779,"offset":12411},{"maxLine":2054,"offset":12412},{"maxLine":2842,"offset":12413},{"maxLine":2897,"offset":12416},{"maxLine":3305,"offset":12417},{"maxLine":3485,"offset":12418},{"maxLine":5307,"offset":12419},{"maxLine":5670,"offset":12427},{"maxLine":6079,"offset":12437},{"maxLine":6091,"offset":12439},{"maxLine":6899,"offset":12440},{"maxLine":7181,"offset":12441},{"maxLine":7684,"offset":12442},{"maxLine":8700,"offset":12443},{"maxLine":10242,"offset":12445},{"maxLine":11454,"offset":12446},{"maxLine":11625,"offset":12447},{"maxLine":12348,"offset":12448},{"maxLine":12366,"offset":12450},{"maxLine":14225,"offset":12452},{"maxLine":15345,"offset":12453},{"maxLine":15347,"offset":12454},{"maxLine":16044,"offset":12455},{"maxLine":16922,"offset":12456},{"maxLine":19061,"offset":12459},{"maxLine":19383,"offset":12460},{"maxLine":19649,"offset":12461},{"maxLine":20267,"offset":12462},{"maxLine":20460,"offset":12463},{"maxLine":20662,"offset":12464},{"maxLine":21074,"offset":12465},{"maxLine":21324,"offset":12466},{"maxLine":22080,"offset":12467},{"maxLine":22122,"offset":12468},{"maxLine":22276,"offset":12469},{"maxLine":24158,"offset":12470},{"maxLine":24453,"offset":12471},{"maxLine":27211,"offset":12918},{"maxLine":27411,"offset":12919},{"maxLine":28361,"offset":12920},{"maxLine":30510,"offset":12922},{"maxLine":null,"offset":12923}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13008},{"maxLine":2081,"offset":13009},{"maxLine":2870,"offset":13010},{"maxLine":2925,"offset":13013},{"maxLine":3348,"offset":13014},{"maxLine":3528,"offset":13015},{"maxLine":5386,"offset":13016},{"maxLine":5920,"offset":13024},{"maxLine":6400,"offset":13034},{"maxLine":6412,"offset":13036},{"maxLine":7279,"offset":13037},{"maxLine":7561,"offset":13038},{"maxLine":8103,"offset":13039},{"maxLine":8519,"offset":13040},{"maxLine":8934,"offset":13041},{"maxLine":9758,"offset":13042},{"maxLine":11324,"offset":13044},{"maxLine":12584,"offset":13045},{"maxLine":12767,"offset":13046},{"maxLine":13494,"offset":13047},{"maxLine":13512,"offset":13049},{"maxLine":15371,"offset":13051},{"maxLine":16515,"offset":13052},{"maxLine":16517,"offset":13053},{"maxLine":17258,"offset":13054},{"maxLine":18155,"offset":13055},{"maxLine":20309,"offset":13058},{"maxLine":20631,"offset":13059},{"maxLine":20897,"offset":13060},{"maxLine":21506,"offset":13061},{"maxLine":21699,"offset":13062},{"maxLine":21902,"offset":13063},{"maxLine":22314,"offset":13064},{"maxLine":22564,"offset":13065},{"maxLine":23320,"offset":13066},{"maxLine":23362,"offset":13067},{"maxLine":23516,"offset":13068},{"maxLine":25398,"offset":13069},{"maxLine":25862,"offset":13070},{"maxLine":28654,"offset":13519},{"maxLine":28989,"offset":13520},{"maxLine":30028,"offset":13521},{"maxLine":32182,"offset":13523},{"maxLine":null,"offset":13524}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -6251,8 +6257,10 @@
     if (!p || p.private || id === _mpViewerId) return;
     var req = ++_spV2Req;
     _mpViewerId = id;
+    _mpHiId = (id === _spV2StartId) ? null : id;   // FAM-16b: back to the start person clears the highlight
     _mpLabels = _spV2Cache[id] || {};
     _mpDrawNodes(); _spV2Hint();
+    if (_mpHiId != null) _mpCentreOnPerson(id, true);
     if (_spV2Cache[id]) return;
     try {
       var res = await shareFetch(SHARE_PROXY_URL, {
@@ -6294,6 +6302,7 @@
       return kids || (f.partner1_id && f.partner2_id);
     });
     _mpOwnerId = null;
+    _mpHiId = null;   // FAM-16b
     _mpViewerId = data.viewerId || null;
     _spV2StartId = _mpViewerId;
     _mpLabels = data.labels || {};
@@ -27970,6 +27979,7 @@
   var _mpFamilies   = [];   // life_families rows
   var _mpChildren   = [];   // life_family_children rows
   var _mpLayout     = null; // last computed layout (see _mpComputeLayout)
+  var _mpHiId       = null; // FAM-16b: person whose direct family is highlighted (tap); null = whole tree shown normally
   var _mpOwnerId    = null; // the is_owner person ("me")
   var _mpViewerId   = null; // person the labels are computed for
   var _mpLabels     = {};   // personId -> label, for the current viewer
@@ -28077,6 +28087,7 @@
     var owner = _mpPeople.find(function(p) { return p.is_owner; });
     _mpOwnerId    = owner ? owner.id : null;
     _mpViewerId   = _mpOwnerId;
+    _mpHiId       = null;   // FAM-16b
     _mpLabels     = {};
     _mpLabelCache = {};
     _mpLabelWarned = false;
@@ -28130,6 +28141,7 @@
     if (_mpShareCtx) { _spV2Tap(id); return; }
     if (_mpSuppressClick) return;                // the click that ends a mouse drag
     if (id === _mpViewerId) { mpOpenProfile(id); return; }
+    _mpSetHighlight(id, true);   // FAM-16b
     _mpSetViewer(id);
   }
 
@@ -28141,7 +28153,7 @@
     document.getElementById('mpViewChipName').textContent = v.name || 'this person';
     chip.style.display = 'flex';
   }
-  function mpViewBackToMe()   { if (_mpOwnerId) _mpSetViewer(_mpOwnerId); }
+  function mpViewBackToMe()   { if (_mpOwnerId) { _mpSetHighlight(null); _mpSetViewer(_mpOwnerId); } }
   function mpViewOpenProfile() { if (_mpViewerId) mpOpenProfile(_mpViewerId); }
 
   // ── Layout ────────────────────────────────────────────────────────
@@ -28150,6 +28162,7 @@
   // children centred under their family, a partner who belongs to another branch is
   // placed there and joined by a dotted link. Layout does not depend on who is viewing.
   var MP_NODE_W = 138, MP_NODE_H = 78, MP_GX = 18, MP_CG = 30, MP_GY = 150, MP_PAD = 50;
+  var MP_BAR_TOP = 26, MP_LANE_H = 8, MP_BAR_CLEAR = 10, MP_BAR_BELOW_PARENT = 20, MP_EXT_TOP = 14, MP_EXT_LANE_H = 6;   // FAM-16a sibling bar lanes
 
   function _mpComputeLayout() {
     var W = MP_NODE_W, H = MP_NODE_H, GX = MP_GX, CG = MP_CG, GY = MP_GY;
@@ -28296,17 +28309,66 @@
       if (ks.length) X['fam:' + f.id] = ks.reduce(function(s, c) { return s + X[c.child_id]; }, 0) / ks.length;
     });
 
-    var Y = function(id) { return 70 + gen[id] * GY; };
+    // FAM-16a: sibling bars. Each family draws one horizontal bar in the gap above its children. Bars in the
+    // same gap whose spans overlap are put in separate lanes (lane 0 = today's height, each further lane 8px
+    // higher). Bars that overlap nothing stay in lane 0, so a tree without overlaps is drawn exactly as before.
+    // If a gap needs more lanes than fit, that gap (and every row below it) is made taller.
+    var lane = {}, rowY = [70], laneCount = {};
+    var barsByGap = {};
+    families.forEach(function(f) {
+      var mx = X['fam:' + f.id];
+      var ks = (kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
+      if (mx == null || !ks.length) return;
+      var g = Math.min.apply(null, ks.map(function(c) { return gen[c.child_id]; }));
+      var cx = ks.map(function(c) { return X[c.child_id]; });
+      (barsByGap[g] = barsByGap[g] || []).push({ id: f.id, lo: Math.min.apply(null, [mx].concat(cx)), hi: Math.max.apply(null, [mx].concat(cx)) });
+    });
+    Object.keys(barsByGap).forEach(function(g) {
+      var ends = [];
+      barsByGap[g].sort(function(a, b) { return a.lo - b.lo || (a.hi - a.lo) - (b.hi - b.lo) || (a.id < b.id ? -1 : 1); }).forEach(function(b) {
+        var i = 0;
+        while (i < ends.length && ends[i] + MP_BAR_CLEAR >= b.lo) i++;
+        ends[i] = b.hi; lane[b.id] = i;
+      });
+      laneCount[g] = ends.length;
+    });
+    // Partner links routed underneath a card that sits between the partners get lanes too (same rule, 6px apart).
+    var extLane = {}, extCount = {}, extByRow = {};
+    families.forEach(function(f) {
+      var ps = partners(f);
+      if (ps.length !== 2 || X[ps[0]] == null || X[ps[1]] == null) return;
+      var lo2 = Math.min(X[ps[0]], X[ps[1]]), hi2 = Math.max(X[ps[0]], X[ps[1]]);
+      var blocked = gen[ps[0]] !== gen[ps[1]] || people.some(function(q) {
+        return q.id !== ps[0] && q.id !== ps[1] && X[q.id] != null && gen[q.id] === gen[ps[0]] && X[q.id] > lo2 && X[q.id] < hi2;
+      });
+      if (blocked) (extByRow[gen[ps[0]]] = extByRow[gen[ps[0]]] || []).push({ id: f.id, lo: lo2, hi: hi2 });
+    });
+    Object.keys(extByRow).forEach(function(g) {
+      var ends = [];
+      extByRow[g].sort(function(a, b) { return a.lo - b.lo || (a.hi - a.lo) - (b.hi - b.lo) || (a.id < b.id ? -1 : 1); }).forEach(function(b) {
+        var i = 0;
+        while (i < ends.length && ends[i] + MP_BAR_CLEAR >= b.lo) i++;
+        ends[i] = b.hi; extLane[b.id] = i;
+      });
+      extCount[g] = ends.length;
+    });
+    for (var g2 = 1; g2 <= maxGen; g2++) {
+      var n2 = laneCount[g2] || 1, e2 = extCount[g2 - 1] || 0;
+      // space needed in the gap above row g2: underneath-routes stack down from the parent row, bars stack up from the child row
+      var need = MP_BAR_TOP + MP_LANE_H * (n2 - 1) + (e2 ? MP_EXT_TOP + MP_EXT_LANE_H * (e2 - 1) + MP_LANE_H : MP_BAR_BELOW_PARENT);
+      rowY[g2] = rowY[g2 - 1] + GY + Math.max(0, need - (GY - H));
+    }
+    var Y = function(id) { return rowY[gen[id]]; };
     var xs = people.map(function(p) { return X[p.id]; }).filter(function(v) { return v != null; });
     var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
     var dims = {
       w: (maxX - minX) + W + 2 * MP_PAD,
-      h: maxGen * GY + H + 2 * MP_PAD,
+      h: (rowY[maxGen] - 70) + H + 2 * MP_PAD,
     };
     dims.tx = MP_PAD + W / 2 - minX;
     dims.ty = MP_PAD - (70 - H / 2);
     return { people: people, P: P, F: F, X: X, Y: Y, gen: gen, maxGen: maxGen, famsOf: famsOf, kidsOf: kidsOf,
-             partners: partners, families: families, W: W, H: H, dims: dims, external: external };
+             partners: partners, families: families, W: W, H: H, dims: dims, external: external, lane: lane, extLane: extLane, rowY: rowY };
   }
 
   // ── Drawing ───────────────────────────────────────────────────────
@@ -28336,11 +28398,12 @@
     L.families.forEach(function(f) {
       var ps = L.partners(f), st = f.union_status || 'current', mx = X['fam:' + f.id];
       if (mx == null) return;
+      var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': f.id }, gl);   // FAM-16b: one group per family so its lines can be lit or faded together
       var kids = (L.kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
-      var y = ps.length ? 70 + Math.max.apply(null, ps.map(function(p) { return gen[p]; })) * MP_GY
-                        : (kids.length ? 70 + (Math.min.apply(null, kids.map(function(c) { return gen[c.child_id]; })) - 1) * MP_GY : 0);
+      var y = ps.length ? L.rowY[Math.max.apply(null, ps.map(function(p) { return gen[p]; }))]
+                        : (kids.length ? L.rowY[Math.min.apply(null, kids.map(function(c) { return gen[c.child_id]; })) - 1] : 0);
       var cls = st === 'ended' ? 'mpt-end' : st === 'widowed' ? 'mpt-wid' : 'mpt-cur';
-      var dropY = y + H / 2, extJoin = false;
+      var dropY = y + H / 2, extJoin = false, extY = 0;
       if (ps.length === 2 && X[ps[0]] != null && X[ps[1]] != null) {
         var a = X[ps[0]], b = X[ps[1]];
         // Straight line whenever the partners share a row and no other card sits between them;
@@ -28354,30 +28417,68 @@
         })();
         if (near) {
           var l = Math.min(a, b) + W / 2, r = Math.max(a, b) - W / 2;
-          _mpSvg('line', { x1: l, y1: y, x2: r, y2: y, class: cls }, gl);
+          _mpSvg('line', { x1: l, y1: y, x2: r, y2: y, class: cls }, fg);
           if (st !== 'current') {
-            var t = _mpSvg('text', { x: (l + r) / 2, y: y - 4, 'text-anchor': 'middle', class: 'mpt-mk ' + (st === 'ended' ? 'mpt-mk-end' : 'mpt-mk-wid') }, gl);
+            var t = _mpSvg('text', { x: (l + r) / 2, y: y - 4, 'text-anchor': 'middle', class: 'mpt-mk ' + (st === 'ended' ? 'mpt-mk-end' : 'mpt-mk-wid') }, fg);
             t.textContent = st === 'ended' ? 'ended' : '\u2020';
           }
         } else {
-          var yy = Y(ps[0]) + H / 2 + 14 + ((ps[0].charCodeAt(0) + ps[1].charCodeAt(2)) % 4) * 5;
-          _mpSvg('path', { d: 'M' + a + ' ' + (Y(ps[0]) + H / 2) + ' V' + yy + ' H' + b + ' V' + (Y(ps[1]) + H / 2), class: 'mpt-lnk mpt-ext' }, gl);
+          var yy = Y(ps[0]) + H / 2 + MP_EXT_TOP + ((L.extLane && L.extLane[f.id]) || 0) * MP_EXT_LANE_H;   // FAM-16a: lane, not a guessed offset
+          extY = yy;
+          _mpSvg('path', { d: 'M' + a + ' ' + (Y(ps[0]) + H / 2) + ' V' + yy + ' H' + b + ' V' + (Y(ps[1]) + H / 2), class: 'mpt-lnk mpt-ext' }, fg);
           extJoin = true;
         }
       }
       if (!kids.length) return;
-      var hy = extJoin ? Y(ps[0]) + H / 2 + 14 : y + (ps.length ? H / 2 : 0);
-      var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - 26;
+      var hy = extJoin ? extY : y + (ps.length ? H / 2 : 0);
+      var lane = (L.lane && L.lane[f.id]) || 0;   // FAM-16a: 0 unless this bar overlaps another in the same gap
+      var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - MP_BAR_TOP - lane * MP_LANE_H;
       var cxs = kids.map(function(c) { return X[c.child_id]; });
       var lo = Math.min.apply(null, [mx].concat(cxs)), hi = Math.max.apply(null, [mx].concat(cxs));
-      _mpSvg('path', { d: 'M' + mx + ' ' + hy + ' V' + busY + ' M' + lo + ' ' + busY + ' H' + hi, class: 'mpt-lnk' }, gl);
-      if (!ps.length && !_mpShareCtx) _mpSvg('circle', { cx: mx, cy: busY, r: 4, class: 'mpt-unk' }, gl);   // parents not known (app only)
+      _mpSvg('path', { d: 'M' + mx + ' ' + hy + ' V' + busY + ' M' + lo + ' ' + busY + ' H' + hi, class: 'mpt-lnk' }, fg);
+      if (!ps.length && !_mpShareCtx) _mpSvg('circle', { cx: mx, cy: busY, r: 4, class: 'mpt-unk' }, fg);   // parents not known (app only)
       kids.forEach(function(c) {
         var cx = X[c.child_id], k = c.kind || 'biological';
-        _mpSvg('path', { d: 'M' + cx + ' ' + busY + ' V' + (Y(c.child_id) - H / 2), class: 'mpt-lnk' + (k !== 'biological' ? ' mpt-kind' : '') }, gl);
-        if (k !== 'biological') { var t2 = _mpSvg('text', { x: cx + 4, y: busY + 12, class: 'mpt-mk mpt-mk-kind' }, gl); t2.textContent = k; }
+        _mpSvg('path', { d: 'M' + cx + ' ' + busY + ' V' + (Y(c.child_id) - H / 2), class: 'mpt-lnk' + (k !== 'biological' ? ' mpt-kind' : '') }, fg);
+        if (k !== 'biological') { var t2 = _mpSvg('text', { x: cx + 4, y: lane ? (Y(c.child_id) - H / 2 - 6) : busY + 12, class: 'mpt-mk mpt-mk-kind' }, fg); t2.textContent = k; }
       });
     });
+  }
+
+  // FAM-16b: tap to highlight. The tapped person, their parents, siblings, partners and children stay bright
+  // together with the lines joining them; everyone else fades. The layout is not touched, so nothing moves.
+  function _mpHighlightSets(id) {
+    var L = _mpLayout;
+    if (!L || id == null || L.X[id] == null) return null;
+    var ps = {}, fs = {};
+    ps[id] = true;
+    L.families.forEach(function(f) {
+      var pp = L.partners(f), kids = L.kidsOf[f.id] || [];
+      var asPartner = pp.indexOf(id) >= 0, asChild = kids.some(function(c) { return c.child_id === id; });
+      if (!asPartner && !asChild) return;
+      fs[f.id] = true;
+      pp.forEach(function(q) { ps[q] = true; });
+      kids.forEach(function(c) { ps[c.child_id] = true; });
+    });
+    return { p: ps, f: fs };
+  }
+  function _mpApplyHighlight() {
+    var ct = _mpCt(), svg = ct ? ct.querySelector('svg.mpt') : null;
+    if (!svg) return;
+    var sets = _mpHiId != null ? _mpHighlightSets(_mpHiId) : null;
+    if (!sets) { _mpHiId = null; svg.classList.remove('mpt-hl'); }
+    else svg.classList.add('mpt-hl');
+    Array.prototype.forEach.call(svg.querySelectorAll('.mpt-fam'), function(g) {
+      g.classList.toggle('mpt-on', !!(sets && sets.f[g.getAttribute('data-fid')]));
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll('.mpt-nd'), function(n) {
+      n.classList.toggle('mpt-on', !!(sets && sets.p[n.getAttribute('data-pid')]));
+    });
+  }
+  function _mpSetHighlight(id, centre) {
+    _mpHiId = id;
+    _mpApplyHighlight();
+    if (id != null && centre) _mpCentreOnPerson(id, true);
   }
 
   var _mpClipSeq = 0;   // unique ids for the round photo clips
@@ -28391,7 +28492,7 @@
       var n = _mpSvg('g', {
         class: 'mpt-nd' + (isViewer ? ' mpt-me' : '') + (p.is_deceased ? ' mpt-late' : '') + (p.private ? ' mpt-private' : ''),
         transform: 'translate(' + (L.X[p.id] - L.W / 2) + ',' + (L.Y(p.id) - L.H / 2) + ')',
-        tabindex: 0, role: 'button', 'aria-label': nameTxt + (lab ? ', ' + lab : ''),
+        tabindex: 0, role: 'button', 'aria-label': nameTxt + (lab ? ', ' + lab : ''), 'data-pid': p.id,
       }, g);
       _mpSvg('rect', { class: 'mpt-card', width: L.W, height: L.H, rx: 6 }, n);
       _mpSvg('rect', { class: 'mpt-sex mpt-sex-' + (p.sex || 'n'), width: 4, height: L.H, rx: 2 }, n);
@@ -28430,6 +28531,7 @@
       n.addEventListener('click', function() { _mpTapPerson(p.id); });
       n.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _mpTapPerson(p.id); } });
     });
+    _mpApplyHighlight();   // FAM-16b: the nodes were just rebuilt
   }
 
   function _mpRender() {
@@ -28451,6 +28553,11 @@
     _mpDrawLinks(_mpSvg('g', {}, root));
     _mpSvg('g', { id: 'mpNodes', class: 'mpt-nodes' }, root);
     _mpDrawNodes();
+    svg.addEventListener('click', function(e) {   // FAM-16b: tap empty space to clear the highlight (not the end of a drag)
+      if (_mpHiId == null || _mpSuppressClick) return;
+      if (e.target && e.target.closest && e.target.closest('.mpt-nd')) return;
+      _mpSetHighlight(null);
+    });
     _mpBindPan();
     _mpApplyZoomState();
   }
@@ -28502,11 +28609,14 @@
     _mpCentreOnPerson(_mpViewerId || _mpOwnerId);
   }
 
-  function _mpCentreOnPerson(id) {
+  function _mpCentreOnPerson(id, smooth) {
     var vp = _mpVp(), L = _mpLayout;
     if (!vp || !L || id == null || L.X[id] == null) return;
-    vp.scrollLeft = (L.X[id] + L.dims.tx) * _mpZoomScale - vp.clientWidth / 2;
-    vp.scrollTop  = (L.Y(id) + L.dims.ty) * _mpZoomScale - vp.clientHeight * 0.4;
+    var left = (L.X[id] + L.dims.tx) * _mpZoomScale - vp.clientWidth / 2;
+    var top  = (L.Y(id) + L.dims.ty) * _mpZoomScale - vp.clientHeight * 0.4;
+    var calm = false; try { calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e) {}
+    if (smooth && !calm && vp.scrollTo) { vp.scrollTo({ left: left, top: top, behavior: 'smooth' }); return; }
+    vp.scrollLeft = left; vp.scrollTop = top;
   }
   function _mpCentreOnSelf() { _mpCentreOnPerson(_mpOwnerId); }
 
