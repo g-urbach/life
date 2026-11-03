@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.313">
+  <meta name="lifetold-version" content="v7.314">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5397,7 +5397,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.313';
+  const APP_VERSION = 'v7.314';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5408,7 +5408,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13084},{"maxLine":2087,"offset":13085},{"maxLine":2876,"offset":13086},{"maxLine":2931,"offset":13089},{"maxLine":3354,"offset":13090},{"maxLine":3534,"offset":13091},{"maxLine":5392,"offset":13092},{"maxLine":5926,"offset":13100},{"maxLine":6409,"offset":13110},{"maxLine":6421,"offset":13112},{"maxLine":7288,"offset":13113},{"maxLine":7570,"offset":13114},{"maxLine":8112,"offset":13115},{"maxLine":8528,"offset":13116},{"maxLine":8943,"offset":13117},{"maxLine":9767,"offset":13118},{"maxLine":11333,"offset":13120},{"maxLine":12593,"offset":13121},{"maxLine":12776,"offset":13122},{"maxLine":13503,"offset":13123},{"maxLine":13521,"offset":13125},{"maxLine":15380,"offset":13127},{"maxLine":16524,"offset":13128},{"maxLine":16526,"offset":13129},{"maxLine":17267,"offset":13130},{"maxLine":18164,"offset":13131},{"maxLine":20318,"offset":13134},{"maxLine":20640,"offset":13135},{"maxLine":20906,"offset":13136},{"maxLine":21515,"offset":13137},{"maxLine":21708,"offset":13138},{"maxLine":21911,"offset":13139},{"maxLine":22323,"offset":13140},{"maxLine":22573,"offset":13141},{"maxLine":23329,"offset":13142},{"maxLine":23371,"offset":13143},{"maxLine":23525,"offset":13144},{"maxLine":25407,"offset":13145},{"maxLine":25871,"offset":13146},{"maxLine":28842,"offset":13595},{"maxLine":29177,"offset":13596},{"maxLine":30216,"offset":13597},{"maxLine":32370,"offset":13599},{"maxLine":null,"offset":13600}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13141},{"maxLine":2088,"offset":13142},{"maxLine":2882,"offset":13143},{"maxLine":2937,"offset":13146},{"maxLine":3360,"offset":13147},{"maxLine":3540,"offset":13148},{"maxLine":5405,"offset":13149},{"maxLine":5939,"offset":13157},{"maxLine":6426,"offset":13167},{"maxLine":6438,"offset":13169},{"maxLine":7306,"offset":13170},{"maxLine":7588,"offset":13171},{"maxLine":8130,"offset":13172},{"maxLine":8546,"offset":13173},{"maxLine":8961,"offset":13174},{"maxLine":9785,"offset":13175},{"maxLine":11351,"offset":13177},{"maxLine":12611,"offset":13178},{"maxLine":12794,"offset":13179},{"maxLine":13521,"offset":13180},{"maxLine":13539,"offset":13182},{"maxLine":15398,"offset":13184},{"maxLine":16542,"offset":13185},{"maxLine":16544,"offset":13186},{"maxLine":17285,"offset":13187},{"maxLine":18182,"offset":13188},{"maxLine":20336,"offset":13191},{"maxLine":20658,"offset":13192},{"maxLine":20924,"offset":13193},{"maxLine":21533,"offset":13194},{"maxLine":21726,"offset":13195},{"maxLine":21929,"offset":13196},{"maxLine":22341,"offset":13197},{"maxLine":22591,"offset":13198},{"maxLine":23347,"offset":13199},{"maxLine":23389,"offset":13200},{"maxLine":23543,"offset":13201},{"maxLine":25425,"offset":13202},{"maxLine":25889,"offset":13203},{"maxLine":28956,"offset":13652},{"maxLine":29843,"offset":13653},{"maxLine":30882,"offset":13654},{"maxLine":33036,"offset":13656},{"maxLine":null,"offset":13657}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -6299,7 +6299,7 @@
     _mpDrawNodes(); _spV2Hint();
   }
 
-  function _spRenderTreeV2(data, token) {
+  async function _spRenderTreeV2(data, token) {
     _spV2 = true; _spV2Token = token;
     _mpT = { ct: 'shareTreeCanvas', vp: 'shareTreeViewport' };
     _mpShareCtx = { token: token };
@@ -6324,11 +6324,14 @@
     _spV2StartId = _mpViewerId;
     _mpLabels = data.labels || {};
     _spV2Cache = {}; if (_mpViewerId) _spV2Cache[_mpViewerId] = _mpLabels;
-    _mpRender();
-    _spV2Hint();
-    _spInitTreeZoom();
-    _mpFitInitial();
-    _spZoomScale = _mpZoomScale;
+    // TREE-IP-01: the layout comes from TREE_PROXY; the hint, zoom set up and fit must wait for it (the retry button runs them too)
+    await _mpRender(function() {
+      _spV2Hint();
+      _spInitTreeZoom();
+      _mpFitInitial();
+      _spZoomScale = _mpZoomScale;
+      requestAnimationFrame(function() { _spRecordCentre(); _spUpdateRotateHint(); });
+    });
   }
 
   function _spApplyZoomState() {
@@ -7140,7 +7143,7 @@
         }
 
         if (data.treeVersion === 2) {
-          _spRenderTreeV2(data, token);
+          await _spRenderTreeV2(data, token);
           requestAnimationFrame(function() { _spRecordCentre(); _spUpdateRotateHint(); });
         } else {
           // FAM-08: SHARE_PROXY has returned treeVersion 2 since v3.79; the old payload no longer exists.
@@ -27996,7 +27999,7 @@
 
   var _mpFamilies   = [];   // life_families rows
   var _mpChildren   = [];   // life_family_children rows
-  var _mpLayout     = null; // last computed layout (see _mpComputeLayout)
+  var _mpLayout     = null; // last layout: the server's geometry plus relationship lookups (see _mpBuildLayout)
   var _mpHiId       = null; // FAM-16b: person whose direct family is highlighted (tap); null = whole tree shown normally
   var _mpOwnerId    = null; // the is_owner person ("me")
   var _mpViewerId   = null; // person the labels are computed for
@@ -28110,8 +28113,7 @@
     _mpLabelCache = {};
     _mpLabelWarned = false;
 
-    _mpRender();
-    _mpFitInitial();
+    await _mpRender(function() { _mpFitInitial(); });   // TREE-IP-01: the layout comes from TREE_PROXY, so wait for it
     _mpSetViewer(_mpOwnerId);      // fetches labels, then redraws the cards
     requestAnimationFrame(function() { _mpMaybeShowGuide(); });
   }
@@ -28177,248 +28179,56 @@
   function mpViewBackToMe()   { if (_mpOwnerId) { _mpSetHighlight(null); _mpSetViewer(_mpOwnerId); } }
   function mpViewOpenProfile() { if (_mpViewerId) mpOpenProfile(_mpViewerId); }
 
-  // ── Layout ────────────────────────────────────────────────────────
-  // Families -> x/y positions. Ported from the approved render page (large test tree):
-  // partners side by side (ended/widowed unions on the left, current on the right),
-  // children centred under their family, a partner who belongs to another branch is
-  // placed there and joined by a dotted link. Layout does not depend on who is viewing.
-  var MP_NODE_W = 138, MP_NODE_H = 78, MP_GX = 18, MP_CG = 30, MP_GY = 150, MP_PAD = 50;
-  var MP_BAR_TOP = 26, MP_LANE_H = 8, MP_BAR_CLEAR = 10, MP_BAR_BELOW_PARENT = 20, MP_EXT_TOP = 14, MP_EXT_LANE_H = 6;   // FAM-16a sibling bar lanes
+  // ── Layout (TREE-IP-01, built 2026-11-03) ───────────────────────────
+  // The layout rules (generations, partner and child placement, sibling bar lanes, bridges, line routing) are NOT in this page.
+  // They run in TREE_PROXY (action tree_layout). The page sends the bare graph (ids and links only) and DRAWS what comes back:
+  // card positions and ready made line shapes. There is no local copy and no fallback: if the call fails the tree shows a
+  // retry message (the tree needs the network, as relationship labels already do). Do not add layout code back to this page.
+  var _mpGeoCache = {};     // JSON of the graph -> server reply (the share page and an unchanged tree never ask twice)
+  var _mpGeoReq   = 0;      // guards against out-of-order replies
+  var MP_LINE_TAGS = { path: 1, line: 1, text: 1, circle: 1 };   // the only shapes the server may ask us to draw
 
-  function _mpComputeLayout() {
-    var W = MP_NODE_W, H = MP_NODE_H, GX = MP_GX, CG = MP_CG, GY = MP_GY;
+  // The graph the server needs. Same order as the page holds the rows: the order decides placement.
+  function _mpGraph() {
+    return {
+      people:   _mpTreePeople().map(function(p) { return p.id; }),
+      families: _mpFamilies.map(function(f) { return { id: f.id, partner1_id: f.partner1_id || null, partner2_id: f.partner2_id || null, union_status: f.union_status || null }; }),
+      children: _mpChildren.map(function(c) { return { family_id: c.family_id, child_id: c.child_id, kind: c.kind || null }; })
+    };
+  }
+
+  async function _mpFetchGeometry(graph) {
+    var key = JSON.stringify(graph);
+    if (_mpGeoCache[key]) return _mpGeoCache[key];
+    var body = Object.assign({ action: 'tree_layout' }, graph), res;
+    if (_mpShareCtx) {   // share page: the link token is the credential (same as SHARE_PROXY calls)
+      body.share_token = _mpShareCtx.token;
+      res = await _mpFetchRetry(TREE_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON }, body: JSON.stringify(body) });
+    } else {
+      await _syncSessionToken();   // SESSION-GUARD-01
+      res = await _mpFetchRetry(TREE_PROXY_URL, { method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
+    }
+    var j = {}; try { j = await res.json(); } catch (e) {}
+    if (!res.ok) { var err = new Error(j.error || ('TREE_PROXY ' + res.status)); err.status = res.status; throw err; }
+    if (!j.empty && !(j.pos && j.dims && Array.isArray(j.fams))) throw new Error('tree_layout: unexpected reply');
+    var keys = Object.keys(_mpGeoCache); if (keys.length >= 6) delete _mpGeoCache[keys[0]];
+    _mpGeoCache[key] = j;
+    return j;
+  }
+
+  // Server geometry + the plain relationship lookups the highlight, find and zoom code use (these read only data the page already holds).
+  function _mpBuildLayout(j) {
     var people = _mpTreePeople();
     var P = {}; people.forEach(function(p) { P[p.id] = p; });
     var families = _mpFamilies.slice();
     var F = {}; families.forEach(function(f) { F[f.id] = f; });
     var partners = function(f) { return [f.partner1_id, f.partner2_id].filter(function(id) { return id && P[id]; }); };
-    var children = _mpChildren.filter(function(c) { return F[c.family_id] && P[c.child_id]; });
-    if (!people.length) return null;
-
-    var famsOf = {}, kidsOf = {}, parFams = {};
-    families.forEach(function(f) { partners(f).forEach(function(p) { (famsOf[p] = famsOf[p] || []).push(f.id); }); });
-    children.forEach(function(c) {
-      (kidsOf[c.family_id] = kidsOf[c.family_id] || []).push(c);
-      (parFams[c.child_id] = parFams[c.child_id] || []).push(c.family_id);
-    });
-    var RANK = { ended: 0, widowed: 0, current: 1 };
-    Object.keys(famsOf).forEach(function(k) {
-      famsOf[k].sort(function(x, y) { return RANK[F[x].union_status || 'current'] - RANK[F[y].union_status || 'current']; });
-    });
-
-    // generations: partners share one, children sit one below their parents
-    var gen = {}; people.forEach(function(p) { gen[p.id] = 0; });
-    for (var it = 0; it < 80; it++) {
-      var ch = false;
-      families.forEach(function(f) {
-        var ps = partners(f);
-        if (!ps.length) {
-          // Family with no known parents: its children are siblings, so they share one generation
-          // (the deepest any of them already sits, e.g. via marriage). Without this, siblings drift apart.
-          var ks0 = kidsOf[f.id] || [];
-          if (ks0.length > 1) {
-            var g0 = Math.max.apply(null, ks0.map(function(c) { return gen[c.child_id]; }));
-            ks0.forEach(function(c) { if (gen[c.child_id] < g0) { gen[c.child_id] = g0; ch = true; } });
-          }
-          return;
-        }
-        var g = Math.max.apply(null, ps.map(function(p) { return gen[p]; }));
-        ps.forEach(function(p) { if (gen[p] < g) { gen[p] = g; ch = true; } });
-        (kidsOf[f.id] || []).forEach(function(c) { if (gen[c.child_id] < g + 1) { gen[c.child_id] = g + 1; ch = true; } });
-      });
-      if (!ch) break;
-    }
-    var maxGen = Math.max.apply(null, Object.keys(gen).map(function(k) { return gen[k]; }));
-
-    var placed = new Set(), visited = new Set(), external = [];
-    // 2026-11-01: only a family with at least one known partner counts as "parents". A child of a family with no known
-    // parents (e.g. Philip and his Urbach brother) is a top-of-tree person: it must be built before the in-laws that marry in,
-    // otherwise the in-law (Zalie) is placed first and is joined to her husband (Ezra) by a dotted line.
-    var hasParents = function(id) { return (parFams[id] || []).some(function(fid) { return partners(F[fid]).length > 0; }); };
-
-    function build(p) {
-      placed.add(p);
-      var row = [p], links = [];
-      function extend(x, side) {
-        (famsOf[x] || []).forEach(function(fid) {
-          if (visited.has(fid)) return;
-          visited.add(fid);
-          var f = F[fid], other = partners(f).find(function(q) { return q !== x; });
-          // Draw person beside spouse if they have no parents in the tree, OR if this
-          // family has children (a person belongs beside their co-parent regardless of
-          // whether they also appear in their own birth family). Families with no children
-          // and a partner who has their own parents keep the dotted external connector.
-          var hasKidsHere = (kidsOf[fid] || []).length > 0;
-          var marry = other && !placed.has(other) && (!hasParents(other) || hasKidsHere);
-          if (other && !marry) { external.push({ fid: fid, a: x, b: other }); links.push({ fid: fid, x: x, ext: true }); return; }
-          if (!other) { links.push({ fid: fid, x: x, solo: true }); return; }
-          placed.add(other);
-          if (side < 0) { row.unshift(other); links.push({ fid: fid, a: other, b: x }); extend(other, -1); }
-          else          { row.push(other);    links.push({ fid: fid, a: x, b: other }); extend(other, 1); }
-        });
-      }
-      var mine  = (famsOf[p] || []).slice();
-      var left  = mine.filter(function(f) { return (F[f].union_status || 'current') !== 'current'; });
-      var right = mine.filter(function(f) { return (F[f].union_status || 'current') === 'current'; });
-      var saved = famsOf[p];
-      famsOf[p] = left;  extend(p, -1);
-      famsOf[p] = right; extend(p, 1);
-      if (saved) famsOf[p] = saved; else delete famsOf[p];
-
-      var blocks = {};
-      links.forEach(function(l) {
-        blocks[l.fid] = (kidsOf[l.fid] || []).filter(function(c) { return !placed.has(c.child_id); })
-          .map(function(c) { return { c: c, b: build(c.child_id) }; });
-      });
-      var pos = {}, idx = {}; row.forEach(function(r, i) { idx[r] = i; });
-      var need = function(fid) {
-        var bl = blocks[fid]; if (!bl || !bl.length) return 0;
-        return bl.reduce(function(s, o) { return s + (o.b.max - o.b.min); }, 0) + GX * (bl.length - 1);
-      };
-      // Gap between adjacent people in the row.
-      // Old formula used only the left child group width, which caused a person with
-      // multiple marriages to sit very close to their earlier spouse (whose children push
-      // them apart) and very far from their later spouse (whose children are entirely on
-      // the right). New formula blends old and new at 50/50:
-      //   new = max(W+CG, leftChildWidth/2 + rightChildWidth/2 + 2*GX)
-      // so each person sits roughly equidistant between their two families.
-      // Blend keeps the old formula's no-overlap guarantee for simple cases (one marriage).
-      var prevD = 0, prevW = 0;
-      row.forEach(function(r, i) {
-        if (i === 0) { pos[r] = 0; return; }
-        var lLink = links.find(function(k) { return k.a === row[i - 1] && k.b === r; });
-        var rLink = links.find(function(k) { return k.a === r && k.b === row[i + 1]; });
-        var wLeft  = lLink ? need(lLink.fid) : 0;
-        var wRight = rLink ? need(rLink.fid) : 0;
-        var oldD = i === 1 ? W + CG : Math.max(W + CG, prevW + wLeft + 2 * GX - prevD);
-        var newD = Math.max(W + CG, wLeft / 2 + wRight / 2 + 2 * GX);
-        var d = oldD * 0.5 + newD * 0.5;
-        pos[r] = pos[row[i - 1]] + d; prevD = d; prevW = wLeft;
-      });
-      var vals = Object.keys(pos).map(function(k) { return pos[k]; });
-      var out = { pos: Object.assign({}, pos), mid: {}, min: Math.min.apply(null, vals) - W / 2, max: Math.max.apply(null, vals) + W / 2, root: p };
-      var prevBlockMax = null; // right edge of the last placed child block (for overlap guard)
-      links.forEach(function(l) {
-        var m = (l.a && l.b) ? (pos[l.a] + pos[l.b]) / 2 : pos[l.x];
-        out.mid[l.fid] = m;
-        var bl = blocks[l.fid]; if (!bl || !bl.length) return;
-        var tot = need(l.fid), cx = m - tot / 2;
-        // Guard: if this block would overlap the previous block (e.g. two marriages of
-        // the same person with large child groups that the couple-spacing didn't fully
-        // account for), push it right so there is at least GX of clear space between them.
-        if (prevBlockMax !== null && cx < prevBlockMax + GX) cx = prevBlockMax + GX;
-        prevBlockMax = cx + tot;
-        bl.forEach(function(o) {
-          var off = cx - o.b.min;
-          Object.keys(o.b.pos).forEach(function(k) { out.pos[k] = o.b.pos[k] + off; });
-          Object.keys(o.b.mid).forEach(function(k) { out.mid[k] = o.b.mid[k] + off; });
-          out.min = Math.min(out.min, o.b.min + off); out.max = Math.max(out.max, o.b.max + off);
-          cx += o.b.max - o.b.min + GX;
-        });
-      });
-      return out;
-    }
-
-    var roots = people.filter(function(p) { return !hasParents(p.id); }).map(function(p) { return p.id; });
-    var absorbed = function(id) { return (famsOf[id] || []).some(function(fid) { return partners(F[fid]).some(function(q) { return q !== id && hasParents(q); }); }); };
-    // Anything still unplaced (e.g. children of a family with no known parents) becomes its own root.
-    var order = roots.filter(function(r) { return !absorbed(r); }).concat(roots.filter(absorbed));
-    // Brothers and sisters of a family with no known parents are placed one after another, so their sibling bar stays short.
-    // A sibling who is only reached through a partner who has parents (a "marry-in") is left to be placed beside that partner.
-    var seenSib = new Set(), orderSib = [];
-    function addSib(id) {
-      if (seenSib.has(id)) return;
-      seenSib.add(id); orderSib.push(id);
-      (parFams[id] || []).forEach(function(fid) {
-        if (partners(F[fid]).length) return;
-        (kidsOf[fid] || []).forEach(function(c) { if (roots.indexOf(c.child_id) >= 0 && !absorbed(c.child_id)) addSib(c.child_id); });
-      });
-    }
-    order.forEach(addSib);
-    order = orderSib;
-    var X = {}, cursor = 0;
-    function place(r) {
-      if (placed.has(r)) return;
-      var b = build(r), off = cursor - b.min;
-      Object.keys(b.pos).forEach(function(k) { X[k] = b.pos[k] + off; });
-      Object.keys(b.mid).forEach(function(k) { X['fam:' + k] = b.mid[k] + off; });
-      cursor += b.max - b.min + 60;
-    }
-    order.forEach(place);
-    people.forEach(function(p) { place(p.id); });
-
-    // families without a hub: partners' midpoint, or (no known partners) the middle of the children
-    families.forEach(function(f) {
-      if (X['fam:' + f.id] != null) return;
-      var ps = partners(f).filter(function(p) { return X[p] != null; });
-      if (ps.length) { X['fam:' + f.id] = ps.reduce(function(s, p) { return s + X[p]; }, 0) / ps.length; return; }
-      var ks = (kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
-      if (ks.length) X['fam:' + f.id] = ks.reduce(function(s, c) { return s + X[c.child_id]; }, 0) / ks.length;
-    });
-
-    // FAM-16a: sibling bars. Each family draws one horizontal bar in the gap above its children. Bars in the
-    // same gap whose spans overlap are put in separate lanes (lane 0 = today's height, each further lane 8px
-    // higher). Bars that overlap nothing stay in lane 0, so a tree without overlaps is drawn exactly as before.
-    // If a gap needs more lanes than fit, that gap (and every row below it) is made taller.
-    var lane = {}, rowY = [70], laneCount = {};
-    var barsByGap = {};
-    families.forEach(function(f) {
-      var mx = X['fam:' + f.id];
-      var ks = (kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
-      if (mx == null || !ks.length) return;
-      var g = Math.min.apply(null, ks.map(function(c) { return gen[c.child_id]; }));
-      var cx = ks.map(function(c) { return X[c.child_id]; });
-      (barsByGap[g] = barsByGap[g] || []).push({ id: f.id, lo: Math.min.apply(null, [mx].concat(cx)), hi: Math.max.apply(null, [mx].concat(cx)) });
-    });
-    Object.keys(barsByGap).forEach(function(g) {
-      var ends = [];
-      barsByGap[g].sort(function(a, b) { return a.lo - b.lo || (a.hi - a.lo) - (b.hi - b.lo) || (a.id < b.id ? -1 : 1); }).forEach(function(b) {
-        var i = 0;
-        while (i < ends.length && ends[i] + MP_BAR_CLEAR >= b.lo) i++;
-        ends[i] = b.hi; lane[b.id] = i;
-      });
-      laneCount[g] = ends.length;
-    });
-    // Partner links routed underneath a card that sits between the partners get lanes too (same rule, 6px apart).
-    var extLane = {}, extCount = {}, extByRow = {};
-    families.forEach(function(f) {
-      var ps = partners(f);
-      if (ps.length !== 2 || X[ps[0]] == null || X[ps[1]] == null) return;
-      var lo2 = Math.min(X[ps[0]], X[ps[1]]), hi2 = Math.max(X[ps[0]], X[ps[1]]);
-      var blocked = gen[ps[0]] !== gen[ps[1]] || people.some(function(q) {
-        return q.id !== ps[0] && q.id !== ps[1] && X[q.id] != null && gen[q.id] === gen[ps[0]] && X[q.id] > lo2 && X[q.id] < hi2;
-      });
-      if (blocked) (extByRow[gen[ps[0]]] = extByRow[gen[ps[0]]] || []).push({ id: f.id, lo: lo2, hi: hi2 });
-    });
-    Object.keys(extByRow).forEach(function(g) {
-      var ends = [];
-      extByRow[g].sort(function(a, b) { return a.lo - b.lo || (a.hi - a.lo) - (b.hi - b.lo) || (a.id < b.id ? -1 : 1); }).forEach(function(b) {
-        var i = 0;
-        while (i < ends.length && ends[i] + MP_BAR_CLEAR >= b.lo) i++;
-        ends[i] = b.hi; extLane[b.id] = i;
-      });
-      extCount[g] = ends.length;
-    });
-    for (var g2 = 1; g2 <= maxGen; g2++) {
-      var n2 = laneCount[g2] || 1, e2 = extCount[g2 - 1] || 0;
-      // space needed in the gap above row g2: underneath-routes stack down from the parent row, bars stack up from the child row
-      var need = MP_BAR_TOP + MP_LANE_H * (n2 - 1) + (e2 ? MP_EXT_TOP + MP_EXT_LANE_H * (e2 - 1) + MP_LANE_H : MP_BAR_BELOW_PARENT);
-      rowY[g2] = rowY[g2 - 1] + GY + Math.max(0, need - (GY - H));
-    }
-    var Y = function(id) { return rowY[gen[id]]; };
-    var xs = people.map(function(p) { return X[p.id]; }).filter(function(v) { return v != null; });
-    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
-    var dims = {
-      w: (maxX - minX) + W + 2 * MP_PAD,
-      h: (rowY[maxGen] - 70) + H + 2 * MP_PAD,
-    };
-    // FAM-16e: bars above the top row (children of a family with no known parents) stack upward; make room so they are not clipped
-    var topExtra = Math.max(0, MP_BAR_TOP + MP_LANE_H * ((laneCount[0] || 1) - 1) + MP_LANE_H - MP_PAD);
-    dims.h += topExtra;
-    dims.tx = MP_PAD + W / 2 - minX;
-    dims.ty = MP_PAD - (70 - H / 2) + topExtra;
-    return { people: people, P: P, F: F, X: X, Y: Y, gen: gen, maxGen: maxGen, famsOf: famsOf, kidsOf: kidsOf,
-             partners: partners, families: families, W: W, H: H, dims: dims, external: external, lane: lane, extLane: extLane, rowY: rowY };
+    var kidsOf = {};
+    _mpChildren.filter(function(c) { return F[c.family_id] && P[c.child_id]; }).forEach(function(c) { (kidsOf[c.family_id] = kidsOf[c.family_id] || []).push(c); });
+    var X = {}, Ys = {};
+    Object.keys(j.pos).forEach(function(id) { X[id] = j.pos[id][0]; Ys[id] = j.pos[id][1]; });
+    return { people: people, P: P, F: F, X: X, Y: function(id) { return Ys[id]; }, W: j.W, H: j.H, dims: j.dims,
+             kidsOf: kidsOf, partners: partners, families: families, famLines: j.fams };
   }
 
   // ── Drawing ───────────────────────────────────────────────────────
@@ -28443,95 +28253,15 @@
     return lines.length ? lines : [''];
   }
 
-  // FAM-16c: where one family's horizontal line crosses another family's vertical line, the horizontal line hops over it with a
-  // small bridge (r = 5px) so the two do not read as joined. Joins inside one family are never hopped.
-  var MP_HOP_R = 5;
-  function _mpHopTo(V, y, x1, x2, fid) {
-    var r = MP_HOP_R, dir = x2 >= x1 ? 1 : -1, xs = [];
-    V.forEach(function(v) {
-      if (v.fid === fid || !(v.y1 + 1 < y && y < v.y2 - 1)) return;
-      var d = (v.x - x1) * dir;
-      if (d > r + 1 && d < Math.abs(x2 - x1) - r - 1) xs.push(d);
-    });
-    xs.sort(function(p, q) { return p - q; });
-    var out = '', last = -1e9, sweep = dir > 0 ? 1 : 0;
-    xs.forEach(function(d) {
-      if (d - last < 2 * r + 2) return;   // two crossings too close for two bridges: skip the second
-      out += ' H' + (x1 + dir * (d - r)) + ' a' + r + ' ' + r + ' 0 0 ' + sweep + ' ' + (dir * 2 * r) + ' 0';
-      last = d;
-    });
-    return out + ' H' + x2;
-  }
-
+  // Lines: the server sends every family's lines as ready made shapes (TREE-IP-01). One group per family so FAM-16b can light or fade
+  // a family's lines together. Shapes marked app = 1 (the "parents not known" dot) are skipped on the share page.
   function _mpDrawLinks(gl) {
-    var L = _mpLayout, X = L.X, Y = L.Y, W = L.W, H = L.H, gen = L.gen;
-    var plans = [], V = [];   // pass 1: work out every line; pass 2: draw (so a bridge knows what it crosses)
-    L.families.forEach(function(f) {
-      var ps = L.partners(f), st = f.union_status || 'current', mx = X['fam:' + f.id];
-      if (mx == null) return;
-      var kids = (L.kidsOf[f.id] || []).filter(function(c) { return X[c.child_id] != null; });
-      // 2026-11-01: a family with no known parents whose children sit on the TOP row has no row above it, so rowY[-1] is
-      // undefined. That made the hub height NaN, the whole bar path invalid, and the browser drew no line across the
-      // top-level brothers/sisters. y stays null in that case and the bar code below puts the hub on the bar itself.
-      var y = ps.length ? L.rowY[Math.max.apply(null, ps.map(function(p) { return gen[p]; }))]
-                        : (kids.length ? L.rowY[Math.min.apply(null, kids.map(function(c) { return gen[c.child_id]; })) - 1] : 0);
-      if (y == null || !isFinite(y)) y = null;
-      var cls = st === 'ended' ? 'mpt-end' : st === 'widowed' ? 'mpt-wid' : 'mpt-cur';
-      var pl = { f: f, ps: ps, st: st, mx: mx, kids: kids, y: y, cls: cls, near: null, ext: null, bar: null };
-      if (ps.length === 2 && X[ps[0]] != null && X[ps[1]] != null) {
-        var a = X[ps[0]], b = X[ps[1]];
-        // Straight line whenever the partners share a row and no other card sits between them;
-        // only route around underneath when a card is actually in the way.
-        var near = gen[ps[0]] === gen[ps[1]] && (function() {
-          var lo2 = Math.min(a, b), hi2 = Math.max(a, b), ry = Y(ps[0]);
-          return !L.people.some(function(q) {
-            var qid = (q && q.id != null) ? q.id : q;
-            return qid !== ps[0] && qid !== ps[1] && X[qid] != null && Y(qid) === ry && X[qid] > lo2 && X[qid] < hi2;
-          });
-        })();
-        if (near) {
-          pl.near = { l: Math.min(a, b) + W / 2, r: Math.max(a, b) - W / 2 };
-        } else {
-          var yy = Y(ps[0]) + H / 2 + MP_EXT_TOP + ((L.extLane && L.extLane[f.id]) || 0) * MP_EXT_LANE_H;   // FAM-16a: lane, not a guessed offset
-          pl.ext = { a: a, b: b, y0: Y(ps[0]) + H / 2, yy: yy, y1: Y(ps[1]) + H / 2 };
-          V.push({ x: a, y1: Math.min(pl.ext.y0, yy), y2: Math.max(pl.ext.y0, yy), fid: f.id }, { x: b, y1: Math.min(yy, pl.ext.y1), y2: Math.max(yy, pl.ext.y1), fid: f.id });
-        }
-      }
-      if (kids.length) {
-        var hy = pl.ext ? pl.ext.yy : (y == null ? null : y + (ps.length ? H / 2 : 0));
-        var lane = (L.lane && L.lane[f.id]) || 0;   // FAM-16a: 0 unless this bar overlaps another in the same gap
-        var busY = (Math.min.apply(null, kids.map(function(c) { return Y(c.child_id); })) - H / 2) - MP_BAR_TOP - lane * MP_LANE_H;
-        if (hy == null) hy = busY;   // no row above: the "parents not known" dot sits on the bar, no stem
-        var cxs = kids.map(function(c) { return X[c.child_id]; });
-        pl.bar = { hy: hy, busY: busY, lane: lane, lo: Math.min.apply(null, [mx].concat(cxs)), hi: Math.max.apply(null, [mx].concat(cxs)) };
-        V.push({ x: mx, y1: hy, y2: busY, fid: f.id });
-        kids.forEach(function(c) { V.push({ x: X[c.child_id], y1: busY, y2: Y(c.child_id) - H / 2, fid: f.id }); });
-      }
-      plans.push(pl);
-    });
-    plans.forEach(function(pl) {
-      var f = pl.f, ps = pl.ps, st = pl.st, mx = pl.mx, kids = pl.kids, y = pl.y, cls = pl.cls;
-      var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': f.id }, gl);   // FAM-16b: one group per family so its lines can be lit or faded together
-      if (pl.near) {
-        var l = pl.near.l, r = pl.near.r, hop = _mpHopTo(V, y, l, r, f.id);
-        if (hop === ' H' + r) _mpSvg('line', { x1: l, y1: y, x2: r, y2: y, class: cls }, fg);
-        else _mpSvg('path', { d: 'M' + l + ' ' + y + hop, class: cls, fill: 'none' }, fg);
-        if (st !== 'current') {
-          var t = _mpSvg('text', { x: (l + r) / 2, y: y - 4, 'text-anchor': 'middle', class: 'mpt-mk ' + (st === 'ended' ? 'mpt-mk-end' : 'mpt-mk-wid') }, fg);
-          t.textContent = st === 'ended' ? 'ended' : '\u2020';
-        }
-      } else if (pl.ext) {
-        var e = pl.ext;
-        _mpSvg('path', { d: 'M' + e.a + ' ' + e.y0 + ' V' + e.yy + _mpHopTo(V, e.yy, e.a, e.b, f.id) + ' V' + e.y1, class: 'mpt-lnk mpt-ext' }, fg);
-      }
-      if (!pl.bar) return;
-      var B = pl.bar;
-      _mpSvg('path', { d: 'M' + mx + ' ' + B.hy + ' V' + B.busY + ' M' + B.lo + ' ' + B.busY + _mpHopTo(V, B.busY, B.lo, B.hi, f.id), class: 'mpt-lnk' }, fg);
-      if (!ps.length && !_mpShareCtx) _mpSvg('circle', { cx: mx, cy: B.busY, r: 4, class: 'mpt-unk' }, fg);   // parents not known (app only)
-      kids.forEach(function(c) {
-        var cx = X[c.child_id], k = c.kind || 'biological';
-        _mpSvg('path', { d: 'M' + cx + ' ' + B.busY + ' V' + (Y(c.child_id) - H / 2), class: 'mpt-lnk' + (k !== 'biological' ? ' mpt-kind' : '') }, fg);
-        if (k !== 'biological') { var t2 = _mpSvg('text', { x: cx + 4, y: B.lane ? (Y(c.child_id) - H / 2 - 6) : B.busY + 12, class: 'mpt-mk mpt-mk-kind' }, fg); t2.textContent = k; }
+    ((_mpLayout && _mpLayout.famLines) || []).forEach(function(fam) {
+      var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': fam.fid }, gl);
+      (fam.p || []).forEach(function(e) {
+        if (!e || !MP_LINE_TAGS[e.t] || (e.app && _mpShareCtx)) return;
+        var el = _mpSvg(e.t, e.a || {}, fg);
+        if (e.s != null) el.textContent = e.s;
       });
     });
   }
@@ -28726,19 +28456,30 @@
     _mpApplyHighlight();   // FAM-16b: the nodes were just rebuilt
   }
 
-  function _mpRender() {
+  // Draws the tree from the server's geometry. Returns true when drawn, false when there is nothing to draw, the call failed
+  // (a retry message is shown) or a newer render superseded this one. `after` runs once the tree is on screen (fit, zoom, hints);
+  // the retry button runs the same `after`.
+  async function _mpRender(after) {
     var container = _mpCt();
-    if (!container) return;
-    container.innerHTML = '';
-    _mpLayout = null;
-    if (!_mpPeople.length) return;
-    try { _mpLayout = _mpComputeLayout(); } catch(e) {
+    if (!container) return false;
+    var req = ++_mpGeoReq;
+    if (!_mpPeople.length) { container.innerHTML = ''; _mpLayout = null; return false; }
+    var j;
+    try { j = await _mpFetchGeometry(_mpGraph()); }
+    catch(e) {
+      if (req !== _mpGeoReq) return false;
+      container.innerHTML = ''; _mpLayout = null;
       dbgErr('PEOPLE', 'layout error: ' + e.message + ' | ' + (e.stack || ''));
       notifyDev('error', 'PEOPLE', 'layout: ' + String(e && e.message || e));
       logActivity('people_error', 'layout: ' + String(e && e.message || e), 'error', 'PEOPLE');
-      return;
+      _mpShowLayoutError(container, after);
+      return false;
     }
-    var L = _mpLayout; if (!L) return;
+    if (req !== _mpGeoReq) return false;       // a newer render superseded this one
+    container.innerHTML = '';
+    _mpLayout = null;
+    if (j.empty) return false;
+    var L = _mpLayout = _mpBuildLayout(j);
     var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + L.dims.w + ' ' + L.dims.h, role: 'group',
                               'aria-label': 'Family tree. Tap a person to see everyone from their point of view.' }, container);
     var root = _mpSvg('g', { transform: 'translate(' + L.dims.tx + ',' + L.dims.ty + ')' }, svg);
@@ -28752,6 +28493,28 @@
     });
     _mpBindPan();
     _mpApplyZoomState();
+    if (typeof after === 'function') { try { after(); } catch(e2) { dbgWarn('PEOPLE', 'after render: ' + e2.message); } }
+    return true;
+  }
+
+  // The tree could not be drawn (the server call failed). No local fallback exists by design: show a plain message and a retry button.
+  function _mpShowLayoutError(container, after) {
+    container.innerHTML = '';
+    var box = document.createElement('div');
+    box.setAttribute('role', 'alert');
+    box.setAttribute('data-mp-layout-error', '1');
+    box.style.cssText = 'margin:auto;padding:28px 20px;text-align:center;max-width:340px;color:var(--text)';
+    var m = document.createElement('p');
+    m.style.cssText = 'margin:0 0 14px;font-size:0.95rem;line-height:1.5';
+    m.textContent = 'Could not load the family tree. Please check your connection and try again.';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Try again';
+    btn.style.cssText = 'padding:9px 20px;border-radius:8px;border:1px solid var(--gold);background:var(--bg);color:var(--text);font-family:inherit;font-size:16px;cursor:pointer';
+    btn.addEventListener('click', function() { btn.disabled = true; btn.textContent = 'Loading\u2026'; _mpRender(after); });
+    box.appendChild(m); box.appendChild(btn);
+    container.appendChild(box);
+    container.style.display = 'flex'; container.style.alignItems = 'center'; container.style.justifyContent = 'center';
   }
 
   // ── Zoom, fit, pan ────────────────────────────────────────────────
