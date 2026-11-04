@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.316">
+  <meta name="lifetold-version" content="v7.317">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -4198,6 +4198,11 @@
       <button id="mpViewChipProfile" type="button" style="padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-family:inherit;font-size:0.78rem;color:var(--text);cursor:pointer">Open profile</button>
       <button id="mpViewChipBack" type="button" style="padding:4px 10px;border:none;border-radius:6px;background:var(--gold);font-family:inherit;font-size:0.78rem;font-weight:700;color:#fff;cursor:pointer">Back to me</button>
     </div>
+    <!-- FAM-23: shown when a branch (two or more people) is not joined to the tree yet -->
+    <div id="mpIslandBar" style="display:none;flex:none;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-family:'Lato',sans-serif;font-size:0.82rem;color:var(--text)">
+      <span id="mpIslandText"></span>
+      <button id="mpIslandBtn" type="button" style="padding:4px 10px;border:none;border-radius:6px;background:var(--gold);font-family:inherit;font-size:0.78rem;font-weight:700;color:#fff;cursor:pointer">Connect it now</button>
+    </div>
     <!-- (Build 2a: the in-app tree draws its own SVG here; dTree is no longer used by it) dTree renders into this div; it creates its own SVG canvas with pan/zoom.
          touch-action:pan-x pan-y lets one-finger drag-scroll through, but excludes
          pinch-zoom — see mpZoomIn/mpZoomOut/mpRecentre for the intended zoom UI.
@@ -4314,6 +4319,7 @@
             &#43; Add a relative
           </button>
         </div>
+        <button id="mpProfileLinkBtn" type="button" style="display:none;width:100%;margin-top:8px;padding:9px;background:var(--surface);border:1px solid var(--gold);border-radius:8px;font-family:'Lato',sans-serif;font-size:0.8rem;color:var(--gold-dark);cursor:pointer">&#128279; Link to someone in my tree</button>
         <!-- Write a memory — secondary text link style -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button id="mpProfileWriteMemBtn" style="padding:0;background:none;border:none;font-family:'Lato',sans-serif;font-size:0.78rem;color:var(--gold-dark);cursor:pointer;text-decoration:underline;text-underline-offset:2px">
@@ -5397,7 +5403,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.316';
+  const APP_VERSION = 'v7.317';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -11258,6 +11264,9 @@
   // module state). Every other caller (the normal Save button,
   // memRetryDone) passes nothing, so this is a no-op for them.
   async function memDone(agpConversationIdToCommit) {
+    // 2026-11-03: the param is a conversation uuid string or nothing. If a handler is ever bound
+    // straight to memDone again, the click Event must not be treated as an id.
+    if (typeof agpConversationIdToCommit !== 'string') agpConversationIdToCommit = undefined;
     stopMemMic(); // stop any in-progress recording before saving
     memClearSaveError(); // clear any prior banner before attempting
     let savedId;
@@ -28049,6 +28058,8 @@
     if (treeEl) treeEl.innerHTML = '';
     var chipEl = document.getElementById('mpViewChip');
     if (chipEl) chipEl.style.display = 'none';
+    var islEl = document.getElementById('mpIslandBar');
+    if (islEl) islEl.style.display = 'none';
 
     try {
       var headers = getAuthHeaders();
@@ -28114,6 +28125,7 @@
     _mpLabelWarned = false;
 
     await _mpRender(function() { _mpFitInitial(); });   // TREE-IP-01: the layout comes from TREE_PROXY, so wait for it
+    try { _mpUpdateIslandBar(); } catch (e) { dbgWarn('PEOPLE', 'island bar: ' + (e && e.message)); }
     _mpSetViewer(_mpOwnerId);      // fetches labels, then redraws the cards
     requestAnimationFrame(function() { _mpMaybeShowGuide(); });
   }
@@ -28255,8 +28267,8 @@
 
   // Lines: the server sends every family's lines as ready made shapes (TREE-IP-01). One group per family so FAM-16b can light or fade
   // a family's lines together. Shapes marked app = 1 (the "parents not known" dot) are skipped on the share page.
-  function _mpDrawLinks(gl) {
-    ((_mpLayout && _mpLayout.famLines) || []).forEach(function(fam) {
+  function _mpDrawLinks(gl, famLinesOverride) {
+    (famLinesOverride || (_mpLayout && _mpLayout.famLines) || []).forEach(function(fam) {
       var fg = _mpSvg('g', { class: 'mpt-fam', 'data-fid': fam.fid }, gl);
       (fam.p || []).forEach(function(e) {
         if (!e || !MP_LINE_TAGS[e.t] || (e.app && _mpShareCtx)) return;
@@ -28835,20 +28847,21 @@
 
   // ── FAM-18: photo of a family tree (Premium) ──────────────────────────────────────────────────────────────────────
   // This page shrinks the photo, TREE_PROXY (tree_photo_read) reads it with AI and sends back a DRAFT list of people and links, you
-  // check and correct the draft here, and it then goes through the same preview, matching, import and Undo as a GEDCOM file
-  // (gedcom_preview and gedcom_commit accept { draft } in place of { file_b64 }). No reading or matching rules live in this page.
+  // check the draft drawn as a tree (FAM-22: remove people, say who is already in your tree) and press Import, which uses the same
+  // matching, import and Undo as a GEDCOM file (gedcom_preview and gedcom_commit accept { draft } in place of { file_b64 }). No reading or matching rules live in this page.
   var GED_PHOTO_MAX_BYTES = 25 * 1024 * 1024, GED_PHOTO_EDGE = 2000, GED_PHOTO_READ_MS = 110000;
   var GED_AMBER = '#b26a00';
-  var GED_INPUT = 'width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:inherit;font-size:16px;box-sizing:border-box';
 
   // What gedcom_commit is sent: the file, or the checked draft when the people came from a photo.
   function _gedSrc() { var s = _gedS; return s.source === 'photo' ? { draft: _gedDraftOut() } : { file_b64: s.b64 }; }
-  // Shared by both ways in: store the server's preview and show the review screen.
+  // Import key: one per import attempt, so a retry after a dropped connection is never added twice.
+  function _gedNewKey(prefix) { return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+  // GEDCOM file only (FAM-22 step 4: a photo no longer has a review screen, it imports from the tree screen): store the server's preview and show the review screen.
   function _gedEnterReview(prev, prefix) {
     var s = _gedS;
     s.prev = prev; s.owner = prev.owner || null;
     s.decisions = Object.assign({}, prev.defaults || {}); s.ownerRef = prev.owner_guess || null; s.mode = 'add'; s.typed = '';
-    s.key = prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    s.key = _gedNewKey(prefix);
     s.hasTree = !!(prev.tree && prev.tree.has_tree);
     _gedApplyOwner();
     s.step = 'review'; _gedRender();
@@ -28902,7 +28915,9 @@
       var j = await _gedCall('tree_photo_read', { image_b64: img.b64 }, GED_PHOTO_READ_MS);
       if (_gedS !== s) return;   // the window was closed (or reopened) while we waited
       s.source = 'photo'; s.b64 = null; s.fileName = 'Your photo'; s.photoUrl = img.dataUrl;
-      s.draft = j.draft; s.photoNotes = j.notes || [];
+      s.draft = j.draft; s.photoNotes = j.notes || []; s.undo = null; s.photoMatch = null; s.matchDec = {}; s.matchFail = false; s.stale = false; s.key = _gedNewKey('photo');
+      await _gedPhotoCheck();   // who in the photo may already be in your tree; the tree is drawn with the answer
+      if (_gedS !== s) return;
       s.step = 'photo'; _gedRender();
       try { logActivity('tree_photo_read', (j.draft.people.length) + ' people, ' + (j.draft.families.length) + ' families', 'info', 'PEOPLE'); } catch (e) {}
     } catch (e) {
@@ -28927,51 +28942,229 @@
       families: d.families.map(function(f) { return { partners: f.partners.slice(), children: f.children.slice() }; })
     };
   }
+  // People who are in at least one family are the ones the import keeps; anyone else would be left out (the server does the same).
+  function _gedConnected(d) {
+    var m = {};
+    d.families.forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { m[r] = 1; }); });
+    return m;
+  }
+  // What the Import button needs: the answer to who may already be in your tree, a name for everyone, and two connected people.
   function _gedPhotoReady() {
-    var d = _gedS && _gedS.draft; if (!d) return { ok: false, why: '' };
-    if (d.people.some(function(p) { return !String(p.name || '').trim(); })) return { ok: false, why: 'Every person needs a name. Type one in, or remove the person with the \u2715 button.' };
-    if (d.people.length < 2 || !d.families.length) return { ok: false, why: 'Nobody is left who is connected to someone else. Choose a different photo to start again.' };
+    var s = _gedS, d = s && s.draft; if (!d) return { ok: false, why: '' };
+    var conn = _gedConnected(d), kept = d.people.filter(function(p) { return conn[p.ref]; });
+    if (s.checking) return { ok: false, why: 'Checking the photo against your tree\u2026' };
+    if (s.matchFail || !s.photoMatch) return { ok: false, why: 'Your tree could not be checked, so nothing can be imported yet. Use Check again.' };
+    if (s.drawFailed) return { ok: false, why: 'The tree could not be drawn, so the people cannot be checked. Try again, or choose a different photo.' };
+    if (kept.some(function(p) { return !String(p.name || '').trim(); })) return { ok: false, why: 'Someone has no name. Tap them in the tree and remove them.' };
+    if (kept.length < 2) return { ok: false, why: 'Nobody is left who is connected to someone else. Choose a different photo to start again.' };
     return { ok: true, why: '' };
   }
+  // The same-person choices made on the tree, for the people who will be imported: { decisions, owner } keyed by the page's own refs.
+  function _gedPhotoDecisions() {
+    var s = _gedS, out = { decisions: {}, owner: null }, pm = s && s.photoMatch;
+    if (!pm || !s.draft) return out;
+    var conn = _gedConnected(s.draft);
+    s.draft.people.forEach(function(p) {
+      var id = s.matchDec && s.matchDec[p.ref];
+      if (!id || !conn[p.ref]) return;
+      out.decisions[p.ref] = id;
+      if (pm.owner && id === pm.owner.id) out.owner = p.ref;   // a match to your own entry is who you are
+    });
+    return out;
+  }
+  function _gedPhotoCounts() {
+    var s = _gedS, d = s.draft, conn = _gedConnected(d), dec = _gedPhotoDecisions().decisions;
+    var included = d.people.filter(function(p) { return conn[p.ref]; }).length, merged = Object.keys(dec).length;
+    return { included: included, merged: merged, added: included - merged, left: d.people.length - included };
+  }
+  // Asks the server which people in the photo may already be in your tree. Not fatal: Import waits until it has an answer (Check again).
+  async function _gedPhotoCheck() {
+    var s = _gedS; if (!s || !s.draft || s.checking) return;
+    s.checking = true; s.matchFail = false;
+    if (s.step === 'photo') _gedRender();
+    try {
+      var pm = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
+      if (_gedS !== s) return;
+      s.photoMatch = pm; s.matchDec = Object.assign({}, pm.defaults || {});
+    } catch (e) {
+      if (_gedS !== s) return;
+      s.matchFail = true;
+      try { logActivity('people_error', 'photo match check: ' + (e && e.code || e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
+    }
+    s.checking = false;
+    if (s.step === 'photo') _gedRender();
+  }
+  // A family is worth keeping when it still has two people: a parent and one more, or (parents not known) two or more brothers and sisters.
+  function _gedFamKeep(f) { var n = f.partners.length + f.children.length; return f.partners.length ? n >= 2 : f.children.length >= 2; }
+  function _gedFamsWithout(fams, ref) {
+    return fams.map(function(f) { return { partners: f.partners.filter(function(r) { return r !== ref; }), children: f.children.filter(function(r) { return r !== ref; }) }; }).filter(_gedFamKeep);
+  }
+  // FAM-22 step 2: who would be left with no relatives at all if this person were removed (they would not be imported).
+  function _gedRemoveEffect(ref) {
+    var d = _gedS.draft, was = {}, now = {};
+    d.families.forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { was[r] = 1; }); });
+    _gedFamsWithout(d.families, ref).forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { now[r] = 1; }); });
+    return d.people.filter(function(p) { return p.ref !== ref && was[p.ref] && !now[p.ref]; }).map(function(p) { return String(p.name || '').trim() || '(no name)'; });
+  }
+  // Removes one person from the draft. Their children stay joined to the other parent; with no other parent the brothers and sisters
+  // stay joined to each other. One level of Undo is kept (s.undo).
   function _gedDraftRemove(ref) {
-    var d = _gedS.draft;
-    d.people = d.people.filter(function(p) { return p.ref !== ref; });
-    d.families.forEach(function(f) { f.partners = f.partners.filter(function(r) { return r !== ref; }); f.children = f.children.filter(function(r) { return r !== ref; }); });
-    d.families = d.families.filter(function(f) { return f.partners.length >= 1 && f.partners.length + f.children.length >= 2; });
+    var s = _gedS, d = s && s.draft, i = -1;
+    if (!d) return;
+    d.people.forEach(function(p, n) { if (p.ref === ref) i = n; });
+    if (i < 0) return;
+    s.undo = { person: d.people[i], index: i, families: JSON.parse(JSON.stringify(d.families)) };
+    d.people.splice(i, 1);
+    d.families = _gedFamsWithout(d.families, ref);
     _gedRender();
   }
-  function _gedFillConn(host) {
-    var d = _gedS.draft, nm = {};
-    d.people.forEach(function(p) { nm[p.ref] = String(p.name || '').trim() || '(no name)'; });
-    host.textContent = '';
-    d.families.forEach(function(f) {
-      var kids = f.children.map(function(r) { return nm[r]; });
-      host.appendChild(_gedEl('div', 'font-size:0.84rem;color:var(--text);line-height:1.5;margin:0 0 4px', f.partners.map(function(r) { return nm[r]; }).join(' & ') + (kids.length ? ' \u2192 ' + kids.join(', ') : ' (no children shown)')));
-    });
+  function _gedDraftUndo() {
+    var s = _gedS, u = s && s.undo;
+    if (!u) return;
+    s.draft.people.splice(Math.min(u.index, s.draft.people.length), 0, u.person);
+    s.draft.families = u.families;
+    s.undo = null;
+    _gedRender();
   }
-  function _gedPhotoRow(p, onChange) {
-    var card = _gedEl('div', 'border:1px solid var(--border);border-left:3px solid ' + (p.unsure ? GED_AMBER : 'var(--border)') + ';border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--surface)');
-    var top = _gedEl('div', 'display:flex;gap:8px;align-items:center');
-    var nm = _gedEl('input', GED_INPUT); nm.type = 'text'; nm.value = p.name || ''; nm.maxLength = 120; nm.autocomplete = 'off'; nm.placeholder = 'Name'; nm.setAttribute('aria-label', 'Name');
-    nm.addEventListener('input', function() { p.name = nm.value; onChange(); });
-    var rm = _gedBtn('\u2715', 'flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:1px solid var(--border);background:none;color:var(--text-light);font-size:1rem;cursor:pointer;line-height:1;padding:0', function() { _gedDraftRemove(p.ref); });
-    rm.setAttribute('aria-label', 'Remove ' + (p.name || 'this person')); rm.title = 'Remove this person';
-    top.appendChild(nm); top.appendChild(rm); card.appendChild(top);
-    var dates = _gedEl('div', 'display:flex;gap:8px;margin-top:6px');
-    [['born', 'Born'], ['died', p.deceased && !p.died ? 'Died (no date shown)' : 'Died']].forEach(function(f) {
-      var inp = _gedEl('input', GED_INPUT); inp.type = 'text'; inp.value = p[f[0]] || ''; inp.maxLength = 40; inp.autocomplete = 'off'; inp.placeholder = f[1]; inp.setAttribute('aria-label', f[1] + ' date');
-      inp.addEventListener('input', function() { p[f[0]] = inp.value; onChange(); });
-      dates.appendChild(inp);
-    });
-    card.appendChild(dates);
-    if (p.unsure) card.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin-top:5px', 'Hard to read in the photo, please check this one.'));
-    return card;
+  // FAM-22 step 1: the people read from a photo, drawn as a tree (draw only, nothing is saved).
+  // tree_layout takes any graph of ids and links, so the unsaved draft goes in as it is and the server sends back card positions and
+  // ready made lines. The cards are drawn here (the main tree's card code is tied to saved people); the lines reuse _mpDrawLinks.
+  function _gedDraftGraph(d) {
+    var kids = [];
+    d.families.forEach(function(f, i) { (f.children || []).forEach(function(r) { kids.push({ family_id: 'pf' + i, child_id: String(r), kind: 'biological' }); }); });
+    return {
+      people: d.people.map(function(p) { return String(p.ref); }),
+      families: d.families.map(function(f, i) { return { id: 'pf' + i, partner1_id: f.partners[0] != null ? String(f.partners[0]) : null, partner2_id: f.partners[1] != null ? String(f.partners[1]) : null, union_status: null }; }),
+      children: kids
+    };
+  }
+  // FAM-22 step 3: same-person choices on the tree. matchDec[ref] is the existing person's id when the photo person is the same person,
+  // '' when you said Different person, and absent when nothing was suggested. Each existing person can be matched once.
+  var GED_BLUE = '#2b6cb0';
+  function _gedMatchOf(ref) { var s = _gedS; return (s && s.photoMatch && s.matchDec && s.matchDec[ref]) || ''; }
+  function _gedCands(ref) { var pm = _gedS && _gedS.photoMatch; return (pm && pm.matches && pm.matches[ref]) || []; }
+  function _gedExLabel(id) {
+    var pm = _gedS && _gedS.photoMatch, e = pm && pm.existing && pm.existing[id];
+    if (!e) return 'someone in your tree';
+    return (e.is_owner ? 'you (' + e.name + ')' : e.name) + (e.born_year ? ' (b. ' + e.born_year + ')' : '');
+  }
+  function _gedSetMatch(ref, id) {
+    var s = _gedS; if (!s || !s.photoMatch) return;
+    if (id) Object.keys(s.matchDec).forEach(function(k) { if (k !== ref && s.matchDec[k] === id) s.matchDec[k] = ''; });
+    s.matchDec[ref] = id;
+  }
+  function _gedTreePreview(host, d, onFail) {
+    var box = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;background:var(--bg);overflow:auto;max-height:55vh;padding:6px');
+    var note = _gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'Drawing the tree\u2026');
+    box.appendChild(note); host.appendChild(box);
+    var st = { j: null, nodes: null, wrap: null, k: 1, w: 0, h: 0, sel: null, menu: null };
+    function dropMenu() { if (st.menu && st.menu.parentNode) st.menu.parentNode.removeChild(st.menu); st.menu = null; }
+    function closeMenu() { dropMenu(); if (st.sel != null) { st.sel = null; nodes(); } }
+    // FAM-22 step 2: tapping a card opens a small menu on it. Remove is the only choice for now (step 3 adds Same person).
+    function openMenu(p) {
+      if (!st.j || !st.wrap) return;
+      dropMenu(); st.sel = p.ref; nodes();
+      var j = st.j, pos = j.pos[String(p.ref)]; if (!pos) return;
+      var nm = String(p.name || '').trim() || 'this person';
+      var m = _gedEl('div', 'position:absolute;z-index:5;width:250px;max-width:calc(100% - 4px);box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,0.2)');
+      m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Options for ' + nm);
+      m.appendChild(_gedEl('div', 'font-size:0.88rem;font-weight:700;color:var(--text);margin:0 0 8px;word-break:break-word', nm));
+      var cands = _gedCands(p.ref), cur = _gedMatchOf(p.ref);
+      if (cands.length) {
+        m.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);margin:0 0 4px', 'Already in your tree?'));
+        var choice = function(on) { return 'display:block;width:100%;text-align:left;box-sizing:border-box;padding:8px 10px;min-height:40px;margin:0 0 6px;border-radius:8px;font-family:inherit;font-size:0.84rem;line-height:1.35;color:var(--text);cursor:pointer;border:' + (on ? '2px solid ' + GED_BLUE + ';background:rgba(43,108,176,0.1)' : '1px solid var(--border);background:none'); };
+        cands.slice(0, 3).forEach(function(c) {
+          var b = _gedBtn('', choice(cur === c.id), function(ev) { ev.stopPropagation(); _gedSetMatch(p.ref, c.id); openMenu(p); });
+          b.appendChild(_gedEl('span', 'font-weight:' + (cur === c.id ? '700' : '400'), (cur === c.id ? '\u2713 ' : '') + 'Same as ' + _gedExLabel(c.id)));
+          b.appendChild(_gedEl('div', 'font-size:0.74rem;color:var(--text-light)', (c.conf === 'high' ? 'Strong match: ' : c.conf === 'medium' ? 'Possible match: ' : 'Weak match: ') + c.why));
+          m.appendChild(b);
+        });
+        m.appendChild(_gedBtn((!cur ? '\u2713 ' : '') + 'Different person', choice(!cur), function(ev) { ev.stopPropagation(); _gedSetMatch(p.ref, ''); openMenu(p); }));
+        if (cur && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'This one was hard to read in the photo, so check the name before you match it.'));
+      }
+      var lost = _gedRemoveEffect(p.ref);
+      if (lost.length) m.appendChild(_gedEl('div', 'font-size:0.78rem;color:' + GED_AMBER + ';line-height:1.4;margin:0 0 8px', lost.slice(0, 3).join(', ') + (lost.length > 3 ? ' and ' + (lost.length - 3) + ' more' : '') + ' would be left with no relatives and would not be imported.'));
+      var rm = _gedBtn('Remove from import', GED_BTN_RED + ';width:100%;min-height:44px', function(ev) { ev.stopPropagation(); _gedDraftRemove(p.ref); });
+      var cn = _gedBtn('Close', GED_BTN + ';width:100%;min-height:44px;margin-top:8px', function(ev) { ev.stopPropagation(); closeMenu(); });
+      m.appendChild(rm); m.appendChild(cn);
+      m.addEventListener('keydown', function(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeMenu(); } });
+      st.wrap.appendChild(m); st.menu = m;
+      var cx = (pos[0] - j.W / 2 + j.dims.tx) * st.k, cy = (pos[1] - j.H / 2 + j.dims.ty) * st.k, ch = j.H * st.k;
+      var mw = m.offsetWidth, mh = m.offsetHeight;
+      var top = cy + ch + 6;
+      if (top + mh > st.h && cy - mh - 6 >= 0) top = cy - mh - 6;
+      m.style.left = Math.max(0, Math.min(cx, st.w - mw)) + 'px'; m.style.top = Math.max(0, top) + 'px';
+      try { rm.focus({ preventScroll: true }); } catch (e) {}
+      try { m.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+    }
+    function nodes() {
+      var j = st.j; if (!j || !st.nodes) return;
+      var W = j.W, H = j.H, g = st.nodes;
+      g.textContent = '';
+      d.people.forEach(function(p) {
+        var pos = j.pos[String(p.ref)]; if (!pos) return;
+        var shown = String(p.name || '').trim() || '(no name)';
+        var n = _mpSvg('g', { class: 'mpt-nd' + (p.deceased ? ' mpt-late' : ''), transform: 'translate(' + (pos[0] - W / 2) + ',' + (pos[1] - H / 2) + ')', tabindex: '0', role: 'button', 'aria-label': shown + (_gedMatchOf(p.ref) ? ', already in your tree' : '') + ', tap for options' }, g);
+        n.style.cursor = 'pointer';
+        var card = _mpSvg('rect', { class: 'mpt-card', width: W, height: H, rx: 6 }, n);
+        var mid = _gedMatchOf(p.ref), poss = _gedCands(p.ref).length > 0;
+        if (st.sel === p.ref) card.setAttribute('style', 'stroke:var(--gold);stroke-width:3' + (mid ? ';stroke-dasharray:6 3' : ''));
+        else if (mid) card.setAttribute('style', 'stroke:' + GED_BLUE + ';stroke-width:2.5;stroke-dasharray:6 3');
+        else if (p.unsure) card.setAttribute('style', 'stroke:' + GED_AMBER + ';stroke-width:2');
+        else if (poss) card.setAttribute('style', 'stroke:' + GED_BLUE + ';stroke-width:1.5;stroke-dasharray:2 3');
+        _mpSvg('rect', { class: 'mpt-sex mpt-sex-' + (p.sex === 'M' ? 'male' : p.sex === 'F' ? 'female' : 'n'), width: 4, height: H, rx: 2 }, n);
+        var nm = _mpWrap((p.deceased ? '\u2020 ' : '') + shown, 21, 2);
+        var t = _mpSvg('text', { class: 'mpt-nm', x: 12, y: 15 }, n);
+        nm.forEach(function(l, i) { var sp = _mpSvg('tspan', { x: 12, dy: i ? 12 : 0 }, t); sp.textContent = l; });
+        var born = String(p.born || '').trim();
+        if (born) { var tb = _mpSvg('text', { class: 'mpt-bd', x: 12, y: H - 8 }, n); tb.textContent = 'b. ' + (born.length > 26 ? born.slice(0, 25) + '\u2026' : born); }
+        if (mid) {
+          _mpSvg('rect', { x: W - 70, y: H - 8, width: 66, height: 15, rx: 7, fill: GED_BLUE }, n);
+          var tg = _mpSvg('text', { x: W - 37, y: H + 3, 'text-anchor': 'middle', fill: '#fff', 'font-size': 9, 'font-weight': 700 }, n); tg.textContent = 'In your tree';
+        }
+        _mpSvg('title', {}, n).textContent = shown + (mid ? '\nSame person as ' + _gedExLabel(mid) : '') + (p.unsure ? '\nHard to read in the photo' : '');
+        function toggle(ev) { ev.stopPropagation(); if (st.sel === p.ref) closeMenu(); else openMenu(p); }
+        n.addEventListener('click', toggle);
+        n.addEventListener('keydown', function(ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(ev); } });
+      });
+    }
+    box.addEventListener('click', function(ev) { if (st.menu && st.menu.contains(ev.target)) return; closeMenu(); });
+    (async function() {
+      try {
+        var j = await _mpFetchGeometry(_gedDraftGraph(d));
+        box.textContent = '';
+        if (j.empty) { box.appendChild(_gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'Nothing to draw yet.')); return; }
+        st.j = j;
+        var avail = box.clientWidth || host.clientWidth || 320;
+        var k = Math.max(0.5, Math.min(1, (avail - 14) / j.dims.w));
+        var sw = Math.ceil(j.dims.w * k), sh = Math.ceil(j.dims.h * k);
+        var wrap = _gedEl('div', 'position:relative;margin:0 auto;width:' + sw + 'px;height:' + sh + 'px');
+        box.appendChild(wrap);
+        var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + j.dims.w + ' ' + j.dims.h, width: sw, height: sh, role: 'group', 'aria-label': 'The people read from your photo, drawn as a family tree. Tap a person for options.' }, wrap);
+        svg.style.display = 'block'; svg.style.fontFamily = "'Lato', sans-serif";
+        st.wrap = wrap; st.k = sw / j.dims.w; st.w = sw; st.h = sh;
+        var root = _mpSvg('g', { transform: 'translate(' + j.dims.tx + ',' + j.dims.ty + ')' }, svg);
+        _mpDrawLinks(_mpSvg('g', {}, root), j.fams.map(function(f) { return f; }));
+        st.nodes = _mpSvg('g', {}, root);
+        nodes();
+      } catch (e) {
+        box.textContent = '';
+        box.appendChild(_gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'The tree picture could not be drawn, so the people cannot be checked here.'));
+        if (onFail) onFail();
+        try { logActivity('people_error', 'photo preview draw: ' + String(e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
+      }
+    })();
+    return { update: nodes };
   }
 
+  // FAM-22 step 4: the tree is the whole checking screen. Remove people, say who is already in your tree, press Import. Names and
+  // dates are fixed afterwards in the main tree with the normal edit.
   function _gedRenderPhoto(body) {
     var s = _gedS, d = s.draft;
+    s.drawFailed = false;
     var lab = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin:0 0 6px';
-    body.appendChild(_gedEl('p', GED_NOTE, 'We read ' + _gedPlural(d.people.length, 'person', 'people') + ' and ' + _gedPlural(d.families.length, 'family', 'families') + ' from your photo. Photos are not always easy to read, so please check each person: fix anything that is wrong and remove anyone who should not be there. Nothing is added to your tree yet.'));
+    var hasMatches = !!(s.photoMatch && Object.keys(s.photoMatch.matches || {}).length);
+    body.appendChild(_gedEl('p', GED_NOTE, 'We read ' + _gedPlural(d.people.length, 'person', 'people') + ' and ' + _gedPlural(d.families.length, 'family', 'families') + ' from your photo. Photos are not always easy to read, so look the tree over before you import. Names and dates can be corrected in your tree afterwards. Nothing is added until you press Import.'));
     if (s.photoUrl) {
       var det = _gedEl('details', 'margin:0 0 12px');
       det.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Show my photo'));
@@ -28983,41 +29176,47 @@
       s.photoNotes.forEach(function(t) { nl.appendChild(_gedEl('li', 'margin-bottom:3px', t)); });
       body.appendChild(nl);
     }
-    body.appendChild(_gedEl('div', lab, 'People'));
-    var conn = _gedEl('div', 'margin:0 0 12px'), go, msg;
-    function refresh() { _gedFillConn(conn); var r = _gedPhotoReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; }
-    var list = _gedEl('div', 'margin:0 0 12px');
-    d.people.forEach(function(p) { list.appendChild(_gedPhotoRow(p, refresh)); });
-    body.appendChild(list);
-    body.appendChild(_gedEl('div', lab, 'Who is connected to whom'));
-    body.appendChild(conn);
-    var err = _gedEl('div', 'display:none;color:#b3261e;font-size:0.84rem;margin:8px 0;line-height:1.45'); err.id = 'gedPhotoErr'; body.appendChild(err);
+    body.appendChild(_gedEl('div', lab, 'How it looks as a tree'));
+    body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
+    var go, msg;
+    function refresh() { var r = _gedPhotoReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; }
+    var pvHost = _gedEl('div', 'margin:0 0 12px'); body.appendChild(pvHost);
+    _gedTreePreview(pvHost, d, function() { s.drawFailed = true; refresh(); });
+    if (hasMatches) {
+      var key = _gedEl('div', GED_NOTE + ';margin:0 0 8px');
+      key.appendChild(_gedEl('span', 'color:' + GED_BLUE + ';font-weight:700', 'Dashed blue with an In your tree tag'));
+      key.appendChild(document.createTextNode(': probably already in your tree, so they are joined to that person and nobody is added twice. Dotted blue: possible match, tap to decide. Amber: hard to read.'));
+      body.appendChild(key);
+    }
+    if (s.undo) {
+      var ub = _gedEl('div', 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:0.84rem;color:var(--text);margin:0 0 12px');
+      ub.appendChild(_gedEl('span', null, 'Removed ' + (String(s.undo.person.name || '').trim() || 'one person') + '.'));
+      ub.appendChild(_gedBtn('Put back', GED_BTN, _gedDraftUndo));
+      body.appendChild(ub);
+    }
+    if (s.stale) body.appendChild(_gedEl('p', GED_NOTE + ';color:' + GED_AMBER, 'Your tree changed while you were looking, so the matches were checked again. Please look at them before you import.'));
+    if (s.matchFail && !s.checking) {
+      var cf = _gedEl('div', 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px');
+      cf.appendChild(_gedBtn('Check again', GED_BTN, _gedPhotoCheck));
+      body.appendChild(cf);
+    }
+    if (s.photoMatch) {
+      var c = _gedPhotoCounts();
+      var sum = _gedEl('div', 'background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:0.86rem;color:var(--text);line-height:1.55');
+      sum.appendChild(_gedEl('div', 'font-weight:700;margin-bottom:2px', 'This will add:'));
+      sum.appendChild(_gedEl('div', null, _gedPlural(c.added, 'new person', 'new people') + (c.merged ? ' and match ' + _gedPlural(c.merged, 'person', 'people') + ' to someone already in your tree' : '') + '.'));
+      if (c.left) sum.appendChild(_gedEl('div', 'color:var(--text-light)', _gedPlural(c.left, 'person has', 'people have') + ' no relatives in the photo, so ' + (c.left === 1 ? 'is' : 'are') + ' left out.'));
+      body.appendChild(sum);
+    }
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap;align-items:center');
-    go = _gedBtn('Looks right, continue', GED_BTN_MAIN, _gedPhotoContinue); go.id = 'gedPhotoGo';
+    var n = s.photoMatch ? _gedPhotoCounts().included : 0;
+    go = _gedBtn(n ? 'Import ' + _gedPlural(n, 'person', 'people') : 'Import', GED_BTN_MAIN, _gedCommit); go.id = 'gedPhotoGo';
     bar.appendChild(go);
     bar.appendChild(_gedBtn('Choose a different photo', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
     body.appendChild(bar);
     msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedPhotoMsg'; body.appendChild(msg);
     body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:10px', 'Wrong connections are easy to fix in your tree afterwards, and Undo removes everything this import adds.'));
     refresh();
-  }
-
-  async function _gedPhotoContinue() {
-    var s = _gedS; if (!s || s.busy || !_gedPhotoReady().ok) return;
-    var go = document.getElementById('gedPhotoGo'), er = document.getElementById('gedPhotoErr');
-    if (er) er.style.display = 'none';
-    if (go) { go.disabled = true; go.textContent = 'Checking\u2026'; }
-    try {
-      var prev = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
-      if (_gedS !== s) return;
-      s.fileName = 'Your photo';
-      _gedEnterReview(prev, 'photo');
-    } catch (e) {
-      if (_gedS !== s) return;
-      try { logActivity('people_error', 'tree photo preview: ' + (e && e.code || e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
-      if (go) { go.disabled = false; go.textContent = 'Looks right, continue'; }
-      if (er) { er.textContent = (e && e.message) ? e.message : 'Could not check this against your tree.'; er.style.display = 'block'; }
-    }
   }
 
   // The person who is "me" in the file is always the owner row, and nobody else may claim the owner row.
@@ -29035,7 +29234,9 @@
     return d;
   }
   function _gedCounts() {
-    var s = _gedS, dec = _gedEffective();
+    var s = _gedS;
+    if (s.source === 'photo') return _gedPhotoCounts();
+    var dec = _gedEffective();
     var inc = s.prev.people.filter(function(p) { return !p.skip; });
     var merged = inc.filter(function(p) { return dec[p.ref]; }).length;
     var added = inc.filter(function(p) { return !dec[p.ref]; });
@@ -29116,14 +29317,14 @@
     var go = _gedBtn(s.mode === 'replace' ? 'Delete my tree and import ' + _gedPlural(c.added + c.merged, 'person', 'people') : 'Import ' + _gedPlural(c.added + c.merged, 'person', 'people'), s.mode === 'replace' ? GED_BTN_RED : GED_BTN_MAIN, _gedCommit);
     go.id = 'gedGo'; go.disabled = !_gedReady().ok; go.style.opacity = go.disabled ? '0.5' : '1';
     go.addEventListener('click', function() {}); bar.appendChild(go);
-    if (s.source === 'photo') bar.appendChild(_gedBtn('Back to what was read', GED_BTN, function() { s.step = 'photo'; _gedRender(); }));
-    else bar.appendChild(_gedBtn('Choose a different file', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
+    bar.appendChild(_gedBtn('Choose a different file', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
     body.appendChild(bar);
     var msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedReadyMsg'; msg.textContent = _gedReady().why; body.appendChild(msg);
   }
 
   function _gedReady() {
     var s = _gedS;
+    if (s && s.source === 'photo') return _gedPhotoReady();
     if (!s || !s.prev) return { ok: false, why: '' };
     var c = _gedCounts();
     if (c.included === 0) return { ok: false, why: 'There is nobody in this file with a relative, so there is nothing to import.' };
@@ -29196,7 +29397,7 @@
     body.appendChild(_gedEl('p', GED_NOTE, 'If the connection dropped, it is safe to try again: the same file is never added twice.'));
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
     bar.appendChild(_gedBtn('Try again', GED_BTN_MAIN, _gedCommit));
-    bar.appendChild(_gedBtn('Back to the preview', GED_BTN, function() { s.step = 'review'; _gedRender(); }));
+    bar.appendChild(_gedBtn('Back to the preview', GED_BTN, function() { s.step = s.source === 'photo' ? 'photo' : 'review'; _gedRender(); }));
     bar.appendChild(_gedBtn('Close', GED_BTN, _gedClose));
     body.appendChild(bar);
   }
@@ -29218,8 +29419,15 @@
       }
       body.appendChild(_gedEl('p', GED_NOTE, 'Look through your tree and the Directory to check everyone came in as expected.'));
     }
+    var isl = [];
+    if (!undone) { try { isl = _mpIslands().islands; } catch (e) {} }   // FAM-23: a branch the import left unconnected
+    if (isl.length) {
+      var ip = 0; isl.forEach(function(g) { ip += g.length; });
+      body.appendChild(_gedEl('p', GED_NOTE + ';color:' + GED_AMBER, (isl.length === 1 ? 'This branch is not connected to your tree yet' : isl.length + ' branches are not connected to your tree yet') + ' (' + _gedPlural(ip, 'person', 'people') + '). Connect ' + (isl.length === 1 ? 'it' : 'them') + ' now? You can also do this later from the person.'));
+    }
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
-    bar.appendChild(_gedBtn('Done', GED_BTN_MAIN, _gedClose));
+    if (isl.length) bar.appendChild(_gedBtn('Connect it now', GED_BTN_MAIN, function() { _gedClose(); _mpV2OpenLink(null); }));
+    bar.appendChild(_gedBtn('Done', isl.length ? GED_BTN : GED_BTN_MAIN, _gedClose));
     if (!undone && !r.replaced && !r.already_done) bar.appendChild(_gedBtn('Undo this import', GED_BTN, _gedUndo));
     body.appendChild(bar);
     if (!undone && !r.replaced && !r.already_done) body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:8px', 'Undo removes the people this import added, including anything you add to them from now on.'));
@@ -29236,14 +29444,17 @@
     if (typeof _mpEditBlocked === 'function' && _mpEditBlocked()) return;
     s.busy = true; s.step = 'working'; _gedRender();
     try {
-      s.result = await _gedCall('gedcom_commit', Object.assign(_gedSrc(), { mode: s.mode, decisions: s.mode === 'replace' ? {} : s.decisions, owner_ref: s.ownerRef, import_key: s.key }));
+      var photo = s.source === 'photo', pd = photo ? _gedPhotoDecisions() : null;
+      if (!s.key) s.key = _gedNewKey(photo ? 'photo' : 'gedcom');   // a photo always adds to the tree, with the choices made on the tree screen
+      s.result = await _gedCall('gedcom_commit', Object.assign(_gedSrc(), photo ? { mode: 'add', decisions: pd.decisions, owner_ref: pd.owner, import_key: s.key } : { mode: s.mode, decisions: s.mode === 'replace' ? {} : s.decisions, owner_ref: s.ownerRef, import_key: s.key }));
       s.busy = false; s.step = 'done';
       try { await _mpLoad(); if (typeof _mpActiveTab !== 'undefined' && _mpActiveTab === 'directory') mpDirRender(); } catch (e) { dbgErr('PEOPLE', 'reload after import: ' + (e && e.message)); try { logActivity('people_error', 'reload after import: ' + (e && e.message), 'warn', 'PEOPLE'); } catch (e2) {} }
       try { logActivity('gedcom_import', (s.result.people_added || 0) + ' added, ' + (s.result.people_merged || 0) + ' matched, mode ' + s.mode, 'info', 'PEOPLE'); } catch (e) {}
       _gedRender();
     } catch (e) {
       s.busy = false;
-      if (e && (e.status === 403 || e.code === 'premium_required')) { s.step = 'review'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so nothing was imported.' }); return; }
+      if (e && (e.status === 403 || e.code === 'premium_required')) { s.step = s.source === 'photo' ? 'photo' : 'review'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so nothing was imported.' }); return; }
+      if (e && e.code === 'tree_changed' && s.source === 'photo') { s.step = 'photo'; s.photoMatch = null; s.stale = true; _gedRender(); _gedPhotoCheck(); return; }   // no need to read the photo again: only the matches are checked again
       if (e && e.code === 'tree_changed') { s.step = 'choose'; _gedRender(); _gedChooseError('Your tree changed since the preview, so please choose the file again.'); return; }
       s.step = 'error'; s.error = (e && e.message) ? e.message : String(e);
       try { notifyDev('error', 'PEOPLE', 'GEDCOM import failed: ' + s.error); logActivity('people_error', 'gedcom import: ' + s.error, 'error', 'PEOPLE'); } catch (e2) {}
@@ -29283,6 +29494,7 @@
   // Edit  -> PATCH life_people (name, sex, birth_text/birth_year, is_deceased, bio, hide_from_share).
   // Add   -> RPC life_tree_add_relative (person + link, atomic). Delete / unions / child kind: Build 2b-2.
   var _mpV2Mode = null, _mpV2AnchorId = null;
+  var _mpV2LinkOnly = false, _mpV2Island = null;           // FAM-23: the form is only for linking a person already in your tree to a branch
   var _mpV2Free = false;                                   // opened with no fixed person (Directory / empty tree): the form asks who they relate to
   var _MP_NON_TREE = { friend: 1, colleague: 1, other: 1 };  // groups that are NOT placed in the family tree
 
@@ -29319,12 +29531,15 @@
       '<div id="mpV2RelWrap">' +
         '<label id="mpV2KindLbl" style="' + lb + '">Add a\u2026</label>' +
         '<select id="mpV2Kind" style="' + fs + '"></select>' +
-        '<div id="mpV2AnchorWrap" style="display:none"><label style="' + lb + '">Related to</label><select id="mpV2Anchor" style="' + fs + '"></select></div>' +
+        '<div id="mpV2AnchorWrap" style="display:none"><label id="mpV2AnchorLbl" style="' + lb + '">Related to</label><select id="mpV2Anchor" style="' + fs + '"></select></div>' +
         '<div id="mpV2FamWrap" style="display:none"><label id="mpV2FamLbl" style="' + lb + '"></label><select id="mpV2Fam" style="' + fs + '"></select></div>' +
         '<div id="mpV2CkWrap" style="display:none"><label style="' + lb + '">Relationship to the parent(s)</label><select id="mpV2ChildKind" style="' + fs + '"><option value="biological">Biological</option><option value="adopted">Adopted</option><option value="step">Step</option><option value="foster">Foster</option></select></div>' +
       '</div>' +
-      '<label style="' + lb + '">Name <span style="color:var(--rose)">*</span></label>' +
+      '<label id="mpV2NameLbl" style="' + lb + '">Name <span style="color:var(--rose)">*</span></label>' +
       '<input id="mpV2Name" type="text" autocomplete="off" style="' + fs + '">' +
+      '<div id="mpV2Matches" style="display:none;margin:-8px 0 14px;border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>' +
+      '<div id="mpV2LinkChip" style="display:none;margin:-8px 0 14px;padding:10px 12px;border:1px solid var(--gold);border-radius:8px;background:var(--surface);font-size:0.88rem;color:var(--text)"></div>' +
+      '<div id="mpV2NewFields">' +
       '<label style="' + lb + '">Sex</label>' +
       '<select id="mpV2Sex" style="' + fs + '"><option value="">Not stated</option><option value="female">Female</option><option value="male">Male</option></select>' +
       '<label style="' + lb + '">Born <span style="text-transform:none;letter-spacing:0;font-weight:400">(optional, e.g. 1948 or 12 March 1948)</span></label>' +
@@ -29341,6 +29556,7 @@
       '</div>' +
       '<div id="mpV2HideWrap"><label style="display:flex;gap:8px;align-items:center;font-size:0.9rem;color:var(--text);margin-bottom:4px"><input id="mpV2Hide" type="checkbox"> Hide from shared tree links</label>' +
       '<div style="font-size:0.75rem;color:var(--text-light);margin:0 0 14px 24px">They will not appear at all on tree links you share.</div></div>' +
+      '</div>' +
       '<div id="mpV2Rels" style="display:none;border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px"></div>' +
       '<div id="mpV2Err" style="display:none;color:var(--rose);font-size:0.85rem;margin-bottom:10px"></div>' +
       '<div style="display:flex;gap:10px"><button id="mpV2Cancel" style="flex:1;padding:11px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">Cancel</button>' +
@@ -29351,6 +29567,7 @@
     document.getElementById('mpV2Cancel').addEventListener('click', _mpV2Hide);
     document.getElementById('mpV2Save').addEventListener('click', _mpV2Save);
     document.getElementById('mpV2Kind').addEventListener('change', _mpV2KindChanged);
+    document.getElementById('mpV2Name').addEventListener('input', _mpV2Suggest);
     document.getElementById('mpV2Anchor').addEventListener('change', function() { _mpV2AnchorId = this.value; _mpV2KindChanged(); });
     document.getElementById('mpV2PhotoBtn').addEventListener('click', function() { document.getElementById('mpV2PhotoFile').click(); });
     document.getElementById('mpV2PhotoFile').addEventListener('change', _mpV2PhotoPick);
@@ -29520,16 +29737,218 @@
   }
   function _mpV2Hide() { var m = document.getElementById('mpV2Modal'); if (m) m.style.display = 'none'; }
 
+  // ── FAM-23: branches that are not joined to your tree ──
+  // Everyone who is in at least one family falls into a group of people joined by those families. The group with you in it is your tree
+  // (just you, if you have no relatives yet). Any other group of two or more people is a branch ("island"). A person with no relatives
+  // at all is not a branch. The page already holds the whole tree, so nothing is asked of the server.
+  function _mpComponents() {
+    var parent = {}, anchor = {};
+    function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    function add(x) { if (x && parent[x] == null) parent[x] = x; }
+    function join(a, b) { add(a); add(b); if (a && b) parent[find(a)] = find(b); }
+    _mpFamilies.forEach(function(f) { add(f.partner1_id); add(f.partner2_id); if (f.partner1_id && f.partner2_id) join(f.partner1_id, f.partner2_id); anchor[f.id] = f.partner1_id || f.partner2_id || null; });
+    _mpChildren.forEach(function(c) {
+      if (!Object.prototype.hasOwnProperty.call(anchor, c.family_id)) return;
+      add(c.child_id);
+      if (anchor[c.family_id]) join(c.child_id, anchor[c.family_id]); else anchor[c.family_id] = c.child_id;   // a family with no known parent: the brothers and sisters join each other
+    });
+    var known = {}, groups = {};
+    _mpPeople.forEach(function(p) { known[p.id] = 1; });
+    Object.keys(parent).forEach(function(id) { if (!known[id]) return; var r = find(id); (groups[r] = groups[r] || []).push(id); });
+    return Object.keys(groups).map(function(r) { return groups[r]; });
+  }
+  // { main: { id: 1 } (your tree), islands: [[id, ...], ...] biggest first }
+  function _mpIslands() {
+    var owner = (_mpPeople || []).find(function(p) { return p.is_owner; }), comps = _mpComponents(), main = {}, islands = [];
+    if (!owner) return { main: main, islands: islands };
+    main[owner.id] = 1;
+    comps.forEach(function(g) {
+      if (g.indexOf(owner.id) >= 0) g.forEach(function(id) { main[id] = 1; });
+      else if (g.length >= 2) islands.push(g);
+    });
+    islands.sort(function(a, b) { return b.length - a.length; });
+    return { main: main, islands: islands };
+  }
+  function _mpIslandOf(id) {
+    var found = null;
+    _mpIslands().islands.forEach(function(g) { if (g.indexOf(id) >= 0) found = g; });
+    return found;
+  }
+  // The person to start from when linking a branch: the one born first, else the first one added.
+  function _mpIslandAnchor(ids) {
+    var best = null;
+    _mpPeople.forEach(function(p) {
+      if (ids.indexOf(p.id) < 0) return;
+      if (!best || (p.birth_year && (!best.birth_year || p.birth_year < best.birth_year))) best = p;
+    });
+    return best ? best.id : null;
+  }
+  function _mpIslandNames(ids) {
+    var names = _mpPeople.filter(function(p) { return ids.indexOf(p.id) >= 0; }).map(function(p) { return p.name || 'Unnamed'; });
+    return names.slice(0, 3).join(', ') + (names.length > 3 ? ' and ' + (names.length - 3) + ' more' : '');
+  }
+  function _mpUpdateIslandBar() {
+    var bar = document.getElementById('mpIslandBar'); if (!bar) return;
+    var isl = _mpIslands().islands, n = 0;
+    isl.forEach(function(g) { n += g.length; });
+    if (!isl.length) { bar.style.display = 'none'; return; }
+    document.getElementById('mpIslandText').textContent = isl.length === 1
+      ? 'This branch is not connected to your tree yet: ' + _mpIslandNames(isl[0]) + '.'
+      : isl.length + ' branches (' + n + ' people) are not connected to your tree yet.';
+    bar.style.display = 'flex';
+  }
+  // Opens the add form in link-only mode for the branch this person is in (or the biggest branch).
+  function _mpV2OpenLink(personId) {
+    var isl = _mpIslands().islands, pick = null;
+    if (personId) isl.forEach(function(g) { if (g.indexOf(personId) >= 0) pick = g; });
+    if (!pick) pick = isl[0];
+    if (!pick) { toast('Everyone is already connected to your tree.'); return; }
+    var aid = (personId && pick.indexOf(personId) >= 0) ? personId : _mpIslandAnchor(pick);
+    var person = _mpPeople.find(function(x) { return x.id === aid; }); if (!person) return;
+    _mpV2Open('add', person, 'parent', { island: pick });
+  }
+  function mpV2LinkBranch() {
+    var id = _mpProfilePersonId;
+    if (!id) return;
+    mpCloseProfile();
+    _mpV2OpenLink(id);
+  }
+
   // Show the family picker only when the choice is genuinely ambiguous.
+  // ── FAM-20: link a person who is already in My People (type-ahead on the Name box) ──
+  // The page already holds the whole tree, so it hides people the database would refuse; the
+  // database (life_tree_add_relative with p_existing_id) still checks everything and its plain
+  // messages show in the form if something gets through.
+  var _mpV2LinkId = null;
+  function _mpV2Reach(pid, up) {
+    var seen = {}, stack = [pid];
+    while (stack.length) {
+      var c = stack.pop();
+      if (up) {
+        _mpChildren.forEach(function(ch) {
+          if (ch.child_id !== c) return;
+          var f = _mpFamilies.find(function(x) { return x.id === ch.family_id; });
+          if (f) [f.partner1_id, f.partner2_id].forEach(function(p) { if (p && !seen[p]) { seen[p] = 1; stack.push(p); } });
+        });
+      } else {
+        _mpV2Fams(c).forEach(function(f) {
+          _mpChildren.forEach(function(ch) { if (ch.family_id === f.id && !seen[ch.child_id]) { seen[ch.child_id] = 1; stack.push(ch.child_id); } });
+        });
+      }
+    }
+    return seen;
+  }
+  function _mpV2Role(kind) { return { parent: 'parent', child: 'child', sibling: 'brother or sister', partner: 'partner' }[kind] || 'relative'; }
+  function _mpV2Line(p) {
+    var births = _mpV2BirthFams(p.id).filter(function(f) { return f.partner1_id || f.partner2_id; });
+    if (births.length) {
+      var kid = p.sex === 'male' ? 'son' : p.sex === 'female' ? 'daughter' : 'child';
+      return kid + ' of ' + [births[0].partner1_id, births[0].partner2_id].filter(Boolean).map(_mpV2Name).join(' and ');
+    }
+    var fams = _mpV2Fams(p.id);
+    var withPartner = fams.find(function(f) { return f.partner1_id && f.partner2_id; });
+    if (withPartner) return 'partner of ' + _mpV2Name(withPartner.partner1_id === p.id ? withPartner.partner2_id : withPartner.partner1_id);
+    var kids = 0; fams.forEach(function(f) { kids += _mpChildren.filter(function(c) { return c.family_id === f.id; }).length; });
+    if (kids) return 'parent of ' + kids + (kids === 1 ? ' child' : ' children');
+    return (p.bucket === 'family' || p.is_owner) ? 'in your tree, no relatives yet' : '(not in your tree)';
+  }
+  function _mpV2BtnLabel() {
+    if (_mpV2Mode === 'add' && _mpV2LinkId) {
+      return 'Link ' + _mpV2Name(_mpV2LinkId) + ' as ' + _mpV2Role(document.getElementById('mpV2Kind').value);
+    }
+    if (_mpV2Mode === 'add' && _mpV2LinkOnly) return 'Link';
+    return 'Add';
+  }
+  function _mpV2UpdateBtn() {
+    if (_mpV2Mode !== 'add') return;
+    var b = document.getElementById('mpV2Save'); if (b && !b.disabled) b.textContent = _mpV2BtnLabel();
+  }
+  function _mpV2Suggest() {
+    var box = document.getElementById('mpV2Matches'); if (!box) return;
+    var kind = document.getElementById('mpV2Kind').value, a = _mpV2AnchorId;
+    var q = (document.getElementById('mpV2Name').value || '').trim().toLowerCase();
+    if (_mpV2Mode !== 'add' || _mpV2LinkId || _MP_NON_TREE[kind] || !a || q.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var anc = _mpV2Reach(a, true), desc = _mpV2Reach(a, false);
+    var skip = {}; skip[a] = 1;
+    if (kind === 'child') {
+      Object.keys(anc).forEach(function(k) { skip[k] = 1; });
+      _mpV2Fams(a).forEach(function(f) { skip[f.partner1_id] = 1; skip[f.partner2_id] = 1; });   // already a parent there
+    } else if (kind === 'parent') {
+      Object.keys(desc).forEach(function(k) { skip[k] = 1; });
+      Object.keys(anc).forEach(function(k) { skip[k] = 1; });
+    } else if (kind === 'sibling') {
+      Object.keys(anc).forEach(function(k) { skip[k] = 1; });
+      _mpV2BirthFams(a).forEach(function(f) { _mpChildren.forEach(function(c) { if (c.family_id === f.id) skip[c.child_id] = 1; }); });
+    } else {   // partner
+      Object.keys(desc).forEach(function(k) { skip[k] = 1; });
+      _mpV2Fams(a).forEach(function(f) { if (f.union_status === 'current') { skip[f.partner1_id] = 1; skip[f.partner2_id] = 1; } });
+    }
+    var words = q.split(/\s+/);
+    var inTree = _mpV2LinkOnly ? _mpIslands().main : null;   // FAM-23: only people in your own tree, never someone in the same branch
+    var hits = (_mpPeople || []).filter(function(p) {
+      if (skip[p.id]) return false;
+      if (inTree && !inTree[p.id]) return false;
+      var n = (p.name || '').toLowerCase();
+      return words.every(function(w) { return n.indexOf(w) >= 0; });
+    }).sort(function(x, y) {
+      var px = (x.name || '').toLowerCase().indexOf(q) === 0 ? 0 : 1, py = (y.name || '').toLowerCase().indexOf(q) === 0 ? 0 : 1;
+      return px - py || (x.name || '').localeCompare(y.name || '');
+    }).slice(0, 5);
+    box.innerHTML = '';
+    if (!hits.length) { box.style.display = 'none'; return; }
+    var hd = document.createElement('div');
+    hd.style.cssText = 'padding:6px 12px;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);background:var(--surface)';
+    hd.textContent = _mpV2LinkOnly ? 'In your tree. Tap to link them' : 'Already in My People? Tap to link them';
+    box.appendChild(hd);
+    hits.forEach(function(p) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.style.cssText = 'display:block;width:100%;text-align:left;padding:9px 12px;border:none;border-top:1px solid var(--border);background:var(--bg);cursor:pointer;font-family:Lato,sans-serif;color:var(--text)';
+      var yr = p.birth_year || (p.birth_text || '').trim();
+      var t = document.createElement('div'); t.style.cssText = 'font-size:0.92rem;font-weight:700'; t.textContent = (p.name || 'Unnamed') + (yr ? ' (b. ' + yr + ')' : '') + (p.is_owner ? ' (you)' : '');
+      var l = document.createElement('div'); l.style.cssText = 'font-size:0.8rem;color:var(--text-light)'; l.textContent = _mpV2Line(p);
+      b.appendChild(t); b.appendChild(l);
+      b.addEventListener('click', function() { _mpV2PickLink(p.id); });
+      box.appendChild(b);
+    });
+    box.style.display = '';
+  }
+  function _mpV2PickLink(id) {
+    var p = _mpPeople.find(function(x) { return x.id === id; }); if (!p) return;
+    var $ = function(i) { return document.getElementById(i); };
+    _mpV2LinkId = id;
+    $('mpV2Name').value = p.name || ''; $('mpV2Name').readOnly = true;
+    $('mpV2Matches').style.display = 'none'; $('mpV2Matches').innerHTML = '';
+    $('mpV2NewFields').style.display = 'none';
+    var chip = $('mpV2LinkChip'); chip.innerHTML = '';
+    var tx = document.createElement('div'); tx.textContent = 'Linking ' + (p.name || 'this person') + ' (' + _mpV2Line(p) + '). Their notes, photos and stories stay with them.';
+    var ch = document.createElement('button'); ch.type = 'button'; ch.textContent = _mpV2LinkOnly ? 'Choose a different person' : 'Choose a different person or add a new one';
+    ch.style.cssText = 'margin-top:6px;padding:0;border:none;background:none;color:var(--gold);cursor:pointer;font-size:0.82rem;text-decoration:underline;font-family:Lato,sans-serif';
+    ch.addEventListener('click', _mpV2ClearLink);
+    chip.appendChild(tx); chip.appendChild(ch); chip.style.display = '';
+    $('mpV2Err').style.display = 'none';
+    _mpV2UpdateBtn();
+  }
+  function _mpV2ClearLink() {
+    var $ = function(i) { return document.getElementById(i); };
+    _mpV2LinkId = null;
+    $('mpV2Name').readOnly = false; $('mpV2Name').value = '';
+    $('mpV2NewFields').style.display = _mpV2LinkOnly ? 'none' : '';
+    $('mpV2LinkChip').style.display = 'none';
+    _mpV2UpdateBtn();
+    $('mpV2Name').focus();
+  }
+
   function _mpV2KindChanged() {
     var kind = document.getElementById('mpV2Kind').value;
     var nonTree = !!_MP_NON_TREE[kind];
+    if (nonTree && _mpV2LinkId) _mpV2ClearLink();   // FAM-20: a friend / colleague is never a link
     var aw = document.getElementById('mpV2AnchorWrap'), hw = document.getElementById('mpV2HideWrap');
     if (aw) aw.style.display = (_mpV2Free && !nonTree) ? '' : 'none';
     if (hw && _mpV2Mode === 'add') hw.style.display = nonTree ? 'none' : '';
     if (_mpV2Free && !nonTree) { var asel = document.getElementById('mpV2Anchor'); if (asel && asel.value) _mpV2AnchorId = asel.value; }
     var a = _mpV2AnchorId;
-    if (nonTree) { document.getElementById('mpV2FamWrap').style.display = 'none'; document.getElementById('mpV2CkWrap').style.display = 'none'; return; }
+    if (nonTree) { document.getElementById('mpV2FamWrap').style.display = 'none'; document.getElementById('mpV2CkWrap').style.display = 'none'; _mpV2Suggest(); _mpV2UpdateBtn(); return; }
     var wrap = document.getElementById('mpV2FamWrap'), sel = document.getElementById('mpV2Fam'), lbl = document.getElementById('mpV2FamLbl');
     var opts = [], text = '';
     if (kind === 'child') {
@@ -29552,6 +29971,8 @@
     lbl.style.cssText = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px';
     wrap.style.display = opts.length ? '' : 'none';
     document.getElementById('mpV2CkWrap').style.display = (kind === 'child' || kind === 'sibling') ? '' : 'none';
+    _mpV2Suggest();
+    _mpV2UpdateBtn();
   }
 
   // Kind choices: family kinds need a person to be related to; the "not in the tree" kinds do not.
@@ -29564,12 +29985,19 @@
 
   // mode 'edit': person = who to edit.  mode 'add': person = who the new person is a relative of, or null when opened
   // from the Directory / empty tree (then the form asks "Where do they fit?" and, for family, "Related to").
-  function _mpV2Open(mode, person, defKind) {
+  function _mpV2Open(mode, person, defKind, opts) {
     _mpV2Ensure();
     _mpV2Mode = mode;
+    _mpV2LinkOnly = !!(mode === 'add' && opts && opts.island); _mpV2Island = _mpV2LinkOnly ? opts.island : null;   // FAM-23: reset on every open
     var $ = function(id) { return document.getElementById(id); };
     $('mpV2Err').style.display = 'none';
     $('mpV2Save').disabled = false;
+    _mpV2LinkId = null; $('mpV2Name').readOnly = false;                  // FAM-20: start every time with no person picked
+    $('mpV2NewFields').style.display = _mpV2LinkOnly ? 'none' : ''; $('mpV2LinkChip').style.display = 'none';
+    $('mpV2Matches').style.display = 'none'; $('mpV2Matches').innerHTML = '';
+    $('mpV2AnchorLbl').textContent = _mpV2LinkOnly ? 'Which person in this branch?' : 'Related to';
+    if (_mpV2LinkOnly) { $('mpV2NameLbl').textContent = 'Search your tree'; $('mpV2Name').placeholder = 'Start typing a name'; }
+    else { $('mpV2NameLbl').innerHTML = 'Name <span style="color:var(--rose)">*</span>'; $('mpV2Name').placeholder = ''; }
     if (mode === 'edit') {
       _mpV2Free = false;
       _mpV2AnchorId = person.id;
@@ -29587,9 +30015,13 @@
       _mpV2RenderRels(person.id);
     } else {
       $('mpV2Rels').style.display = 'none';
-      _mpV2Free = !person;
+      _mpV2Free = !person || _mpV2LinkOnly;
       var anchors = (_mpPeople || []).filter(function(q) { return q.bucket === 'family' || q.is_owner; })
         .sort(function(x, y) { return (y.is_owner ? 1 : 0) - (x.is_owner ? 1 : 0); });
+      if (_mpV2LinkOnly) {   // FAM-23: the people of this branch, the one you started from first
+        anchors = (_mpPeople || []).filter(function(q) { return _mpV2Island.indexOf(q.id) >= 0; })
+          .sort(function(x, y) { return (y.id === person.id ? 1 : 0) - (x.id === person.id ? 1 : 0) || (x.name || '').localeCompare(y.name || ''); });
+      }
       if (_mpV2Free) {
         var asel = $('mpV2Anchor'); asel.innerHTML = '';
         anchors.forEach(function(q) { var op = document.createElement('option'); op.value = q.id; op.textContent = (q.name || 'Unnamed') + (q.is_owner ? ' (you)' : ''); asel.appendChild(op); });
@@ -29597,16 +30029,16 @@
       } else {
         _mpV2AnchorId = person.id;
       }
-      $('mpV2Title').textContent = _mpV2Free ? 'Add a person' : 'Add a relative of ' + (person.name || 'this person');
-      $('mpV2KindLbl').textContent = _mpV2Free ? 'Where do they fit?' : 'Add a\u2026';
+      $('mpV2Title').textContent = _mpV2LinkOnly ? 'Connect this branch to your tree' : _mpV2Free ? 'Add a person' : 'Add a relative of ' + (person.name || 'this person');
+      $('mpV2KindLbl').textContent = _mpV2LinkOnly ? 'Someone in your tree who is their\u2026' : _mpV2Free ? 'Where do they fit?' : 'Add a\u2026';
       $('mpV2RelWrap').style.display = '';
       $('mpV2HideWrap').style.display = '';
-      _mpV2FillKinds(!!_mpV2AnchorId, _mpV2Free);
+      _mpV2FillKinds(!!_mpV2AnchorId, _mpV2Free && !_mpV2LinkOnly);
       var kinds = Array.prototype.map.call($('mpV2Kind').options, function(o) { return o.value; });
       $('mpV2Kind').value = kinds.indexOf(defKind) >= 0 ? defKind : (kinds.indexOf('child') >= 0 ? 'child' : kinds[0]);
       $('mpV2Name').value = ''; $('mpV2Sex').value = ''; $('mpV2Birth').value = '';
       $('mpV2Dec').checked = false; $('mpV2Bio').value = ''; $('mpV2Hide').checked = false;
-      $('mpV2Save').textContent = 'Add';
+      $('mpV2Save').textContent = _mpV2LinkOnly ? 'Link' : 'Add';
       _mpV2PhotoReset(null);
       _mpV2KindChanged();
     }
@@ -29632,27 +30064,68 @@
     var h = document.createElement('div');
     h.style.cssText = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px';
     h.textContent = 'Relationships'; box.appendChild(h);
-    function row(text, controls) {
+    function row(text, controls, unlink) {
       var r = document.createElement('div');
       r.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;font-size:0.88rem;color:var(--text)';
       var t = document.createElement('span'); t.style.cssText = 'flex:1 1 100%'; t.textContent = text; r.appendChild(t);
       controls.forEach(function(c) { r.appendChild(c); });
+      if (unlink) {   // FAM-21
+        var ub = document.createElement('button'); ub.type = 'button'; ub.textContent = 'Unlink';
+        ub.style.cssText = 'padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--rose);cursor:pointer;font-size:0.82rem;font-family:Lato,sans-serif;margin-left:auto';
+        ub.addEventListener('click', unlink); r.appendChild(ub);
+      }
       box.appendChild(r);
     }
     fams.forEach(function(f) {
       var other = f.partner1_id === pid ? f.partner2_id : f.partner1_id;
       var st = _mpV2Sel([['current','Current'],['ended','Ended'],['widowed','Widowed']], f.union_status || 'current');
       var kd = _mpV2Sel([['','Not stated'],['married','Married'],['partner','Partners']], f.union_kind || '');
-      row('Partner: ' + _mpV2Name(other), [st, kd]);
+      row('Partner: ' + _mpV2Name(other), [st, kd], function() { _mpV2Unlink(f.id, pid, 'partner', _mpV2Name(other)); });
       _mpV2RelRows.push({ type: 'union', fam: f, st: st, kd: kd });
     });
     births.forEach(function(f) {
       var c = _mpChildren.find(function(x) { return x.family_id === f.id && x.child_id === pid; });
       var ck = _mpV2Sel([['biological','Biological'],['adopted','Adopted'],['step','Step'],['foster','Foster']], (c && c.kind) || 'biological');
-      row('Child of: ' + _mpV2BirthLabel(f), [ck]);
+      row('Child of: ' + _mpV2BirthLabel(f), [ck], function() { _mpV2Unlink(f.id, pid, 'child', _mpV2BirthLabel(f)); });
       _mpV2RelRows.push({ type: 'child', fam: f, child: c, ck: ck });
     });
     box.style.display = '';
+  }
+  // FAM-21: remove one partner link or one child link; both people stay. The database never blocks it
+  // (life_tree_unlink); if the cut leaves a separate branch it returns the names, shown in the message.
+  async function _mpV2Unlink(famId, pid, role, otherLabel) {
+    var me = _mpV2Name(pid), msg;
+    if (role === 'partner') {
+      var kids = _mpChildren.filter(function(c) { return c.family_id === famId; }).length;
+      msg = 'Remove the partner link between ' + me + ' and ' + otherLabel + '? Both stay in your tree.';
+      if (kids) msg += '\n\n' + me + ' will also no longer be a parent of this couple\'s ' + (kids === 1 ? 'child' : kids + ' children') + '; ' + otherLabel + ' stays their parent.';
+    } else {
+      msg = 'Unlink ' + me + ' from their parents (' + otherLabel + ')? Everyone stays in your tree, but they will no longer be linked.';
+    }
+    if (!confirm(msg)) return;
+    var err = document.getElementById('mpV2Err');
+    err.style.display = 'none';
+    try {
+      var res = await _mpTimedFetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_unlink', {
+        method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ p_family_id: famId, p_person_id: pid })
+      });
+      if (!res.ok) {
+        var m = ''; try { var j = await res.json(); m = j.message || ''; } catch(e) {}
+        throw new Error(m || ('Could not unlink (' + res.status + ')'));
+      }
+      var out = null; try { out = await res.json(); } catch(e) {}
+      logActivity('people_unlinked', me + ' / ' + role, 'info', 'PEOPLE');
+      await _mpLoad();
+      if (_mpActiveTab === 'directory') mpDirRender();
+      _mpV2RenderRels(pid);
+      toast('Unlinked.' + (out && out.cut_off ? ' ' + out.cut_off + ' is now a separate branch.' : ''), out && out.cut_off ? 6000 : 3000);
+    } catch(e) {
+      err.textContent = (e && e.name === 'AbortError') ? 'That took too long. Please check your connection and try again.' : (e.message || 'Could not unlink.');
+      err.style.display = 'block';
+      dbgWarn('PEOPLE', 'unlink error: ' + e.message);
+      logActivity('people_unlink_failed', String(e && e.message || e), 'warn', 'PEOPLE');
+    }
   }
   // Retry ONCE on a network-level failure (fetch throws TypeError: dead/stale connection,
   // typically after the tab or phone has been idle). Only used for idempotent calls:
@@ -29743,10 +30216,10 @@
 
   // FAM-08: the two ways a person is created. Used by the add form, the memory review and the story-subject auto-add.
   // Family relative: the database function places them in the tree (and links the family) in one step.
-  async function _mpAddViaRpc(anchorId, kind, person, famId, childKind) {
+  async function _mpAddViaRpc(anchorId, kind, person, famId, childKind, existingId) {
     var res = await _mpTimedFetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_add_relative', {
       method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ anchor_id: anchorId, kind: kind, person: Object.assign({ bucket: 'family' }, person), p_family_id: famId || null, p_child_kind: childKind || 'biological' })
+      body: JSON.stringify({ anchor_id: anchorId, kind: kind, person: existingId ? undefined : Object.assign({ bucket: 'family' }, person), p_family_id: famId || null, p_child_kind: childKind || 'biological', p_existing_id: existingId || null })
     });
     if (!res.ok) {
       var m = ''; try { var j = await res.json(); m = j.message || ''; } catch(e) {}
@@ -29769,6 +30242,7 @@
     var err = $('mpV2Err'), btn = $('mpV2Save');
     var name = ($('mpV2Name').value || '').trim();
     err.style.display = 'none';
+    if (_mpV2Mode === 'add' && _mpV2LinkOnly && !_mpV2LinkId) { err.textContent = 'Search for the person in your tree and tap them to choose them.'; err.style.display = 'block'; return; }   // FAM-23
     if (!name) { err.textContent = 'Please enter a name.'; err.style.display = 'block'; return; }
     var birthText = ($('mpV2Birth').value || '').trim();
     var ym = birthText.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
@@ -29784,7 +30258,7 @@
     btn.disabled = true; btn.textContent = 'Saving\u2026';
     var hdr = Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' });
     // v7.261 (PEOPLE-06): upload the chosen photo first; only the storage PATH is saved (never an expiring link).
-    var photoFile = _mpV2CroppedBlob, photoPath = null;
+    var photoFile = (_mpV2Mode === 'add' && _mpV2LinkId) ? null : _mpV2CroppedBlob, photoPath = null;   // FAM-20: a linked person keeps their own photo
     var _tr = photoFile ? _mpTraceNew(photoFile.size) : null;
     if (_tr) logActivity('people_photo_start', '#' + _tr.id + ' size=' + Math.round(photoFile.size / 1024) + 'KB ' + _netSnap(), 'info', 'PEOPLE');
     if (photoFile) {
@@ -29821,13 +30295,14 @@
         } else {
           if (!_mpV2AnchorId) throw new Error('Please choose who they are related to.');
           var famSel = $('mpV2FamWrap').style.display !== 'none' ? $('mpV2Fam').value : '';
-          await _mpAddViaRpc(_mpV2AnchorId, kind, fields, famSel || null, (kind === 'child' || kind === 'sibling') ? $('mpV2ChildKind').value : 'biological');
+          await _mpAddViaRpc(_mpV2AnchorId, kind, fields, famSel || null, (kind === 'child' || kind === 'sibling') ? $('mpV2ChildKind').value : 'biological', _mpV2LinkId || null);
           photoNeedsAttach = !!photoPath;   // the add function takes no photo, so it is attached below
         }
-        logActivity('people_added', name, 'info', 'PEOPLE');
+        logActivity(_mpV2LinkId ? 'people_linked' : 'people_added', name, 'info', 'PEOPLE');
       }
+      var _wasLink = (_mpV2Mode === 'add' && !!_mpV2LinkId);
       _mpV2Hide();
-      toast(_mpV2Mode === 'edit' ? 'Saved.' : name + ' added.');
+      toast(_mpV2Mode === 'edit' ? 'Saved.' : name + (_wasLink ? ' linked.' : ' added.'));
       await _mpLoad();
       if (_mpActiveTab === 'directory') mpDirRender();
       // New family relative: attach the photo now (find the row that did not exist before).
@@ -29843,7 +30318,7 @@
     } catch(e) {
       if (_tr) { _tr.mark('failed'); _mpTraceLog(_tr, 'FAIL', e); }
       err.textContent = (e && e.name === 'AbortError') ? 'That took too long. Please check your connection and try again.' : (e.message || 'Something went wrong.'); err.style.display = 'block';
-      btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : 'Add';
+      btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : _mpV2BtnLabel();
       dbgWarn('PEOPLE', 'v2 save error: ' + e.message);
       // ERR-LOG-02: the success paths are logged (people_added / people_edited); failures now are too.
       logActivity('people_save_failed', _mpV2Mode + ': ' + String(e && e.message || e), 'warn', 'PEOPLE');
@@ -30361,6 +30836,8 @@
     // FAM-08: only people in the family tree can have relatives added; a friend / colleague / other has no such button.
     var _arb = document.getElementById('mpProfileAddRelBtn');
     if (_arb) _arb.style.display = (person.bucket === 'family' || person.is_owner) ? '' : 'none';
+    var _lkb = document.getElementById('mpProfileLinkBtn');   // FAM-23: only a person in a branch that is not joined to the tree yet
+    if (_lkb) { var _isl = null; try { _isl = _mpIslandOf(personId); } catch (e) {} _lkb.style.display = _isl ? '' : 'none'; }
     document.getElementById('mpProfileName').textContent = person.name || '—';
     document.getElementById('mpProfileMentionName').textContent = person.name || '';
 
@@ -33672,7 +34149,10 @@
     // ── Memories tab — AI review / save buttons ───────────────────────────
     on('memSpellBtn',      'click', spellCheckMemory);
     on('memCancelReviewBtn','click',function() { _aiReviewAborted=true; this.style.display='none'; });
-    on('memSaveNewBtn',    'click', memDone);
+    // 2026-11-03: was bound straight to memDone, so the click Event arrived as agpConversationIdToCommit
+    // (truthy, not a uuid) and every normal Save sent commit_conversation with a bad id (400, noise only).
+    // memRetryDone calls memDone() with no arguments, which is what the comments on memDone describe.
+    on('memSaveNewBtn',    'click', memRetryDone);
     on('memNewBtn',        'click', memNewEntry);
     on('memSaveBtn',       'click', memSave);
     on('memCancelBtn',     'click', memCancel);
@@ -33858,6 +34338,8 @@
     on('mpProfileCloseBtn',    'click', mpCloseProfile);
     on('mpProfileEditBtn',     'click', mpV2Edit);
     on('mpProfileAddRelBtn',   'click', mpV2AddRelative);
+    on('mpProfileLinkBtn',     'click', mpV2LinkBranch);
+    on('mpIslandBtn',          'click', function() { _mpV2OpenLink(null); });
     on('mpProfileWriteMemBtn', 'click', mpProfileWriteMemory);
     on('mpProfileDeleteBtn',   'click', mpV2Delete);
     on('mpProfileWriteMemBtn2','click', mpProfileWriteMemory);
