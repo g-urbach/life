@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.327">
+  <meta name="lifetold-version" content="v7.328">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.327';
+  const APP_VERSION = 'v7.328';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -10779,7 +10779,7 @@
     await new Promise(function(r) { setTimeout(r, 300); });
     if (_obSelectedGoal === OB_GOAL_TREE && MP_EDIT_ENABLED) {   // ONB-TREE-01: they came to build a tree, so start there (the pointer shows by itself on their card)
       try { logActivity('onboard_tree_goal', 'open My People', 'info', 'ONBOARD'); await openMyPeople(); return; }
-      catch (e) { try { logActivity('onboard_error', 'tree goal open: ' + (e && e.message || e), 'warn', 'ONBOARD'); } catch (e2) {} }
+      catch (e) { var w5 = 'tree goal open: ' + (e && e.message || e); try { dbgErr('ONBOARD', w5); notifyDev('error', 'ONBOARD', w5); logActivity('onboard_error', w5, 'error', 'ONBOARD'); } catch (e2) {} }
     }
     showPanel('memories', null, 1);
     var titleEl  = document.getElementById('memTitle');
@@ -28076,7 +28076,7 @@
       window.addEventListener('resize', _mpIntroClose);
       var vp = _mpVp(); if (vp) vp.addEventListener('scroll', _mpIntroClose, { once: true });
       try { logActivity('mp_intro_shown', es && es.style.display === 'flex' ? 'empty' : 'own card', 'info', 'PEOPLE'); } catch (e) {}
-    } catch (e) { try { logActivity('people_error', 'intro pointer: ' + (e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {} }
+    } catch (e) { var w6 = 'intro pointer: ' + (e && e.message || e); try { dbgErr('PEOPLE', w6); notifyDev('error', 'PEOPLE', w6); logActivity('people_error', w6, 'error', 'PEOPLE'); } catch (e2) {} }
   }
 
   function _mpCentreOnPerson(id, smooth) {
@@ -28480,7 +28480,7 @@
   // Asks the server which people in the photo may already be in your tree. Not fatal: Import waits until it has an answer (Check again).
   async function _gedPhotoCheck() {
     var s = _gedS; if (!s || !s.draft || s.checking) return;
-    s.checking = true; s.matchFail = false; s.matchFormat = false;
+    s.checking = true; s.matchFail = false;
     if (s.step === 'photo') _gedRender();
     try {
       var pm = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
@@ -28493,8 +28493,9 @@
       var mk = Object.keys(pm.matches || {}), fit = mk.filter(function(k) { return onScreen[k]; }).length;
       try { logActivity('people_info', 'photo match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' pre-selected, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
       if (mk.length && !fit) {
-        s.photoMatch = null; s.matchDec = {}; s.matchFail = true; s.matchFormat = true;
-        try { logActivity('people_error', 'photo match: answer keys do not fit the page refs (' + mk.slice(0, 3).join(',') + ')', 'warn', 'PEOPLE'); } catch (e4) {}
+        s.photoMatch = null; s.matchDec = {}; s.matchFail = true;
+        var why4 = 'photo match: the answer is keyed by ' + mk.slice(0, 3).join(',') + ', not by the page refs, so TREE_PROXY is older than v1.5.3';
+        try { dbgErr('PEOPLE', why4); notifyDev('error', 'PEOPLE', why4); logActivity('people_error', why4, 'error', 'PEOPLE'); } catch (e4) {}
       }
     } catch (e) {
       if (_gedS !== s) return;
@@ -28762,14 +28763,14 @@
     body.appendChild(_gedEl('div', lab, 'How it looks as a tree'));
     body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
     var go, msg;
-    // paint: the match status line, the "This will add" box and the Import button label, all from the current choices (so a choice on a card shows at once).
-    function paint() {
+    // paintMatchStatus: the match status line, the "This will add" box and the Import button label, all from the current choices (so a choice on a card shows at once).
+    function paintMatchStatus() {
       if (stat) {
         var merged = 0, poss = 0;
         if (s.photoMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else if (_gedCands(p.ref).length) poss++; });
         var parts = [];
         if (s.checking) parts.push('Checking who is already in your tree\u2026');
-        else if (s.matchFail) parts.push(s.matchFormat ? 'The server answered in a form this page cannot use, so duplicates cannot be shown and nothing can be imported yet. The server part (TREE_PROXY) may be out of date.' : 'We could not check who is already in your tree.');
+        else if (s.matchFail) parts.push('We could not check who is already in your tree.');
         else if (s.photoMatch) {
           if (!merged && !poss) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
           if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry (tagged In your tree).');
@@ -28791,10 +28792,10 @@
         }
       }
     }
-    function refresh() { var r = _gedPhotoReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; paint(); }
+    function refresh() { var r = _gedPhotoReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; paintMatchStatus(); }
     var pvHost = _gedEl('div', 'margin:0 0 12px'); body.appendChild(pvHost);
     _gedTreePreview(pvHost, d, function() { s.drawFailed = true; refresh(); }, refresh);
-    var stat = _gedEl('div', GED_NOTE + ';margin:0 0 10px'); body.appendChild(stat);   // what the match check found (filled by paint)
+    var stat = _gedEl('div', GED_NOTE + ';margin:0 0 10px'); body.appendChild(stat);   // what the match check found (filled by paintMatchStatus)
     if (s.undo) {
       var ub = _gedEl('div', 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:0.84rem;color:var(--text);margin:0 0 12px');
       ub.appendChild(_gedEl('span', null, 'Removed ' + (String(s.undo.person.name || '').trim() || 'one person') + '.'));
