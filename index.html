@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.330">
+  <meta name="lifetold-version" content="v7.331">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.330';
+  const APP_VERSION = 'v7.331';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28567,23 +28567,13 @@
   var GED_BLUE = '#2b6cb0';
   function _gedMatchOf(ref) { var s = _gedS; return (s && s.photoMatch && s.matchDec && s.matchDec[ref]) || ''; }
   function _gedCands(ref) { var pm = _gedS && _gedS.photoMatch; return (pm && pm.matches && pm.matches[ref]) || []; }
-  // 2026-11-05 (developer): two levels of "may already be in your tree". LIKELY = spelled the same (capitals, accents, spacing and punctuation are ignored)
-  // and no birth year that disagrees. POSSIBLE = anything else the server suggested. Neither joins anyone: only the person's own Yes does.
-  function _gedNorm(x) { return String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9\u00c0-\uffff ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-  function _gedYearOf(t) { var m = String(t || '').match(/\b(1[0-9]{3}|20[0-9]{2})\b/); return m ? +m[1] : null; }
-  function _gedLevel(name, born, c, exMap) {
-    var e = exMap && exMap[c.id];
-    if (!e || !_gedNorm(name) || _gedNorm(name) !== _gedNorm(e.name)) return 'possible';
-    var y1 = _gedYearOf(born), y2 = e.born_year ? +e.born_year : null;
-    return (y1 && y2 && y1 !== y2) ? 'possible' : 'likely';
-  }
-  function _gedIsMe(id) { var pm = _gedS && _gedS.photoMatch; return !!(pm && ((pm.owner && pm.owner.id === id) || (pm.existing && pm.existing[id] && pm.existing[id].is_owner))); }
-  // The photo person's candidates with their level, likely ones first.
+  // 2026-11-05 (developer): two levels of "may already be in your tree". The RULE LIVES ON THE SERVER (TREE_PROXY v1.5.4 sends level: likely, possible or
+  // weak, with every match); this page only shows it. A missing level (older proxy) is treated as possible. Neither level joins anyone: only the person's Yes does.
+  function _gedLv(m) { return m && (m.level === 'likely' || m.level === 'weak') ? m.level : 'possible'; }
+  function _gedIsMe(id) { var pm = _gedS && _gedS.photoMatch; return !!(pm && ((pm.owner && pm.owner.id === id) || (pm.existing && pm.existing[id] && pm.existing[id].is_owner))); }   // the server marks the owner's entry
+  // The photo person's candidates with their level (set by the server), likely ones first.
   function _gedBest(p) {
-    var pm = _gedS && _gedS.photoMatch;
-    var cl = _gedCands(p.ref).map(function(c) { return { c: c, lv: _gedLevel(p.name, p.born, c, pm && pm.existing) }; });
-    cl.sort(function(a, b) { return (a.lv === 'likely' ? 0 : 1) - (b.lv === 'likely' ? 0 : 1); });
-    return cl;
+    return _gedCands(p.ref).map(function(c) { return { c: c, lv: _gedLv(c) === 'likely' ? 'likely' : 'possible' }; });   // the server sends them likely first
   }
   // What a card is tagged: { label, kind } kind = agreed (you said yes) | likely | possible, or null.
   function _gedTag(p) {
@@ -28909,7 +28899,7 @@
       var gp = s.ownerGuess && !s.ownerRef && !s.ownerNo ? _gedByRef()[s.ownerGuess] : null;
       if (gp && !gp.skip) {
         var lk = _gedEl('div', 'border:2px solid ' + GED_BLUE + ';background:rgba(43,108,176,0.1);border-radius:10px;padding:10px 12px;margin:0 0 10px');
-        lk.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:' + GED_BLUE + ';font-weight:700;margin-bottom:4px', 'Likely you'));
+        lk.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:' + GED_BLUE + ';font-weight:700;margin-bottom:4px', m.owner_level === 'likely' ? 'Likely you' : 'Possible you'));
         lk.appendChild(_gedEl('div', 'font-size:0.9rem;color:var(--text);line-height:1.4', 'Is ' + _gedPersonLine(gp) + ' you? If so, they are joined to your own entry so your branch connects. Nothing is joined unless you say yes.'));
         var lkb = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px');
         lkb.appendChild(_gedBtn('Yes, this is me', GED_BTN_MAIN, function() { s.ownerRef = s.ownerGuess; _gedApplyOwner(); _gedRender(); }));
@@ -28987,9 +28977,8 @@
   function _gedRenderMatches(body) {
     var s = _gedS, ex = s.prev.existing || {}, byRef = _gedByRef(), matches = s.prev.matches || {};
     var refs = Object.keys(matches).filter(function(r) { return byRef[r] && !byRef[r].skip && r !== s.ownerRef; });
-    function lvOf(r, m) { return _gedLevel(byRef[r].name, byRef[r].born, m, ex); }
-    var likely = refs.filter(function(r) { return matches[r].some(function(m) { return lvOf(r, m) === 'likely'; }); });
-    var strong = refs.filter(function(r) { return likely.indexOf(r) < 0 && matches[r].some(function(m) { return m.conf !== 'low'; }); });
+    var likely = refs.filter(function(r) { return matches[r].some(function(m) { return _gedLv(m) === 'likely'; }); });
+    var strong = refs.filter(function(r) { return likely.indexOf(r) < 0 && matches[r].some(function(m) { return _gedLv(m) === 'possible'; }); });
     var weak = refs.filter(function(r) { return likely.indexOf(r) < 0 && strong.indexOf(r) < 0; });
     if (!refs.length) return;
     function byName(a, b) { return byRef[a].name < byRef[b].name ? -1 : byRef[a].name > byRef[b].name ? 1 : 0; }
@@ -28997,9 +28986,8 @@
       var p = byRef[ref], card = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--surface)');
       card.appendChild(_gedEl('div', 'font-size:0.9rem;font-weight:700;color:var(--text)', _gedPersonLine(p)));
       var grp = 'gedm-' + ref.replace(/[^A-Za-z0-9]/g, '');
-      var opts = matches[ref].filter(function(m) { return m.id !== (s.owner && s.owner.id); }).map(function(m) { return { id: m.id, why: m.why, conf: m.conf, lv: lvOf(ref, m) }; });
-      opts.sort(function(a, b) { return (a.lv === 'likely' ? 0 : 1) - (b.lv === 'likely' ? 0 : 1); });
-      opts.push({ id: '', why: '', conf: '' });
+      var opts = matches[ref].filter(function(m) { return m.id !== (s.owner && s.owner.id); }).map(function(m) { return { id: m.id, why: m.why, lv: _gedLv(m) }; });
+      opts.push({ id: '', why: '', lv: '' });
       opts.forEach(function(o) {
         var lab = _gedEl('label', 'display:flex;gap:8px;align-items:flex-start;font-size:0.84rem;color:var(--text);margin-top:5px;cursor:pointer;line-height:1.4');
         var r = _gedEl('input'); r.type = 'radio'; r.name = grp; r.style.marginTop = '2px'; r.checked = (s.decisions[ref] || '') === o.id;
