@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.323">
+  <meta name="lifetold-version" content="v7.324">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5405,7 +5405,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.323';
+  const APP_VERSION = 'v7.324';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -29051,10 +29051,15 @@
     s.matchDec[ref] = id;
   }
   function _gedTreePreview(host, d, onFail) {
-    var box = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;background:var(--bg);overflow:auto;max-height:55vh;padding:6px');
+    // FAM-22 (2026-11-05): the checking tree behaves like the My People tree. A tall window you drag to pan, + / - / fit buttons with the
+    // same steps and limits (MP_ZOOM_*), text drawn larger when zoomed out (MP_BIG_TEXT_BELOW), and an opening view that shows the whole
+    // tree when it is readable and a readable size when it is not (same rule as _mpFitInitial). Zoom state is local to this window, so it
+    // cannot disturb the My People tree behind it.
+    var holder = _gedEl('div', 'position:relative');
+    var box = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;background:var(--bg);overflow:auto;height:min(62vh,620px);min-height:260px');
     var note = _gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'Drawing the tree\u2026');
-    box.appendChild(note); host.appendChild(box);
-    var st = { j: null, nodes: null, wrap: null, k: 1, w: 0, h: 0, sel: null, menu: null };
+    box.appendChild(note); holder.appendChild(box); host.appendChild(holder);
+    var st = { j: null, nodes: null, wrap: null, svg: null, k: 1, w: 0, h: 0, big: false, suppress: false, sel: null, menu: null };
     function dropMenu() { if (st.menu && st.menu.parentNode) st.menu.parentNode.removeChild(st.menu); st.menu = null; }
     function closeCardMenu() { dropMenu(); if (st.sel != null) { st.sel = null; nodes(); } }
     // FAM-22 step 2: tapping a card opens a small menu on it. Remove is the only choice for now (step 3 adds Same person).
@@ -29101,7 +29106,8 @@
       d.people.forEach(function(p) {
         var pos = j.pos[String(p.ref)]; if (!pos) return;
         var shown = String(p.name || '').trim() || '(no name)';
-        var n = _mpSvg('g', { class: 'mpt-nd' + (p.deceased ? ' mpt-late' : ''), transform: 'translate(' + (pos[0] - W / 2) + ',' + (pos[1] - H / 2) + ')', tabindex: '0', role: 'button', 'aria-label': shown + (_gedMatchOf(p.ref) ? ', already in your tree' : '') + ', tap for options' }, g);
+        var big = st.k < MP_BIG_TEXT_BELOW;
+        var n = _mpSvg('g', { class: 'mpt-nd' + (p.deceased ? ' mpt-late' : '') + (big ? ' mpt-big' : ''), transform: 'translate(' + (pos[0] - W / 2) + ',' + (pos[1] - H / 2) + ')', tabindex: '0', role: 'button', 'aria-label': shown + (_gedMatchOf(p.ref) ? ', already in your tree' : '') + ', tap for options' }, g);
         n.style.cursor = 'pointer';
         var card = _mpSvg('rect', { class: 'mpt-card', width: W, height: H, rx: 6 }, n);
         var mid = _gedMatchOf(p.ref), poss = _gedCands(p.ref).length > 0;
@@ -29110,40 +29116,95 @@
         else if (p.unsure) card.setAttribute('style', 'stroke:' + GED_AMBER + ';stroke-width:2');
         else if (poss) card.setAttribute('style', 'stroke:' + GED_BLUE + ';stroke-width:1.5;stroke-dasharray:2 3');
         _mpSvg('rect', { class: 'mpt-sex mpt-sex-' + (p.sex === 'M' ? 'male' : p.sex === 'F' ? 'female' : 'n'), width: 4, height: H, rx: 2 }, n);
-        var nm = _mpWrap((p.deceased ? '\u2020 ' : '') + shown, 21, 2);
-        var t = _mpSvg('text', { class: 'mpt-nm', x: 12, y: 15 }, n);
-        nm.forEach(function(l, i) { var sp = _mpSvg('tspan', { x: 12, dy: i ? 12 : 0 }, t); sp.textContent = l; });
+        var nm = _mpWrap((p.deceased ? '\u2020 ' : '') + shown, big ? 14 : 21, 2);
+        var t = _mpSvg('text', { class: 'mpt-nm', x: 12, y: big ? 17 : 15 }, n);
+        nm.forEach(function(l, i) { var sp = _mpSvg('tspan', { x: 12, dy: i ? (big ? 15 : 12) : 0 }, t); sp.textContent = l; });
         var born = String(p.born || '').trim();
-        if (born) { var tb = _mpSvg('text', { class: 'mpt-bd', x: 12, y: H - 8 }, n); tb.textContent = 'b. ' + (born.length > 26 ? born.slice(0, 25) + '\u2026' : born); }
+        if (born) { var tb = _mpSvg('text', { class: 'mpt-bd', x: 12, y: H - 8 }, n); tb.textContent = 'b. ' + (born.length > (big ? 14 : 26) ? born.slice(0, big ? 13 : 25) + '\u2026' : born); }
         if (mid) {
           _mpSvg('rect', { x: W - 70, y: H - 8, width: 66, height: 15, rx: 7, fill: GED_BLUE }, n);
           var tg = _mpSvg('text', { x: W - 37, y: H + 3, 'text-anchor': 'middle', fill: '#fff', 'font-size': 9, 'font-weight': 700 }, n); tg.textContent = 'In your tree';
         }
         _mpSvg('title', {}, n).textContent = shown + (mid ? '\nSame person as ' + _gedExLabel(mid) : '') + (p.unsure ? '\nHard to read in the photo' : '');
-        function toggle(ev) { ev.stopPropagation(); if (st.sel === p.ref) closeCardMenu(); else openCardMenu(p); }
+        function toggle(ev) { ev.stopPropagation(); if (st.suppress) return; if (st.sel === p.ref) closeCardMenu(); else openCardMenu(p); }
         n.addEventListener('click', toggle);
         n.addEventListener('keydown', function(ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(ev); } });
       });
     }
-    box.addEventListener('click', function(ev) { if (st.menu && st.menu.contains(ev.target)) return; closeCardMenu(); });
+    box.addEventListener('click', function(ev) { if (st.suppress) return; if (st.menu && st.menu.contains(ev.target)) return; closeCardMenu(); });
+    function setK(k) {
+      var j = st.j; if (!j || !st.svg || !st.wrap) return;
+      k = Math.max(MP_ZOOM_MIN, Math.min(MP_ZOOM_MAX, k));
+      st.k = k; st.big = k < MP_BIG_TEXT_BELOW;
+      st.w = Math.ceil(j.dims.w * k); st.h = Math.ceil(j.dims.h * k);
+      st.svg.setAttribute('width', st.w); st.svg.setAttribute('height', st.h);
+      st.wrap.style.width = st.w + 'px'; st.wrap.style.height = st.h + 'px';
+      dropMenu(); st.sel = null;   // the options menu is placed for one zoom level, so a zoom closes it
+      nodes();
+    }
+    function zoomBy(f) {
+      if (!st.j) return;
+      var cx = (box.scrollLeft + box.clientWidth / 2) / st.k, cy = (box.scrollTop + box.clientHeight / 2) / st.k;
+      setK(st.k * f);
+      box.scrollLeft = cx * st.k - box.clientWidth / 2; box.scrollTop = cy * st.k - box.clientHeight / 2;
+    }
+    function fitScale() { return 0.94 * Math.min((box.clientWidth || 320) / st.j.dims.w, (box.clientHeight || 300) / st.j.dims.h); }
+    function fitAll() { if (!st.j) return; setK(Math.min(fitScale(), 1)); box.scrollLeft = 0; box.scrollTop = 0; }
+    function openingView() {
+      var fit = fitScale(), phone = Math.min(window.innerWidth, window.innerHeight) < 600;
+      var floor = 0.85 / Math.pow(MP_ZOOM_STEP, SP_PHONE_ZOOM_STEPS);
+      setK(phone ? (fit >= floor ? Math.min(fit, 1) : floor) : (fit >= 0.6 ? Math.min(fit, 1) : 0.85));
+      box.scrollLeft = Math.max(0, (st.w - box.clientWidth) / 2); box.scrollTop = 0;
+    }
+    function buildControls() {
+      var cb = 'width:36px;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:1.05rem;cursor:pointer;color:var(--text)';
+      var ctl = _gedEl('div', 'display:flex;flex-direction:column;align-items:center;gap:4px;position:absolute;left:10px;bottom:22px;z-index:6;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.18)');
+      [['+', 'Zoom in', function() { zoomBy(MP_ZOOM_STEP); }], ['\u2212', 'Zoom out', function() { zoomBy(1 / MP_ZOOM_STEP); }], ['\u2295', 'Fit tree to screen', fitAll]].forEach(function(b) {
+        var el = _gedBtn(b[0], cb, function(ev) { ev.stopPropagation(); b[2](); });
+        el.title = b[1]; el.setAttribute('aria-label', b[1]); ctl.appendChild(el);
+      });
+      return ctl;
+    }
+    // Desktop: ctrl+wheel (and Safari trackpad pinch) zoom the tree, a mouse drag pans it. Touch uses the window's own scrolling.
+    box.addEventListener('wheel', function(ev) { if (!ev.ctrlKey || !st.j) return; ev.preventDefault(); zoomBy(Math.exp(-ev.deltaY * 0.01)); }, { passive: false });
+    if ('ongesturestart' in window) {
+      var g0 = 1;
+      box.addEventListener('gesturestart', function(ev) { ev.preventDefault(); g0 = st.k; });
+      box.addEventListener('gesturechange', function(ev) { ev.preventDefault(); if (st.j) zoomBy((g0 * ev.scale) / st.k); });
+      box.addEventListener('gestureend', function(ev) { ev.preventDefault(); });
+    }
+    box.addEventListener('pointerdown', function(ev) {
+      if (ev.pointerType !== 'mouse' || ev.button !== 0 || !st.j) return;
+      var d0 = { x: ev.clientX, y: ev.clientY, l: box.scrollLeft, t: box.scrollTop, moved: false };
+      function mv(e) {
+        var dx = e.clientX - d0.x, dy = e.clientY - d0.y;
+        if (!d0.moved && Math.abs(dx) + Math.abs(dy) > 5) { d0.moved = true; box.style.cursor = 'grabbing'; box.style.userSelect = 'none'; }
+        if (d0.moved) { box.scrollLeft = d0.l - dx; box.scrollTop = d0.t - dy; }
+      }
+      function up() {
+        window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
+        box.style.cursor = ''; box.style.userSelect = '';
+        if (d0.moved) { st.suppress = true; setTimeout(function() { st.suppress = false; }, 0); }
+      }
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+    });
     (async function() {
       try {
         var j = await _mpFetchGeometry(_gedDraftGraph(d));
         box.textContent = '';
         if (j.empty) { box.appendChild(_gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'Nothing to draw yet.')); return; }
         st.j = j;
-        var avail = box.clientWidth || host.clientWidth || 320;
-        var k = Math.max(0.5, Math.min(1, (avail - 14) / j.dims.w));
-        var sw = Math.ceil(j.dims.w * k), sh = Math.ceil(j.dims.h * k);
-        var wrap = _gedEl('div', 'position:relative;margin:0 auto;width:' + sw + 'px;height:' + sh + 'px');
+        var wrap = _gedEl('div', 'position:relative;flex:none;margin:auto');   // margin:auto centres a small tree and lets a big one scroll from its edge
+        box.style.display = 'flex';
         box.appendChild(wrap);
-        var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + j.dims.w + ' ' + j.dims.h, width: sw, height: sh, role: 'group', 'aria-label': 'The people read from your photo, drawn as a family tree. Tap a person for options.' }, wrap);
+        var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + j.dims.w + ' ' + j.dims.h, width: j.dims.w, height: j.dims.h, role: 'group', 'aria-label': 'The people read from your photo, drawn as a family tree. Tap a person for options.' }, wrap);
         svg.style.display = 'block'; svg.style.fontFamily = "'Lato', sans-serif";
-        st.wrap = wrap; st.k = sw / j.dims.w; st.w = sw; st.h = sh;
+        st.wrap = wrap; st.svg = svg;
         var root = _mpSvg('g', { transform: 'translate(' + j.dims.tx + ',' + j.dims.ty + ')' }, svg);
         _mpDrawLinks(_mpSvg('g', {}, root), j.fams.map(function(f) { return f; }));
         st.nodes = _mpSvg('g', {}, root);
-        nodes();
+        holder.appendChild(buildControls());
+        openingView();
       } catch (e) {
         box.textContent = '';
         box.appendChild(_gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'The tree picture could not be drawn, so the people cannot be checked here.'));
@@ -29169,9 +29230,12 @@
       det.appendChild(im); body.appendChild(det);
     }
     if ((s.photoNotes || []).length) {
-      var nl = _gedEl('ul', GED_NOTE + ';padding-left:18px');
+      // 2026-11-05: the notes are the least important part of this screen, so they sit closed under the photo, like the photo itself.
+      var ndet = _gedEl('details', 'margin:0 0 12px');
+      ndet.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Notes about reading the photo (' + s.photoNotes.length + ')'));
+      var nl = _gedEl('ul', GED_NOTE + ';padding-left:18px;margin-top:8px');
       s.photoNotes.forEach(function(t) { nl.appendChild(_gedEl('li', 'margin-bottom:3px', t)); });
-      body.appendChild(nl);
+      ndet.appendChild(nl); body.appendChild(ndet);
     }
     body.appendChild(_gedEl('div', lab, 'How it looks as a tree'));
     body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
@@ -29212,7 +29276,7 @@
     bar.appendChild(_gedBtn('Choose a different photo', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
     body.appendChild(bar);
     msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedPhotoMsg'; body.appendChild(msg);
-    body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:10px', 'Wrong connections are easy to fix in your tree afterwards, and Undo removes everything this import adds.'));
+    body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:10px', 'Wrong connections are easy to fix in your tree afterwards.'));
     refresh();
   }
 
@@ -29425,9 +29489,7 @@
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
     if (isl.length) bar.appendChild(_gedBtn('Connect it now', GED_BTN_MAIN, function() { _gedClose(); _mpV2OpenLink(null); }));
     bar.appendChild(_gedBtn('Done', isl.length ? GED_BTN : GED_BTN_MAIN, _gedClose));
-    if (!undone && !r.replaced && !r.already_done) bar.appendChild(_gedBtn('Undo this import', GED_BTN, _gedUndo));
     body.appendChild(bar);
-    if (!undone && !r.replaced && !r.already_done) body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:8px', 'Undo removes the people this import added, including anything you add to them from now on.'));
   }
 
   async function _gedCommit() {
@@ -29457,24 +29519,6 @@
       try { notifyDev('error', 'PEOPLE', 'GEDCOM import failed: ' + s.error); logActivity('people_error', 'gedcom import: ' + s.error, 'error', 'PEOPLE'); } catch (e2) {}
       _gedRender();
     }
-  }
-
-  async function _gedUndo() {
-    var s = _gedS; if (!s || s.busy || !s.result) return;
-    if (!confirm('Undo this import? The people and relationships it added will be removed, and anything it filled in will be put back.')) return;
-    s.busy = true; s.step = 'working'; _gedRender();
-    try {
-      var res = await _mpTimedFetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_undo_import', {
-        method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }), body: JSON.stringify({ p_import_key: s.key })
-      });
-      if (!res.ok) { var m = ''; try { m = (await res.json()).message || ''; } catch (e) {} throw new Error(m || ('Could not undo (' + res.status + ')')); }
-      s.undone = true; s.busy = false; s.step = 'done';
-      try { await _mpLoad(); if (typeof _mpActiveTab !== 'undefined' && _mpActiveTab === 'directory') mpDirRender(); } catch (e) {}
-      try { logActivity('gedcom_import_undone', s.key, 'info', 'PEOPLE'); } catch (e) {}
-    } catch (e) {
-      s.busy = false; s.step = 'done'; try { toast('Could not undo: ' + (e && e.message ? e.message : e)); } catch (e2) {}
-    }
-    _gedRender();
   }
 
   // ── FAM-24 step 4 — Version history (read only). Reads the list columns only, never payload. 50 at a time, newest first. ──
