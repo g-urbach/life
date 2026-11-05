@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.324">
+  <meta name="lifetold-version" content="v7.325">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5405,7 +5405,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.324';
+  const APP_VERSION = 'v7.325';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5416,7 +5416,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13591},{"maxLine":2089,"offset":13592},{"maxLine":2883,"offset":13593},{"maxLine":2938,"offset":13596},{"maxLine":3361,"offset":13597},{"maxLine":3541,"offset":13598},{"maxLine":5413,"offset":13599},{"maxLine":5947,"offset":13607},{"maxLine":6437,"offset":13617},{"maxLine":6449,"offset":13619},{"maxLine":7317,"offset":13620},{"maxLine":7599,"offset":13621},{"maxLine":8141,"offset":13622},{"maxLine":8557,"offset":13623},{"maxLine":8972,"offset":13624},{"maxLine":9796,"offset":13625},{"maxLine":11365,"offset":13627},{"maxLine":12625,"offset":13628},{"maxLine":12808,"offset":13629},{"maxLine":13535,"offset":13630},{"maxLine":13553,"offset":13632},{"maxLine":15412,"offset":13634},{"maxLine":16556,"offset":13635},{"maxLine":16558,"offset":13636},{"maxLine":17299,"offset":13637},{"maxLine":18196,"offset":13638},{"maxLine":20350,"offset":13641},{"maxLine":20672,"offset":13642},{"maxLine":20938,"offset":13643},{"maxLine":21547,"offset":13644},{"maxLine":21740,"offset":13645},{"maxLine":21943,"offset":13646},{"maxLine":22355,"offset":13647},{"maxLine":22605,"offset":13648},{"maxLine":23361,"offset":13649},{"maxLine":23403,"offset":13650},{"maxLine":23557,"offset":13651},{"maxLine":25439,"offset":13652},{"maxLine":25903,"offset":13653},{"maxLine":28735,"offset":14102},{"maxLine":30201,"offset":14103},{"maxLine":31315,"offset":14104},{"maxLine":33469,"offset":14106},{"maxLine":null,"offset":14107}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13592},{"maxLine":2089,"offset":13593},{"maxLine":2883,"offset":13594},{"maxLine":2938,"offset":13597},{"maxLine":3361,"offset":13598},{"maxLine":3541,"offset":13599},{"maxLine":5413,"offset":13600},{"maxLine":5947,"offset":13608},{"maxLine":6437,"offset":13618},{"maxLine":6449,"offset":13620},{"maxLine":7317,"offset":13621},{"maxLine":7599,"offset":13622},{"maxLine":8141,"offset":13623},{"maxLine":8557,"offset":13624},{"maxLine":8972,"offset":13625},{"maxLine":9796,"offset":13626},{"maxLine":11365,"offset":13628},{"maxLine":12625,"offset":13629},{"maxLine":12808,"offset":13630},{"maxLine":13535,"offset":13631},{"maxLine":13553,"offset":13633},{"maxLine":15412,"offset":13635},{"maxLine":16556,"offset":13636},{"maxLine":16558,"offset":13637},{"maxLine":17299,"offset":13638},{"maxLine":18196,"offset":13639},{"maxLine":20350,"offset":13642},{"maxLine":20672,"offset":13643},{"maxLine":20938,"offset":13644},{"maxLine":21547,"offset":13645},{"maxLine":21740,"offset":13646},{"maxLine":21943,"offset":13647},{"maxLine":22355,"offset":13648},{"maxLine":22605,"offset":13649},{"maxLine":23361,"offset":13650},{"maxLine":23403,"offset":13651},{"maxLine":23557,"offset":13652},{"maxLine":25439,"offset":13653},{"maxLine":25898,"offset":13654},{"maxLine":28730,"offset":14103},{"maxLine":30240,"offset":14104},{"maxLine":31354,"offset":14105},{"maxLine":33508,"offset":14107},{"maxLine":null,"offset":14108}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -5546,10 +5546,6 @@
   const VOICE_ARCHIVE_URL  = SUPABASE_URL + '/storage/v1/object/life-voice-archive';
   const VOICE_ARCHIVE_SIGN = SUPABASE_URL + '/storage/v1/object/sign/life-voice-archive';
   const SHARE_PROXY_URL    = SUPABASE_URL + '/functions/v1/SHARE_PROXY';
-  // SHARE-LOG-02: every call to SHARE_PROXY goes through shareFetch, so a failure always leaves a usable trail:
-  // which action, how long it took, the HTTP status or the browser-level error, and whether the browser thought it
-  // was online or in the background. Never logs the request body, the share token or the link (privacy).
-  // Behaviour is otherwise identical to fetch(): same Response returned, same errors thrown.
   var _SHARE_CREATE_ACTIONS = { create_share: 1, create_story_share: 1, create_tree_share: 1 };
   // SHARE-RETRY-01: one quiet retry when a request never got a reply from the server (browser-level "Failed to fetch":
   // a dropped Wi-Fi, a network switch, a laptop waking up). Only for actions where a second attempt is harmless:
@@ -5573,14 +5569,12 @@
       else setTimeout(go, 1500);
     });
   }
-  // One attempt. Logs HTTP failures and (on the first attempt) the full browser-level failure, then rethrows.
   async function _shareFetchOnce(url, init, action, isRetry) {
     var t0 = _shareNow();
     try {
       var res = await fetch(url, init);
       var took = Math.round(_shareNow() - t0);
       if (!res.ok) {
-        // 404/410 on a visit just mean "link not found / expired" and are logged separately as share_load_failed.
         var lvl = res.status >= 500 ? 'error' : (res.status === 404 || res.status === 410) ? 'info' : 'warn';
         logActivity('share_call_failed', JSON.stringify({ action: action, status: res.status, ms: took, retry: isRetry }), lvl, 'SHARE');
       } else if (_SHARE_CREATE_ACTIONS[action]) {
@@ -5599,12 +5593,6 @@
       throw e;
     }
   }
-  // Behaves like fetch(): same Response, same errors. Never logs the request body, the share token or the link.
-  // SHARE-AUTH-01 (2026-10-20): "Unauthorised" when creating a tree link, three times in a row, on a laptop that was
-  // otherwise working. getAuthHeaders() sends the sessionToken variable, which can be stale (the login token only lives
-  // about an hour and the variable is only refreshed by auth events). Signed-in share calls now (1) fetch the live
-  // session token just before sending, and (2) on a 401 refresh the session and retry once. Visitor calls (no login) are
-  // untouched. Every step is time-limited so a stuck auth call can never hang a share.
   function _shareAuthTimeout(p, ms) {
     return Promise.race([p, new Promise(function(res) { setTimeout(function() { res(null); }, ms); })]);
   }
@@ -5656,7 +5644,6 @@
       }
     }
   }
-  // SHARE-LOG-02: why did the copy fail? Chrome refuses clipboard writes unless the page has focus; record that.
   function _clipFallbackDetail(err) {
     var m = (err && err.message) || String(err);
     return JSON.stringify({ err: m, focused: document.hasFocus && document.hasFocus(), visible: document.visibilityState, secure: window.isSecureContext });
@@ -5779,17 +5766,6 @@
   // (bookmarks, onboarding deep-links) don't throw a ReferenceError.
   function toggleFunny() { /* no-op — select Comedy format via the story configurator */ }
 
-  // BUGFIX [DBG-TRAIL], 22 Sep 2026: dbg() (info) was console-only — during
-  // the DBG-PLAY iPhone stall investigation, the exact storagePath/resolvedUrl
-  // being loaded was logged via dbg() and lost forever, leaving only the
-  // final "STALLED" error with no context about which file it was.
-  // Blanket-persisting every dbg() call was considered and rejected: 169
-  // call sites, many in hot paths (per-keystroke/per-render), would flood
-  // life_activity_log with routine noise at real row-count/cost for no
-  // benefit on the happy path. Instead: keep a small in-memory ring buffer
-  // of recent dbg() breadcrumbs, and attach it ONLY when dbgErr/dbgWarn
-  // actually persists something — full context exactly when it's needed,
-  // zero added cost otherwise.
   var _DBG_TRAIL_MAX = 20;
   var _dbgTrail = [];
   function _dbgTrailPush(area, args) {
@@ -5802,12 +5778,6 @@
   function _dbgTrailSnapshot() {
     return _dbgTrail.join('\n');
   }
-  // LOG-REDACT-01 (2026-10-19): signed storage URLs carry a one-hour bearer
-  // token in their query string (?token=eyJ...). DBG-PLAY logged the full URL,
-  // and every dbg() line is kept in the breadcrumb trail that dbgErr/dbgWarn
-  // attach to life_activity_log rows (and dbgErr sends to Telegram), so the
-  // token could be stored or forwarded. Redact it at every sink: console,
-  // trail, activity log and Telegram. Anything shaped like a JWT is masked too.
   function _redactTokens(v) {
     if (typeof v !== 'string') return v;
     return v.replace(/([?&]token=)[^&"'\s]+/gi, '$1[redacted]')
@@ -5820,23 +5790,11 @@
       const msg = _redactTokens(args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
       const trail = _dbgTrailSnapshot();
       const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
-      notifyDev('error', area, msg);                       // Telegram — keep concise, no trail (avoid spam/length limits)
+      notifyDev('error', area, msg);
       logActivity('app_error', msgWithTrail, 'error', area); // Supabase — source of truth, now with breadcrumb trail
       _dbgTrailPush(area, ['ERROR', ...args]);
     } catch(e) {}
   }
-  // dbgWarn: always logs to console AND Supabase (logActivity). For curated serious
-  // areas, also fires Telegram so important warnings surface in real-time.
-  // Non-fatal noise (PEECHO cleanup, caption failures etc.) excluded from Telegram only —
-  // they still go to Supabase for post-hoc analysis.
-  // Areas that fire Telegram on dbgWarn. Rule: include if a warning means a feature
-  // is broken or data may be lost and you'd want to know NOW to fix it. Exclude if it's
-  // expected noise (device offline, routine cleanup, user-facing fallback already shown).
-  // EXCLUDED intentionally: NET (offline event), PWA (SW reg fails in Safari/dev),
-  // OFFLINE-PRUNED (routine queue maintenance), UX-M06 (UI state flag only),
-  // AGP-TAGS/AGP_MIC (non-critical fallbacks), NUDGE (cosmetic), STORY/PHOTO/VIDEO/AUDIO
-  // (fallbacks shown to user), AI-REVIEW (non-blocking), MEM (auto-title, non-blocking),
-  // FEAT (analytics tracking, non-blocking), NOTIFY (avoid recursive Telegram loop).
   var _WARN_NOTIFY_AREAS = [
     'AUTH','DB','INIT',                       // core infrastructure
     'AI','CONVO',                             // AI proxy / conversation
@@ -5862,20 +5820,16 @@
       const msgWithTrail = trail ? (msg + '\n--- recent trail ---\n' + trail) : msg;
       logActivity('app_warning', msgWithTrail, 'warn', area); // Supabase — all warnings, now with breadcrumb trail
       if (_WARN_NOTIFY_AREAS.includes(area)) {
-        notifyDev('warn', area, msg);  // Telegram — curated areas only, concise
+        notifyDev('warn', area, msg);
       }
       _dbgTrailPush(area, ['WARN', ...args]);
     } catch(e) {}
   }
 
-  // ── Dev error notifications ───────────────────────────────────────
-  // Posts to NOTIFY_PROXY edge function which forwards to Telegram (and optionally
-  // Resend email). Fire-and-forget — never throws, never blocks the user.
-  // Deduplication: same area+message is suppressed for 60s to avoid spam.
   var _notifyCache = {};
   function notifyDev(level, area, detail, srcLine) {
     if (!NOTIFY_PROXY_URL) return;
-    detail = _redactTokens(detail); // LOG-REDACT-01
+    detail = _redactTokens(detail);
     var key   = area + '|' + detail.substring(0, 80);
     var now   = Date.now();
     var dedupMs = (level === 'error') ? 10000 : 60000; // errors dedup 10s, others 60s
@@ -5896,16 +5850,6 @@
     // Line number offset: browser reports stripped-file line; add offset to get dev-file line
     var rawLine  = srcLine ? Number(srcLine) : null;
     var devLine  = rawLine ? rawLine + _resolveLogLineOffset(rawLine) : null;
-    // OBS-03: neutralise URL-shaped substrings before this reaches Telegram.
-    // Stack traces routinely contain "https://lifetold.app/:12345:67" style
-    // frames — Telegram's own link-unfurler will try to fetch these as real
-    // URLs, generating a bogus inbound request back at the app (confirmed via
-    // Cloudflare logs, 2026-07-23, source IP in Telegram's own infra range).
-    // A zero-width space right after "://" breaks the contiguous URL pattern
-    // for Telegram's (and most other) auto-linkers while staying human-
-    // readable — the message still reads correctly in the Telegram app.
-    // logActivity()'s copy of the same detail (DB-bound) is NOT sanitised —
-    // this only affects the Telegram-bound payload built below.
     var telegramSafeDetail = String(detail).replace(/(https?:\/\/)/gi, '$1\u200b');
     // VIP-01: flag premium users so real issues for paying users don't get lost
     // in the noise — isPremium() is a function declaration (hoisted), safe to
@@ -5926,7 +5870,6 @@
       entry_count:  entryCount,
       src_line:     rawLine,
       src_line_dev: devLine
-      // PRV-12: navigator.userAgent removed from Telegram payload (device fingerprinting risk)
     };
     fetch(NOTIFY_PROXY_URL, {
       method: 'POST',
@@ -5935,16 +5878,6 @@
     }).catch(function(){}); // truly fire-and-forget
   }
 
-  // ── Activity log ─────────────────────────────────────────────────
-  // Writes ALL events (errors, warnings, usage) to life_activity_log in Supabase.
-  // Supabase is the source of truth — Telegram (notifyDev) is a real-time subset.
-  // Fire-and-forget — never throws, never blocks the user.
-  // logActivity(action, detail, level, area, srcLine)
-  //   action  — snake_case event name (required)
-  //   detail  — human-readable description (optional)
-  //   level   — 'info' | 'warn' | 'error' (default 'info')
-  //   area    — uppercase area tag e.g. 'AUTH','AI','RENDER' (default 'APP')
-  //   srcLine — raw browser line number (optional, from window.onerror col 4)
   // Parses navigator.userAgent into a short "OS/Browser" tag, e.g. "iOS 17/Safari",
   // "Android/Chrome", "Windows/Chrome". Best-effort — UA strings are messy and this
   // doesn't need to be perfect, just far more useful than a bare "mobile" bucket.
@@ -5982,12 +5915,6 @@
     return os + '/' + browser;
   }
 
-  // LOG-OUTBOX-01 (2026-10-19): when the network is down or stalled, the log insert fails
-  // too, so the very failures we most want to see vanished (a photo save that hung and
-  // ended in "Failed to fetch" left no row at all). A failed insert is now kept on this
-  // device (localStorage, newest 60) and sent when the connection returns, on the next
-  // successful log write, and shortly after the app starts. Late rows keep their
-  // original timestamp and gain " [delivered late]" in the detail.
   var _logFlushing = false;
   function _logOutboxPush(payload) {
     try {
@@ -6033,12 +5960,10 @@
   window.addEventListener('online', _logOutboxFlush);
   setTimeout(_logOutboxFlush, 6000);
 
-  // One-line network picture for log rows (Chrome-only fields show ? elsewhere).
   function _netSnap() {
     var c = navigator.connection || {};
     return 'online=' + navigator.onLine + ' net=' + (c.effectiveType || '?') + '/rtt' + (c.rtt != null ? c.rtt : '?') + '/dl' + (c.downlink != null ? c.downlink : '?') + ' vis=' + document.visibilityState;
   }
-  // The browser's own record of the most recent request whose URL contains `part` (URL itself is not logged).
   function _lastReq(part) {
     var es = (performance.getEntriesByType ? performance.getEntriesByType('resource') : []);
     for (var i = es.length - 1; i >= 0; i--) {
@@ -6067,7 +5992,7 @@
       platform:     platform,
       platform_detail: _parseUaDetail(ua), // e.g. "iOS 17/Safari" — fills the gap where "mobile" alone wasn't enough
       user_agent:   ua,
-      tier:         isPremium() ? 'premium' : 'free', // VIP-01: mirrors notifyDev's Telegram tag, now on every row too
+      tier:         isPremium() ? 'premium' : 'free',
       version:      (typeof APP_VERSION === 'string') ? APP_VERSION : null,
       ts:           new Date().toISOString(),
       src_line:     rawLine,
@@ -6079,14 +6004,7 @@
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + token, 'Prefer': 'return=minimal' },
         body:    JSON.stringify(payload)
       }).then(function(res) {
-        if (res.ok) _logOutboxFlush();   // LOG-OUTBOX-01: connection is working, send anything held back
-        // BUG FIX v6.72: fetch only rejects on network failure, never on HTTP error
-        // status — a 400/403/500 response was previously swallowed completely
-        // (invisible to console, Supabase, and Telegram alike). Surface it now.
-        // Root cause of the v6.71 silent-400 bug: payload included platform_detail,
-        // a column never migrated onto life_activity_log. This check doesn't fix
-        // that (see SQL migration, run separately) — it just makes sure the NEXT
-        // schema drift doesn't go silent again.
+        if (res.ok) _logOutboxFlush();
         if (!res.ok) {
           res.text().then(function(t) {
             console.error('[ACTIVITY] Insert rejected ' + res.status + ':', t);
@@ -6094,12 +6012,7 @@
         }
       }).catch(function(err) {
         console.warn('[ACTIVITY] Insert failed:', err.message);
-        _logOutboxPush(payload);   // LOG-OUTBOX-01: keep the row, send it when the network is back
-        // FIX (v7.186): logActivity() can't call itself to report its own DB
-        // failure, so this went completely silent — no console (in prod),
-        // no DB row, no Telegram ping. notifyDev() is independent of the DB
-        // path, so it's the only way a broken activity-log pipeline surfaces
-        // at all. Dedup'd like every other notifyDev call (10s for errors).
+        _logOutboxPush(payload);
         notifyDev('error', 'ACTIVITY', 'logActivity insert failed: ' + err.message);
       });
     }
@@ -6115,17 +6028,10 @@
       _doInsert(token);
     }).catch(function(err) {
       console.warn('[ACTIVITY] getSession failed:', err.message);
-      // FIX (v7.186): same reasoning as the insert-failure catch above — this
-      // is the other way logActivity() can fail before ever reaching the DB.
       notifyDev('error', 'ACTIVITY', 'logActivity getSession failed: ' + err.message);
     });
   }
-  // SHARE-VIEW-01: the "share link viewed" Telegram alert now comes from SHARE_PROXY v3.87 (get_entry). The app-side
-  // _notifyShareViewed was removed in v7.248. The DB row in life_activity_log is still written by logActivity.
 
-  // ── Global error net ─────────────────────────────────────────────
-  // Catches anything that slips through specific try/catch blocks.
-  // Filters known noise to avoid alert fatigue. Deduped via notifyDev (60s).
   var _globalErrNoisePatterns = [
     'blob:',                          // SW blob URL — known WIP
     'start_url',                      // PWA manifest — known WIP
@@ -6133,8 +6039,8 @@
     'life_activity_log',              // RLS 403 — known pre-existing
     'ResizeObserver',                 // benign browser internals
     'Non-Error promise rejection',    // vague browser noise
-    'SES Removing',                   // Cloudflare lockdown — harmless
-    'lockdown-install',               // Cloudflare lockdown — harmless
+    'SES Removing',
+    'lockdown-install',
     'chrome-extension',               // browser extensions — not our code
     'moz-extension',
     'Unexpected onend',               // speech recognition auto-restart — harmless
@@ -6142,7 +6048,7 @@
     'network changed',                // mobile network transitions — harmless
     'Load failed',                    // Safari network blip — harmless
     'fetch is aborted',               // intentional abort — harmless
-    'auth-token" is busy',           // 2026-10-26: supabase auth lock held by another tick/tab; the app carries on (AUTH-ROBUST-01), no need to log or alert
+    'auth-token" is busy',
   ];
   function _isKnownNoise(msg) {
     if (!msg) return false;
@@ -6168,8 +6074,6 @@
     return 'Recording isn\'t supported in this browser. If you opened this link inside an app (Messages, Instagram, etc.), try opening it in Safari or Chrome directly.';
   }
 
-  // Intercept console.error so any error logged anywhere in the app (not just
-  // uncaught exceptions) also gets forwarded to Telegram AND the activity log DB.
   (function() {
     var _origConsoleError = console.error.bind(console);
     console.error = function() {
@@ -6209,7 +6113,6 @@
   // SHARE PAGE — public visitor view (no auth)
   // ══════════════════════════════════════════════════════════════════
 
-  // State for the share page feedback form
   var _shareFbPhoto    = null;  // { file, preview }
   var _shareFbAudio    = null;  // { file, preview, recorded }
   var _shareFbVideo    = null;  // { file, preview, recorded }
@@ -6220,7 +6123,7 @@
   var _shareFbVideoRecording = false;
   var _shareFbVideoChunks    = [];
   var _shareFbVideoTimer     = null;
-  var _shareEntryTitle = '';   // stored for Telegram notification
+  var _shareEntryTitle = '';
 
   // FAM-06-FIXES continuation (2026-09-27): share-page tree now has its own
   // explicit-scale zoom system, mirroring the in-app one (_mpApplyZoomState/
@@ -6666,7 +6569,6 @@
         document.getElementById('shareRefreshDone').style.display = 'block';
         return;
       }
-      // ERR-LOG-02: 429 (rate limit) and 409 (link works again) are expected; anything else is a real failure.
       if (res.status !== 429 && res.status !== 409) {
         var _rd = 'HTTP ' + res.status + (d && d.error ? ' - ' + d.error : '');
         logActivity('share_refresh_request_failed', _rd, 'warn', 'SHARE');
@@ -6679,7 +6581,6 @@
         err.style.display = 'block';
       }
     } catch (e) {
-      // ERR-LOG-02: network failure, or something threw after the response (e.g. a missing form element).
       logActivity('share_refresh_request_failed', 'exception: ' + String(e && e.message || e), 'warn', 'SHARE');
       notifyDev('warn', 'SHARE', 'request_refresh exception - ' + String(e && e.message || e));
       if (err) { err.textContent = 'Sorry, we could not send your request. Please check your connection and try again.'; err.style.display = 'block'; }
@@ -6719,7 +6620,6 @@
         // SEC-13: Show only a generic message to visitors — never reflect raw API errors
         var diagEl = document.getElementById('shareErrorDetail');
         if (diagEl) diagEl.textContent = 'Something went wrong — please contact the person who shared this link.';
-        // Detailed error logged server-side only (Telegram + Supabase)
         notifyDev('warn', 'SHARE', 'loadSharePage failed — ' + errDetail + ' — token: ' + token);
         logActivity('share_load_failed', errDetail + ' — token: ' + token, 'warn', 'SHARE');
         return;
@@ -6738,7 +6638,6 @@
           return;
         }
 
-        // Store title for feedback Telegram notification (same slot used by entry shares)
         _shareEntryTitle = data.piece.title || 'a story piece';
 
         var ownerP = data.ownerName || data.ownerFirstName || 'Someone';
@@ -6801,7 +6700,6 @@
           othersEl.style.display = 'block';
         }
 
-        // Customise feedback form for piece type
         var shareFormHeading = document.getElementById('shareFormHeading');
         var shareMessageLbl  = document.getElementById('shareMessageLabel');
         var shareMsgArea     = document.getElementById('shareMessage');
@@ -7055,9 +6953,6 @@
                 try {
                   decoded = si === 0 ? firstDecoded : await _spFetchSegment(segments[si].text);
                 } catch (segErr) {
-                  // Don't let one bad segment kill the whole song — log it with enough
-                  // detail to diagnose (which segment, what kind of error) and move on
-                  // to the next section rather than stopping playback entirely.
                   logActivity('share_listen_segment_error',
                     JSON.stringify({
                       token: token,
@@ -7080,7 +6975,6 @@
               if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
             }
 
-            // Finished or stopped — reset
             _sharePlaying  = false;
             _shareStopFlag = false;
             _shareAudio    = null;
@@ -7161,7 +7055,6 @@
         return; // done — skip all entry/piece-rendering code below
       } // end data.isTree
 
-      // Entry share path — data.entry is present
       if (!data.entry) {
         // Safety net: not a piece share but entry is missing — avoid crash on undefined.title
         document.getElementById('shareLoading').style.display = 'none';
@@ -7198,21 +7091,18 @@
       var msgArea    = document.getElementById('shareMessage');
       var formHeading = document.getElementById('shareFormHeading');
       if (data.note) {
-        // Question mode
         if (formQWrap)   formQWrap.style.display = 'block';
         if (formQEl)     formQEl.textContent     = data.note;
         _shareSetMsgLabel(msgLabel, 'Answer');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave your answer';
       } else {
-        // Feedback mode — no question set
         if (formQWrap)   formQWrap.style.display = 'none';
         _shareSetMsgLabel(msgLabel, 'Your feedback');
         if (msgArea)     msgArea.placeholder     = '';
         if (formHeading) formHeading.textContent = 'Leave feedback';
       }
 
-      // Title
       var titleEl = document.getElementById('shareEntryTitle');
       titleEl.textContent = entry.title || '';
       if (!entry.title) titleEl.style.display = 'none';
@@ -7233,7 +7123,6 @@
         photosEl.style.display = 'none';
       }
 
-      // Audio
       var audiosEl = document.getElementById('shareEntryAudios');
       var audioList = (data.audios && data.audios.length) ? data.audios
         : (entry.audio_url ? [{ signedUrl: entry.audio_url, caption: '' }] : []);
@@ -7248,7 +7137,6 @@
         audiosEl.style.display = 'none';
       }
 
-      // Video
       var videoEl = document.getElementById('shareEntryVideo');
       var videoList = (data.videos && data.videos.length) ? data.videos
         : (entry.video_url ? [{ signedUrl: entry.video_url, caption: '' }] : []);
@@ -7263,7 +7151,6 @@
         videoEl.style.display = 'none';
       }
 
-      // Entry text
       var textEl = document.getElementById('shareEntryText');
       textEl.textContent = entry.answer || '';
 
@@ -7310,7 +7197,6 @@
         voiceEl.style.display = 'none';
       }
 
-      // Show content, hide loader
       document.getElementById('shareLoading').style.display = 'none';
       document.getElementById('shareContent').style.display = 'block';
       logActivity('share_viewed', JSON.stringify({ type: 'entry', token: token }), 'info', 'SHARE');
@@ -7482,7 +7368,6 @@
       '</div>';
     }
     strip.innerHTML = html;
-    // Delegated click for remove buttons
     strip.addEventListener('click', function(e) {
       var btn = e.target.closest('[data-action]');
       if (!btn) return;
@@ -7507,7 +7392,6 @@
     var errEl = document.getElementById('shareFeedbackError');
     errEl.style.display = 'none';
 
-    // Spam prevention
     var honeypot = (document.getElementById('shareHoneypot')?.value || '').trim();
     if (honeypot) {
       // Silently fail — don't tell the bot it was caught
@@ -7584,7 +7468,6 @@
       sessionStorage.setItem(_shareRLKey,     String(_shareRLCount + 1));
       sessionStorage.setItem(_shareRLCoolKey, String(_now + 30000)); // 30s cooldown
 
-      // Success
       logActivity('share_feedback_submitted', JSON.stringify({ token: token }), 'info', 'SHARE');
       document.getElementById('shareFeedbackForm').style.display    = 'none';
       document.getElementById('shareFeedbackSuccess').style.display = 'block';
@@ -7656,7 +7539,6 @@
 
     var _cp = (method === 'copy') ? _ltCopyDeferred() : null;   // COPY-LINK-01: start the copy inside the click, link to follow
 
-    // Show spinner, hide buttons
     document.getElementById('shareConsentBtns').style.display    = 'none';
     document.getElementById('shareConsentSpinner').style.display = 'block';
 
@@ -7701,11 +7583,6 @@
   async function _createShareLink(entryId, label, note) {
     var expiryDays = parseInt((document.getElementById('shareConsentExpiry') || {}).value || '30', 10);
     if (![0,7,14,30,90].includes(expiryDays)) expiryDays = 30;
-    // SHARE-LOG-01: routed through SHARE_PROXY's new create_share action
-    // instead of a direct PostgREST insert, so entry shares now go through
-    // the exact same creation path as story pieces and the tree (JWT +
-    // server-side premium check + server-side expires_days allow-list,
-    // rather than a client-computed expires_at with only RLS behind it).
     var res = await shareFetch(SHARE_PROXY_URL, {
       method: 'POST',
       headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
@@ -7719,8 +7596,6 @@
     });
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
-    // Never log the token/link itself — just enough metadata to know the
-    // feature is being used.
     logActivity('entry_shared', JSON.stringify({ entry_id: entryId, has_note: !!note, expires_days: expiryDays }), 'info', 'SHARE');
     notifyDev('info', 'SHARE', 'Memory shared — entry_id=' + entryId + (label ? ', label="' + label + '"' : '') + ', expires in ' + expiryDays + 'd');
     return location.origin + '/?share=' + data.token;
@@ -7805,7 +7680,6 @@
       if (!res.ok) throw new Error('fetch failed');
       var tokens = await res.json();
 
-      // Separate active vs expired
       var now = new Date();
       var active  = tokens.filter(function(t) { return new Date(t.expires_at) > now; });
       var expired = tokens.filter(function(t) { return new Date(t.expires_at) <= now; });
@@ -8043,23 +7917,6 @@
       var resolvedUrl = isAbsolute ? signedUrl : (SUPABASE_URL + '/storage/v1' + (signedUrl.startsWith('/') ? '' : '/') + signedUrl);
       dbg('DBG-PLAY', 'signedUrl absolute?', isAbsolute, '| resolvedUrl=' + resolvedUrl);
 
-      // BUGFIX [WEBM-ON-IOS-STALL], 22 Sep 2026: iOS Safari has no WebM
-      // demuxer at all. Handing it a .webm src doesn't produce a clean
-      // 'error' event — the <audio> element just sits at networkState=2
-      // (NETWORK_LOADING) forever, firing 'stalled' with no other signal.
-      // Root-caused from a real DBG-PLAY session: a .webm archive recorded
-      // earlier the same day (likely on a non-Safari device/browser) was
-      // played back on iPhone Safari and stalled indefinitely — every other
-      // format that day (.wav) played fine. Cross-device archives are a
-      // known, expected case here (recordings can be made on any device and
-      // replayed on any other), so this must degrade gracefully rather than
-      // assume the playing browser can handle whatever was recorded.
-      // Fix: check canPlayType() against the storage path's extension BEFORE
-      // setting src, and fail fast with a clear message instead of silently
-      // stalling. Belt-and-braces: also cap how long we'll wait for
-      // loadedmetadata after a stalled/no-progress state, in case a browser
-      // optimistically reports 'maybe' for a container it can't actually
-      // demux (canPlayType() is advisory, not a guarantee).
       var extMatch = /\.([a-z0-9]+)(?:\?|$)/i.exec(storagePath || '');
       var ext = extMatch ? extMatch[1].toLowerCase() : '';
       var extMimeMap = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'audio/mp4', wav: 'audio/wav', mp3: 'audio/mpeg' };
@@ -8123,7 +7980,6 @@
       );
       if (!res.ok) return;
       var tokens = await res.json();
-      // Group by entry_id
       var byEntry = {};
       tokens.forEach(function(t) {
         if (!byEntry[t.entry_id]) byEntry[t.entry_id] = [];
@@ -8168,7 +8024,6 @@
       });
       if (!res.ok) {
         tile.style.display = 'none';
-        // ERR-LOG-02: was silent. A failing list means an owner never sees that someone asked for a new link.
         logActivity('link_requests_load_failed', 'HTTP ' + res.status, 'warn', 'SHARE');
         notifyDev('warn', 'SHARE', 'list_refresh_requests failed - HTTP ' + res.status);
         return;
@@ -8587,7 +8442,6 @@
 
       tile.style.display = 'block';
       _agpPendingResponseCount = feedback.length;
-      // Show red dot on Dashboard nav tab
       setTabBadge('dashResponsesBadge', true);
       countEl.textContent = feedback.length + (feedback.length === 1 ? ' new response' : ' new responses');
 
@@ -8734,7 +8588,6 @@
       return;
     }
 
-    // Find the parent entry for context
     var parentEntry = entries.find(function(e) { return e.id === entryId; });
     var parentTitle = parentEntry ? (parentEntry.title || 'a memory') : 'a memory';
 
@@ -8744,7 +8597,6 @@
       ? feedback.life_share_tokens.note
       : null;
 
-    // Disable buttons while saving
     if (row) row.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
 
     try {
@@ -8802,7 +8654,6 @@
       toast('Feedback accepted ✓');
       _importingFeedbackIds.delete(feedbackId);
 
-      // Remove the row and reload entries
       if (row) row.remove();
       // fetchEntries was undefined — use loadEntries (full DB reload) then re-render
       await loadEntries();
@@ -9004,7 +8855,6 @@
     loadResponsesTile();
   }
 
-  // Permanently delete a feedback response
   async function deleteResponse(feedbackId) {
     if (!confirm('Delete this response? It cannot be undone.')) return;
     var row = document.getElementById('response-row-' + feedbackId);
@@ -9052,7 +8902,6 @@
     var child = entries.find(function(e) { return e.id === childEntryId; });
     if (!child) { toast('Entry not found'); return; }
     var parent = child.parent_entry_id ? entries.find(function(e) { return e.id === child.parent_entry_id; }) : null;
-    // Pre-fill Memories tab with the feedback text
     showPanel('memories', null, 1);
     setTimeout(function() {
       var titleEl  = document.getElementById('memTitle');
@@ -9075,7 +8924,6 @@
       .replace(/'/g, '&#39;');
   }
 
-  // Helper — human-readable time ago
   function formatTimeAgo(isoString) {
     if (!isoString) return '';
     var diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
@@ -9123,7 +8971,6 @@
       }
     }
 
-    // Detect return from Peecho after successful order
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('printed') === 'true') {
       // Clean the URL so refreshing doesn't re-show the message
@@ -9131,8 +8978,6 @@
       // Show success toast once app has loaded — deferred so toast() is ready
       setTimeout(() => toast('🎉 Your book is on its way! Peecho will email you with tracking details.'), 1200);
       dbg('PEECHO', 'Returned from Peecho after successful order');
-      // Notify + log — this is the closest signal we have to a completed order
-      // (Peecho redirects back with ?printed=true after the user completes checkout)
       notifyDev('warn', 'PEECHO', 'Book ordered — user returned from Peecho checkout');
       logActivity('book_ordered', null, 'warn', 'PEECHO');
     }
@@ -9251,7 +9096,6 @@
       return;
     }
 
-    // Show landing screen initially
     document.getElementById('landingScreen').style.display = 'block';
     document.getElementById('appShell').style.display = 'none';
 
@@ -9335,9 +9179,6 @@
       // there via session.user.last_sign_in_at instead.
     }
 
-    // v7.258 (HELEN-01): shared fresh-login logger. The focus_return early-return below used to
-    // swallow the real OAuth SIGNED_IN whenever an earlier INITIAL_SESSION event had already
-    // started init, so sign_up / sign_in never fired for first-time OAuth users.
     var _lastFreshLoginLogged = null;
     function _logFreshLogin(_u2) {
       var _isNewUser = _u2.created_at && _u2.last_sign_in_at &&
@@ -9370,11 +9211,6 @@
       if (event === 'SIGNED_IN' && session && (_appFullyLoaded || _appInitInProgress)) {
         sessionToken = session.access_token;
         dbg('AUTH', 'SIGNED_IN while app ' + (_appFullyLoaded ? 'fully loaded' : 'init in progress') + ' — token updated, no reload');
-        // PRELAUNCH-01: also pinged to Telegram, not just logged to Supabase —
-        // deliberately verbose while user count is tiny and every bit of activity
-        // is worth seeing. Wind this back to DB-only (drop the notifyDev call,
-        // keep logActivity) once real user volume makes focus-return pings noisy.
-        // v7.258: a SIGNED_IN with a server sign-in time under 15s old is a real login, not a focus return.
         var _earlyAge = session.user.last_sign_in_at ? (Date.now() - new Date(session.user.last_sign_in_at).getTime()) : Infinity;
         if (_earlyAge < 15000) {
           if (_lastFreshLoginLogged !== session.user.last_sign_in_at) {
@@ -9394,27 +9230,6 @@
       // for the next session regardless of which path the user takes.
       if (currentUser || event === 'SIGNED_OUT') _authExpiredShown = false;
 
-      // Notify on sign-in and new account confirmation so every login is visible
-      // in Telegram. SIGNED_IN fires on both fresh login and session restore on
-      // page load.
-      //
-      // OBS-08 (found 2026-08-26): _initSessionRestored (the old signal for "this
-      // is a page-load restore, not a fresh login") is a CLIENT-SIDE TIMING flag —
-      // it's set true if sb.auth.getSession(), called right after createClient(),
-      // already returns a session. That's correct for an ordinary reload with a
-      // cached session, but WRONG for the OAuth-redirect landing page itself:
-      // supabase-js's detectSessionInUrl processing runs inside getSession()'s
-      // own initialisation promise, so on the very page load that completes an
-      // OAuth login, getSession() already resolves with the brand-new session —
-      // _initSessionRestored gets set true, and the real login below was silently
-      // reclassified as 'session_resumed' (Supabase-only, no Telegram). Root cause
-      // of "logged out and back in with Google, got no Telegram alert" — this is
-      // NOT rare, it's the normal timing on every OAuth redirect completion.
-      // FIX: use a server-set signal instead of a client-timing one. Supabase sets
-      // last_sign_in_at at the moment auth actually happens, server-side — if it's
-      // within the last few seconds, this IS a fresh login, full stop, regardless
-      // of when our own getSession() call happened to resolve. Same trusted-timestamp
-      // pattern already used just below to detect new-user sign-up.
       if (event === 'SIGNED_IN' && session) {
         var _u2 = session.user;
         _ltReportRecovery(_u2);
@@ -9434,11 +9249,6 @@
             _logFreshLogin(_u2);
           }
         } else {
-          // ANALYTICS-02 (4): page-load restore — a cached session, not a fresh login.
-          // Distinct from the focus_return case above, which short-circuits earlier
-          // (only reachable once _appFullyLoaded/_appInitInProgress is true).
-          // PRELAUNCH-01: also pinged to Telegram — see matching comment on the
-          // focus_return case above for why, and when to wind it back.
           notifyDev('info', 'AUTH', 'Session resumed (page_load): ' + session.user.email);
           logActivity('session_resumed', 'via=page_load: ' + session.user.email, 'info', 'AUTH');
         }
@@ -9543,15 +9353,6 @@
     el.style.display = 'block';
   }
 
-  // ── AUTH-ROBUST-01 (2026-10-22): sign-in that cannot hang ─────────────────────────────────
-  // Symptom: on an Android phone the Google button sat on "Redirecting…" forever, and only reinstalling
-  // the app fixed it. supabase-js serialises every auth call behind a browser lock (navigator.locks); if
-  // anything on the device holds it (another tab/installed-app window, a refresh that never finished),
-  // signInWithOAuth() simply waits - no error, no timeout. Reinstalling cleared the lock and any stale
-  // saved sign-in data. Defences below: (1) a lock that gives up waiting after 5s, (2) a timeout + one
-  // automatic retry with clean saved auth data on the Google button, (3) if trouble repeats, an automatic
-  // repair that does what reinstalling did (once per 30 min, never loops), (4) every step is logged AND sent to
-  // Telegram (_ltAuthTrouble / _ltAutoRepairAuth / _ltReportRecovery) so we know it is happening.
   function _ltAuthLock(name, acquireTimeout, fn) {
     if (!(typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request)) return fn();
     if (acquireTimeout === 0) {   // "try once, skip if busy" (background refresh tick) - same as the default
@@ -9610,7 +9411,6 @@
     var mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') ? 'mobile' : 'desktop';
     return mobile + (standalone ? ', installed app' : ', browser');
   }
-  // Records one sign-in problem: activity log + Telegram, and returns how many happened in the last 10 min.
   function _ltAuthTrouble(kind, detail) {
     var now = Date.now(), recent = [];
     try { recent = JSON.parse(localStorage.getItem('lt_auth_trouble') || '[]').filter(function(t) { return now - t < 600000; }); } catch (e) {}
@@ -9647,7 +9447,6 @@
     setTimeout(function() { window.location.replace(window.location.origin + window.location.pathname); }, 500);
     return true;
   }
-  // Called on every real sign-in: if we auto-repaired recently, tell Telegram it worked; reset the counter.
   function _ltReportRecovery(u) {
     try {
       var ra = +localStorage.getItem('lt_auth_repair_at') || 0;
@@ -9770,7 +9569,6 @@
     var settingsHeaders  = { ...getAuthHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' };
     var versionsHeaders  = { ...getAuthHeaders(), 'Prefer': 'resolution=ignore-duplicates,return=minimal', 'Content-Type': 'application/json' };
     await Promise.all([
-      // Per-user acceptance record in life_settings
       fetch(DB_SETTINGS_URL, { method:'POST', headers:settingsHeaders, body: JSON.stringify({ user_id:currentUser.id, key:'disclaimer_version', value:version, updated_at:now }) }),
       fetch(DB_SETTINGS_URL, { method:'POST', headers:settingsHeaders, body: JSON.stringify({ user_id:currentUser.id, key:'disclaimer_accepted_at', value:now, updated_at:now }) }),
       // Version text archive in life_disclaimer_versions — idempotent (ignore-duplicates if version already stored)
@@ -9794,19 +9592,6 @@
   // gate (_checkDisclaimerVersion(), below) — there is no separate privacy
   // acceptance to track anymore.
 
-  // Returns a Promise that resolves immediately if already accepted, or only
-  // after the user clicks "I Agree" if they haven't. This ensures the rest of
-  // the login sequence (loadEntries → onboarding) is blocked until T&Cs are done.
-  // PRV-28 Build F (v6.90): _checkDisclaimerVersion() now fetches DISCLAIMER_VERSION
-  // and DISCLAIMER_TEXT from life_disclaimer_facts (DB) instead of hardcoded constants.
-  // HARD FAIL policy: if DB is unreachable or table is empty, the app is blocked and
-  // a 🔴 Telegram alert fires. No silent fallback to stale hardcoded text — for a
-  // legal consent instrument, a visible failure is always safer than silent staleness.
-  // PRV-30 (this session): repointed from life_disclaimer_facts to the merged
-  // life_privacy_facts table (clauses/html_content columns added there). This is
-  // now the single version check for BOTH the Privacy Policy and the Terms —
-  // accepting the current version accepts both documents at once, by design.
-  // life_disclaimer_facts itself is retired, not dropped (read-only history).
   async function _checkDisclaimerVersion() {
     if (!currentUser) return;
     try {
@@ -9840,12 +9625,10 @@
       // ── Step 3: show overlay, populated from DB content ──
       dbg('DISCLAIMER', 'Showing disclaimer — saved:', savedVersion, 'current:', currentVersion);
 
-      // Populate the disclaimer body from DB clauses
       var bodyEl = document.querySelector('.disclaimer-body');
       if (bodyEl && facts.html_content) {
         bodyEl.innerHTML = facts.html_content; // rich HTML if stored
       }
-      // version label in header
       var versionLbl = document.querySelector('#disclaimerBox strong');
       if (versionLbl) versionLbl.textContent = 'Privacy & Terms — ' + currentVersion;
 
@@ -9944,15 +9727,6 @@
     toast('Signed out');
   }
 
-  // ── Database ──────────────────────────────────────────────────────
-  // PRV-28 Build F (v6.90): DISCLAIMER_VERSION and DISCLAIMER_TEXT constants removed.
-  // Disclaimer version and clause text are now fetched from life_disclaimer_facts (DB)
-  // at login via _checkDisclaimerVersion(). Hard fail + Telegram alert if DB unreachable.
-  // Version history (for reference — authoritative record is in life_disclaimer_facts):
-  //   v1.2 (v4.12): PRV-04 — cross-border transfer disclosure, Groq + OpenAI named
-  //   v1.3 (v4.31): PRV-24 — Australian data residency confirmed (ap-southeast-2)
-  //   v1.4 (v5.62): SUB-31 — Anthropic added as premium processor
-  //   v1.5 (v6.84): Build C — Anthropic primary for all plans, Groq failover, Inworld TTS
   const DB_URL              = SUPABASE_URL + '/rest/v1/life_entries';
   const DB_SETTINGS_URL     = SUPABASE_URL + '/rest/v1/life_settings';
   const DB_SHARE_TOKENS_URL   = SUPABASE_URL + '/rest/v1/life_share_tokens';
@@ -9960,24 +9734,8 @@
   const DB_FEATURE_URL      = SUPABASE_URL + '/rest/v1/life_feature_usage';
   const DB_CONVERSATIONS_URL = SUPABASE_URL + '/rest/v1/life_conversations';
   const DB_DISCLAIMER_URL        = SUPABASE_URL + '/rest/v1/life_disclaimer_versions';
-  // PRV-30 (this session): life_disclaimer_facts and life_privacy_versions are
-  // RETIRED — kept in Supabase, read-only, for audit/history, but nothing in
-  // the app writes to or reads from them anymore. One table now covers both
-  // documents: life_privacy_facts, which as of v2.0 also carries `clauses`
-  // and `html_content` (the disclaimer/terms content) alongside the existing
-  // `processors`/`retention`/`rights`/`sharing_model` columns. One version
-  // number, one fetch, one consent gate for both the Privacy Policy and the
-  // Terms/Disclaimer. See prv30_merge_migration.sql for the schema change.
-  //
-  // This also removes the old PRIVACY_VERSION hardcoded JS constant (and the
-  // separate, non-blocking privacy-only version-check/acceptance-save
-  // mechanism it powered) — that constant was the exact thing that silently
-  // drifted a full version behind the real DB before this session. There is
-  // now nowhere left to hardcode a privacy version: _checkDisclaimerVersion()
-  // below fetches it live, same HARD FAIL policy as before (blocks the app +
-  // Telegram alert if the DB is unreachable or the row is malformed).
   const DB_PRIVACY_FACTS_URL = SUPABASE_URL + '/rest/v1/life_privacy_facts';
-  const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/functions/v1/LOG_PROXY'; // usage tracking — routed via LOG_PROXY for server-side IP capture (was: /rest/v1/life_activity_log direct)
+  const DB_ACTIVITY_LOG_URL = SUPABASE_URL + '/functions/v1/LOG_PROXY';
   const DB_PEOPLE_URL       = SUPABASE_URL + '/rest/v1/life_people';                // Family tree nodes
   const DB_ENTRY_PEOPLE_URL = SUPABASE_URL + '/rest/v1/life_entry_people';          // Entry→person join table
 
@@ -9993,7 +9751,6 @@
       _authExpiredShown = true;
       toast('⚠️ Your session has expired — please sign out and back in', 5000);
       dbgWarn('AUTH', '401 received while signed in — session likely expired');
-      // Surface the sign-out button prominently
       const btn = document.getElementById('signOutBtn');
       if (btn) { btn.style.outline = '2px solid var(--rose)'; btn.style.outlineOffset = '2px'; }
     }
@@ -10489,7 +10246,7 @@
             // don't log it as one. Keep the existing speechSynthesis fallback so
             // the conversation doesn't break, just stop mislabelling it.
             dbg('TTS', 'gethroSpeak rate-limited — falling back to speechSynthesis');
-            logActivity('tts_fallback', 'rate limited (' + res.status + ') — using browser voice', 'warn', 'TTS'); // v7.261: this path used to log nothing
+            logActivity('tts_fallback', 'rate limited (' + res.status + ') — using browser voice', 'warn', 'TTS');
             _maybeShowTtsRateLimitToast(rlParsed);
             _gethroFallback(text, resolve, myGen);
             return;
@@ -10499,8 +10256,6 @@
         var arrayBuf = await res.arrayBuffer();
         dbg('TTS', 'arrayBuffer size=' + arrayBuf.byteLength);
         if (!arrayBuf.byteLength) throw new Error('TTS_PROXY returned empty buffer');
-        // v7.261: facts about what actually came back, kept for the decode-failure log below
-        // (decodeAudioData detaches arrayBuf, so they have to be read first).
         var _ttsBytes = arrayBuf.byteLength, _ttsCt = res.headers.get('content-type') || '?', _ttsHead = '';
         try { _ttsHead = Array.prototype.map.call(new Uint8Array(arrayBuf.slice(0, 12)), function(b) { return (b >= 32 && b < 127) ? String.fromCharCode(b) : '.'; }).join(''); } catch(eHead) {}
         // APP-6x: archive this reply's audio — fire-and-forget, before the
@@ -10547,7 +10302,6 @@
           var msg = decodeErr ? decodeErr.message || String(decodeErr) : 'decodeAudioData failed';
           dbg('TTS', 'decodeAudioData error:', msg);
           notifyDev('error', 'TTS', 'decodeAudioData failed: ' + msg);
-          // v7.261: this path used to reach Telegram only. Now also in the activity log, with what the server sent.
           logActivity('tts_fallback', 'decodeAudioData failed: ' + msg + ' | type=' + _ttsCt + ' | bytes=' + _ttsBytes + ' | head=' + _ttsHead + ' | ctx=' + (ctx && ctx.state) + ' | rate=' + (ctx && ctx.sampleRate), 'error', 'TTS');
           _gethroAudio = null; _gethroFallback(text, resolve, myGen); return;
         }
@@ -10572,8 +10326,6 @@
       }
     });
   }
-  // _gethroFallbackNotified removed — every failure now logs individually so we
-  // can see exactly which path and how often it fails.
   function _gethroFallback(text, resolve, myGen) {
     dbg('TTS', '_gethroFallback called');
     if (!window.speechSynthesis) { dbg('TTS', 'speechSynthesis unavailable'); resolve(); return; }
@@ -10730,7 +10482,6 @@
     }
   }
 
-  // Generic step transition
   function obGoStep(targetStep) {
     logActivity('onboarding_step', 'step ' + targetStep, 'info', 'ONBOARD'); // v7.258
     gethroCancel();
@@ -11041,7 +10792,6 @@
 
     // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
-    // PANEL BUG DEBUG v2.14 — log full state before switching
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -11104,7 +10854,6 @@
 
   // ── Memories tab ─────────────────────────────────────────────────
 
-  // State
   let recPhotos      = [];   // [{file, preview, caption}] queued photos
   let recAudios      = [];   // [{file, preview, caption, recorded}] queued audio clips
   let recVideos      = [];   // [{file, preview, caption, recorded}] queued video clips (10s max)
@@ -11158,7 +10907,6 @@
         try { var fb = JSON.parse(parsed.reply); generatedTitle = (fb.title || '').trim(); } catch(e) {}
       }
       if (!generatedTitle || generatedTitle.length > 80) return; // safety guard
-      // Patch DB
       var patchRes = await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
         method: 'PATCH',
         headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
@@ -11175,18 +10923,6 @@
     }
   }
 
-  // ── APP-55 Phase 4/5 (moat-protected): commit a staged voice turn + apply ───
-  // Called fire-and-forget from memDone(), once per staged turn, after a
-  // successful save. Two network calls per turn:
-  //   1. commit_voice_turn (multipart) — server generates label/path/turn_index,
-  //      uploads the blob, inserts the row. Client supplies offset and
-  //      baselineSnapshot (inherently client-known — only the client knows
-  //      where the textarea was at mic-open) but nothing else.
-  //   2. apply_voice_transcript (JSON, { turnId }) — server re-transcribes the
-  //      blob it just stored, runs the offset-safe patch decision against its
-  //      own row, and writes the result directly. Client never sees offset,
-  //      baseline, or the transcript text — only applied: true/false.
-  // Never blocks the save UX. Silent on failure (logs to activity log).
   async function _commitAndApplyVoiceTurn(entryId, turn) {
     if (!currentUser) return;
     if (!turn || !turn.blob || turn.blob.size === 0) return;
@@ -12119,7 +11855,6 @@
       if (label) label.textContent = 'Transcribing…';
       if (textarea) textarea.style.borderColor = 'var(--amber, #f59e0b)';
     } else {
-      // idle or error
       btn.style.background  = 'rgba(201,169,110,0.1)';
       btn.style.borderColor = 'var(--gold)';
       btn.style.color       = 'var(--gold-dark)';
@@ -12191,7 +11926,6 @@
       return toast(_mediaUnsupportedMessage());
     }
 
-    // Reset dictation state
     _micFlushedUpTo      = 0;
     _micTranscriptSoFar  = '';
     _micRecordStart      = Date.now();
@@ -12284,11 +12018,6 @@
         }
       } catch(err) {
         if (!isFinal) {
-          // MIC-QUIET-01: a live chunk is only a preview. The whole recording is transcribed again in one pass when
-          // the person taps stop (_vaLcRunFullPassCorrection) and that text replaces everything dictated in this
-          // session, so a failed chunk loses nothing and there is nothing for the person to do. No message, no
-          // "retry" instruction, and no error-level alarm: it is logged as a warning for us only. The short pause
-          // before the next flush is kept only for rate limits, where hammering the server would make it worse.
           dbg('MIC', 'Live chunk skipped (' + err.message + ') — full pass at stop will cover it');
           logActivity('mic_live_chunk_skipped', String(err.message), 'warn', 'MIC');
           if (/rate limit|too many|429/i.test(String(err.message))) {
@@ -12475,7 +12204,7 @@
       if (!prevRawBlob) return; // first segment of the turn — nothing to pair with yet
       try {
         var wav = await MicManager.buildTrailingWav([prevRawBlob, curRawBlob]);
-        if (!wav) return; // Phase 0 build failed — already logged via VA_LC_P0
+        if (!wav) return;
         var jointText = await _vaLcFetchTranscript(wav, 'wav');
         if (!jointText) return;
         // For the isFinal override path, tokenAtStart was captured before _micRelease()
@@ -12624,7 +12353,7 @@
     }
 
     // ── Start MicManager ────────────────────────────────────────────────────
-    var _tTap = Date.now();            // MIC-READY-01: for the mic_open_timing log below
+    var _tTap = Date.now();
     _setMicState('starting');          // MIC-READY-01: show "getting ready" immediately, not after the mic has opened
     var err = await MicManager.start({
       onChunk: async function(blob, mime, ext, isFinal, wavBlob, wavMime, wavExt) {
@@ -12710,7 +12439,6 @@
       },
 
       onVolume: function(vol) {
-        // Silence detection — dictation-specific thresholds
         if (_micState !== 'recording') return;
         var now       = Date.now();
         var chunkAge  = now - (_micRecordStart || now);
@@ -12885,7 +12613,6 @@
     recActive = false;
     _userHasTyped = false;
     _memEditEntryId = null; // clear edit mode — next save will be a fresh insert
-    // Close the details accordion
     var accPanel = document.getElementById('memDetailsPanel');
     if (accPanel) accPanel.style.display = 'none';
     var accIcon  = document.getElementById('memDetailsIcon');
@@ -12975,10 +12702,8 @@
       d = rows[0].content;
     } catch(e) { dbg('DRAFT', 'draftRestore fetch failed: ' + e); logActivity('draft_warn', String(e && e.message || e), 'warn', 'DRAFT'); return; }
     if (!d || (!d.title && !d.answer)) { draftClear(); return; }
-    // Restore text fields
     if (d.title  && document.getElementById('memTitle'))  document.getElementById('memTitle').value  = d.title;
     if (d.answer && document.getElementById('memAnswer')) document.getElementById('memAnswer').value = d.answer;
-    // Restore tag selects
     restoreSelectOrCustom('recTagChapter', 'recTagChapterCustom', d.chapter);
     restoreSelectOrCustom('recTagYear',    'recTagYearCustom',    d.era);
     if (d.date) {
@@ -13032,13 +12757,11 @@
     var sel = document.getElementById(selId);
     var inp = document.getElementById(customId);
     if (!sel) return;
-    // Check if val exists in options
     var found = false;
     for (var i = 0; i < sel.options.length; i++) {
       if (sel.options[i].value === val) { sel.value = val; found = true; break; }
     }
     if (!found && inp) {
-      // Not in options — show custom input
       inp.value = val;
       inp.style.display = 'block';
     }
@@ -13209,7 +12932,6 @@
     featTrackReview();
     try {
       const wordCount   = text.split(/\s+/).filter(Boolean).length;
-      // Build optional feedback context block for prompts
       const fbReplies = feedbackReplies && feedbackReplies.length ? feedbackReplies : [];
       const feedbackContext = fbReplies.length
         ? '\n\nFACTUAL ADDITIONS FROM FAMILY/FRIENDS:\n' +
@@ -13257,7 +12979,6 @@
         if (['empty','none','n/a','not applicable','unknown','unclear','not mentioned'].includes(l)) return '';
         return v.trim();
       };
-      // Normalise
       r.spelling = { ok: !!r.spelling_ok, fixed: '', notes: r.spelling_notes || '' };
       r.grammar  = { ok: !!r.grammar_ok,  notes: r.grammar_notes  || '' };
       r.length   = { ok: !!r.length_ok,   notes: r.length_notes   || '' };
@@ -13368,7 +13089,6 @@
       if (!hasPeople && r.suggestPeople) {
         sugTags.people = r.suggestPeople;
       } else if (newResponders.length) {
-        // Merge new responders into existing people tag
         const merged = (tags.people ? tags.people + ', ' : '') + newResponders.join(', ');
         sugTags.people = merged;
       }
@@ -13426,7 +13146,6 @@
     const fixed = panel?.dataset.fixed;
     if (!fixed) return;
     if (entryId) {
-      // Save to DB
       await fetch(DB_URL + '?id=eq.' + entryId + '&user_id=eq.' + currentUser.id, {
         method: 'PATCH',
         headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
@@ -13478,10 +13197,8 @@
     let tags;
     try { tags = typeof tagsJson === 'string' ? JSON.parse(tagsJson.replace(/&quot;/g,'"')) : tagsJson; }
     catch(e) { return; }
-    // Visually remove the accepted chip immediately
     if (btn) { btn.style.opacity = '0.4'; btn.disabled = true; btn.textContent = '✓ ' + btn.textContent.replace('＋ ',''); }
     if (entryId) {
-      // Save directly to DB
       const patch = {};
       if (tags.title)    patch.title    = tags.title;
       if (tags.chapter)  patch.chapter  = tags.chapter;
@@ -13759,7 +13476,6 @@
 
     var html = '';
 
-    // Photos
     recPhotos.forEach(function(p, i) {
       html += '<div style="display:flex;flex-direction:column;gap:4px;align-items:center">' +
         '<div style="position:relative;display:inline-block">' +
@@ -13772,7 +13488,6 @@
       '</div>';
     });
 
-    // Audio clips
     recAudios.forEach(function(a, i) {
       html += '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;max-width:180px">' +
         '<div style="position:relative;display:flex;align-items:center;gap:4px;background:var(--surface2);border:2px solid var(--gold);border-radius:8px;padding:4px 8px">' +
@@ -13786,7 +13501,6 @@
       '</div>';
     });
 
-    // Video clips
     recVideos.forEach(function(v, i) {
       html += '<div style="display:flex;flex-direction:column;gap:4px;align-items:center">' +
         '<div style="position:relative;display:inline-block">' +
@@ -13799,7 +13513,6 @@
       '</div>';
     });
 
-    // Live recording status
     if (_audioRecording) {
       html += '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--surface2);border:2px solid var(--rose);border-radius:8px;font-size:0.78rem;color:var(--rose)">' +
         '<span style="animation:pulse 1s infinite">\u23FA</span> Recording audio\u2026 ' +
@@ -13863,7 +13576,6 @@
     if (file.size > 10 * 1024 * 1024) { input.value = ''; return toast('Photo too large — max 10MB'); }
     // Add to composerPhotos so savePhotoEntry can use it
     composerPhotos = [{ file, preview: URL.createObjectURL(file) }];
-    // Show preview image
     document.getElementById('photoPreview').src = composerPhotos[0].preview;
     document.getElementById('photoRecordingSection').style.display = 'block';
     document.getElementById('photoStoryText').value = '';
@@ -14042,7 +13754,6 @@
       const parentId = await addEntry(cat, story, null, firstUp.path, firstUp.desc, tags);
       if (!parentId) return toast('Could not save entry');
 
-      // Additional photos saved as children
       for (let i = 1; i < composerPhotos.length; i++) {
         toast('Uploading photo ' + (i+1) + ' of ' + composerPhotos.length + '...');
         const up = await uploadPhotoFile(composerPhotos[i].file);
@@ -14542,7 +14253,6 @@
           cardsEl.style.display = 'block';
           var songHtml = '';
 
-          // Mood genre cards
           songHtml += '<div style="margin-bottom:16px">';
           songHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px;font-family:\'Lato\',sans-serif">Choose a mood</div>';
           songHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
@@ -14557,7 +14267,6 @@
           });
           songHtml += '</div></div>';
 
-          // Full / Short toggle
           songHtml += '<div>';
           songHtml += '<div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:8px;font-family:\'Lato\',sans-serif">Song length</div>';
           songHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
@@ -14575,13 +14284,11 @@
 
           cardsEl.innerHTML = songHtml;
 
-          // Wire up freetext input
           var searchInput = document.getElementById('scSongSearchInput');
           if (searchInput) {
             searchInput.addEventListener('input', function() {
               _scSongSearchText = this.value.trim();
               _scSongStyleMode  = _scSongSearchText ? 'search' : (_scSongStyle ? 'genre' : 'search');
-              // Clear genre selection highlight when typing
               if (_scSongSearchText) {
                 var moodBtns = cardsEl.querySelectorAll('[data-mood]');
                 for (var mi = 0; mi < moodBtns.length; mi++) {
@@ -14600,7 +14307,6 @@
             searchInput.addEventListener('blur', function() {
               if (!this.value) this.style.borderColor = 'var(--border)';
             });
-            // Restore focus state if returning via back
             if (_scSongStyleMode === 'search' && _scSongSearchText) {
               searchInput.style.borderColor = 'var(--rose)';
             }
@@ -14632,7 +14338,6 @@
           // Current value restore (back-navigation)
           var curThemeVal = (_scThemeMode === 'freetext') ? '' : (_scTheme || '');
 
-          // Freetext input
           themeHtml += '<div style="margin-bottom:16px">';
           themeHtml += '<input id="scThemeInput" type="text" maxlength="100" placeholder="e.g. food, resilience, Hey Jude…" value="' + escHtml(curThemeVal) + '" ' +
             'style="width:100%;box-sizing:border-box;padding:10px 14px;border:2px solid ' + (_scTheme && _scThemeMode === 'freetext' ? 'var(--rose)' : 'var(--border)') + ';border-radius:10px;font-family:\'Lato\',sans-serif;font-size:0.88rem;color:var(--text);background:var(--surface);outline:none" />';
@@ -14689,17 +14394,14 @@
             });
             themeHtml += '</div>';
           } else {
-            // Initial state — show the suggest button
             themeHtml += '<button data-action="sc-suggest-themes" style="background:none;border:none;font-size:0.8rem;color:var(--rose);cursor:pointer;padding:0;font-family:\'Lato\',sans-serif;text-decoration:underline;text-underline-offset:2px">✨ Suggest a theme</button>';
           }
           themeHtml += '</div>';
 
           cardsEl.innerHTML = themeHtml;
 
-          // Wire up freetext input
           var themeInput = document.getElementById('scThemeInput');
           if (themeInput) {
-            // Restore freetext value if previously entered
             if (_scThemeMode === 'freetext' && _scTheme) {
               themeInput.value = _scTheme;
               themeInput.style.borderColor = 'var(--rose)';
@@ -14710,7 +14412,6 @@
                 _scTheme     = val;
                 _scThemeMode = 'freetext';
                 this.style.borderColor = 'var(--rose)';
-                // Clear chip highlights
                 var chips = cardsEl.querySelectorAll('button[data-action="sc-theme-chip"]');
                 for (var ci = 0; ci < chips.length; ci++) {
                   chips[ci].style.borderColor = 'var(--border)';
@@ -14751,7 +14452,6 @@
           var descHtml = card.desc ? '<span style="font-size:0.75rem;color:var(--text-light);line-height:1.35;display:block;margin-top:2px">' + card.desc + '</span>' : '';
           btn.innerHTML = '<span style="font-size:1.3rem;line-height:1">' + card.emoji + '</span><span style="font-size:0.82rem;font-weight:700;color:var(--text);line-height:1.2;margin-top:2px">' + card.label + '</span>' + descHtml;
           cardsEl.appendChild(btn);
-          // If already selected, re-enable Next button
           if (alreadySelected) {
             _scSelected = card.value;
             if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
@@ -14871,13 +14571,11 @@
   function _scSelectThemeChip(value, btn) {
     _scTheme     = value;
     _scThemeMode = 'chip';
-    // Update freetext input to reflect chip value
     var themeInput = document.getElementById('scThemeInput');
     if (themeInput) {
       themeInput.value = value;
       themeInput.style.borderColor = 'var(--border)';
     }
-    // Highlight selected chip, clear others
     var cardsEl = document.getElementById('scCards');
     if (cardsEl) {
       var chips = cardsEl.querySelectorAll('button[data-action="sc-theme-chip"]');
@@ -14890,7 +14588,6 @@
       btn.style.borderColor = 'var(--rose)';
       btn.style.background  = 'rgba(180,60,60,0.07)';
     }
-    // Update Next button label
     var nextBtn = document.getElementById('scNextBtn');
     if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = 'Next'; }
   }
@@ -15009,7 +14706,6 @@
         _scTheme     = cleanTheme || rawTheme; // fallback to raw if strip leaves empty
         _scThemeMode = 'freetext';
       }
-      // Empty input or Skip → null theme
       if (!_scTheme) { _scTheme = null; _scThemeMode = null; }
       _scThemeSubStep = false;
       // Song skips roast/tone step — jump straight to scope
@@ -15053,13 +14749,11 @@
           // Show comedy style sub-step before advancing (intensity always 'full')
           _scRoastSubStep    = 'options';
           _scComedyIntensity = 'full';
-          // Set sensible default style if first visit
           if (!_scComedyStyle) _scComedyStyle = 'affectionate';
           _scSelected = null;
           _scRender();
           return;
         }
-        // straight — clear any leftover comedy params
         _scComedyStyle     = null;
         _scComedyIntensity = null;
         _scRoastSubStep    = null;
@@ -15298,10 +14992,6 @@
         return;
       }
 
-      // ── AI generation ─────────────────────────────────────────────────────
-      // Format-branch guards — each format is handled server-side by the proxy;
-      // these client-side checks exist for clarity, logging, and future divergence.
-      // funny=true applies a comedy roast overlay on top of any format (not mywords).
       if (format === 'prose')      { /* warm literary memoir — default AI branch */ }
       else if (format === 'letter')     { /* "Dear grandchildren…" first-person letter */ }
       else if (format === 'newspaper')  { /* headline + third-person article */ }
@@ -15391,7 +15081,6 @@
     } catch (err) {
       dbgErr('STORY', err); notifyDev('error', 'STORY', String(err && err.message || err)); logActivity('story_error', String(err && err.message || err), 'error', 'STORY');
       skeleton.style.display = 'none';
-      // Restore configurator so user can try again
       var configuratorEl2 = document.getElementById('storyConfigurator');
       if (configuratorEl2) configuratorEl2.style.display = 'block';
       out.style.display = 'block';
@@ -15438,7 +15127,6 @@
     var bldView  = document.getElementById('storyBookBuilderView');
     var abView   = document.getElementById('storyAudiobookView');
 
-    // Reset all tab buttons
     var activeSty = 'var(--rose)'; var activeCol = '#fff';
     var offSty = 'transparent'; var offCol = 'var(--text-light)';
     if (genBtn)   { genBtn.style.background   = offSty; genBtn.style.color   = offCol; }
@@ -15446,7 +15134,6 @@
     if (buildBtn) { buildBtn.style.background = offSty; buildBtn.style.color = offCol; }
     if (audioBtn) { audioBtn.style.background = offSty; audioBtn.style.color = offCol; }
 
-    // Hide all sub-views
     if (libView) libView.style.display = 'none';
     if (bldView) bldView.style.display = 'none';
     if (abView)  abView.style.display  = 'none';
@@ -15490,7 +15177,6 @@
     }
   }
 
-  // Format type → display label + emoji
   var _STORY_TYPE_META = {
     prose:        { emoji: '📖', label: 'Story' },
     poem:         { emoji: '🌿', label: 'Poem' },
@@ -15511,7 +15197,6 @@
     return _STORY_TYPE_META[type] || { emoji: '📄', label: type || 'Story' };
   }
 
-  // Auto-generate a human-readable title from story metadata
   function _autoStoryTitle(meta, dateStr) {
     var m = _storyTypeMeta(meta.format || meta.type || '');
     var parts = [m.label];
@@ -15574,7 +15259,6 @@
 
   function _saveToLibClick() {
     if (!currentStory || !currentStory.text) return;
-    // Pre-fill title from auto-generator
     var dateStr = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
     var meta = {
       format:     currentStory.mode,
@@ -15865,7 +15549,6 @@
     }
   }
 
-  // Build a single library card element
   function _buildLibraryCard(piece) {
     var meta    = piece.metadata || {};
     var typeMeta = _storyTypeMeta(piece.type || meta.format || '');
@@ -15889,7 +15572,6 @@
     // PRV-09 Phase 9: store piece for delegate lookup
     _libPieceMap[piece.id] = piece;
 
-    // Title row
     var titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:flex-start;gap:10px;margin-bottom:6px';
 
@@ -15900,7 +15582,6 @@
     var titleWrap = document.createElement('div');
     titleWrap.style.cssText = 'flex:1;min-width:0';
 
-    // Editable title
     var titleSpan = document.createElement('span');
     titleSpan.setAttribute('data-lib-title', piece.id);
     titleSpan.setAttribute('data-action', 'lib-edit-title');
@@ -15925,7 +15606,6 @@
     titleRow.appendChild(titleWrap);
     card.appendChild(titleRow);
 
-    // Preview text
     if (preview) {
       var prevEl = document.createElement('div');
       prevEl.style.cssText = 'font-size:0.78rem;color:var(--text-light);line-height:1.45;margin-bottom:10px;padding-left:2px';
@@ -16036,7 +15716,6 @@
     return card;
   }
 
-  // Inline title editing
   function _storyLibEditTitle(id, titleSpan) {
     var current = titleSpan.textContent;
     var input = document.createElement('input');
@@ -16067,7 +15746,6 @@
     input.onkeydown = function(e) { if (e.key === 'Enter') { e.preventDefault(); _commit(); } if (e.key === 'Escape') { input.value = current; _commit(); } };
   }
 
-  // Delete with confirmation
   async function _storyLibDelete(id, cardEl) {
     if (!confirm('Remove this piece from your library? This cannot be undone.')) return;
     try {
@@ -16082,7 +15760,6 @@
     }
   }
 
-  // Expand overlay
   var _storyLibCurrentPiece = null; // FE-01: piece currently open in reading overlay
 
   function _storyLibOpenOverlay(piece) {
@@ -16209,7 +15886,6 @@
     if (!currentUser) { toast('Please sign in first.'); return; }
     _primeAudioContext(); // must be called synchronously inside gesture handler
 
-    // Stop any current playback
     if (_abPlayer.playing || _abPlayer.paused) {
       _abStop();
       await new Promise(function(r) { setTimeout(r, 150); });
@@ -16248,7 +15924,6 @@
     // we show a toast-style indicator in the library tab instead)
     toast('🎧 Playing: ' + (piece.title || 'your piece') + ' — tap ⏹ to stop', 4000);
 
-    // Start playback from the single item
     _abPlayFrom(0);
   }
 
@@ -16298,7 +15973,6 @@
     _abSetProgress('');
     toast('🎧 Playing preview — save to library to keep it', 4000);
     _abPlayFrom(0).then(function() {
-      // Playback finished naturally — reset button
       var b = document.getElementById('postGenListenBtn');
       if (b) { b.textContent = '🎧 Listen'; b.disabled = false; }
     });
@@ -16308,7 +15982,6 @@
   // If saved, opens share modal; if not, prompts to save first.
   function _postGenShare() {
     if (currentStory && currentStory.componentId) {
-      // Derive a title for the modal header
       var title = (currentStory.userTitle || '').trim();
       _storyLibSharePiece(currentStory.componentId, title);
     } else {
@@ -16354,11 +16027,6 @@
       var data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'HTTP ' + res.status);
       link = location.origin + '/?share=' + data.token;
-      // SHARE-LOG-01: this already logged to DB (logActivity) but never to
-      // Telegram — notifyDev added so real-time "feature is being used"
-      // visibility isn't limited to comments coming back in (submit_feedback
-      // is the only SHARE action that currently pings Telegram). Token itself
-      // is never included.
       logActivity('story_shared', JSON.stringify({ component_id: pieceId }));
       notifyDev('info', 'SHARE', (_storyShareIsAudio ? 'Recording' : 'Story piece') + ' shared — component_id=' + pieceId + ', expires in ' + expiryDays + 'd');
     } catch(err) {
@@ -16571,7 +16239,6 @@
         .order('sort_order', { ascending: true });
       if (error) throw error;
 
-      // Load the referenced pieces
       var compIds = (sections || []).map(function(s) { return s.component_id; });
       var piecesMap = {};
       if (compIds.length > 0) {
@@ -16591,9 +16258,7 @@
     }
   }
 
-  // Add a piece to the book
   async function _bookAddPiece(componentId) {
-    // Prevent duplicates
     if (_bookSections.some(function(s) { return s.component_id === componentId; })) return;
     var newSortOrder = _bookSections.length;
     try {
@@ -16603,7 +16268,6 @@
         .select()
         .single();
       if (error) throw error;
-      // Find piece from picker list
       var piece = _bookPieces.find(function(p) { return p.id === componentId; }) || null;
       _bookSections.push(Object.assign({}, inserted, { piece: piece }));
       _renderBookBuilder();
@@ -16613,7 +16277,6 @@
     }
   }
 
-  // Remove a piece from the book
   async function _bookRemovePiece(sectionId) {
     try {
       var { error } = await sb.from('life_book_sections').delete().eq('id', sectionId);
@@ -16626,7 +16289,6 @@
     }
   }
 
-  // Render both columns of the Book Builder
   async function _renderBookBuilder() {
     var pickerEl  = document.getElementById('bookPickerList');
     var sectionEl = document.getElementById('bookSectionList');
@@ -16635,7 +16297,6 @@
     var previewBtn= document.getElementById('bookPreviewBtn');
     if (!pickerEl || !sectionEl) return;
 
-    // Load pieces for picker
     pickerEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-light);padding:8px 0">Loading…</div>';
     try {
       var { data: pieces, error } = await sb
@@ -16651,7 +16312,6 @@
       _bookPieces = [];
     }
 
-    // Load existing sections
     await _loadBookSections();
 
     // Render picker (left column)
@@ -16710,7 +16370,6 @@
 
   // ── APP-42 Phase 2: drag-to-reorder + enable/disable ──────────────────────
 
-  // State for drag-and-drop within the section list
   var _bookDragSrcIdx = null;
 
   // Render just the section list column (called by _renderBookBuilder and drag/toggle handlers)
@@ -16740,23 +16399,19 @@
         row.dataset.idx = idx;
         row.style.cssText = 'display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 9px;transition:opacity 0.2s,border-color 0.2s;cursor:default;user-select:none';
 
-        // Drag handle
         var handle = document.createElement('span');
         handle.style.cssText = 'flex-shrink:0;font-size:0.85rem;color:var(--text-light);cursor:grab;padding:0 2px;line-height:1;touch-action:none';
         handle.title = 'Drag to reorder';
         handle.textContent = '☰';
 
-        // Number badge
         var num = document.createElement('span');
         num.style.cssText = 'font-size:0.7rem;font-weight:700;color:var(--text-light);flex-shrink:0;min-width:14px;text-align:center';
         num.textContent = (idx + 1) + '.';
 
-        // Label
         var label = document.createElement('div');
         label.style.cssText = 'flex:1;min-width:0;font-size:0.76rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
         label.textContent = typeMeta.emoji + ' ' + title;
 
-        // Remove button
         var removeBtn = document.createElement('button');
         removeBtn.style.cssText = 'flex-shrink:0;background:none;border:none;color:var(--text-light);font-size:1rem;cursor:pointer;padding:0 1px;line-height:1';
         removeBtn.title = 'Remove from book';
@@ -16778,7 +16433,6 @@
         });
         row.addEventListener('dragend', function() {
           this.style.opacity = '1';
-          // Clear drop highlights
           var rows = sectionEl.querySelectorAll('[draggable]');
           rows.forEach(function(r) { r.style.borderColor = 'var(--border)'; });
         });
@@ -16795,7 +16449,6 @@
           this.style.borderColor = 'var(--border)';
           var destIdx = parseInt(this.dataset.idx, 10);
           if (_bookDragSrcIdx === null || _bookDragSrcIdx === destIdx) return;
-          // Reorder _bookSections array
           var moved = _bookSections.splice(_bookDragSrcIdx, 1)[0];
           _bookSections.splice(destIdx, 0, moved);
           _bookDragSrcIdx = null;
@@ -16829,7 +16482,6 @@
         return sb.from('life_book_sections').update({ sort_order: i }).eq('id', s.id);
       });
       await Promise.all(updates);
-      // Update local sort_order to match
       _bookSections.forEach(function(s, i) { s.sort_order = i; });
     } catch(err) {
       dbgErr('BOOK', '_bookSaveOrder error: ' + err.message); notifyDev('error', 'BOOK', String(err && err.message || err)); logActivity('book_error', String(err && err.message || err), 'error', 'BOOK');
@@ -16859,7 +16511,6 @@
     _a48Render();
   }
 
-  // Close the modal
   function _a48Close() {
     var modal = document.getElementById('app48Modal');
     if (modal) modal.style.display = 'none';
@@ -16896,13 +16547,11 @@
     var html = '<div style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:var(--text);margin-bottom:4px">Assemble a themed chapter</div>';
     html += '<div style="font-size:0.82rem;color:var(--text-light);margin-bottom:18px;font-family:\'Lato\',sans-serif">Pick a theme — Gethro will find the pieces in your library that connect to it.</div>';
 
-    // Freetext input
     html += '<div style="margin-bottom:14px"><input id="a48ThemeInput" type="text" maxlength="100" placeholder="e.g. Food, Travel, Resilience…" ' +
       'value="' + escHtml((_a48Theme && !_chipThemes().includes(_a48Theme)) ? _a48Theme : '') + '" ' +
       'style="width:100%;box-sizing:border-box;padding:10px 14px;border:2px solid var(--border);border-radius:10px;' +
       'font-family:\'Lato\',sans-serif;font-size:0.88rem;color:var(--text);background:var(--surface);outline:none" /></div>';
 
-    // Life topics row
     html += '<div style="margin-bottom:10px"><div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Life topics</div>';
     html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
     [['🍽️','Food'],['✈️','Travel'],['👨‍👩‍👧','Family'],['❤️','Love'],['💼','Work'],['⚽','Sport'],['🎵','Music'],['🧒','Childhood']].forEach(function(c) {
@@ -16910,7 +16559,6 @@
     });
     html += '</div></div>';
 
-    // Story moods row
     html += '<div style="margin-bottom:18px"><div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px;font-family:\'Lato\',sans-serif">Story moods</div>';
     html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
     [['💪','Resilience'],['🌱','Coming of age'],['🥹','Bittersweet'],['🏆','Triumph'],['🤝','Forgiveness'],['🌍','Adventure']].forEach(function(c) {
@@ -16918,7 +16566,6 @@
     });
     html += '</div></div>';
 
-    // CTA
     html += '<button id="a48FindBtn" data-action="a48-find" ' +
       'style="width:100%;padding:12px;background:var(--rose);color:#fff;border:none;border-radius:10px;' +
       'font-family:\'Lato\',sans-serif;font-size:0.88rem;font-weight:700;cursor:pointer;' +
@@ -16927,13 +16574,11 @@
 
     el.innerHTML = html;
 
-    // Wire freetext input
     var input = document.getElementById('a48ThemeInput');
     if (input) {
       input.addEventListener('input', function() {
         var val = this.value.trim();
         _a48Theme = val || null;
-        // Clear chip highlights
         el.querySelectorAll('button[data-action="a48-chip"]').forEach(function(b) {
           b.style.borderColor = 'var(--border)'; b.style.background = 'var(--surface)';
         });
@@ -16956,7 +16601,6 @@
     return ['Food','Travel','Family','Love','Work','Sport','Music','Childhood','Resilience','Coming of age','Bittersweet','Triumph','Forgiveness','Adventure'];
   }
 
-  // Chip tap handler
   function _a48SelectChip(value) {
     _a48Theme = value;
     var input = document.getElementById('a48ThemeInput');
@@ -16966,7 +16610,6 @@
       el.querySelectorAll('button[data-action="a48-chip"]').forEach(function(b) {
         b.style.borderColor = 'var(--border)'; b.style.background = 'var(--surface)';
       });
-      // Highlight matching chip
       el.querySelectorAll('button[data-action="a48-chip"]').forEach(function(b) {
         if (b.dataset.value === value) {
           b.style.borderColor = 'var(--rose)'; b.style.background = 'rgba(180,60,60,0.07)';
@@ -16977,7 +16620,6 @@
     if (findBtn) { findBtn.style.opacity = '1'; findBtn.style.pointerEvents = ''; }
   }
 
-  // Call the proxy to find matching pieces
   async function _a48FindPieces() {
     if (!_a48Theme || _a48Loading) return;
     _a48Loading = true;
@@ -17079,7 +16721,6 @@
     var html = '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:14px">';
     html += 'Add ' + count + ' piece' + (count === 1 ? '' : 's') + ' to your book?</div>';
 
-    // Piece list summary
     html += '<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:18px">';
     _a48Selected.forEach(function(id) {
       var r     = _a48Ranked.find(function(r) { return r.id === id; });
@@ -17126,7 +16767,6 @@
 
     _a48Close();
     toast('✨ ' + added + ' piece' + (added === 1 ? '' : 's') + ' added to your book');
-    // Switch to Book Builder and re-render
     _storyTabSwitch('build');
     await _renderBookBuilder();
   }
@@ -17229,7 +16869,6 @@
     return { html: html, text: text, pieces: pieces };
   }
 
-  // Export multi-section book as downloadable HTML file
   async function exportBookPDF() {
     await _pubRepliesLoad();   // FB-PUBLISH-02
     var built = _buildBookHtmlContent();
@@ -17305,7 +16944,6 @@
   var _abPieces  = [];   // all library pieces (for picker column)
   var _abDragSrcIdx = null;
 
-  // Player state
   var _abPlayer = {
     playing:    false,
     paused:     false,
@@ -17470,13 +17108,11 @@
           + 'font-size:0.8rem;cursor:grab;opacity:' + (isEnabled ? '1' : '0.45') + ';'
           + (isPlaying ? 'border-color:var(--rose);' : '');
 
-        // Drag handle
         var handle = document.createElement('span');
         handle.textContent = '⠿';
         handle.style.cssText = 'font-size:0.95rem;color:var(--text-light);flex-shrink:0;cursor:grab';
         row.appendChild(handle);
 
-        // Playing indicator
         if (isPlaying) {
           var playInd = document.createElement('span');
           playInd.textContent = '🔊';
@@ -17484,14 +17120,12 @@
           row.appendChild(playInd);
         }
 
-        // Title
         var titleSpan = document.createElement('span');
         titleSpan.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
           + (isEnabled ? '' : ';text-decoration:line-through');
         titleSpan.textContent = meta.emoji + ' ' + (piece ? (piece.title || meta.label) : '?');
         row.appendChild(titleSpan);
 
-        // Enable toggle
         var tog = document.createElement('input');
         tog.type = 'checkbox';
         tog.checked = isEnabled;
@@ -17503,7 +17137,6 @@
         tog.addEventListener('change', function() { _abToggleEnabled(item.id, tog.checked); });
         row.appendChild(tog);
 
-        // Remove button
         var removeBtn = document.createElement('button');
         removeBtn.textContent = '×';
         removeBtn.title = 'Remove';
@@ -17512,7 +17145,6 @@
         removeBtn.setAttribute('data-id', item.id);
         row.appendChild(removeBtn);
 
-        // Drag events
         row.addEventListener('dragstart', function(e) {
           _abDragSrcIdx = parseInt(this.dataset.idx, 10);
           e.dataTransfer.effectAllowed = 'move';
@@ -17540,7 +17172,6 @@
       });
     }
 
-    // Update count badge and controls
     if (countEl) countEl.textContent = _abQueue.length > 0 ? '(' + _abQueue.length + ')' : '';
     _abUpdatePlayerControls();
   }
@@ -17639,9 +17270,6 @@
         _abPlayer.fetchAbort = null;
         if (err && (err.name === 'AbortError' || _abPlayer.stopFlag)) { _abSwell(); resolve(); return; }
         if (err && err.__rateLimited) {
-          // BUG FIX v6.75 (RL-02/RL-03 item 4): expected, not a bug — quiet log,
-          // shared toast (once per page load, see _maybeShowTtsRateLimitToast),
-          // same fallback as any other failure so playback doesn't break.
           dbg('AUDIOBOOK', '_abSpeak rate-limited — falling back to speechSynthesis');
           _maybeShowTtsRateLimitToast(err.parsed);
         } else {
@@ -17736,7 +17364,6 @@
   function _abCleanForTts(text)  { return _cleanForTts(text); }
   function _abGetSegments(piece) { return _getSegments(piece); }
 
-  // The main sequential play loop
   async function _abPlayFrom(startIdx) {
     var enabledItems = _abQueue.filter(function(q) { return q.enabled !== false && q.piece; });
     if (enabledItems.length === 0) { toast('No pieces in playlist — add some first.'); return; }
@@ -17763,7 +17390,6 @@
       var piece = item.piece;
       var meta  = _STORY_TYPE_META[piece.type] || { emoji: '📖', label: 'Story' };
 
-      // Announce chapter
       _abSetNowPlaying((i + 1) + ' of ' + enabledItems.length + ' — ' + (piece.title || meta.label));
       _abSetProgress('');
       _renderAudiobookView(); // refresh playing indicator
@@ -17782,7 +17408,6 @@
       await _abSpeak(announce);
       if (_abPlayer.stopFlag) break;
 
-      // Play segments
       var segments = _abGetSegments(piece);
       for (var j = 0; j < segments.length; j++) {
         if (_abPlayer.stopFlag) break;
@@ -17821,14 +17446,12 @@
         }
       }
 
-      // Brief pause between pieces
       if (!_abPlayer.stopFlag && i < enabledItems.length - 1) {
         _abSwell(); // APP-46 Phase 3b: swell between pieces
         await new Promise(function(r) { setTimeout(r, 1200); });
       }
     }
 
-    // Playback finished or stopped
     if (!_abPlayer.stopFlag) {
       _abSetNowPlaying('Finished');
       _abSetProgress('');
@@ -17938,7 +17561,6 @@
   // Maps a piece to a bg-music genre string matching our Supabase Storage files.
   // Available: country, folk, hiphop, jazz, classical (piano), pop, rock, soul
   function _abMusicGenreFor(piece) {
-    // Genre slug → available file mapping
     var slugMap = {
       pop_ballad: 'pop',     country: 'country',  folk: 'folk',
       classical: 'classical', jazz: 'jazz',        blues: 'jazz',
@@ -18086,7 +17708,6 @@
                 gainNode.gain.value = 0;
               },
               resume: function() {
-                // Restore volume after pause
                 gainNode.gain.value = this._pausedVol || _AB_VOL_FULL;
                 if (bgCtx.state === 'suspended') bgCtx.resume().catch(function(){});
               },
@@ -18104,12 +17725,11 @@
     } catch (err) {
       var errMsg = '✗ _abFetchAndPlayMusic outer catch: ' + (err && err.message);
       dbgWarn('MUSIC', errMsg); logActivity('music_warn', String(err && err.message || err), 'warn', 'MUSIC');
-      console.error('[MUSIC] ' + errMsg); // escalate — hits Telegram via intercept
+      console.error('[MUSIC] ' + errMsg);
       _abPlayer.bgAudio = null;
     }
   }
 
-  // Stop and release background music.
   function _abStopMusic() {
     if (_abPlayer.bgAudio) {
       _abPlayer.bgAudio.stop(); // permanently destroys the source node
@@ -18167,7 +17787,6 @@
       }
       step++;
       var next = startVol + delta * step;
-      // Clamp and snap on last step
       if (step >= steps) {
         _abPlayer.bgAudio.volume = Math.max(0, Math.min(1, target));
         clearInterval(_abPlayer.rampInterval);
@@ -18213,7 +17832,6 @@
       // Display the freetext style input directly, or a friendly fallback
       const sLabel = sStyle || 'Original song';
 
-      // Title block
       const songTitleHtml =
         '<div class="story-title">🎵 ' + (name !== 'Their' ? name + '\u2019s ' : '') + 'Song</div>' +
         '<div class="story-subtitle">' + escHtml(sLabel) + (funny ? ' · 😄 Comedy Edition' : '') +
@@ -18257,7 +17875,6 @@
     const processedStory = story.replace(/^##\s*(.+)$/gm, '\x00CHAPTERHEAD:$1\x00');
     const paragraphs = processedStory.split('\n').filter(p => p.trim());
 
-    // Build comedy subtitle from style + intensity
     function comedySubtitle() {
       const styleLabels = { dry: 'Dry wit', affectionate: 'Affectionate roast', selfdep: 'Self-deprecating', absurdist: 'Absurdist' };
       const intLabels   = { gentle: '😏 Gentle', medium: '😂 Medium', full: '😈 Full roast' };
@@ -18267,7 +17884,6 @@
       return parts.length ? parts.join(' · ') : 'A loving roast';
     }
 
-    // Story title + byline
     const titleHtml =
       '<div class="story-title">' + (name !== 'Their' ? name + '\'s ' : '') + (funny ? 'Life Story (The Comedy Edition)' : 'Life Story') + '</div>' +
       '<div class="story-subtitle">' + (funny ? '😄 ' + comedySubtitle() : '✨ A personal memoir') + ' · ' + new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'}) + '</div>';
@@ -18289,7 +17905,6 @@
       paragraphs.forEach((p, i) => {
         bodyHtml += renderPara(p);
         if (i === 2 && paragraphs.length > 5) {
-          // Extract a sentence for pull quote
           const sentences = p.split('. ');
           const pullSentence = sentences[Math.floor(sentences.length / 2)] || sentences[0];
           if (pullSentence.length > 40) {
@@ -18425,10 +18040,8 @@
     const fields = ['Year','Chapter'];
     const keys   = ['year','chapter'];
     const tags   = {};
-    // Title
     const titleEl = document.getElementById(prefix + 'TagTitle');
     if (titleEl && titleEl.value.trim()) tags.title = titleEl.value.trim();
-    // Date
     const dateEl = document.getElementById(prefix + 'TagDate');
     if (dateEl && dateEl.value) tags.date = dateEl.value;
     // People (hidden input, comma-separated)
@@ -18442,7 +18055,6 @@
     const refUrlEl = document.getElementById(prefix + 'TagRefUrl');
     if (refEl    && refEl.value.trim())    tags.reference    = refEl.value.trim();
     if (refUrlEl && refUrlEl.value.trim()) tags.reference_url = refUrlEl.value.trim();
-    // Select fields
     fields.forEach((f, i) => {
       const sel = document.getElementById(prefix + 'Tag' + f);
       const inp = document.getElementById(prefix + 'Tag' + f + 'Custom');
@@ -18465,7 +18077,6 @@
       title.textContent = '👥 Manage People';
       input.placeholder = 'Add a name e.g. Mum, Dad...';
       urlRow.style.display = 'none';
-      // Load existing
       const hiddenId = entryId ? prefix + '_' + entryId + 'TagPeople' : prefix + 'TagPeople';
       const existing = document.getElementById(hiddenId)?.value || '';
       _tagMgr.items = existing.split(',').map(s=>s.trim()).filter(Boolean).map(s=>({label:s,url:''}));
@@ -18473,7 +18084,6 @@
       title.textContent = '📍 Manage Locations';
       input.placeholder = 'Add a location e.g. Melbourne...';
       urlRow.style.display = 'none';
-      // Load existing
       const hiddenId = entryId ? prefix + '_' + entryId + 'TagLocation' : prefix + 'TagLocation';
       const existing = document.getElementById(hiddenId)?.value || '';
       _tagMgr.items = existing.split(',').map(s=>s.trim()).filter(Boolean).map(s=>({label:s,url:''}));
@@ -18637,7 +18247,6 @@
       }
       if (!found) { yearCustom.value = year; yearCustom.style.display = 'block'; }
     }
-    // Flag suspicious date combinations in the UI
     flagDateWarning(d.value);
   }
 
@@ -18664,7 +18273,6 @@
     } else if (isVeryOldDate) {
       warning = 'Date is before 1900 — double-check this is correct.';
     } else {
-      // Check era consistency if era is set
       var eraVal = document.getElementById('recTagYear')?.value ||
                    document.getElementById('recTagYearCustom')?.value || '';
       if (eraVal) {
@@ -18740,21 +18348,18 @@
       const us = prefix.indexOf('_');
       if (us > -1) { shortPrefix = prefix.slice(0, us); chipEntryId = prefix.slice(us + 1); }
     }
-    // People chips
     if (tags.people) {
       const hidden = document.getElementById(prefix + 'TagPeople');
       if (hidden) hidden.value = tags.people;
       const chipsId = chipEntryId ? shortPrefix + 'PeopleChips' + chipEntryId : shortPrefix + 'PeopleChips';
       renderTagChipManager(chipsId, tags.people.split(',').map(s=>s.trim()).filter(Boolean), 'people', shortPrefix, chipEntryId||null);
     }
-    // Location chips
     if (tags.location) {
       const hidden = document.getElementById(prefix + 'TagLocation');
       if (hidden) hidden.value = tags.location;
       const chipsId = chipEntryId ? shortPrefix + 'LocationChips' + chipEntryId : shortPrefix + 'LocationChips';
       renderTagChipManager(chipsId, tags.location.split(',').map(s=>s.trim()).filter(Boolean), 'location', shortPrefix, chipEntryId||null);
     }
-    // Reference chips
     if (tags.reference) {
       const hidden = document.getElementById(prefix + 'TagRef');
       if (hidden) hidden.value = tags.reference;
@@ -18841,7 +18446,6 @@
       }
       const panel = document.getElementById('edit-' + entryId) || document.getElementById('redit-' + entryId) || document.getElementById('cdedit-' + entryId);
       if (panel) panel.style.display = 'none';
-      // Refresh whichever panel is active
       _refreshActivePanel();
     } catch(err) { dbgErr('DB', 'saveEntryTags threw:', err.message); toast('Error: ' + err.message); }
   }
@@ -18945,9 +18549,7 @@
       dbgWarn('RENDER', 'buildEditPanel called with null/undefined entryId (prefix=' + prefix + ')');
       return '';
     }
-    // Find existing photo children for this entry
     const photoChildren = entries.filter(e => e.parent_entry_id === entryId && e.photo_url);
-    // Find existing audio children for this entry
     const audioChildren = entries.filter(e => e.parent_entry_id === entryId && e.audio_url && !e.photo_url);
     const photosHtml = photoChildren.length
       ? photoChildren.map((p, i) =>
@@ -19213,7 +18815,6 @@
         method: 'DELETE', headers: getAuthHeaders()
       });
       if (!res.ok) { toast('Could not delete — try again'); return; }
-      // Remove from local entries array
       entries = entries.filter(function(e) { return e.id !== childId; });
       toast('Attachment deleted ✓');
       // Refresh the active panel — the panel re-renders cleanly with the child removed.
@@ -19281,7 +18882,6 @@
         out += '<span style="display:block;margin-top:14px">'
           + '<strong style="color:var(--gold-dark)">AI Question:</strong>'
           + '</span>';
-        // Next line is the question text
         if (i + 1 < lines.length) {
           i++;
           out += '<span style="display:block;margin-bottom:6px;font-size:0.95em">' + escHtml(lines[i]) + '</span>';
@@ -19305,7 +18905,6 @@
           + '</span>';
         continue;
       }
-      // Regular text line
       out += (line ? escHtml(line) : '') + '\n';
     }
     return out;
@@ -19339,9 +18938,6 @@
 
     if (!confirm(msg)) return;
 
-    // Log immediately — before the undo window — so we always have an audit trail
-    // even if the user undoes. The commit/undo state is tracked separately.
-    // PRV-13: log only entry ID — title and date are memoir content and must not appear in operational logs.
     logActivity('entry_delete_initiated', 'id:' + entryId, 'info', 'ENTRIES');
 
     // Safety: if a delete is already pending, block a new one until the user
@@ -19367,7 +18963,6 @@
     if (!_undoTimer) return;
     clearTimeout(_undoTimer);
     _undoTimer = null;
-    // Restore entry to local array and re-render
     if (_undoEntry) entries.push(_undoEntry);
     entries.sort(function(a,b){ return a.timestamp < b.timestamp ? -1 : 1; });
     _undoEntry   = null;
@@ -19444,7 +19039,6 @@
     // FAM-01b: subject helpers for Gethro tile
     const _gtIsOther = userProfile.subjectMode === 'other' && userProfile.subjectName;
     const _gtSubject = _gtIsOther ? userProfile.subjectName : null;
-    // "their"/"your", "they"/"you" helpers
     const _gt_their  = _gtSubject ? _gtSubject + '\'s' : 'your';
     const _gt_they   = _gtSubject ? _gtSubject : 'you';
     const _gt_them   = _gtSubject ? _gtSubject : 'you';
@@ -19640,7 +19234,6 @@
       }
     }
 
-    // Optional action button
     if (pick.action === 'memories') {
       actEl.innerHTML = '<button style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--gold);border-radius:6px;background:none;color:var(--gold-dark);font-family:\'Lato\',sans-serif;cursor:pointer">✍️ Write a memory</button>';
     } else if (pick.action === 'entries') {
@@ -19678,9 +19271,6 @@
 
   function _invalidateSortCache() { _sortedReal = null; _sortedRealLen = -1; }
 
-  // ── v7.258 (HELEN-03): one-tap "what would have helped?" question ───────────────
-  // Shown once per user, only to people with zero memories, after skipping the tour or
-  // ~3 minutes of idle on screen. Answers go to life_activity_log and Telegram.
   var _helpQShown = false;
   var _helpQLastTouch = Date.now();
   ['pointerdown','keydown','touchstart'].forEach(function(ev) { document.addEventListener(ev, function() { _helpQLastTouch = Date.now(); }, { passive: true }); });
@@ -19862,10 +19452,6 @@
     } catch(e) {}
   }, 5000);
 
-  // ── v7.258 (HELEN-05): welcome-email feedback box ───────────────────────────────
-  // ONBOARDING_EMAIL_PROXY links to /?feedback=welcome. The param is stashed (it survives the
-  // sign-in redirect), then a small box opens once the app is loaded. Saved like the Help tab contact
-  // form: logActivity('user_contact') for the DB + notifyDev for Telegram.
   (function() {
     // v7.261: the welcome email's feedback link needs NO login. ?feedback=welcome&u=<userId>&n=<firstName>
     // opens the box straight away over whatever screen is showing. Nothing is read from the URL
@@ -19962,7 +19548,6 @@
   setInterval(_fitMemBox, 1000); // catches banners, panels and fonts changing the layout
 
   function renderDashboard() {
-    // Remove skeleton shimmer once entries have loaded
     var dashGrid = document.getElementById('dashGrid');
     if (dashGrid) dashGrid.classList.remove('loading');
     try {
@@ -19985,11 +19570,9 @@
       try { renderGethroTile([]); } catch(e) {}
       return;
     }
-    // Hide welcome card once entries exist
     var welcomeCard = document.getElementById('dashWelcomeCard');
     if (welcomeCard) welcomeCard.style.display = 'none';
 
-    // Story Health tile
     const totalWords = real.reduce((n,e) => n + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
     const chapters   = [...new Set(real.map(e => e.chapter).filter(Boolean))];
     const noTag      = real.filter(e => !e.chapter).length;
@@ -20001,13 +19584,11 @@
     document.getElementById('dashHealthBar').style.width      = score + '%';
     document.getElementById('dashHealthBar').style.background = scoreCol;
 
-    // Essentials tile
     const confirmed = entries.filter(e => e.category?.startsWith('_essentials_')).length;
     document.getElementById('dashEssentialsValue').textContent = confirmed + ' / 8 confirmed';
     document.getElementById('dashEssentialsSub').textContent   = confirmed === 8 ? 'Complete! ✓' : (8 - confirmed) + ' still to add';
     document.getElementById('dashEssentialsBar').style.width   = Math.round((confirmed/8)*100) + '%';
 
-    // Entries tile
     const noTagCount = real.filter(e => !e.chapter).length;
     document.getElementById('dashEntriesValue').textContent = real.length + ' memor' + (real.length===1?'y':'ies');
     document.getElementById('dashEntriesSub').textContent   = noTagCount ? noTagCount + ' missing chapter tag' : 'All tagged ✓';
@@ -20083,7 +19664,6 @@
           '<div style="height:100%;border-radius:3px;background:' + col + ';width:' + pct + '%;transition:width 0.5s ease"></div>' +
           '</div></div>';
       }).join('');
-      // Delegated click for chapter drill-down rows
       chapterListEl.addEventListener('click', function(e) {
         var row = e.target.closest('[data-chapter]');
         if (row) { e.stopPropagation(); filterEntriesByChapter(row.dataset.chapter); }
@@ -20097,7 +19677,6 @@
     // ── Story Hygiene tile ────────────────────────────────────────────
     try { renderHygieneTile(real); } catch(hyErr) { console.warn('Hygiene tile:', hyErr); logActivity('hygiene_tile_warn', String(hyErr && hyErr.message || hyErr), 'warn', 'HYGIENE'); }
 
-    // Last entry tile
     const sorted = [...real].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
     if (sorted.length) {
       const last    = new Date(sorted[0].timestamp);
@@ -20135,7 +19714,6 @@
       }
     }
 
-    // People tile
     const allPeople = real.flatMap(e => e.people ? e.people.split(',').map(p => p.trim()).filter(Boolean) : []);
     const peopleCounts = {};
     allPeople.forEach(p => { peopleCounts[p] = (peopleCounts[p] || 0) + 1; });
@@ -20144,7 +19722,6 @@
     const topPerson = peopleSorted[0];
     document.getElementById('dashPeopleValue').textContent = uniquePeople + ' ' + (uniquePeople === 1 ? 'person' : 'people') + ' tagged';
     document.getElementById('dashPeopleSub').textContent   = topPerson ? 'Most mentioned: ' + topPerson[0] + ' (' + topPerson[1] + (topPerson[1]===1?' entry':' entries') + ')' : 'Tag people in your entries';
-    // Populate people drill-down chips
     const peopleGrid = document.getElementById('dashPeopleGrid');
     if (peopleGrid) {
       if (!peopleSorted.length) {
@@ -20192,7 +19769,6 @@
       drillGrid.innerHTML = chCards.join('') || '<p style="font-size:0.82rem;color:var(--text-light)">No chapters tagged yet — add a chapter tag to your entries.</p>';
     }
 
-    // Locations tile
     const allLocations = real.flatMap(e => e.location ? e.location.split(',').map(l => l.trim()).filter(Boolean) : []);
     const locationCounts = {};
     allLocations.forEach(l => { locationCounts[l] = (locationCounts[l] || 0) + 1; });
@@ -20217,7 +19793,6 @@
       }
     }
 
-    // Recent entries tile
     const recent  = [...real].sort((a,b) => new Date(b.timestamp)-new Date(a.timestamp)).slice(0,3);
     const recentEl = document.getElementById('dashRecentList');
     recentEl.innerHTML = recent.map(e => {
@@ -20315,7 +19890,6 @@
     var bestDate = new Date(best.timestamp || best.date);
     var yearDiff = today.getFullYear() - bestDate.getFullYear();
 
-    // Build label
     var label;
     if (bestDist === 0 && yearDiff > 0) {
       label = 'On this day in ' + bestDate.getFullYear();
@@ -20337,7 +19911,6 @@
     document.getElementById('dashThisDayPreview').textContent = preview;
     tile.style.display = '';
 
-    // Tap opens entry in My Memories
     tile.onclick = function() {
       _entriesTypeFilter = null; _entriesPersonFilter = null; _entriesLocationFilter = null;
       showPanel('entries', null, 2);
@@ -20355,7 +19928,6 @@
   function openTour(startSlide) {
     startSlide = startSlide || 1;
     _tourCurrentSlide = startSlide;
-    // Reset all slides
     for (var i = 1; i <= 6; i++) {
       var sl = document.getElementById('tourSlide' + i);
       var dt = document.getElementById('tourDot' + i);
@@ -20376,7 +19948,6 @@
   function closeTour(completed) {
     var overlay = document.getElementById('tourOverlay');
     if (overlay) overlay.style.display = 'none';
-    // Stop any tour TTS mid-sentence
     if (typeof gethroCancel === 'function') gethroCancel();
     if (completed) {
       _tourCompleted = true;
@@ -20415,7 +19986,6 @@
     toEl.classList.add('ob-active');
     // Update tab-location hint on slide 2
     if (target === 2) { _tourUpdateTabHint(); }
-    // Gethro speaks on every slide entrance
     _tourAnimateGethroInSlide(toEl);
     setTimeout(function() { fromEl.classList.remove('ob-exit'); }, 300);
   }
@@ -20453,7 +20023,6 @@
     wrap.classList.remove('speaking');
     void wrap.offsetWidth;
     wrap.classList.add('speaking');
-    // Speak the slide script if available and user is logged in (has session token)
     var slideNum = _tourCurrentSlide;
     var line = _TOUR_SCRIPT[slideNum];
     if (line && typeof gethroSpeak === 'function' && sessionToken) {
@@ -20529,7 +20098,6 @@
       var daysSince = Math.floor((now - lastSeen) / 86400000);
       if (daysSince < 14) return; // not long enough away
 
-      // Find most recent entry chapter for context
       var real = (entries || []).filter(function(e) { return !e.category || !e.category.startsWith('_profile'); });
       var sorted = real.slice().sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
       var lastChapter = sorted.length && sorted[0].chapter ? sorted[0].chapter : null;
@@ -20707,7 +20275,6 @@
   }
 
   function openDashChapterDetail(chapter) {
-    // Open coverage dialog first if not open
     const coverageDialog = document.getElementById('dashDialogCoverage');
     if (!coverageDialog.classList.contains('open')) {
       populateDashCoverageGrid();
@@ -20768,7 +20335,6 @@
       </div>`;
     }).join('');
 
-    // Register tags and populate dropdowns
     sorted.filter(e => e.id).forEach(e => {
       registerEntryTags(e.id, getEntryTags(e));
       populateTagDropdowns('cdedit_' + e.id, getEntryTags(e));
@@ -20857,7 +20423,6 @@
   async function saveEssentialToDB(key, value) {
     const existing = entries.find(e => e.category === '_essentials_' + key);
     if (existing && existing.id) {
-      // Update
       await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
         method: 'PATCH',
         headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
@@ -20865,7 +20430,6 @@
       });
       existing.answer = value;
     } else {
-      // Insert
       const entry = { user_id: currentUser.id, category: '_essentials_' + key, answer: value, question: null, timestamp: new Date().toISOString() };
       const res = await fetch(DB_URL, {
         method: 'POST',
@@ -20914,7 +20478,6 @@
     }
   }
 
-  // Build essentials page for story insertion
   function buildEssentialsPage() {
     const confirmed = ESSENTIAL_FIELDS.filter(f => _essentials[f.key]?.confirmed);
     if (!confirmed.length) return '';
@@ -21082,7 +20645,6 @@
   async function renderReview() {
     if (!currentUser) return;
 
-    // Reload entries fresh
     try {
       const res = await fetch(DB_URL + '?user_id=eq.' + currentUser.id + '&order=timestamp.desc', { headers: getAuthHeaders() });
       if (res.ok) entries = (await res.json()) || [];
@@ -21120,7 +20682,6 @@
         const tl    = isOther ? 'tl-red' : trafficLight(score);
         const lbl   = isOther ? 'Add a chapter to these entries' : trafficLabel(score);
         const words = ents.reduce((s,e) => s + (e.answer||'').split(/\s+/).filter(Boolean).length, 0);
-        // Register this chapter's entries for drill-down
         _chapterRegistry[ch] = ents;
         return `<div class="chapter-card"\'")}')">
           <div class="ch-name">
@@ -21195,7 +20756,6 @@
     const e = entries.find(function(en) { return en.id === entryId; });
     if (!e) return;
 
-    // Reset form cleanly first
     memResetForm(false);
     draftClear();
 
@@ -21238,18 +20798,15 @@
       var html = '<div style="font-size:0.78rem;font-weight:700;color:var(--text-light);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:10px">Attached to this memory</div>';
 
       if (!hasStaticContent) {
-        // Placeholder — pending fetch may replace this
         html += '<div id="mem-static-placeholder-' + entryId + '" style="font-size:0.82rem;color:var(--text-light);font-style:italic">Loading responses…</div>';
       }
 
-      // Own photo
       if (e.photo_url) {
         html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
           '<span style="font-size:1rem">📷</span>' +
           '<span style="font-size:0.82rem;color:var(--text);flex:1">Entry photo</span>' +
         '</div>';
       }
-      // Child photos
       photoKids.forEach(function(p) {
         html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
           '<span style="font-size:1rem">📷</span>' +
@@ -21257,7 +20814,6 @@
           (p.id ? '<button style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:none;border:1px solid var(--rose);color:var(--rose);cursor:pointer;font-family:\'Lato\',sans-serif">Delete</button>' : '') +
         '</div>';
       });
-      // Child audio
       audioKids.forEach(function(a) {
         html += '<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--gold)">' +
           '<span style="font-size:1rem">🎵</span>' +
@@ -21297,7 +20853,6 @@
             '&select=*,life_share_tokens(note,label)&order=created_at.asc',
             { headers: getAuthHeaders() }
           );
-          // Remove loading placeholder regardless
           var placeholder = document.getElementById('mem-static-placeholder-' + entryId);
           if (placeholder) placeholder.remove();
 
@@ -21365,7 +20920,6 @@
       const el = document.getElementById(safeId);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        // Brief highlight
         el.style.transition = 'box-shadow 0.3s';
         el.style.boxShadow  = '0 0 0 3px var(--gold)';
         setTimeout(() => { el.style.boxShadow = ''; }, 1800);
@@ -21445,7 +20999,6 @@
     if (_scStorySelectLimit === 1 && _scStorySelected.length === 1) {
       _entriesStoryConfirm();
     } else {
-      // Refresh card highlights
       renderReviewEntries();
     }
   }
@@ -21468,7 +21021,6 @@
     // Poetry/Song skips length — null length is correct; no length configurator needed
     // (length was already null when pending vars were set for poetry)
 
-    // Disable bar to prevent double-tap
     var genBtn = document.getElementById('entriesStoryGenBtn');
     if (genBtn) { genBtn.disabled = true; genBtn.textContent = 'Writing…'; }
 
@@ -21501,12 +21053,10 @@
     if (!_selectMode || !id) return;
     if (_selectedIds.has(id)) _selectedIds.delete(id);
     else _selectedIds.add(id);
-    // Update checkbox visual without full re-render
     var cb = document.getElementById('selcheck-' + id);
     if (cb) cb.checked = _selectedIds.has(id);
     var card = document.getElementById('rev-' + id);
     if (card) card.style.outline = _selectedIds.has(id) ? '2px solid var(--gold)' : '';
-    // Update merge bar
     var countEl  = document.getElementById('entriesMergeCount');
     var mergeBtn = document.getElementById('entriesMergeBtn');
     var n = _selectedIds.size;
@@ -21518,7 +21068,6 @@
     if (_selectedIds.size < 2) return;
     var selectedEntries = entries.filter(function(e) { return e.id && _selectedIds.has(e.id); });
     if (selectedEntries.length < 2) { toast('Could not find selected entries — please try again'); return; }
-    // Exit select mode before opening consolidate overlay
     entriesToggleSelectMode(false);
     // Open consolidate overlay at step 2, pre-loaded with selected entries
     // Mirrors consolidateSelectGroup() but with manually chosen entries instead of AI clusters
@@ -21654,7 +21203,6 @@
     await Promise.all(photoEntries.map(async p => {
       if (p.photo_url) photoUrlCache[p.photo_url] = await getSignedUrl(p.photo_url);
     }));
-    // Pre-fetch signed audio URLs
     const audioUrlCache = {};
     const audioChildren = filtered.flatMap(e =>
       real.filter(c => c.parent_entry_id === e.id && c.audio_url)
@@ -21694,7 +21242,6 @@
         ? `<div id="improve-${e.id}" class="improve-panel" style="display:none"></div>`
         : '';
 
-      // Gather all photos with URLs already resolved
       const entryPhotos = [
         ...(e.photo_url ? [e] : []),
         ...real.filter(c => c.parent_entry_id === e.id && c.photo_url)
@@ -21717,7 +21264,6 @@
           '</div>'
         : '';
 
-      // Gather audio clips for this entry
       const entryAudios = real.filter(c => c.parent_entry_id === e.id && c.audio_url);
       const audioStripHtml = entryAudios.length
         ? '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">' +
@@ -22004,8 +21550,6 @@
         (!_selectMode && !isStoryMode ? pendingFbHtml : '') +
       '</div>';
       } catch(cardErr) {
-        // One bad card must not wipe the whole list — render a visible error placeholder
-        // and fire Telegram so we know which entry broke and why.
         var cardErrId = e ? (e.id || e.timestamp || 'unknown') : 'unknown';
         var cardErrMsg = cardErr && cardErr.message ? cardErr.message : String(cardErr);
         var cardErrStack = cardErr && cardErr.stack ? cardErr.stack.substring(0, 300) : '';
@@ -22026,7 +21570,6 @@
     list.innerHTML = _reviewHtml;
     dbg('DBG-RENDER', 'gen=' + _myGen + ' WROTE DOM (this was the winning/current render)');
 
-    // Register tags and populate dropdowns
     filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
     filtered.filter(e => e.id).forEach(e => populateTagDropdowns('redit_' + e.id, getEntryTags(e)));
 
@@ -22055,7 +21598,6 @@
     }
   }
 
-  // Unified AI Review for any saved entry
   async function improveEntry(entryId) {
     const entry = entries.find(e => e.id === entryId);
     if (!entry) return;
@@ -22064,7 +21606,6 @@
     if (!panel) return;
     if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
     panel.style.display = 'block';
-    // Show cancel button
     const cancelBtn = document.getElementById('cancel-review-' + entryId);
     if (cancelBtn) cancelBtn.style.display = 'inline-block';
     // Gather accepted feedback (child entries with "From " title) to include in AI review
@@ -22131,7 +21672,6 @@
   function openChapterDetail(chapter) {
     const ents = _chapterRegistry[chapter] || [];
 
-    // Hide all three review sections, show detail
     document.getElementById('reviewSectionEssentials').style.display = 'none';
     document.getElementById('reviewSectionCoverage').style.display  = 'none';
     document.getElementById('reviewSectionEntries').style.display   = 'none';
@@ -22143,7 +21683,6 @@
     document.getElementById('chapterDetailStats').textContent =
       ents.length + ' entr' + (ents.length===1?'y':'ies') + ' · ~' + words + ' words';
 
-    // Split into parents and children
     const parents  = ents.filter(e => !e.parent_entry_id);
     const children = ents.filter(e =>  e.parent_entry_id);
     const orphans  = children.filter(c => !ents.find(p => p.id === c.parent_entry_id));
@@ -22155,7 +21694,6 @@
       return;
     }
 
-    // Build full-featured thread cards
     let html = '';
     threads.forEach(parent => {
       const kids   = children.filter(c => c.parent_entry_id === parent.id);
@@ -22170,7 +21708,6 @@
         const cleanQ   = cleanQuestion(e.question);
         const deleteId = e.id ? "'" + e.id + "'" : 'null';
 
-        // Tag chips
         const tagHtml      = buildTagChips(tags);
         const improvePanel = e.id ? `<div id="cdimprove-${e.id}" class="improve-panel" style="display:none"></div>` : '';
         const editPanel    = buildEditPanel(e.id, 'cdedit');
@@ -22192,7 +21729,6 @@
         html += editPanel;
         html += '</div>';
 
-        // Register for safe tag access
         if (e.id) registerEntryTags(e.id, tags);
       });
 
@@ -22201,7 +21737,6 @@
 
     document.getElementById('chapterDetailList').innerHTML = html;
 
-    // Populate tag dropdowns after render
     threads.forEach(parent => {
       const kids = children.filter(c => c.parent_entry_id === parent.id);
       [parent, ...kids].forEach(e => {
@@ -22252,16 +21787,13 @@
   async function askAboutChapter(chapter) {
     // Switch to memories tab, pre-set chapter tag, fire AI New Topic scoped to that chapter
     showPanel('memories', null, 1);
-    // Set chapter tag
     const chapSel = document.getElementById('recTagChapter');
     if (chapSel) {
-      // Try to find matching option
       let found = false;
       for (let opt of chapSel.options) {
         if (opt.value === chapter) { chapSel.value = chapter; found = true; break; }
       }
       if (!found) {
-        // Add as custom
         const customInput = document.getElementById('recTagChapterCustom');
         if (customInput) { chapSel.value = '__new__'; customInput.style.display='block'; customInput.value = chapter; }
       }
@@ -22305,7 +21837,6 @@
       });
     });
     grid.innerHTML = html || '<p style="color:var(--text-light)">Nothing to suggest right now — add a few more memories first!</p>';
-    // Delegated click for prompt chips
     grid.addEventListener('click', function(e) {
       var chip = e.target.closest('.prompt-chip');
       if (chip && chip.dataset.prompt) usePrompt(chip.dataset.prompt);
@@ -22425,7 +21956,6 @@
     var step = _GOAL_STEPS[_goalStep];
     _goalSelectedCard = null;
 
-    // Progress dots
     for (var d = 0; d < 3; d++) {
       var dot = document.getElementById('goalDot' + d);
       if (dot) dot.style.background = d <= _goalStep ? 'var(--rose)' : 'var(--border)';
@@ -22447,7 +21977,6 @@
     if (nextBtn)    nextBtn.disabled = true;
     nextBtn.textContent = _goalStep < 2 ? 'Next' : 'Save my goals';
 
-    // Render tap-cards
     if (cardsEl) {
       cardsEl.innerHTML = '';
       step.cards.forEach(function(card) {
@@ -22458,7 +21987,6 @@
         btn.setAttribute('data-action', 'goal-select-card');
         cardsEl.appendChild(btn);
       });
-      // "Other" card
       var otherBtn = document.createElement('button');
       otherBtn.setAttribute('data-value', '_other');
       otherBtn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;border:2px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;font-family:\'Lato\',sans-serif;transition:all 0.15s;text-align:center';
@@ -22469,13 +21997,11 @@
   }
 
   function _goalSelectCard(value, btn, cardsEl) {
-    // Deselect all
     var allBtns = cardsEl ? cardsEl.querySelectorAll('button') : [];
     for (var i = 0; i < allBtns.length; i++) {
       allBtns[i].style.borderColor = 'var(--border)';
       allBtns[i].style.background  = 'var(--surface)';
     }
-    // Select this one
     btn.style.borderColor = 'var(--rose)';
     btn.style.background  = 'rgba(180,60,60,0.06)';
     _goalSelectedCard = value;
@@ -22486,7 +22012,6 @@
     var nextBtn = document.getElementById('goalNextBtn');
     if (nextBtn && value !== '_other') nextBtn.disabled = false;
 
-    // Speak the card label back for warmth
     var step = _GOAL_STEPS[_goalStep];
     var card = step.cards.find(function(c) { return c.value === value; });
     if (card) {
@@ -22541,7 +22066,6 @@
       }
       await Promise.all(saves);
 
-      // Update in-memory userProfile
       userProfile.goalEra      = _goalAnswers.era      || null;
       userProfile.goalAudience = _goalAnswers.audience || null;
       userProfile.goalTone     = _goalAnswers.tone     || null;
@@ -22552,7 +22076,6 @@
         : 'Perfect. I\'ve got what I need. I\'ll keep these in mind every time we talk.';
       gethroSpeak(summary).catch(function(){});
 
-      // Update tile and close
       renderGoalTile();
       setTimeout(function() { closeGoalSession(); }, 2800);
       logActivity('goal_session_complete', JSON.stringify(_goalAnswers), 'info', 'GOAL');
@@ -23346,7 +22869,6 @@
           var _um = document.getElementById('unsubSuccessMsg');
           if (_um) _um.textContent = "You won't get emails about link requests anymore. You'll still see them on your Dashboard, and you can turn the emails back on any time in Settings.";
         }
-        // Clean URL
         history.replaceState({}, '', window.location.pathname);
       } else {
         if (errorEl) errorEl.style.display = 'block';
@@ -23378,7 +22900,6 @@
         .split(/\s+/)
         .filter(w => w.length > 3 && !STOPWORDS.has(w));
     }
-    // Build TF vectors per entry
     function tfVector(tokens) {
       const freq = {};
       tokens.forEach(t => { freq[t] = (freq[t]||0) + 1; });
@@ -23386,7 +22907,6 @@
       Object.keys(freq).forEach(k => freq[k] /= total);
       return freq;
     }
-    // Cosine similarity between two TF vectors
     function cosineSim(a, b) {
       const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
       let dot = 0, magA = 0, magB = 0;
@@ -23725,7 +23245,6 @@
     if (!entry || !entry.id) return '';
     var wc=(entry.answer||'').split(/\s+/).filter(Boolean).length;
 
-    // Body text — editable textarea
     var bodyHtml=
       '<textarea id="dup-body-'+entry.id+'" rows="8" '+
         'style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:Lato,sans-serif;font-size:0.82rem;color:var(--text);background:var(--surface);box-sizing:border-box;resize:vertical;line-height:1.6">'+
@@ -23903,7 +23422,6 @@
     _initDupEntryPanel(eA);
     _initDupEntryPanel(eB);
 
-    // Bottom bar
     document.getElementById('dupMergeStatus').textContent='';
     document.getElementById('dupActionHint').textContent='';
     var regen=document.getElementById('dupRegenBtn');
@@ -23940,7 +23458,6 @@
       var merged = data.merged || '';
       // Only set if user hasn't typed already
       if (_dupMergedEdits.answer===undefined) _dupMergedEdits.answer=merged;
-      // Update the textarea and status
       var bodyEl=document.getElementById('dup-merged-body');
       var statusEl=document.getElementById('dup-merged-status');
       if (bodyEl && _dupMergedEdits.answer===merged) bodyEl.value=merged;
@@ -24312,10 +23829,8 @@
       const sourceEntries = _consolidateIncludedEntries();
       if (!sourceEntries.length) { toast('No entries included in merge'); approveBtn.disabled=false; approveBtn.textContent='✓ Save Merged Entry & Delete Originals'; return; }
       const base = sourceEntries[0] || {};
-      // Collect all people from all source entries
       const allPeople = [...new Set(sourceEntries.flatMap(e => e.people ? e.people.split(',').map(p => p.trim()).filter(Boolean) : []))];
 
-      // Save merged entry
       const insertRes = await fetch(DB_URL, {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
@@ -24341,7 +23856,6 @@
         });
       }
 
-      // Refresh local entries
       await loadEntries();
       renderDashboard();
       closeConsolidate();
@@ -24488,12 +24002,9 @@
       '</div>';
     }).join('');
 
-    // Register tags for safe edit panel access
     filtered.filter(e => e.id).forEach(e => registerEntryTags(e.id, getEntryTags(e)));
 
-    // Load signed URLs for all photo thumbnails
     const allPhotoEntries = filtered.filter(e => e.photo_url);
-    // Also load child photos of visible entries
     const visibleIds = filtered.filter(e => e.id).map(e => e.id);
     const childPhotoEntries = entries.filter(e => e.photo_url && e.parent_entry_id && visibleIds.includes(e.parent_entry_id));
     const toLoad = [...allPhotoEntries, ...childPhotoEntries];
@@ -24546,16 +24057,12 @@
       });
     });
     grid.innerHTML = html || '<p style="color:var(--text-light)">Nothing to suggest right now — add a few more memories first!</p>';
-    // Delegated click for prompt chips
     grid.addEventListener('click', function(e) {
       var chip = e.target.closest('.prompt-chip');
       if (chip && chip.dataset.prompt) usePrompt(chip.dataset.prompt);
     });
   }
 
-  // ── Account deletion ─────────────────────────────────────────────
-  // Multi-step: two confirms + email typed, then calls DELETE_ACCOUNT edge function.
-  // to life_entries, life_settings, life_print_tokens, life_activity_log.
   async function deleteAccount() {
     if (!currentUser) return;
 
@@ -24591,7 +24098,6 @@
     );
     if (!step3) return;
 
-    // Notify Telegram that deletion was confirmed (pre-attempt)
     notifyDev('warn', 'AUTH', 'Account deletion confirmed by user: ' + currentUser.email);
 
     const DELETE_ACCOUNT_URL = SUPABASE_URL + '/functions/v1/DELETE_ACCOUNT';
@@ -24634,7 +24140,6 @@
         throw new Error(body.error || 'Edge function returned ' + res.status);
       }
 
-      // ✅ Success — log it, sign out, farewell
       logActivity('account_deleted', 'success: ' + currentUser.email, 'warn', 'AUTH');
       await sb.auth.signOut();
       currentUser = null;
@@ -24642,7 +24147,6 @@
       setTimeout(() => { location.reload(); }, 2000);
 
     } catch (err) {
-      // ❌ Failure — log with error level AND full error message
       const errMsg = err.message || 'unknown error';
       logActivity('account_deletion_failed', errMsg + ' | user: ' + currentUser.email, 'error', 'AUTH');
       dbgErr('AUTH', 'deleteAccount failed:', errMsg);
@@ -24717,7 +24221,6 @@
     // APP-42 Phase 3: if _bookPreview() pre-populated ppoStoryHtml, use it directly;
     // otherwise capture from storyOutput as normal.
     if (!(_bookPreview && _bookPreview._isBook)) {
-      // Capture story content from the single-story output
       ppoStoryHtml = document.getElementById('storyOutput')?.innerHTML || '';
       ppoStoryText = ppoStoryHtml.replace(/<[^>]+>/g, '').trim();
       if (!ppoStoryText || ppoStoryText.length < 50) return toast('Please create a story first');
@@ -24746,7 +24249,6 @@
       b.classList.toggle('active', b.dataset.style === ppoCoverStyle);
     });
 
-    // Show overlay
     const overlay = document.getElementById('printPreviewOverlay');
     overlay.classList.add('visible');
     document.body.style.overflow = 'hidden';
@@ -24759,7 +24261,6 @@
       }, 600);
     }
 
-    // Render preview and start background preparation
     updatePreview();
     prepareForPrint();  // runs in background — generates PDF, uploads, gets token
   }
@@ -24769,7 +24270,6 @@
     dbg('PANEL', 'closePrintPreview — scrollY=' + window.scrollY + ' body.scrollTop=' + document.body.scrollTop + ' docEl.scrollTop=' + document.documentElement.scrollTop);
     overlay.classList.remove('visible');
     document.body.style.overflow = '';
-    // Reset order state
     ppoOrderReady  = false;
     ppoTokenExpiry = 0;
     ppoProxyUrl    = null;
@@ -24823,7 +24323,6 @@
     }));
     const preview    = document.getElementById('ppoPreview');
 
-    // Parse story into paragraphs and chapters
     const bodyHtml = ppoStoryHtml
       .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '|||CHAPTER|||$1|||')
       .replace(/<\/p>/gi, '\n')
@@ -24846,7 +24345,6 @@
     // Get auto-generated back cover blurb (first 300 chars of story)
     const blurb = ppoStoryText.substring(0, 280).replace(/\s+/g, ' ').trim() + '…';
 
-    // Build pages HTML
     let pages = [];
 
     // Page 1: Front cover
@@ -24916,7 +24414,6 @@
     });
     flushPage();
 
-    // Back cover
     pages.push(`
       <div class="ppo-page-label">Back Cover</div>
       <div class="book-page">
@@ -24961,7 +24458,6 @@
     btn.textContent = '⏳ Preparing…';
 
     try {
-      // Build PDF from current story content
       btn.textContent = '📄 Generating PDF…';
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' });
@@ -25172,7 +24668,6 @@
         : (currentStory && currentStory.funny ? name + "'s Life Story (Comedy Edition)" : name + "'s Life Story");
       let pageCount = Math.max(20, Math.ceil(storyText.length / 1800));
 
-      // Build PDF with jsPDF
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' });
       const pageW = doc.internal.pageSize.getWidth();
@@ -25185,14 +24680,12 @@
         if (y + lineH > pageH - marginB) { doc.addPage(); y = marginT; }
       }
 
-      // Title
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(18);
       const titleLines = doc.splitTextToSize(title, textW);
       titleLines.forEach(line => { addPageIfNeeded(9); doc.text(line, pageW/2, y, { align: 'center' }); y += 9; });
       y += 4;
 
-      // Subtitle
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(9);
       doc.setTextColor(139, 115, 85);
@@ -25236,7 +24729,6 @@
         }
       });
 
-      // Footer
       addPageIfNeeded(10);
       y += 4;
       doc.setDrawColor(232, 220, 200);
@@ -25623,7 +25115,6 @@
   var _convoEntryId     = null;  // entry_id when seeded from a memory (for linking)
   var _convoContext     = 'general'; // 'memory_entry' | 'general'
 
-  // Start a new conversation row in Supabase
   async function _convoStart(context, entryId) {
     if (!currentUser) return;
     _convoContext = context || 'general';
@@ -25961,7 +25452,6 @@
       'The people who come after you will treasure this.',
     ];
 
-    // Memory topics to suggest
     var topics = [
       { label: 'a childhood memory',           prompt: 'Tell me about a childhood memory' },
       { label: 'someone who shaped you',        prompt: 'Tell me about someone who shaped who you are' },
@@ -26025,7 +25515,6 @@
       _agpMemoryMode = true;
       _agpUpdateSaveBar();
     }
-    // Scroll log to bottom
     setTimeout(function() {
       var log = document.getElementById('agpLog');
       if (log) log.scrollTop = log.scrollHeight;
@@ -26160,7 +25649,6 @@
     _gethroHistory = [];
     var log = document.getElementById('agpLog');
     if (log) log.innerHTML = '';
-    // Start fresh — show greeting
     var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
     var opener = _buildGethroOpener(firstName);
     _convoStart('general', null);
@@ -26200,7 +25688,6 @@
     yesBtn.setAttribute('data-action', 'agp-save-yes');
     div.appendChild(yesBtn);
 
-    // No button — dismisses cleanly, clears history
     var noBtn = document.createElement('button');
     noBtn.className = 'agp-action-btn';
     noBtn.style.marginTop = '10px';
@@ -26481,7 +25968,6 @@
     delete panel.dataset.hasEntry;
     delete panel.dataset.agpConversationId;
 
-    // Clear Gethro log and history immediately
     _gethroHistory = [];
     var log = document.getElementById('agpLog');
     if (log) log.innerHTML = '';
@@ -26642,7 +26128,6 @@
     // Keep last 6 exchanges as conversation history
     var historyToSend = _gethroHistory.slice(-40); // GTH-CTX-01: was -12; server re-validates and caps independently (sanitiseChatHistory)
 
-    // Detect current screen for contextual help
     var currentScreen = 'unknown';
     try {
       var _screenPanels = ['memories','entries','story','dashboard','help','people'];
@@ -26650,7 +26135,6 @@
         var _spEl = document.getElementById('panel-' + _screenPanels[_si]);
         if (_spEl && _spEl.classList.contains('active')) { currentScreen = _screenPanels[_si]; break; }
       }
-      // Check if an overlay is covering everything
       if (currentScreen === 'people') currentScreen = 'my_people';   // NAV-03 step 2: My People is a panel now
       var _ppOv = document.getElementById('printPreviewOverlay');
       if (_ppOv && _ppOv.classList.contains('visible')) currentScreen = 'print_preview';
@@ -26749,7 +26233,6 @@
 
       var reply = (parsed.reply || 'I had trouble with that — could you try again?').trim();
 
-      // Remove typing indicator and show reply
       if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
       _agpAppendGethro(reply, parsed.action || null);
       _gethroHistory.push({ role: 'assistant', content: reply });
@@ -26769,12 +26252,10 @@
         _agpUpdateSaveBar();
       }
 
-      // Route the action
       if (parsed.action && parsed.action.type) {
         await _agpRoute(parsed.action);
       }
 
-      // Log friction observations to Telegram with conversation context
       if (parsed.observation) {
         var convoLines = historyToSend.map(function(m) {
           return (m.role === 'user' ? 'User' : 'Gethro') + ': ' + m.content;
@@ -26877,7 +26358,6 @@
           var answerEl = document.getElementById('memAnswer');
           if (titleEl && p.title) { titleEl.value = p.title; }
           if (answerEl) { answerEl.value = ''; answerEl.focus(); }
-          // Pre-fill chapter tag if provided
           if (p.chapter) {
             var chEl = document.getElementById('recTagChapter');
             if (chEl) chEl.value = p.chapter;
@@ -26995,22 +26475,6 @@
   //
   // Platform note: logs UA at mic-start to help debug future device-specific issues.
 
-  // State
-  // APP-XX FIX: _agpMicRecorder was mistakenly removed here in the v7.19 Phase 0
-  // MicManager refactor. Unlike the sibling variable that WAS fully superseded
-  // (removed v7.19 comment below, correctly), this one is still live: AGP layers
-  // its own short-lived chunk-boundary MediaRecorder instances on top of
-  // MicManager.stream (see _agpFlushChunk/_agpFlushAndSend) — that's intentional
-  // architecture, independent of MicManager's own internal recorder. Without this
-  // declaration, every read in _agpFlushChunk/_agpFlushAndSend threw
-  // "ReferenceError: _agpMicRecorder is not defined" on the very first silence-
-  // triggered flush, so AGP dictation recorded audio but never actually
-  // transcribed or sent anything — looked exactly like "the mic isn't listening"
-  // with zero user-facing error (the throw was only ever caught by the global
-  // unhandledrejection logger, never shown as a toast). Confirmed via
-  // life_activity_log: repeated unhandled_rejection entries, area=UNHANDLED,
-  // platform=Android/Chrome, at _agpFlushAndSend/_agpFlushChunk via _silenceLoop's
-  // onVolume callback.
   var _agpMicRecorder     = null;
   // (removed v7.19 — now internal to MicManager)
   var _agpMicChunks       = [];
@@ -27088,7 +26552,6 @@
     // _agpMicRelease() directly without going through _agpFlushAndSend
     // (e.g. onError above) — no-op if already stopped/never started.
     AgpArchiveRecorder.discard();
-    // Stream/recorder/analyser teardown delegated to MicManager
     MicManager.release();
   }
 
@@ -27301,7 +26764,6 @@
 
     _agpMicTranscribing = true;
 
-    // Stop recorder and await full chunk drain
     var oldRecorder = _agpMicRecorder;
     _agpMicRecorder = null;
     var mime = _agpMicMime || 'audio/ogg';
@@ -27365,18 +26827,6 @@
       var parsed;
       try { parsed = JSON.parse(rawText); } catch(e2) { throw new Error('Invalid JSON ' + res.status); }
       if (res.status === 429 || (parsed && parsed.rate_limited)) {
-        // BUG FIX v6.73: this multipart/transcribe path calls GETHRO_PROXY directly,
-        // bypassing callGethro() — the single chokepoint RL-03 wired the shared
-        // rate-limit UX into. A free user hitting their ceiling here was falling
-        // through to the generic catch below and logging as app_error/console_error
-        // ("Chunk transcription failed: Rate limit reached") — expected behaviour
-        // mislabelled as a bug, with none of the friendly messaging/Upgrade CTA.
-        // RL-03 item 7 (v6.81): no `target` is passed here, so since the v6.79
-        // modal refactor this now opens the full _showRateLimitModal (overlay +
-        // premium-benefits card), not the old toast — same upgrade nudge every
-        // other free-tier site gets. No code change needed beyond this comment:
-        // this call was already correct, it just inherited the modal automatically
-        // once the shared function's no-target path changed underneath it.
         dbg('AGP_MIC', 'Chunk transcription rate-limited');
         _showRateLimitPanel({ reset_in_minutes: parsed.reset_in_minutes, tier: parsed.tier, context: 'voice dictation' });
         _agpFlushCooldown = true;
@@ -27466,7 +26916,6 @@
     if (_agpMicTranscribing) return;
     _agpMicTranscribing = true;
 
-    // Stop the recorder and collect all chunks
     var recorder = _agpMicRecorder;
     _agpMicRecorder = null; // signal that any onstop should be ignored
     var blob;
@@ -27892,24 +27341,17 @@
       if (!remaining.length) fetchEntries();
     }
   }
-  // Flush queue whenever device comes back online
   window.addEventListener('online', function() { setTimeout(_offlineQueueFlush, 1000); });
 
   // ── PWA Manifest: served as a static file, /manifest.json (see <link rel="manifest"> in head).
   // The old blob: URL approach was blocked by the CSP (default-src 'self').
 
-  // ── Service Worker registration ─────────────────────────────────────────────
-  // sw.js lives in the GitHub repo root (alongside index.html) and is served by
-  // Cloudflare Pages at /sw.js. The blob approach (v2.61–v3.72) failed on
-  // Cloudflare Pages — blob: URLs are rewritten and fail SW registration.
-  // Strategy: network-first for all GET requests, falling back to cache offline.
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js')
       .then(function(reg) { dbg('PWA', 'Service worker registered, scope: ' + reg.scope); })
       .catch(function(err) { dbgWarn('PWA', 'Service worker registration failed: ' + err); });
   }
 
-  // Wire up button-enable listeners
   document.addEventListener('DOMContentLoaded', () => {
     bindAllEvents();
     ['memTitle','memAnswer'].forEach(id => {
@@ -28122,7 +27564,7 @@
     _mpLabelWarned = false;
 
     await _mpRender(function() { _mpFitInitial(); });   // TREE-IP-01: the layout comes from TREE_PROXY, so wait for it
-    try { _mpUpdateIslandBar(); } catch (e) { dbgWarn('PEOPLE', 'island bar: ' + (e && e.message)); logActivity('people_error', 'island bar: ' + String(e && e.message || e), 'warn', 'PEOPLE'); }   // ERR-LOG-01
+    try { _mpUpdateIslandBar(); } catch (e) { dbgWarn('PEOPLE', 'island bar: ' + (e && e.message)); logActivity('people_error', 'island bar: ' + String(e && e.message || e), 'warn', 'PEOPLE'); }
     _mpSetViewer(_mpOwnerId);      // fetches labels, then redraws the cards
     requestAnimationFrame(function() { _mpMaybeShowGuide(); });
   }
@@ -28504,7 +27946,7 @@
     });
     _mpBindPan();
     _mpApplyZoomState();
-    if (typeof after === 'function') { try { after(); } catch(e2) { dbgWarn('PEOPLE', 'after render: ' + e2.message); logActivity('people_error', 'after render: ' + String(e2 && e2.message || e2), 'warn', 'PEOPLE'); } }   // ERR-LOG-01: a failing fit/zoom/hint step must leave a record
+    if (typeof after === 'function') { try { after(); } catch(e2) { dbgWarn('PEOPLE', 'after render: ' + e2.message); logActivity('people_error', 'after render: ' + String(e2 && e2.message || e2), 'warn', 'PEOPLE'); } }
     return true;
   }
 
@@ -28773,7 +28215,6 @@
     var BADGE = 'font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold-dark);border:1px solid var(--gold);border-radius:999px;padding:1px 7px;margin-left:4px;vertical-align:middle';
     function head(t) { var h = _gedEl('div', HEAD); h.appendChild(document.createTextNode(t + ' ')); h.appendChild(_gedEl('span', BADGE, 'Premium')); return h; }
     body.appendChild(_gedEl('p', GED_NOTE, 'Bring in a family tree from a file or from a photo. You check everything before anything is added.'));
-    // Common to both ways in
     var ul = _gedEl('ul', GED_NOTE + ';padding-left:18px');
     ['Your file or photo is sent securely to your account to be read and compared with your tree. It is not kept: only the people and relationships you choose to import are saved.',
      'You see a preview first and nothing changes until you press Import.',
@@ -29309,7 +28750,6 @@
     var s = _gedS, m = s.prev, c = _gedCounts();
     body.appendChild(_gedEl('p', GED_NOTE, s.fileName + ': ' + _gedPlural(m.counts.people, 'person', 'people') + ' and ' + _gedPlural(m.counts.families, 'family', 'families') + ' that can be brought in.'));
 
-    // how to combine
     if (s.hasTree) {
       var box = _gedEl('div', 'margin:0 0 12px;display:flex;flex-direction:column;gap:6px');
       [['add', 'Add to my tree', 'Keeps everyone already in your tree. People who are in both are matched up below.'],
@@ -29323,7 +28763,6 @@
       body.appendChild(box);
     }
 
-    // who am I
     if (s.owner) {
       var ow = _gedEl('div', 'margin:0 0 12px');
       ow.appendChild(_gedEl('label', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px', s.mode === 'replace' ? 'Which person in the file is you?' : 'Which person in the file is you? (if any)'));
@@ -29342,7 +28781,6 @@
     // matches (add mode only)
     if (s.mode === 'add') _gedRenderMatches(body);
 
-    // what will happen
     var sum = _gedEl('div', 'background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:0.86rem;color:var(--text);line-height:1.55');
     sum.appendChild(_gedEl('div', 'font-weight:700;margin-bottom:2px', s.mode === 'replace' ? 'After deleting your tree this will add:' : 'This will add:'));
     sum.appendChild(_gedEl('div', null, _gedPlural(c.added, 'new person', 'new people') + (c.merged ? ' and match ' + _gedPlural(c.merged, 'person', 'people') + ' to someone already in your tree' : '') + '.'));
@@ -29361,7 +28799,6 @@
       det.appendChild(wl); body.appendChild(det);
     }
 
-    // replace confirmation
     var ready = true, why = '';
     if (s.mode === 'replace') {
       var cnt = m.tree.people, fc = m.tree.families;
@@ -29853,7 +29290,6 @@
       }
       function setZoom(nz) { z = Math.min(5, Math.max(1, nz)); paint(); }
       paint();
-      // drag, plus two-finger pinch
       var ptrs = {}, pinchD = 0;
       vp.addEventListener('pointerdown', function(e) {
         ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -30540,7 +29976,6 @@
       err.textContent = (e && e.name === 'AbortError') ? 'That took too long. Please check your connection and try again.' : (e.message || 'Something went wrong.'); err.style.display = 'block';
       btn.disabled = false; btn.textContent = _mpV2Mode === 'edit' ? 'Save changes' : _mpV2BtnLabel();
       dbgWarn('PEOPLE', 'v2 save error: ' + e.message);
-      // ERR-LOG-02: the success paths are logged (people_added / people_edited); failures now are too.
       logActivity('people_save_failed', _mpV2Mode + ': ' + String(e && e.message || e), 'warn', 'PEOPLE');
       notifyDev('warn', 'PEOPLE', 'v2 save failed (' + _mpV2Mode + ') - ' + String(e && e.message || e));
     }
@@ -30559,7 +29994,6 @@
     var tabDir      = document.getElementById('mpTabDir');
     var tabFeedback = document.getElementById('mpTabFeedback');
 
-    // Reset all panels + tab styles
     if (treeVp)      treeVp.style.display      = 'none';
     if (dirPanel)    dirPanel.style.display     = 'none';
     if (feedPanel)   feedPanel.style.display    = 'none';
@@ -30759,7 +30193,6 @@
       row.onmouseenter = function() { row.style.background = 'var(--surface2,var(--bg))'; };
       row.onmouseleave = function() { row.style.background = 'var(--surface)'; };
 
-      // Avatar
       var avatarEl = document.createElement('div');
       avatarEl.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--bg);border:1px solid var(--border);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:1.1rem';
       if (person.photo_url) {
@@ -30773,7 +30206,6 @@
       }
       row.appendChild(avatarEl);
 
-      // Name + relationship label
       var textEl = document.createElement('div');
       textEl.style.cssText = 'flex:1;min-width:0';
       var nameEl = document.createElement('div');
@@ -30787,7 +30219,6 @@
       textEl.appendChild(relEl);
       row.appendChild(textEl);
 
-      // Chevron
       var chev = document.createElement('div');
       chev.style.cssText = 'color:var(--text-light);font-size:0.9rem;flex-shrink:0';
       chev.textContent = '›';
@@ -30807,7 +30238,6 @@
   async function _mpCheckReview() {
     if (_mpReviewDone) return false;  // already done this session
 
-    // Load the flag from life_settings
     try {
       var headers = getAuthHeaders();
       var res = await fetch(DB_SETTINGS_URL + '?user_id=eq.' + currentUser.id + '&key=eq.people_tree_review_done', { headers });
@@ -30827,7 +30257,6 @@
 
   // Extract unique people names from entries that aren't already in _mpPeople
   function _mpSuggestionsFromEntries() {
-    // Collect all unique names from entry.people tags
     var nameFreq = {};
     (entries || []).forEach(function(e) {
       if (!e.people) return;
@@ -30838,7 +30267,6 @@
       });
     });
 
-    // Exclude names already in _mpPeople
     var existingNames = new Set(_mpPeople.map(function(p) { return p.name.toLowerCase(); }));
     var names = Object.keys(nameFreq).filter(function(n) { return !existingNames.has(n.toLowerCase()); });
 
@@ -30851,11 +30279,9 @@
     });
   }
 
-  // Build and show the review screen
   function _mpShowReviewScreen(suggestions) {
     _mpReviewSuggestions = suggestions;
 
-    // Hide loading/tree elements
     document.getElementById('mpLoadingState').style.display  = 'none';
     document.getElementById('mpEmptyState').style.display    = 'none';
     var dt = document.getElementById('mpDTree');
@@ -30935,7 +30361,6 @@
     var btn    = document.getElementById('mpReviewSaveBtn');
     var status = document.getElementById('mpReviewSaveStatus');
 
-    // Read the current dropdown values
     _mpReviewSuggestions.forEach(function(s, idx) {
       var relEl = document.getElementById('mpReviewRel_' + idx);
       if (relEl) s.relType = relEl.value;
@@ -30950,7 +30375,6 @@
         status.style.display = 'block';
         return;
       }
-      // Nothing ticked — treat as skip all
       await mpReviewSkipAll();
       return;
     }
@@ -30979,7 +30403,6 @@
         } catch(e) { dbgWarn('PEOPLE', 'Review save error for ' + s.name + ': ' + e.message); logActivity('people_warn', String(e && e.message || e), 'warn', 'PEOPLE'); }
       }
 
-      // Mark review as done
       await _mpMarkReviewDone();
       logActivity('people_review_saved', saved + ' people added', 'info', 'PEOPLE');
 
@@ -31079,7 +30502,6 @@
       dobEl.style.display = 'none';
     }
 
-    // Bio
     var bioWrap = document.getElementById('mpProfileBioWrap');
     var bioEl   = document.getElementById('mpProfileBio');
     if (person.bio) {
@@ -31136,7 +30558,6 @@
       var explicitIds = rows.map(function(r) { return r.entry_id; });
       _mpBuildMentions(person, explicitIds);
     } catch(e) {
-      // Non-fatal — name-string mentions already shown
       dbgWarn('PEOPLE', '_mpLoadExplicitLinks error:', e.message); logActivity('people_warn', String(e && e.message || e), 'warn', 'PEOPLE');
     }
   }
@@ -31344,7 +30765,6 @@
       document.getElementById('profileEditOverlay').style.display = 'none';
       toast('Profile updated ✓');
       logActivity('profile_updated', fullName, 'info', 'PROFILE');
-      // Refresh dashboard headline/greeting immediately if visible
       if (document.getElementById('panel-dashboard').classList.contains('active')) renderDashboard();
     } catch(err) {
       dbgErr('PROFILE', 'saveProfileEdit error:', err.message);
@@ -31352,8 +30772,6 @@
     }
   }
 
-  // ── In-app contact form (E: replaces support email) ─────────────────
-  // Logs to life_activity_log (Telegram + Supabase) — no email address exposed.
   async function submitContactMessage() {
     var cat    = document.getElementById('contactCategory');
     var msg    = document.getElementById('contactMessage');
@@ -31392,11 +30810,8 @@
 
     var detail = '[' + category.toUpperCase() + '] ' + message;
     try {
-      // notifyDev fires Telegram immediately so the message is seen right away
       notifyDev('warn', 'CONTACT', detail);
-      // logActivity persists to Supabase for the audit trail
       logActivity('user_contact', detail, 'warn', 'CONTACT');
-      // Clear form
       cat.value = '';
       msg.value = '';
       status.style.background = 'rgba(106,191,123,0.12)';
@@ -31456,7 +30871,6 @@
     }
     if (!currentUser) return;
     try {
-      // Upsert _profile_subject_name
       var existingName = entries.find(function(e) { return e.category === '_profile_subject_name'; });
       if (existingName) {
         await fetch(DB_URL + '?id=eq.' + existingName.id + '&user_id=eq.' + currentUser.id, {
@@ -31484,7 +30898,6 @@
           });
         }
       }
-      // Update in-memory profile
       userProfile.subjectName  = newName;
       userProfile.relationship = newRel || userProfile.relationship;
       if (msgEl) { msgEl.textContent = 'Saved \u2713'; msgEl.style.color = 'var(--sage)'; }
@@ -31506,7 +30919,6 @@
     if (!firstName) { if (msgEl) msgEl.textContent = 'Please enter your first name.'; return; }
     if (!currentUser) return;
     try {
-      // Update both _profile_first_name and _profile_name entries
       var existing = entries.find(function(e) { return e.category === '_profile_first_name'; });
       if (existing) {
         await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
@@ -31519,14 +30931,12 @@
           body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() })
         });
       }
-      // Update in-memory profile
       userProfile.firstName = firstName;
       if (!userProfile.name) userProfile.name = firstName;
       // Also save to life_settings so email sender can read it
       await saveEmailPrefKey('user_name', firstName);
       if (msgEl) { msgEl.textContent = 'Saved ✓'; msgEl.style.color = 'var(--sage)'; }
       setTimeout(function() { if (msgEl) msgEl.textContent = ''; }, 2500);
-      // Reload entries to keep in sync
       await loadEntries();
     } catch(e) {
       if (msgEl) { msgEl.textContent = 'Save failed — please try again.'; msgEl.style.color = 'var(--rose)'; }
@@ -31546,8 +30956,6 @@
     return _subscriptionTier === 'premium';
   }
 
-  // SUB-05: Load subscription tier from life_settings into _subscriptionTier cache.
-  // Detects tier changes (upgrade confirmed, cancellation) and logs them to DB + Telegram.
   async function loadSubscriptionTier() {
     if (!currentUser) return;
     try {
@@ -31587,7 +30995,6 @@
         refreshPremiumGates();
         var firstName = userProfile.firstName || (userProfile.name || '').split(' ')[0] || '';
         if (isPremium()) {
-          // Log confirmed upgrade to DB + Telegram
           var upgradeDetail = 'user=' + (currentUser ? currentUser.email : '?') + ' tier=premium';
           logActivity('subscription_upgraded', upgradeDetail, 'info', 'SUB');
           notifyDev('info', 'SUB', 'UPGRADE CONFIRMED: ' + upgradeDetail);
@@ -31596,7 +31003,6 @@
             : 'Welcome to Premium — Gethro is thrilled.';
           toast(msg);
         } else {
-          // Webhook may not have fired yet or failed — log and warn
           var failDetail = 'user=' + (currentUser ? currentUser.email : '?') + ' still_free_after=' + attempts + '_attempts';
           dbgWarn('SUB', '_handleUpgradeSuccess: ' + failDetail);
           toast('Almost there — your subscription is being confirmed. Refresh in a moment.');
@@ -31650,7 +31056,6 @@
 
   function openGiftModal(source) {
     _giftModalSource = source || 'landing';
-    // Reset form state
     var step1 = document.getElementById('giftFormStep1');
     var step2 = document.getElementById('giftFormStep2');
     var errEl = document.getElementById('giftFormError');
@@ -31664,7 +31069,6 @@
     }
     var modal = document.getElementById('giftModal');
     if (modal) { modal.style.display = 'flex'; }
-    // Focus first empty field
     setTimeout(function() {
       var recipName = document.getElementById('giftRecipientName');
       if (recipName && !recipName.value) { recipName.focus(); }
@@ -31691,7 +31095,6 @@
     var errEl          = document.getElementById('giftFormError');
     var proceedBtn     = document.getElementById('giftProceedBtn');
 
-    // Validation
     recipientName  = recipientName.trim();
     recipientEmail = recipientEmail.trim();
     senderName     = senderName.trim();
@@ -31709,7 +31112,6 @@
     }
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
-    // Log the gift intent so it appears in developer notifications, same as before.
     var giftDetail = 'from=' + (senderName || 'anonymous') +
                      ' to=' + recipientName +
                      ' (' + recipientEmail + ')' +
@@ -32212,13 +31614,11 @@
       (isSelected ? 'var(--sage)' : 'var(--border)') + ';background:' +
       (isSelected ? 'rgba(120,160,100,0.07)' : 'var(--surface)') + ';cursor:pointer;transition:border-color 0.15s';
 
-    // Selection dot
     var dot = document.createElement('div');
     dot.style.cssText = 'width:16px;height:16px;border-radius:50%;flex-shrink:0;border:2px solid ' +
       (isSelected ? 'var(--sage)' : 'var(--border)') + ';background:' +
       (isSelected ? 'var(--sage)' : 'transparent') + ';transition:all 0.15s';
 
-    // Label block
     var labelWrap = document.createElement('div');
     labelWrap.style.cssText = 'flex:1;min-width:0';
     var nameEl = document.createElement('div');
@@ -32230,7 +31630,6 @@
     labelWrap.appendChild(nameEl);
     labelWrap.appendChild(descEl);
 
-    // Preview button
     var prevBtn = document.createElement('button');
     prevBtn.className = 'btn btn-ghost';
     prevBtn.style.cssText = 'font-size:0.75rem;padding:5px 9px;flex-shrink:0';
@@ -32346,7 +31745,6 @@
       statusEl.style.color = 'var(--sage)';
       setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
     }
-    // Re-render to update selection state
     renderVoicesSettingsSection();
   }
 
@@ -32368,7 +31766,6 @@
       stockList.appendChild(_buildVoiceRow(v, 'gethro', _cachedGethroVoiceId, false));
     });
 
-    // Custom voices for Gethro slot
     if (_customVoices.length > 0) {
       _customVoices.forEach(function(cv) {
         stockList.appendChild(_buildVoiceRow(
@@ -32397,7 +31794,6 @@
       });
     }
 
-    // Show/hide custom voices section header
     var customSection = document.getElementById('voicesCustomSection');
     if (customSection) customSection.style.display = 'none'; // inlined above now
 
@@ -32693,7 +32089,6 @@
     var newTitle   = titleInput ? titleInput.value.trim()  : _feOriginalTitle;
     var newContent = bodyInput  ? bodyInput.value           : _feOriginalContent;
 
-    // Skip save if nothing changed
     if (newTitle === _feOriginalTitle && newContent === _feOriginalContent) {
       closeFinalEdit();
       return;
@@ -32830,9 +32225,7 @@
       var ann = sorted[i];
       // Guard against overlaps: skip any annotation that starts before cursor
       if (ann.startIdx < cursor) continue;
-      // Plain text before this annotation
       html += _feEscHtml(text.slice(cursor, ann.startIdx));
-      // Highlighted span
       html += '<mark data-anno-id="' + ann.id + '" style="background:rgba(201,169,110,0.28);border-bottom:2px solid var(--gold);border-radius:2px;cursor:pointer;padding:0 1px" title="' + _feEscHtml(ann.instruction) + '">' + _feEscHtml(text.slice(ann.startIdx, ann.endIdx)) + '</mark>';
       cursor = ann.endIdx;
     }
@@ -32893,7 +32286,6 @@
     var instInput = document.getElementById('feAnnoInstInput');
     if (!pop) return;
     if (instInput) { instInput.value = ''; instInput.style.borderColor = 'var(--border)'; }
-    // Reset chip active states
     var chips = pop.querySelectorAll('[data-action="fe-anno-chip"]');
     chips.forEach(function(c) {
       c.style.background = 'var(--surface)';
@@ -32929,7 +32321,6 @@
     var text = sel.toString().trim();
     if (!text) return;
     _fePendingRange = range.cloneRange();
-    // Position popover near end of selection
     var rect = range.getBoundingClientRect();
     // feAnnoPopover is position:fixed — use raw viewport coords (no scrollY offset)
     _feShowAnnoPopover(rect.left, rect.bottom);
@@ -33542,7 +32933,6 @@
     if (_vrCountdownTimer) { clearInterval(_vrCountdownTimer); _vrCountdownTimer = null; }
     // Stop any live stream/recorder from the previous session
     _vrStopStream();
-    // Reset state
     _vrBlob = null; _vrChunks = []; _vrStream = null; _vrRecorder = null;
     document.getElementById('vrLabelInput').value = '';
     document.getElementById('vrConsentCheck').checked = false;
@@ -33796,7 +33186,6 @@
         saveVoicePref('story_reader_voice_id', null);
       }
 
-      // Reload + re-render
       var cvUrl = SUPABASE_URL + '/rest/v1/life_custom_voices?user_id=eq.' + currentUser.id + '&order=created_at.asc';
       var cvRes = await fetch(cvUrl, { headers: getAuthHeaders() });
       if (cvRes.ok) _customVoices = await cvRes.json();
@@ -33844,7 +33233,6 @@
     if (!banner) return;
     if (msgEl && msg) msgEl.textContent = msg;
     banner.style.display = 'block';
-    // Scroll banner into view gently
     banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
@@ -33894,7 +33282,6 @@
     var vp = document.getElementById('mpCanvasViewport');
     if (!vp) return;
 
-    // Remove any existing tooltip
     var old = document.getElementById('mpGuideTooltip');
     if (old) old.remove();
 
@@ -33950,7 +33337,6 @@
     } else {
       if (emptyEl) emptyEl.style.display = 'none';
 
-      // Build unique chapter list for selects
       var usedChapters = [];
       real.forEach(function(e) { if (e.chapter && usedChapters.indexOf(e.chapter) === -1) usedChapters.push(e.chapter); });
       var allChapters = _BBO_KNOWN_CHAPTERS.slice();
@@ -34180,9 +33566,6 @@
     //   on('shareFbAudioBtn',  'click', toggleShareFbAudio);
     //   on('shareFbVideoBtn',  'click', toggleShareFbVideo);
     on('shareFbSubmitBtn', 'click', submitShareFeedback);
-    // ERR-LOG-02 BUG FIX: "Ask for a new link" had only data-action="share-request-refresh", but #shareScreen sits
-    // outside #appShell and the delegated click handler is only attached inside it, so the button did nothing
-    // for visitors (found by share_page_e2e_refresh.js). Bound directly, like the Send response button above.
     on('shareRefreshBtn', 'click', function() { window.submitRefreshRequest && window.submitRefreshRequest(); });
 
     // ── Landing / auth ────────────────────────────────────────────────────
@@ -34220,7 +33603,6 @@
     if (feVersionOverlay) feVersionOverlay.addEventListener('click', function(e) {
       var btn = e.target.closest('.fe-restore-btn');
       if (btn) _feRestoreVersion(btn);
-      // Click on backdrop closes the overlay
       if (e.target === feVersionOverlay) _feCloseVersionOverlay();
     });
     // RL-09 / RL-03 item 5: rate-limit upgrade modal — close/dismiss/upgrade + backdrop click
@@ -34234,7 +33616,6 @@
       }
       if (e.target === rlUpgradeModal) _closeRateLimitModal();
     });
-    // Edit button inside reading overlay
     on('storyLibEditBtn', 'click', function() {
       if (_storyLibCurrentPiece) openFinalEdit(_storyLibCurrentPiece);
     });
@@ -34242,7 +33623,6 @@
     on('feAnnoSaveBtn',   'click', _feSaveAnnotation);
     on('feAnnoCancelBtn', 'click', _feCloseAnnoPopover);
     on('feSendToGethroBtn', 'click', _feSendToGethro);
-    // Selection on annotation body
     var feAnnoBody = document.getElementById('feAnnoBody');
     if (feAnnoBody) feAnnoBody.addEventListener('mouseup', _feHandleAnnoSelection);
     if (feAnnoBody) feAnnoBody.addEventListener('touchend', function() { setTimeout(_feHandleAnnoSelection, 80); });
@@ -34253,14 +33633,12 @@
       var btn = e.target.closest('[data-action="fe-tab"]');
       if (btn) _feSetTab(btn.getAttribute('data-tab'));
     });
-    // Annotation chips in popover
     var feAnnoPopover = document.getElementById('feAnnoPopover');
     if (feAnnoPopover) feAnnoPopover.addEventListener('click', function(e) {
       var chip = e.target.closest('[data-action="fe-anno-chip"]');
       if (chip) {
         var instInput = document.getElementById('feAnnoInstInput');
         if (instInput) instInput.value = chip.getAttribute('data-instruction');
-        // Visual active state on chip
         var allChips = feAnnoPopover.querySelectorAll('[data-action="fe-anno-chip"]');
         allChips.forEach(function(c) {
           c.style.background = 'var(--surface)';
@@ -34272,13 +33650,11 @@
         chip.style.borderColor = 'var(--gold)';
       }
     });
-    // Annotation remove chips in feAnnoList
     var feAnnoList = document.getElementById('feAnnoList');
     if (feAnnoList) feAnnoList.addEventListener('click', function(e) {
       var btn = e.target.closest('[data-action="fe-anno-remove"]');
       if (btn) _feRemoveAnnotation(btn.getAttribute('data-id'));
     });
-    // Close popover when clicking outside it
     document.addEventListener('mousedown', function(e) {
       var pop = document.getElementById('feAnnoPopover');
       if (pop && pop.style.display !== 'none' && !pop.contains(e.target)) {
@@ -34610,7 +33986,6 @@
     on('tourSlide5Btn',       'click', function() { _tourGoSlide(6); });
     on('tourSlide6Btn',       'click', function() { _tourFinish(); });
     on('tourSlide6CloseBtn',  'click', function() { closeTour(true); });
-    // Dot navigation
     for (var _td = 1; _td <= 6; _td++) {
       (function(n) {
         var dotEl = document.getElementById('tourDot' + n);
@@ -34826,11 +34201,6 @@
       var fbId    = btn.dataset.fbId    || null;
       var entryId = btn.dataset.entryId || null;
       var name    = btn.dataset.name    || '';
-      // DBG-CLICK: full picture of what this click actually resolved to, straight from
-      // the live DOM element — vs. whether the in-memory `entries` array currently has
-      // a matching id. If `id` is null/empty here but a same-card entry with a real id
-      // exists in `entries`, the DOM is stale relative to app state (a superseded render
-      // is still sitting on screen) — that's the render-race bug, not a delegate bug.
       var _cardEl = btn.closest('.entry-card');
       var _cardDomId = _cardEl ? _cardEl.id : '(no .entry-card ancestor)';
       var _liveMatch = id ? entries.find(function(en){ return en.id === id; }) : null;
@@ -35022,7 +34392,6 @@
               logActivity('voice_archive_renamed', 'va=' + _rVaId, 'info', 'VA');
             } catch(e) {
               dbgErr('VA', 'Rename failed:', e.message);
-              // Restore original label on failure
               _newSpan.textContent = _curLabel;
               if ((_voiceArchiveCache[_rEntryId] || []).find(function(r) { return r.id === _rVaId; })) {
                 (_voiceArchiveCache[_rEntryId] || []).find(function(r) { return r.id === _rVaId; }).label = _curLabel;
@@ -35044,7 +34413,6 @@
       }
     }
 
-    // Attach to all three stable entry-list containers
     ['reviewEntryList', 'dashChapterDetailList', 'chapterDetailList'].forEach(function(cid) {
       var el = document.getElementById(cid);
       if (el) el.addEventListener('click', _entryCardDelegate);
@@ -35135,7 +34503,6 @@
           setTimeout(function() { closeAskGethro(); }, pending2.delay - 200);
           _agpRoute(pending2.action);
         }
-      // Action-route button
       } else if (action === 'agp-route') {
         try {
           var routeAction = JSON.parse(btn.dataset.route || '{}');
