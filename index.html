@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.319">
+  <meta name="lifetold-version" content="v7.320">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -981,6 +981,7 @@
       #panel-people .mp-title { order: 0; flex: 1 1 auto; white-space: nowrap; }
       #panel-people #mpShareTreeBtn { order: 1; }
       #panel-people #mpImportBtn { order: 1; }
+      #panel-people #mpHistoryBtn { order: 1; }
       #panel-people #mpGethroBtn { order: 2; }
       #panel-people #mpCloseBtn { order: 3; }
     }
@@ -4137,6 +4138,7 @@
           <!-- FAM-06 Share my tree: the main action on this screen, so it lives in the header (was in the tree toolbar) -->
           <button id="mpShareTreeBtn" type="button" title="Share or collaborate with your people" aria-label="Share my tree. Share or collaborate with your people" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gold);border-radius:999px;background:none;color:var(--gold-dark);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;flex-shrink:0;margin-right:4px">&#128279; Share</button>
           <button id="mpImportBtn" type="button" title="Import a family tree from a GEDCOM file or a photo" aria-label="Import a family tree from a GEDCOM file or a photo" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:none;color:var(--text);font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap"><span aria-hidden="true">&#11014;</span><span>Import</span></button>
+          <button id="mpHistoryBtn" type="button" title="See earlier versions of your family tree" aria-label="Version history of your family tree" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:none;color:var(--text);font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap"><span aria-hidden="true">&#128340;</span><span>History</span></button>
           <!-- Gethro chat button — always accessible even inside overlay -->
           <button id="mpGethroBtn" title="Chat with Gethro" aria-label="Chat with Gethro" style="width:36px;height:36px;border-radius:50%;background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
             <div class="gethro-avatar-wrap gethro-avatar-all" style="width:32px;height:32px;pointer-events:none">
@@ -5403,7 +5405,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.319';
+  const APP_VERSION = 'v7.320';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -29480,6 +29482,156 @@
     _gedRender();
   }
 
+  // ── FAM-24 step 4 — Version history (read only). Reads the list columns only, never payload. 50 at a time, newest first. ──
+  var _fvRows = [], _fvMore = false, _fvBusy = false;
+  var _FV_COLS = 'id,version_num,saved_by,note,created_at,people_count,families_count,keep';
+  function _fvEl(tag, txt, css) { var e = document.createElement(tag); if (txt != null) e.textContent = txt; if (css) e.style.cssText = css; return e; }
+  function _fvRender(err) {
+    var body = document.getElementById('fvBody'); if (!body) return;
+    body.textContent = '';
+    if (err) { body.appendChild(_fvEl('p', err, 'font-size:0.88rem;color:var(--text-light);margin:8px 0')); return; }
+    if (!_fvRows.length) { body.appendChild(_fvEl('p', _fvBusy ? 'Loading…' : 'No earlier versions yet. One is saved the next time your tree changes.', 'font-size:0.88rem;color:var(--text-light);margin:8px 0')); return; }
+    _fvRows.forEach(function(r) {
+      var row = _fvEl('div', null, 'display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--border)');
+      row.appendChild(_fvEl('div', '#' + r.version_num, 'min-width:38px;font-weight:700;color:var(--gold-dark);font-size:0.85rem'));
+      var mid = _fvEl('div', null, 'flex:1;min-width:0');
+      var note = (r.note || 'Change') + (r.keep ? '  📌' : '');
+      mid.appendChild(_fvEl('div', note, 'font-size:0.9rem;color:var(--text);word-break:break-word'));
+      var d = new Date(r.created_at), when = isNaN(d) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      mid.appendChild(_fvEl('div', when + (r.saved_by === 'user' ? ' · saved by you' : ''), 'font-size:0.75rem;color:var(--text-light);margin-top:2px'));
+      var rb = _fvEl('button', 'Restore this version', 'margin-top:5px;padding:0;background:none;border:none;color:var(--gold-dark);font-family:inherit;font-size:0.78rem;text-decoration:underline;text-underline-offset:2px;cursor:pointer');
+      rb.type = 'button'; rb.addEventListener('click', function() { _fvConfirm(r); });
+      mid.appendChild(rb);
+      row.appendChild(mid);
+      var pc = r.people_count || 0, fc = r.families_count || 0;
+      row.appendChild(_fvEl('div', pc + (pc === 1 ? ' person' : ' people') + ', ' + fc + (fc === 1 ? ' family' : ' families'), 'font-size:0.75rem;color:var(--text-light);text-align:right;white-space:nowrap'));
+      body.appendChild(row);
+    });
+    if (_fvMore) {
+      var more = _fvEl('button', _fvBusy ? 'Loading…' : 'Show older versions', "margin-top:10px;width:100%;padding:8px;border:1px solid var(--border);border-radius:10px;background:none;color:var(--text);font-family:inherit;font-size:0.85rem;cursor:pointer");
+      more.type = 'button'; more.disabled = _fvBusy; more.addEventListener('click', function() { _fvLoad(false); });
+      body.appendChild(more);
+    }
+  }
+  async function _fvLoad(first) {
+    if (_fvBusy || !currentUser) return;
+    _fvBusy = true; if (first) { _fvRows = []; _fvMore = false; } _fvRender();
+    try {
+      var res = await _mpTimedFetch(SUPABASE_URL + '/rest/v1/life_tree_versions?select=' + _FV_COLS + '&user_id=eq.' + currentUser.id +
+        '&order=version_num.desc&limit=51&offset=' + _fvRows.length, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error('status ' + res.status);
+      var rows = await res.json();
+      _fvMore = rows.length > 50; _fvRows = _fvRows.concat(rows.slice(0, 50));
+      _fvBusy = false; _fvRender();
+    } catch (e) {
+      _fvBusy = false; _fvRender('Could not load the version history. Please try again.');
+      dbgWarn('PEOPLE', 'version history error: ' + (e && e.message));
+    }
+  }
+  // FAM-24 step 6: Restore this version. Preview (read only) first, then a confirm, then life_tree_restore (one transaction, safety copy first).
+  function _fvRpc(fn, id) {
+    return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }), body: JSON.stringify({ p_version_id: id }) })
+      .then(async function(res) {
+        if (!res.ok) { var m = ''; try { var j = await res.json(); m = j.message || ''; } catch (e) {} throw new Error(m || ('status ' + res.status)); }
+        return res.json();
+      });
+  }
+  function _fvN(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  async function _fvConfirm(row) {
+    var body = document.getElementById('fvBody'); if (!body || _fvBusy) return;
+    body.textContent = ''; body.appendChild(_fvEl('p', 'Checking what would change…', 'font-size:0.88rem;color:var(--text-light);margin:8px 0'));
+    var pv;
+    try { pv = await _fvRpc('life_tree_restore_preview', row.id); }
+    catch (e) { _fvRender('Could not check this version: ' + (e.message || 'please try again.')); dbgWarn('PEOPLE', 'restore preview error: ' + (e && e.message)); return; }
+    body.textContent = '';
+    var d = new Date(row.created_at), when = isNaN(d) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    body.appendChild(_fvEl('div', 'Restore version #' + pv.version_num + '?', 'font-weight:700;font-size:0.95rem;color:var(--text);margin-bottom:4px'));
+    body.appendChild(_fvEl('div', 'Saved ' + when + ' · ' + _fvN(pv.version.people, 'person', 'people') + ', ' + _fvN(pv.version.families, 'family', 'families') + '. Your tree now has ' + _fvN(pv.now.people, 'person', 'people') + ', ' + _fvN(pv.now.families, 'family', 'families') + '.', 'font-size:0.82rem;color:var(--text-light);margin-bottom:10px'));
+    var li = [];
+    if (pv.people_returned) li.push(_fvN(pv.people_returned, 'person comes', 'people come') + ' back.');
+    if (pv.people_moved_in) li.push(_fvN(pv.people_moved_in, 'person moves', 'people move') + ' from My People back into the tree.');
+    if (pv.people_changed)  li.push('The details of ' + _fvN(pv.people_changed, 'person change', 'people change') + ' back.');
+    if (pv.people_removed) {
+      var t = _fvN(pv.people_removed, 'person is', 'people are') + ' taken out of the tree' + (pv.people_removed_names ? ' (' + pv.people_removed_names + ')' : '') + '.';
+      if (pv.people_removed_kept) t += ' ' + pv.people_removed_kept + ' stay' + (pv.people_removed_kept === 1 ? 's' : '') + ' in My People because something else is recorded about them; ' + pv.people_removed_deleted + ' ' + (pv.people_removed_deleted === 1 ? 'is' : 'are') + ' deleted.';
+      else t += ' Nothing else is recorded about them, so they are deleted.';
+      li.push(t);
+    }
+    var fam = [];
+    if (pv.families_added) fam.push(pv.families_added + ' added'); if (pv.families_removed) fam.push(pv.families_removed + ' removed'); if (pv.families_changed) fam.push(pv.families_changed + ' changed');
+    if (fam.length) li.push('Families: ' + fam.join(', ') + '.');
+    var kid = [];
+    if (pv.children_added) kid.push(pv.children_added + ' added'); if (pv.children_removed) kid.push(pv.children_removed + ' removed');
+    if (kid.length) li.push('Child links: ' + kid.join(', ') + '.');
+    if (!li.length) {
+      body.appendChild(_fvEl('p', 'Your tree already matches this version. Nothing would change.', 'font-size:0.88rem;color:var(--text);margin:0 0 10px'));
+    } else {
+      var ul = _fvEl('ul', null, 'margin:0 0 10px;padding-left:18px;font-size:0.86rem;color:var(--text);line-height:1.5');
+      li.forEach(function(x) { ul.appendChild(_fvEl('li', x)); }); body.appendChild(ul);
+      body.appendChild(_fvEl('p', 'A copy of your tree as it is now is saved first (marked 📌 before restore), so you can undo this. Your stories, groups and photos are not changed, and anyone you have hidden from sharing stays hidden.', 'font-size:0.78rem;color:var(--text-light);line-height:1.5;margin:0 0 12px'));
+    }
+    var bar = _fvEl('div', null, 'display:flex;gap:8px;justify-content:flex-end');
+    var back = _fvEl('button', 'Back', 'padding:8px 14px;border:1px solid var(--border);border-radius:10px;background:none;color:var(--text);font-family:inherit;font-size:0.85rem;cursor:pointer'); back.type = 'button';
+    back.addEventListener('click', function() { _fvRender(); });
+    bar.appendChild(back);
+    if (li.length) {
+      var go = _fvEl('button', 'Restore this version', 'padding:8px 14px;border:none;border-radius:10px;background:var(--gold-dark);color:#fff;font-family:inherit;font-size:0.85rem;font-weight:700;cursor:pointer'); go.type = 'button';
+      go.addEventListener('click', function() { _fvDoRestore(row, pv, go, back); });
+      bar.appendChild(go);
+    }
+    body.appendChild(bar);
+  }
+  async function _fvDoRestore(row, pv, go, back) {
+    if (_fvBusy) return; _fvBusy = true; go.disabled = true; back.disabled = true; go.textContent = 'Restoring…';
+    try {
+      var r = await _fvRpc('life_tree_restore', row.id);
+      logActivity('tree_restored', 'version ' + pv.version_num, 'info', 'PEOPLE');
+      _fvBusy = false; _fvClose();
+      var msg = 'Your tree is back to version #' + pv.version_num + '.';
+      if (r.people_kept) msg += ' ' + _fvN(r.people_kept, 'person stays', 'people stay') + ' in My People.';
+      if (r.share_links_switched) msg += ' ' + _fvN(r.share_links_switched, 'share link now uses', 'share links now use') + ' your view.';
+      toast(msg, 8000);
+      await _mpLoad();
+      if (_mpActiveTab === 'directory') mpDirRender();
+    } catch (e) {
+      _fvBusy = false; go.disabled = false; back.disabled = false; go.textContent = 'Restore this version';
+      toast('Could not restore: ' + (e.message || 'please try again.'), 6000);
+      dbgWarn('PEOPLE', 'restore error: ' + (e && e.message));
+    }
+  }
+  // FAM-24 step 7: Save a checkpoint now, with a name (life_tree_checkpoint). Pinned, so it stays in the list.
+  async function _fvSaveCheckpoint() {
+    var inp = document.getElementById('fvName'), btn = document.getElementById('fvSave');
+    if (!inp || !btn || _fvBusy) return;
+    var name = (inp.value || '').trim();
+    if (!name) { toast('Give the checkpoint a name first.', 3000); inp.focus(); return; }
+    btn.disabled = true; var old = btn.textContent; btn.textContent = 'Saving…';
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_checkpoint', { method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }), body: JSON.stringify({ p_note: name }) });
+      if (!res.ok) { var m = ''; try { var j = await res.json(); m = j.message || ''; } catch (e) {} throw new Error(m || ('status ' + res.status)); }
+      var r = await res.json();
+      logActivity('tree_checkpoint', name, 'info', 'PEOPLE');
+      inp.value = '';
+      toast('Checkpoint saved: ' + (r && r.note ? r.note : name), 4000);
+      await _fvLoad(true);
+    } catch (e) {
+      toast('Could not save the checkpoint: ' + (e.message || 'please try again.'), 5000);
+      dbgWarn('PEOPLE', 'checkpoint error: ' + (e && e.message));
+    }
+    btn.disabled = false; btn.textContent = old;
+  }
+  function _fvOpen() { var m = document.getElementById('fvModal'); if (!m) return; m.style.display = 'flex'; _fvLoad(true); }
+  function _fvClose() { var m = document.getElementById('fvModal'); if (m) m.style.display = 'none'; }
+  function _fvWire() {
+    var b = document.getElementById('mpHistoryBtn'); if (!b || b._fvWired) return; b._fvWired = true;
+    b.addEventListener('click', _fvOpen);
+    var x = document.getElementById('fvClose'); if (x) x.addEventListener('click', _fvClose);
+    var sv = document.getElementById('fvSave'); if (sv) sv.addEventListener('click', _fvSaveCheckpoint);
+    var nm = document.getElementById('fvName'); if (nm) nm.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); _fvSaveCheckpoint(); } });
+    var m = document.getElementById('fvModal');
+    if (m) { m.addEventListener('keydown', function(e) { if (e.key === 'Escape') _fvClose(); }); m.addEventListener('click', function(e) { if (e.target === m) _fvClose(); }); }
+  }
+
   function _gedWire() {
     var b = document.getElementById('mpImportBtn'); if (!b || b._gedWired) return; b._gedWired = true;
     b.addEventListener('click', _gedOpen);
@@ -30171,19 +30323,45 @@
     }
   }
 
-  // Delete via RPC (also removes empty single-parent families). Owner is protected server-side.
+  // FAM-24 step 3: a person in the tree is REMOVED from it (life_tree_remove_person: they stay in My People if anything else is known);
+  // a plain person (friend, colleague, other) is DELETED (life_tree_delete_plain_person). Owner is protected server-side.
+  function _mpJoin(a) { return a.length < 2 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+  function _mpRemoveMsg(name, r) {
+    var msg = name + ' is removed from your tree.';
+    if (r.kept) {
+      var why = [], k = r.kept_because || [], c = r.counts || {};
+      if (k.indexOf('stories') >= 0) why.push('is in ' + c.stories + (c.stories === 1 ? ' story' : ' stories'));
+      if (k.indexOf('photo') >= 0)   why.push('has a photo');
+      if (k.indexOf('groups') >= 0)  why.push('is in ' + c.groups + (c.groups === 1 ? ' group' : ' groups'));
+      if (k.indexOf('bio') >= 0)     why.push('has a bio');
+      if (k.indexOf('notes') >= 0)   why.push('has notes');
+      if (k.indexOf('label') >= 0)   why.push('has a relationship label');
+      msg += ' They stay in My People because they ' + _mpJoin(why) + '.';
+    }
+    if (r.cut_off) msg += ' ' + r.cut_off + (r.cut_off_count === 1 ? ' is' : ' are') + ' no longer joined to you.';
+    if (r.share_links_switched) msg += ' ' + r.share_links_switched + (r.share_links_switched === 1 ? ' share link' : ' share links') + ' that used ' + name + "'s view now use yours.";
+    return msg;
+  }
   async function mpV2Delete() {
     var person = _mpPeople.find(function(p) { return p.id === _mpProfilePersonId; });
     if (!person) return;
     if (person.is_owner) { toast('You cannot remove yourself from your own tree.', 4000); return; }
-    var kids = 0;
-    _mpV2Fams(person.id).forEach(function(f) { kids += _mpChildren.filter(function(c) { return c.family_id === f.id; }).length; });
-    var msg = 'Remove "' + (person.name || 'this person') + '" from your family tree? This cannot be undone.';
-    if (kids) msg += '\n\nTheir ' + kids + (kids === 1 ? ' child stays' : ' children stay') + ' in the tree, but will no longer be linked to this person.';
+    var nm = person.name || 'this person';
+    var inTree = person.bucket === 'family';
+    var msg;
+    if (inTree) {
+      var kids = 0;
+      _mpV2Fams(person.id).forEach(function(f) { kids += _mpChildren.filter(function(c) { return c.family_id === f.id; }).length; });
+      msg = 'Remove "' + nm + '" from your family tree?';
+      if (kids) msg += '\n\nTheir ' + kids + (kids === 1 ? ' child stays' : ' children stay') + ' in the tree, but will no longer be linked to this person.';
+      msg += '\n\nIf anything else is recorded about them (a story, a photo, a group, a bio or notes) they stay in My People with all of it. Otherwise they are deleted.';
+    } else {
+      msg = 'Delete "' + nm + '" for good?\n\nThey are taken out of every story they are tagged in and out of any group, and their details are deleted. This cannot be undone.';
+    }
     if (!confirm(msg)) return;
     mpCloseProfile();
     try {
-      var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/life_tree_delete_person', {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + (inTree ? 'life_tree_remove_person' : 'life_tree_delete_plain_person'), {
         method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ p_id: person.id })
       });
@@ -30191,8 +30369,10 @@
         var m2 = ''; try { var j2 = await res.json(); m2 = j2.message || ''; } catch(e) {}
         throw new Error(m2 || ('Delete failed (' + res.status + ')'));
       }
+      var r = null; try { r = await res.json(); } catch(e) {}
       logActivity('people_deleted', person.name, 'info', 'PEOPLE');
-      toast((person.name || 'Person') + ' removed.');
+      if (inTree && r) toast(_mpRemoveMsg(nm, r), 9000);
+      else toast(nm + ' deleted.' + (r && r.share_links_switched ? ' ' + r.share_links_switched + (r.share_links_switched === 1 ? ' share link' : ' share links') + ' that used their view now use yours.' : ''), r && r.share_links_switched ? 7000 : 3000);
       await _mpLoad();
       if (_mpActiveTab === 'directory') mpDirRender();
     } catch(e) {
@@ -30836,6 +31016,8 @@
     // FAM-08: only people in the family tree can have relatives added; a friend / colleague / other has no such button.
     var _arb = document.getElementById('mpProfileAddRelBtn');
     if (_arb) _arb.style.display = (person.bucket === 'family' || person.is_owner) ? '' : 'none';
+    var _dlb = document.getElementById('mpProfileDeleteBtn');   // FAM-24 step 3: tree people are removed from the tree, plain people are deleted
+    if (_dlb) _dlb.innerHTML = person.bucket === 'family' ? '&#128465; Remove from tree' : '&#128465; Delete person';
     var _lkb = document.getElementById('mpProfileLinkBtn');   // FAM-23: only a person in a branch that is not joined to the tree yet
     if (_lkb) { var _isl = null; try { _isl = _mpIslandOf(personId); } catch (e) {} _lkb.style.display = _isl ? '' : 'none'; }
     document.getElementById('mpProfileName').textContent = person.name || '—';
@@ -34275,6 +34457,7 @@
     on('mpRecentreBtn',        'click', mpRecentre);
     on('mpShareTreeBtn',       'click', _mpOpenTreeShareModal);
     _gedWire();   // FAM-10
+    _fvWire();    // FAM-24 step 4
     on('mpZoomInBtn',          'click', mpZoomIn);
     on('mpZoomOutBtn',         'click', mpZoomOut);
     on('mpViewChipBack',       'click', mpViewBackToMe);
@@ -35655,6 +35838,21 @@
         <div id="gedBody"></div>
         <input id="gedFile" type="file" accept=".ged,.gedcom,.txt,text/plain,application/octet-stream" style="display:none">
         <input id="gedPhoto" type="file" accept="image/*" style="display:none">
+      </div>
+    </div>
+    <!-- FAM-24 step 4: Version history, read only -->
+    <div id="fvModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:12px" role="dialog" aria-modal="true" aria-labelledby="fvTitle">
+      <div style="background:var(--surface);border-radius:16px;padding:14px 18px;max-width:520px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);box-sizing:border-box;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);overflow-y:auto;-webkit-overflow-scrolling:touch">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h3 id="fvTitle" style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0">Version history</h3>
+          <button id="fvClose" type="button" aria-label="Close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-light);line-height:1;padding:0">&times;</button>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-light);line-height:1.5;margin:0 0 10px">Every change to your family tree saves what it looked like just before. Each line shows the tree as it was before that change. You can put your tree back to any of them.</p>
+        <div style="display:flex;gap:8px;margin:0 0 10px">
+          <input id="fvName" type="text" maxlength="80" placeholder="Name a checkpoint, e.g. Before adding Dad's side" aria-label="Checkpoint name" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font-family:inherit;font-size:0.85rem">
+          <button id="fvSave" type="button" style="padding:8px 12px;border:1px solid var(--gold);border-radius:10px;background:none;color:var(--gold-dark);font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">Save checkpoint</button>
+        </div>
+        <div id="fvBody"></div>
       </div>
     </div>
     <div id="treeShareModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9500;align-items:center;justify-content:center;padding:12px">
