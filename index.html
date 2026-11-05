@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.326">
+  <meta name="lifetold-version" content="v7.327">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -1328,6 +1328,9 @@
     .mpt-big .mpt-nm { font-size: 15px; }
     .mpt-big .mpt-lb { font-size: 13.5px; }
     .mpt-big .mpt-bd { font-size: 12.5px; }
+    .mp-intro-ring { position: fixed; z-index: 1200; pointer-events: none; border: 3px solid var(--gold); border-radius: 10px; box-sizing: border-box; }
+    @media (prefers-reduced-motion: no-preference) { .mp-intro-ring { animation: mpIntroPulse 1.6s ease-out infinite; } }
+    @keyframes mpIntroPulse { 0% { box-shadow: 0 0 0 0 rgba(201,169,110,0.55); } 100% { box-shadow: 0 0 0 16px rgba(201,169,110,0); } }
     .mpt-me .mpt-lb { fill: var(--gold); font-weight: 700; }
     .mpt-late .mpt-nm { fill: var(--text-light); }
     .mpt-private .mpt-nm { fill: var(--text-light); font-style: italic; font-weight: 400; }
@@ -4901,6 +4904,7 @@
           <button class="ob-goal-card" id="obGoalSelf">&#129454;<span>To understand myself</span></button>
           <button class="ob-goal-card" id="obGoalStory">&#128214;<span>A specific story</span></button>
           <button class="ob-goal-card" id="obGoalExploring">&#127774;<span>Just for fun</span></button>
+          <button class="ob-goal-card" id="obGoalTree" style="grid-column:1 / -1">&#127795;<span>Build my family tree</span></button>
         </div>
         <button class="ob-btn" id="obStep4Btn">Next &#8594;</button>
       </div>
@@ -5405,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.326';
+  const APP_VERSION = 'v7.327';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -10431,6 +10435,7 @@
   ];
 
   var _obIceBraker    = ONBOARD_ICE_BREAKER; // always the fixed question
+  var OB_GOAL_TREE = 'Build my family tree \u2014 I want to map out my family';   // ONB-TREE-01: this goal sends the person straight to My People
   var _obSelectedGoal = null;                 // memoir goal selected on step 4
   var _obCurrentStep  = 1;
   // EML-ONB-01: step 6 story-prompt email choice. Weekly is only the pre-selected FREQUENCY —
@@ -10772,6 +10777,10 @@
     document.getElementById('onboardingOverlay').style.display = 'none';
     toast('Welcome, ' + (userProfile.firstName || '') + '! \uD83C\uDF89');
     await new Promise(function(r) { setTimeout(r, 300); });
+    if (_obSelectedGoal === OB_GOAL_TREE && MP_EDIT_ENABLED) {   // ONB-TREE-01: they came to build a tree, so start there (the pointer shows by itself on their card)
+      try { logActivity('onboard_tree_goal', 'open My People', 'info', 'ONBOARD'); await openMyPeople(); return; }
+      catch (e) { try { logActivity('onboard_error', 'tree goal open: ' + (e && e.message || e), 'warn', 'ONBOARD'); } catch (e2) {} }
+    }
     showPanel('memories', null, 1);
     var titleEl  = document.getElementById('memTitle');
     var answerEl = document.getElementById('memAnswer');
@@ -28015,6 +28024,59 @@
     }
     _mpApplyZoomState();
     _mpCentreOnPerson(_mpViewerId || _mpOwnerId);
+    if (!_mpShareCtx) setTimeout(_mpIntroMaybe, 700);   // ONB-TREE-01
+  }
+
+  // ONB-TREE-01 (2026-11-05): the first time anyone opens My People, one pointer says how to start. It sits on their own card (or on the add button
+  // when the tree is empty), is shown once per person per device (lt_mp_intro_<id>, set the moment it appears so it never nags), never on a share
+  // page, and never while adding people is switched off. Any tap elsewhere, a scroll or "Got it" closes it.
+  var _mpIntroEls = [];
+  function _mpIntroClose() {
+    _mpIntroEls.forEach(function(e) { if (e.parentNode) e.parentNode.removeChild(e); });
+    _mpIntroEls = [];
+    document.removeEventListener('pointerdown', _mpIntroOutside, true); document.removeEventListener('keydown', _mpIntroKey, true);
+    window.removeEventListener('resize', _mpIntroClose);
+  }
+  function _mpIntroOutside(ev) { if (_mpIntroEls.length && !_mpIntroEls[1].contains(ev.target)) _mpIntroClose(); }
+  function _mpIntroKey(ev) { if (ev.key === 'Escape') _mpIntroClose(); }
+  function _mpIntroMaybe() {
+    try {
+      if (_mpShareCtx || _mpIntroEls.length || !currentUser || !MP_EDIT_ENABLED) return;
+      var pnl = document.getElementById('panel-people'); if (!pnl || !pnl.classList.contains('active')) return;
+      var key = 'lt_mp_intro_' + currentUser.id;
+      try { if (localStorage.getItem(key)) return; } catch (e) {}
+      var target = null, text = '', es = document.getElementById('mpEmptyState');
+      if (es && es.style.display === 'flex') { target = document.getElementById('mpAddFirstPersonBtn'); text = 'Start here: add your first family member, then add their relatives one by one.'; }
+      else {
+        var ct = _mpCt();
+        target = ct && (ct.querySelector('g.mpt-me') || (_mpOwnerId != null ? ct.querySelector('g[data-pid="' + _mpOwnerId + '"]') : null));
+        text = 'This is you. Tap your card, then choose \u201c+ Add a relative\u201d to start building your family tree.';
+      }
+      if (!target) return;
+      var r = target.getBoundingClientRect();
+      if (!r.width || r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return;   // not on screen: try again next visit
+      try { localStorage.setItem(key, '1'); } catch (e) {}
+      var ring = document.createElement('div'); ring.className = 'mp-intro-ring';
+      ring.style.cssText = 'left:' + (r.left - 4) + 'px;top:' + (r.top - 4) + 'px;width:' + (r.width + 8) + 'px;height:' + (r.height + 8) + 'px';
+      var bw = Math.min(270, window.innerWidth - 24);
+      var b = document.createElement('div'); b.setAttribute('role', 'status');
+      b.style.cssText = 'position:fixed;z-index:1201;box-sizing:border-box;width:' + bw + 'px;background:var(--surface);color:var(--text);border:1px solid var(--gold);border-radius:12px;padding:12px 14px;box-shadow:0 6px 22px rgba(0,0,0,0.25);font-family:\'Lato\',sans-serif;font-size:0.9rem;line-height:1.45';
+      var p = document.createElement('div'); p.textContent = text; b.appendChild(p);
+      var ok = document.createElement('button'); ok.type = 'button'; ok.textContent = 'Got it';
+      ok.style.cssText = 'margin-top:10px;background:var(--gold);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-family:inherit;font-size:0.86rem;font-weight:700;cursor:pointer;min-height:40px';
+      ok.addEventListener('click', _mpIntroClose); b.appendChild(ok);
+      var arrow = document.createElement('div'); b.appendChild(arrow);
+      document.body.appendChild(ring); document.body.appendChild(b); _mpIntroEls = [ring, b];
+      var bh = b.offsetHeight, left = Math.max(12, Math.min(r.left + r.width / 2 - bw / 2, window.innerWidth - bw - 12));
+      var below = r.bottom + 14 + bh <= window.innerHeight || r.top - 14 - bh < 0;
+      b.style.left = left + 'px'; b.style.top = Math.max(8, below ? r.bottom + 14 : r.top - 14 - bh) + 'px';
+      var ax = Math.max(16, Math.min(r.left + r.width / 2 - left - 7, bw - 30));
+      arrow.style.cssText = 'position:absolute;width:12px;height:12px;background:var(--surface);transform:rotate(45deg);left:' + ax + 'px;' + (below ? 'top:-7px;border-left:1px solid var(--gold);border-top:1px solid var(--gold)' : 'bottom:-7px;border-right:1px solid var(--gold);border-bottom:1px solid var(--gold)');
+      document.addEventListener('pointerdown', _mpIntroOutside, true); document.addEventListener('keydown', _mpIntroKey, true);
+      window.addEventListener('resize', _mpIntroClose);
+      var vp = _mpVp(); if (vp) vp.addEventListener('scroll', _mpIntroClose, { once: true });
+      try { logActivity('mp_intro_shown', es && es.style.display === 'flex' ? 'empty' : 'own card', 'info', 'PEOPLE'); } catch (e) {}
+    } catch (e) { try { logActivity('people_error', 'intro pointer: ' + (e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {} }
   }
 
   function _mpCentreOnPerson(id, smooth) {
@@ -28418,12 +28480,22 @@
   // Asks the server which people in the photo may already be in your tree. Not fatal: Import waits until it has an answer (Check again).
   async function _gedPhotoCheck() {
     var s = _gedS; if (!s || !s.draft || s.checking) return;
-    s.checking = true; s.matchFail = false;
+    s.checking = true; s.matchFail = false; s.matchFormat = false;
     if (s.step === 'photo') _gedRender();
     try {
       var pm = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
       if (_gedS !== s) return;
       s.photoMatch = pm; s.matchDec = Object.assign({}, pm.defaults || {});
+      // 2026-11-05 (UAT: a photo of the same tree flagged nobody): record what came back, and refuse to go on if the answer is keyed in a form this
+      // page cannot read (an out of date TREE_PROXY answers in GEDCOM ids, not the page's refs). Then no card could show a match and Import would add
+      // everyone a second time, so Import waits instead.
+      var onScreen = {}; s.draft.people.forEach(function(p) { onScreen[p.ref] = 1; });
+      var mk = Object.keys(pm.matches || {}), fit = mk.filter(function(k) { return onScreen[k]; }).length;
+      try { logActivity('people_info', 'photo match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' pre-selected, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
+      if (mk.length && !fit) {
+        s.photoMatch = null; s.matchDec = {}; s.matchFail = true; s.matchFormat = true;
+        try { logActivity('people_error', 'photo match: answer keys do not fit the page refs (' + mk.slice(0, 3).join(',') + ')', 'warn', 'PEOPLE'); } catch (e4) {}
+      }
     } catch (e) {
       if (_gedS !== s) return;
       s.matchFail = true;
@@ -28697,7 +28769,7 @@
         if (s.photoMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else if (_gedCands(p.ref).length) poss++; });
         var parts = [];
         if (s.checking) parts.push('Checking who is already in your tree\u2026');
-        else if (s.matchFail) parts.push('We could not check who is already in your tree.');
+        else if (s.matchFail) parts.push(s.matchFormat ? 'The server answered in a form this page cannot use, so duplicates cannot be shown and nothing can be imported yet. The server part (TREE_PROXY) may be out of date.' : 'We could not check who is already in your tree.');
         else if (s.photoMatch) {
           if (!merged && !poss) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
           if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry (tagged In your tree).');
@@ -30450,6 +30522,7 @@
     logActivity('people_review_skipped', '', 'info', 'PEOPLE');
     document.getElementById('mpReviewScreen').style.display = 'none';
     document.getElementById('mpEmptyState').style.display = 'flex';
+    setTimeout(_mpIntroMaybe, 700);   // ONB-TREE-01: an empty tree points at the add button instead
   }
 
   async function _mpMarkReviewDone() {
@@ -34100,6 +34173,8 @@
     on('obGoalSelf',     'click', function() { obSelectGoal(this, 'To understand myself \u2014 I want to reflect on where I\'ve come from'); });
     on('obGoalStory',    'click', function() { obSelectGoal(this, 'A specific story \u2014 there\'s something I need to capture'); });
     on('obGoalExploring','click', function() { obSelectGoal(this, 'Just exploring \u2014 I\'m not sure yet'); });
+    on('obGoalTree',     'click', function() { obSelectGoal(this, OB_GOAL_TREE); });
+    (function() { var gt = document.getElementById('obGoalTree'); if (gt && !MP_EDIT_ENABLED) gt.style.display = 'none'; })();   // adding people is switched off, so do not offer it
     on('obStep4Back','click', function() { obGoStep(3); });
     on('obStep4Btn', 'click', obSaveGoalAndGoStep5);
     on('obStep5Back','click', function() { obGoStep(4); });
