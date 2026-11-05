@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.322">
+  <meta name="lifetold-version" content="v7.323">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5405,7 +5405,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.322';
+  const APP_VERSION = 'v7.323';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5416,7 +5416,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13531},{"maxLine":2088,"offset":13532},{"maxLine":2882,"offset":13533},{"maxLine":2937,"offset":13536},{"maxLine":3360,"offset":13537},{"maxLine":3540,"offset":13538},{"maxLine":5411,"offset":13539},{"maxLine":5945,"offset":13547},{"maxLine":6435,"offset":13557},{"maxLine":6447,"offset":13559},{"maxLine":7315,"offset":13560},{"maxLine":7597,"offset":13561},{"maxLine":8139,"offset":13562},{"maxLine":8555,"offset":13563},{"maxLine":8970,"offset":13564},{"maxLine":9794,"offset":13565},{"maxLine":11363,"offset":13567},{"maxLine":12623,"offset":13568},{"maxLine":12806,"offset":13569},{"maxLine":13533,"offset":13570},{"maxLine":13551,"offset":13572},{"maxLine":15410,"offset":13574},{"maxLine":16554,"offset":13575},{"maxLine":16556,"offset":13576},{"maxLine":17297,"offset":13577},{"maxLine":18194,"offset":13578},{"maxLine":20348,"offset":13581},{"maxLine":20670,"offset":13582},{"maxLine":20936,"offset":13583},{"maxLine":21545,"offset":13584},{"maxLine":21738,"offset":13585},{"maxLine":21941,"offset":13586},{"maxLine":22353,"offset":13587},{"maxLine":22603,"offset":13588},{"maxLine":23359,"offset":13589},{"maxLine":23401,"offset":13590},{"maxLine":23555,"offset":13591},{"maxLine":25437,"offset":13592},{"maxLine":25901,"offset":13593},{"maxLine":28733,"offset":14042},{"maxLine":30048,"offset":14043},{"maxLine":31132,"offset":14044},{"maxLine":33286,"offset":14046},{"maxLine":null,"offset":14047}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":13591},{"maxLine":2089,"offset":13592},{"maxLine":2883,"offset":13593},{"maxLine":2938,"offset":13596},{"maxLine":3361,"offset":13597},{"maxLine":3541,"offset":13598},{"maxLine":5413,"offset":13599},{"maxLine":5947,"offset":13607},{"maxLine":6437,"offset":13617},{"maxLine":6449,"offset":13619},{"maxLine":7317,"offset":13620},{"maxLine":7599,"offset":13621},{"maxLine":8141,"offset":13622},{"maxLine":8557,"offset":13623},{"maxLine":8972,"offset":13624},{"maxLine":9796,"offset":13625},{"maxLine":11365,"offset":13627},{"maxLine":12625,"offset":13628},{"maxLine":12808,"offset":13629},{"maxLine":13535,"offset":13630},{"maxLine":13553,"offset":13632},{"maxLine":15412,"offset":13634},{"maxLine":16556,"offset":13635},{"maxLine":16558,"offset":13636},{"maxLine":17299,"offset":13637},{"maxLine":18196,"offset":13638},{"maxLine":20350,"offset":13641},{"maxLine":20672,"offset":13642},{"maxLine":20938,"offset":13643},{"maxLine":21547,"offset":13644},{"maxLine":21740,"offset":13645},{"maxLine":21943,"offset":13646},{"maxLine":22355,"offset":13647},{"maxLine":22605,"offset":13648},{"maxLine":23361,"offset":13649},{"maxLine":23403,"offset":13650},{"maxLine":23557,"offset":13651},{"maxLine":25439,"offset":13652},{"maxLine":25903,"offset":13653},{"maxLine":28735,"offset":14102},{"maxLine":30201,"offset":14103},{"maxLine":31315,"offset":14104},{"maxLine":33469,"offset":14106},{"maxLine":null,"offset":14107}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -25782,8 +25782,10 @@
   // The deployer stamps the release into <meta name="lifetold-version"> (and tests that it
   // did). Every few minutes, and when the tab is shown, hidden or back online, the app
   // reads the first few KB of the live page and compares that stamp with its own.
-  //   - tab hidden + nothing unsaved  -> reloads itself
-  //   - tab visible                   -> a bar: "A new version is ready", user taps Update now
+  //   - tab hidden                    -> NOTHING. 2026-11-05 (VER-HIDDEN-01): a hidden tab used to reload itself, so the
+  //                                      person came back to a blank page (the page restarted in the background) and never saw
+  //                                      the bar. It now only remembers a newer version exists.
+  //   - tab visible (or comes back)   -> a bar: "A new version is ready", user taps Update now
   //   - something unsaved/in progress -> never reloads; the bar asks them to save first
   // It compares the loaded stamp with the live stamp (not APP_VERSION), so an old deployer
   // that does not stamp can never cause a reload loop, and it reloads at most once every 10 min.
@@ -25825,14 +25827,6 @@
       return '';
     } finally { clearTimeout(timer); }
   }
-  function _vcReload(why) {
-    var last = 0;
-    try { last = parseInt(sessionStorage.getItem('lt_vc_reload') || '0', 10); } catch (e) { notifyDev('warn', 'APP', 'update guard storage read failed: ' + e.message); }
-    if (Date.now() - last < 600000) return;   // at most one automatic reload per 10 minutes
-    try { sessionStorage.setItem('lt_vc_reload', String(Date.now())); } catch (e) { notifyDev('warn', 'APP', 'update guard storage write failed: ' + e.message); }
-    logActivity('app_update', 'reload ' + why + ' loaded=' + _vcLoaded + ' live=' + _vcStale, 'info', 'APP');
-    setTimeout(function() { location.reload(); }, 500);   // short pause so the log row can be sent
-  }
   function _vcShowBar() {
     if (document.getElementById('ltUpdateBar')) return;
     var bar = document.createElement('div');
@@ -25863,14 +25857,15 @@
         _vcLogged = true;
         logActivity('app_update', 'stale loaded=' + _vcLoaded + ' live=' + live + ' tab=' + (hidden ? 'hidden' : 'visible') + (why ? ' blocked: ' + why : ''), 'info', 'APP');
       }
-      if (hidden && !why) _vcReload('hidden-tab');
-      else if (!hidden) _vcShowBar();
+      if (!hidden) _vcShowBar();   // VER-HIDDEN-01: a hidden tab never reloads itself; the bar shows when the person returns
     } catch (e) {
       if (!_vcFailLogged) { _vcFailLogged = true; logActivity('app_update_check_failed', e.name + ': ' + e.message, 'warn', 'APP'); }
     }
   }
   document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'hidden' && _vcStale && !_vcUnsafeReason()) _vcReload('hidden-tab');
+    // VER-HIDDEN-01 (2026-11-05): coming back to a tab that already knows a newer version exists shows the bar at once;
+    // otherwise check (the check itself is limited to once a minute). Leaving the tab never reloads it.
+    if (document.visibilityState === 'visible' && _vcStale) _vcShowBar();
     else _vcCheck();
   });
   // SESSION-GUARD-01: getAuthHeaders() sends the sessionToken variable, which only changed when an auth event
