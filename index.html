@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.329">
+  <meta name="lifetold-version" content="v7.330">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.329';
+  const APP_VERSION = 'v7.330';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28371,7 +28371,9 @@
   function _gedEnterReview(prev, prefix) {
     var s = _gedS;
     s.prev = prev; s.owner = prev.owner || null;
-    s.decisions = {}; s.ownerRef = prev.owner_guess || null;   // 2026-11-05 (developer): nothing is matched until the person chooses it (Use suggested matches is still there) s.mode = 'add'; s.typed = '';
+    // 2026-11-05 (developer): nothing is matched until the person says Yes, and that includes their own entry: the server's guess is only shown as Likely you.
+    s.decisions = {}; s.ownerRef = null; s.ownerGuess = prev.owner_guess || null; s.ownerNo = false;
+    s.mode = 'add'; s.typed = '';
     s.key = _gedNewKey(prefix);
     s.hasTree = !!(prev.tree && prev.tree.has_tree);
     _gedApplyOwner();
@@ -28565,6 +28567,32 @@
   var GED_BLUE = '#2b6cb0';
   function _gedMatchOf(ref) { var s = _gedS; return (s && s.photoMatch && s.matchDec && s.matchDec[ref]) || ''; }
   function _gedCands(ref) { var pm = _gedS && _gedS.photoMatch; return (pm && pm.matches && pm.matches[ref]) || []; }
+  // 2026-11-05 (developer): two levels of "may already be in your tree". LIKELY = spelled the same (capitals, accents, spacing and punctuation are ignored)
+  // and no birth year that disagrees. POSSIBLE = anything else the server suggested. Neither joins anyone: only the person's own Yes does.
+  function _gedNorm(x) { return String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9\u00c0-\uffff ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function _gedYearOf(t) { var m = String(t || '').match(/\b(1[0-9]{3}|20[0-9]{2})\b/); return m ? +m[1] : null; }
+  function _gedLevel(name, born, c, exMap) {
+    var e = exMap && exMap[c.id];
+    if (!e || !_gedNorm(name) || _gedNorm(name) !== _gedNorm(e.name)) return 'possible';
+    var y1 = _gedYearOf(born), y2 = e.born_year ? +e.born_year : null;
+    return (y1 && y2 && y1 !== y2) ? 'possible' : 'likely';
+  }
+  function _gedIsMe(id) { var pm = _gedS && _gedS.photoMatch; return !!(pm && ((pm.owner && pm.owner.id === id) || (pm.existing && pm.existing[id] && pm.existing[id].is_owner))); }
+  // The photo person's candidates with their level, likely ones first.
+  function _gedBest(p) {
+    var pm = _gedS && _gedS.photoMatch;
+    var cl = _gedCands(p.ref).map(function(c) { return { c: c, lv: _gedLevel(p.name, p.born, c, pm && pm.existing) }; });
+    cl.sort(function(a, b) { return (a.lv === 'likely' ? 0 : 1) - (b.lv === 'likely' ? 0 : 1); });
+    return cl;
+  }
+  // What a card is tagged: { label, kind } kind = agreed (you said yes) | likely | possible, or null.
+  function _gedTag(p) {
+    var mid = _gedMatchOf(p.ref);
+    if (mid) return { label: _gedIsMe(mid) ? 'This is you' : 'In your tree', kind: 'agreed' };
+    var b = _gedBest(p); if (!b.length) return null;
+    var me = _gedIsMe(b[0].c.id);
+    return b[0].lv === 'likely' ? { label: me ? 'Likely you' : 'Likely duplicate', kind: 'likely', top: b[0] } : { label: me ? 'Possible you' : 'Possible duplicate', kind: 'possible', top: b[0] };
+  }
   function _gedExLabel(id) {
     var pm = _gedS && _gedS.photoMatch, e = pm && pm.existing && pm.existing[id];
     if (!e) return 'someone in your tree';
@@ -28599,12 +28627,13 @@
       var cands = _gedCands(p.ref), cur = _gedMatchOf(p.ref);
       if (cands.length) {
         m.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-light);margin:0 0 4px', 'Already in your tree?'));
-        m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 6px;line-height:1.4', 'Choosing the same person joins them to that entry, so nobody is added twice.'));
+        m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 6px;line-height:1.4', 'Nothing is joined unless you choose it. Choosing the same person joins them to that entry, so nobody is added twice.'));
         var choice = function(on) { return 'display:block;width:100%;text-align:left;box-sizing:border-box;padding:8px 10px;min-height:40px;margin:0 0 6px;border-radius:8px;font-family:inherit;font-size:0.84rem;line-height:1.35;color:var(--text);cursor:pointer;border:' + (on ? '2px solid ' + GED_BLUE + ';background:rgba(43,108,176,0.1)' : '1px solid var(--border);background:none'); };
-        cands.slice(0, 3).forEach(function(c) {
+        _gedBest(p).slice(0, 3).forEach(function(bc) {
+          var c = bc.c, me = _gedIsMe(c.id);
           var b = _gedBtn('', choice(cur === c.id), function(ev) { ev.stopPropagation(); _gedSetMatch(p.ref, c.id); openCardMenu(p); if (onChange) onChange(); });
-          b.appendChild(_gedEl('span', 'font-weight:' + (cur === c.id ? '700' : '400'), (cur === c.id ? '\u2713 ' : '') + 'Same as ' + _gedExLabel(c.id)));
-          b.appendChild(_gedEl('div', 'font-size:0.74rem;color:var(--text-light)', (c.conf === 'high' ? 'Strong match: ' : c.conf === 'medium' ? 'Possible match: ' : 'Weak match: ') + c.why));
+          b.appendChild(_gedEl('span', 'font-weight:' + (cur === c.id ? '700' : '400'), (cur === c.id ? '\u2713 ' : '') + (me ? 'Yes, this is me (' + _gedExLabel(c.id) + ')' : 'Same as ' + _gedExLabel(c.id))));
+          b.appendChild(_gedEl('div', 'font-size:0.74rem;color:var(--text-light)', (bc.lv === 'likely' ? (me ? 'Likely you: ' : 'Likely duplicate: ') + 'spelled the same. ' : (me ? 'Possible you: ' : 'Possible duplicate: ')) + (c.why || '')));
           m.appendChild(b);
         });
         m.appendChild(_gedBtn((!cur ? '\u2713 ' : '') + 'Different person', choice(!cur), function(ev) { ev.stopPropagation(); _gedSetMatch(p.ref, ''); openCardMenu(p); if (onChange) onChange(); }));
@@ -28635,7 +28664,8 @@
         var pos = j.pos[String(p.ref)]; if (!pos) return;
         var shown = String(p.name || '').trim() || '(no name)';
         var big = st.k < MP_BIG_TEXT_BELOW;
-        var n = _mpSvg('g', { class: 'mpt-nd' + (p.deceased ? ' mpt-late' : '') + (big ? ' mpt-big' : ''), transform: 'translate(' + (pos[0] - W / 2) + ',' + (pos[1] - H / 2) + ')', tabindex: '0', role: 'button', 'aria-label': shown + (_gedMatchOf(p.ref) ? ', already in your tree' : '') + ', tap for options' }, g);
+        var tag0 = _gedTag(p);
+        var n = _mpSvg('g', { class: 'mpt-nd' + (p.deceased ? ' mpt-late' : '') + (big ? ' mpt-big' : ''), transform: 'translate(' + (pos[0] - W / 2) + ',' + (pos[1] - H / 2) + ')', tabindex: '0', role: 'button', 'aria-label': shown + (tag0 ? ', ' + tag0.label.toLowerCase() : '') + ', tap for options' }, g);
         n.style.cursor = 'pointer';
         var card = _mpSvg('rect', { class: 'mpt-card', width: W, height: H, rx: 6 }, n);
         var mid = _gedMatchOf(p.ref), poss = _gedCands(p.ref).length > 0;
@@ -28649,16 +28679,15 @@
         nm.forEach(function(l, i) { var sp = _mpSvg('tspan', { x: 12, dy: i ? (big ? 15 : 12) : 0 }, t); sp.textContent = l; });
         var born = String(p.born || '').trim();
         if (born) { var tb = _mpSvg('text', { class: 'mpt-bd', x: 12, y: H - 8 }, n); tb.textContent = 'b. ' + (born.length > (big ? 14 : 26) ? born.slice(0, big ? 13 : 25) + '\u2026' : born); }
-        var cl = _gedCands(p.ref), top0 = cl[0] || null;
-        if (mid || cl.length) {
-          var lbl = mid ? 'In your tree' : 'Possible duplicate', fs = big ? 11 : 9;
+        if (tag0) {
+          var lbl = tag0.label, fs = big ? 11 : 9;
           var pw = Math.min(W - 8, Math.ceil(lbl.length * fs * 0.62 + 12)), ph = fs + 6, py = H - Math.round(ph / 2);
-          _mpSvg('rect', { x: W - pw - 4, y: py, width: pw, height: ph, rx: ph / 2, style: 'fill:' + (mid ? GED_BLUE : 'var(--bg)'), stroke: GED_BLUE, 'stroke-width': 1 }, n);
-          var tg = _mpSvg('text', { x: W - 4 - pw / 2, y: py + Math.round(ph * 0.73), 'text-anchor': 'middle', fill: mid ? '#fff' : GED_BLUE, 'font-size': fs, 'font-weight': 700 }, n); tg.textContent = lbl;
+          _mpSvg('rect', { x: W - pw - 4, y: py, width: pw, height: ph, rx: ph / 2, style: 'fill:' + (tag0.kind === 'agreed' ? GED_BLUE : tag0.kind === 'likely' ? 'rgba(43,108,176,0.2)' : 'var(--bg)'), stroke: GED_BLUE, 'stroke-width': tag0.kind === 'likely' ? 1.6 : 1 }, n);
+          var tg = _mpSvg('text', { x: W - 4 - pw / 2, y: py + Math.round(ph * 0.73), 'text-anchor': 'middle', fill: tag0.kind === 'agreed' ? '#fff' : GED_BLUE, 'font-size': fs, 'font-weight': 700 }, n); tg.textContent = lbl;
         }
         _mpSvg('title', {}, n).textContent = shown
-          + (mid ? '\nAlready in your tree: same person as ' + _gedExLabel(mid) + '.\nThey will be joined to that entry, so nobody is added twice. Tap to change.'
-             : top0 ? '\nPossible duplicate: this may be ' + _gedExLabel(top0.id) + (top0.why ? ' (' + top0.why + ')' : '') + '.\nTap to say whether it is the same person.' : '')
+          + (mid ? (_gedIsMe(mid) ? '\nYou said this is you: same person as ' : '\nYou said this is the same person as ') + _gedExLabel(mid) + '.\nThey will be joined to that entry, so nobody is added twice. Tap to change.'
+             : tag0 ? '\n' + tag0.label + ': ' + (tag0.top.lv === 'likely' ? 'spelled the same as ' : 'this may be ') + _gedExLabel(tag0.top.c.id) + (tag0.top.c.why ? ' (' + tag0.top.c.why + ')' : '') + '.\nNothing is joined unless you say so. Tap to answer.' : '')
           + (p.unsure ? '\nHard to read in the photo. Check the name.' : '');
         function toggle(ev) { ev.stopPropagation(); if (st.suppress) return; if (st.sel === p.ref) closeCardMenu(); else openCardMenu(p); }
         n.addEventListener('click', toggle);
@@ -28777,15 +28806,17 @@
     // paintMatchStatus: the match status line, the "This will add" box and the Import button label, all from the current choices (so a choice on a card shows at once).
     function paintMatchStatus() {
       if (stat) {
-        var merged = 0, poss = 0;
-        if (s.photoMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else if (_gedCands(p.ref).length) poss++; });
+        var merged = 0, poss = 0, likely = 0;
+        if (s.photoMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else { var tg1 = _gedTag(p); if (tg1) { if (tg1.kind === 'likely') likely++; else poss++; } } });
         var parts = [];
         if (s.checking) parts.push('Checking who is already in your tree\u2026');
         else if (s.matchFail) parts.push('We could not check who is already in your tree.');
         else if (s.photoMatch) {
-          if (!merged && !poss) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
-          if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry (tagged In your tree).');
-          if (poss) parts.push(_gedPlural(poss, 'person', 'people') + ' may already be in your tree (tagged Possible duplicate). Nothing is joined unless you choose it: tap a person and say whether they are the same one, otherwise they are added as new people.');
+          if (!merged && !poss && !likely) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
+          if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry, because you said so (tagged In your tree).');
+          if (likely) parts.push(_gedPlural(likely, 'person is', 'people are') + ' likely to be in your tree already: the name is spelled the same (tagged Likely duplicate, or Likely you for your own entry).');
+          if (poss) parts.push(_gedPlural(poss, 'person', 'people') + ' may already be in your tree (tagged Possible duplicate).');
+          if (likely || poss) parts.push('Nothing is joined unless you agree: tap a person and say whether they are the same one, otherwise they are added as new people.');
         }
         stat.textContent = parts.join(' ');
         stat.style.display = parts.length ? '' : 'none';
@@ -28875,6 +28906,16 @@
 
     if (s.owner) {
       var ow = _gedEl('div', 'margin:0 0 12px');
+      var gp = s.ownerGuess && !s.ownerRef && !s.ownerNo ? _gedByRef()[s.ownerGuess] : null;
+      if (gp && !gp.skip) {
+        var lk = _gedEl('div', 'border:2px solid ' + GED_BLUE + ';background:rgba(43,108,176,0.1);border-radius:10px;padding:10px 12px;margin:0 0 10px');
+        lk.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:' + GED_BLUE + ';font-weight:700;margin-bottom:4px', 'Likely you'));
+        lk.appendChild(_gedEl('div', 'font-size:0.9rem;color:var(--text);line-height:1.4', 'Is ' + _gedPersonLine(gp) + ' you? If so, they are joined to your own entry so your branch connects. Nothing is joined unless you say yes.'));
+        var lkb = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px');
+        lkb.appendChild(_gedBtn('Yes, this is me', GED_BTN_MAIN, function() { s.ownerRef = s.ownerGuess; _gedApplyOwner(); _gedRender(); }));
+        lkb.appendChild(_gedBtn('No, not me', GED_BTN, function() { s.ownerNo = true; _gedRender(); }));
+        lk.appendChild(lkb); ow.appendChild(lk);
+      }
       ow.appendChild(_gedEl('label', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px', s.mode === 'replace' ? 'Which person in the file is you?' : 'Which person in the file is you? (if any)'));
       var sel = _gedEl('select', 'width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:inherit;font-size:16px;box-sizing:border-box');
       sel.setAttribute('aria-label', 'Which person in the file is you');
@@ -28946,15 +28987,18 @@
   function _gedRenderMatches(body) {
     var s = _gedS, ex = s.prev.existing || {}, byRef = _gedByRef(), matches = s.prev.matches || {};
     var refs = Object.keys(matches).filter(function(r) { return byRef[r] && !byRef[r].skip && r !== s.ownerRef; });
-    var strong = refs.filter(function(r) { return matches[r].some(function(m) { return m.conf !== 'low'; }); });
-    var weak = refs.filter(function(r) { return strong.indexOf(r) < 0; });
+    function lvOf(r, m) { return _gedLevel(byRef[r].name, byRef[r].born, m, ex); }
+    var likely = refs.filter(function(r) { return matches[r].some(function(m) { return lvOf(r, m) === 'likely'; }); });
+    var strong = refs.filter(function(r) { return likely.indexOf(r) < 0 && matches[r].some(function(m) { return m.conf !== 'low'; }); });
+    var weak = refs.filter(function(r) { return likely.indexOf(r) < 0 && strong.indexOf(r) < 0; });
     if (!refs.length) return;
     function byName(a, b) { return byRef[a].name < byRef[b].name ? -1 : byRef[a].name > byRef[b].name ? 1 : 0; }
     function row(ref, host) {
       var p = byRef[ref], card = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--surface)');
       card.appendChild(_gedEl('div', 'font-size:0.9rem;font-weight:700;color:var(--text)', _gedPersonLine(p)));
       var grp = 'gedm-' + ref.replace(/[^A-Za-z0-9]/g, '');
-      var opts = matches[ref].filter(function(m) { return m.id !== (s.owner && s.owner.id); }).map(function(m) { return { id: m.id, why: m.why, conf: m.conf }; });
+      var opts = matches[ref].filter(function(m) { return m.id !== (s.owner && s.owner.id); }).map(function(m) { return { id: m.id, why: m.why, conf: m.conf, lv: lvOf(ref, m) }; });
+      opts.sort(function(a, b) { return (a.lv === 'likely' ? 0 : 1) - (b.lv === 'likely' ? 0 : 1); });
       opts.push({ id: '', why: '', conf: '' });
       opts.forEach(function(o) {
         var lab = _gedEl('label', 'display:flex;gap:8px;align-items:flex-start;font-size:0.84rem;color:var(--text);margin-top:5px;cursor:pointer;line-height:1.4');
@@ -28969,7 +29013,7 @@
           var e = ex[o.id];
           t.appendChild(_gedEl('span', null, 'Same person as '));
           t.appendChild(_gedEl('strong', null, (e ? e.name : 'someone in your tree') + (e && e.born_year ? ' (b. ' + e.born_year + ')' : '')));
-          t.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light)', (o.conf === 'high' ? 'Strong match: ' : o.conf === 'medium' ? 'Possible match: ' : 'Weak match: ') + o.why));
+          t.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light)', (o.lv === 'likely' ? 'Likely duplicate: spelled the same. ' : 'Possible duplicate: ') + (o.why || '')));
         } else t.appendChild(_gedEl('span', null, 'A different person: add as new'));
         lab.appendChild(r); lab.appendChild(t); card.appendChild(lab);
       });
@@ -28977,11 +29021,13 @@
     }
     var wrap = _gedEl('div', 'margin:0 0 12px');
     wrap.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px', 'People who may already be in your tree'));
-    wrap.appendChild(_gedEl('p', GED_NOTE, 'Check these. Nothing is matched until you choose it. Matched people are joined to the person you already have, so nobody is added twice, and only blank details are filled in; nothing you wrote is changed.'));
+    wrap.appendChild(_gedEl('p', GED_NOTE, 'Check these. Nothing is matched until you say Yes. Matched people are joined to the person you already have, so nobody is added twice, and only blank details are filled in; nothing you wrote is changed.'));
     var tools = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px');
-    tools.appendChild(_gedBtn('Use suggested matches', GED_BTN, function() { s.decisions = Object.assign({}, s.prev.defaults || {}); _gedApplyOwner(); _gedRender(); }));
     tools.appendChild(_gedBtn('Add everyone as new', GED_BTN, function() { s.decisions = {}; _gedApplyOwner(); _gedRender(); }));
     wrap.appendChild(tools);
+    function head(t) { wrap.appendChild(_gedEl('div', 'font-size:0.8rem;font-weight:700;color:var(--text);margin:8px 0 6px', t)); }
+    if (likely.length) { head('Likely duplicates (spelled the same)'); likely.sort(byName).slice(0, 200).forEach(function(r) { row(r, wrap); }); }
+    if (strong.length) head('Possible duplicates');
     strong.sort(byName).slice(0, 200).forEach(function(r) { row(r, wrap); });
     if (strong.length > 200) wrap.appendChild(_gedEl('p', GED_NOTE, '\u2026and ' + (strong.length - 200) + ' more suggestions, which will be added as new people.'));
     if (weak.length) {
@@ -29155,7 +29201,7 @@
     } else {
       var ul = _fvEl('ul', null, 'margin:0 0 10px;padding-left:18px;font-size:0.86rem;color:var(--text);line-height:1.5');
       li.forEach(function(x) { ul.appendChild(_fvEl('li', x)); }); body.appendChild(ul);
-      body.appendChild(_fvEl('p', 'A copy of your tree as it is now is saved first (marked 📌 before restore), so you can undo this. Your stories, groups and photos are not changed, and anyone you have hidden from sharing stays hidden.', 'font-size:0.78rem;color:var(--text-light);line-height:1.5;margin:0 0 12px'));
+      body.appendChild(_fvEl('p', 'A copy of your tree as it is now is saved first (marked 📌 before restore), so you can undo this, and the restored tree is saved as a new version (restored to version #' + pv.version_num + '). Your stories, groups and photos are not changed, and anyone you have hidden from sharing stays hidden.', 'font-size:0.78rem;color:var(--text-light);line-height:1.5;margin:0 0 12px'));
     }
     var bar = _fvEl('div', null, 'display:flex;gap:8px;justify-content:flex-end');
     var back = _fvEl('button', 'Back', 'padding:8px 14px;border:1px solid var(--border);border-radius:10px;background:none;color:var(--text);font-family:inherit;font-size:0.85rem;cursor:pointer'); back.type = 'button';
@@ -29175,6 +29221,7 @@
       logActivity('tree_restored', 'version ' + pv.version_num, 'info', 'PEOPLE');
       _fvBusy = false; _fvClose();
       var msg = 'Your tree is back to version #' + pv.version_num + '.';
+      if (r.restored_version_num) msg += ' It is saved as version #' + r.restored_version_num + ' (restored to version #' + pv.version_num + ').';
       if (r.people_kept) msg += ' ' + _fvN(r.people_kept, 'person stays', 'people stay') + ' in My People.';
       if (r.share_links_switched) msg += ' ' + _fvN(r.share_links_switched, 'share link now uses', 'share links now use') + ' your view.';
       toast(msg, 8000);
