@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.328">
+  <meta name="lifetold-version" content="v7.329">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.328';
+  const APP_VERSION = 'v7.329';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28027,9 +28027,10 @@
     if (!_mpShareCtx) setTimeout(_mpIntroMaybe, 700);   // ONB-TREE-01
   }
 
-  // ONB-TREE-01 (2026-11-05): the first time anyone opens My People, one pointer says how to start. It sits on their own card (or on the add button
-  // when the tree is empty), is shown once per person per device (lt_mp_intro_<id>, set the moment it appears so it never nags), never on a share
-  // page, and never while adding people is switched off. Any tap elsewhere, a scroll or "Got it" closes it.
+  // ONB-TREE-01 (2026-11-05): the first time anyone opens My People, two pointers in turn show the two ways to start: 1) their own card (or the add button
+  // when the tree is empty): add a relative; 2) the Import button: bring in a family tree from a file or a photo. Shown once per person per device
+  // (lt_mp_intro_<id>, set the moment the first appears, so it never nags), never on a share page, never while adding people is switched off.
+  // Any tap elsewhere, a scroll, a resize or Escape ends it; the button says Next, then Got it.
   var _mpIntroEls = [];
   function _mpIntroClose() {
     _mpIntroEls.forEach(function(e) { if (e.parentNode) e.parentNode.removeChild(e); });
@@ -28039,43 +28040,53 @@
   }
   function _mpIntroOutside(ev) { if (_mpIntroEls.length && !_mpIntroEls[1].contains(ev.target)) _mpIntroClose(); }
   function _mpIntroKey(ev) { if (ev.key === 'Escape') _mpIntroClose(); }
+  function _mpIntroOnScreen(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return !!r.width && !(r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth);
+  }
+  function _mpIntroShow(target, text, last, onNext) {
+    var r = target.getBoundingClientRect();
+    var ring = document.createElement('div'); ring.className = 'mp-intro-ring';
+    ring.style.cssText = 'left:' + (r.left - 4) + 'px;top:' + (r.top - 4) + 'px;width:' + (r.width + 8) + 'px;height:' + (r.height + 8) + 'px';
+    var bw = Math.min(270, window.innerWidth - 24);
+    var b = document.createElement('div'); b.setAttribute('role', 'status');
+    b.style.cssText = 'position:fixed;z-index:1201;box-sizing:border-box;width:' + bw + 'px;background:var(--surface);color:var(--text);border:1px solid var(--gold);border-radius:12px;padding:12px 14px;box-shadow:0 6px 22px rgba(0,0,0,0.25);font-family:\'Lato\',sans-serif;font-size:0.9rem;line-height:1.45';
+    var p = document.createElement('div'); p.textContent = text; b.appendChild(p);
+    var ok = document.createElement('button'); ok.type = 'button'; ok.textContent = last ? 'Got it' : 'Next';
+    ok.style.cssText = 'margin-top:10px;background:var(--gold);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-family:inherit;font-size:0.86rem;font-weight:700;cursor:pointer;min-height:40px';
+    ok.addEventListener('click', function() { if (last) _mpIntroClose(); else onNext(); }); b.appendChild(ok);
+    var arrow = document.createElement('div'); b.appendChild(arrow);
+    document.body.appendChild(ring); document.body.appendChild(b); _mpIntroEls = [ring, b];
+    var bh = b.offsetHeight, left = Math.max(12, Math.min(r.left + r.width / 2 - bw / 2, window.innerWidth - bw - 12));
+    var below = r.bottom + 14 + bh <= window.innerHeight || r.top - 14 - bh < 0;
+    b.style.left = left + 'px'; b.style.top = Math.max(8, below ? r.bottom + 14 : r.top - 14 - bh) + 'px';
+    var ax = Math.max(16, Math.min(r.left + r.width / 2 - left - 7, bw - 30));
+    arrow.style.cssText = 'position:absolute;width:12px;height:12px;background:var(--surface);transform:rotate(45deg);left:' + ax + 'px;' + (below ? 'top:-7px;border-left:1px solid var(--gold);border-top:1px solid var(--gold)' : 'bottom:-7px;border-right:1px solid var(--gold);border-bottom:1px solid var(--gold)');
+    document.addEventListener('pointerdown', _mpIntroOutside, true); document.addEventListener('keydown', _mpIntroKey, true);
+    window.addEventListener('resize', _mpIntroClose);
+    var vp = _mpVp(); if (vp) vp.addEventListener('scroll', _mpIntroClose, { once: true });
+  }
   function _mpIntroMaybe() {
     try {
       if (_mpShareCtx || _mpIntroEls.length || !currentUser || !MP_EDIT_ENABLED) return;
       var pnl = document.getElementById('panel-people'); if (!pnl || !pnl.classList.contains('active')) return;
       var key = 'lt_mp_intro_' + currentUser.id;
       try { if (localStorage.getItem(key)) return; } catch (e) {}
-      var target = null, text = '', es = document.getElementById('mpEmptyState');
-      if (es && es.style.display === 'flex') { target = document.getElementById('mpAddFirstPersonBtn'); text = 'Start here: add your first family member, then add their relatives one by one.'; }
+      var steps = [], es = document.getElementById('mpEmptyState'), empty = !!(es && es.style.display === 'flex');
+      if (empty) steps.push({ t: document.getElementById('mpAddFirstPersonBtn'), text: 'Start here: add your first family member, then add their relatives one by one.' });
       else {
         var ct = _mpCt();
-        target = ct && (ct.querySelector('g.mpt-me') || (_mpOwnerId != null ? ct.querySelector('g[data-pid="' + _mpOwnerId + '"]') : null));
-        text = 'This is you. Tap your card, then choose \u201c+ Add a relative\u201d to start building your family tree.';
+        steps.push({ t: ct && (ct.querySelector('g.mpt-me') || (_mpOwnerId != null ? ct.querySelector('g[data-pid="' + _mpOwnerId + '"]') : null)),
+                     text: 'This is you. Tap your card, then choose \u201c+ Add a relative\u201d to start building your family tree.' });
       }
-      if (!target) return;
-      var r = target.getBoundingClientRect();
-      if (!r.width || r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return;   // not on screen: try again next visit
+      steps.push({ t: document.getElementById('mpImportBtn'), text: 'Already have a family tree? Tap Import to bring it in from a file or from a photo.' });
+      var vis = steps.filter(function(x) { return _mpIntroOnScreen(x.t); });
+      if (!vis.length || vis[0] !== steps[0]) return;   // the first pointer must be showable, or try again next visit
       try { localStorage.setItem(key, '1'); } catch (e) {}
-      var ring = document.createElement('div'); ring.className = 'mp-intro-ring';
-      ring.style.cssText = 'left:' + (r.left - 4) + 'px;top:' + (r.top - 4) + 'px;width:' + (r.width + 8) + 'px;height:' + (r.height + 8) + 'px';
-      var bw = Math.min(270, window.innerWidth - 24);
-      var b = document.createElement('div'); b.setAttribute('role', 'status');
-      b.style.cssText = 'position:fixed;z-index:1201;box-sizing:border-box;width:' + bw + 'px;background:var(--surface);color:var(--text);border:1px solid var(--gold);border-radius:12px;padding:12px 14px;box-shadow:0 6px 22px rgba(0,0,0,0.25);font-family:\'Lato\',sans-serif;font-size:0.9rem;line-height:1.45';
-      var p = document.createElement('div'); p.textContent = text; b.appendChild(p);
-      var ok = document.createElement('button'); ok.type = 'button'; ok.textContent = 'Got it';
-      ok.style.cssText = 'margin-top:10px;background:var(--gold);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-family:inherit;font-size:0.86rem;font-weight:700;cursor:pointer;min-height:40px';
-      ok.addEventListener('click', _mpIntroClose); b.appendChild(ok);
-      var arrow = document.createElement('div'); b.appendChild(arrow);
-      document.body.appendChild(ring); document.body.appendChild(b); _mpIntroEls = [ring, b];
-      var bh = b.offsetHeight, left = Math.max(12, Math.min(r.left + r.width / 2 - bw / 2, window.innerWidth - bw - 12));
-      var below = r.bottom + 14 + bh <= window.innerHeight || r.top - 14 - bh < 0;
-      b.style.left = left + 'px'; b.style.top = Math.max(8, below ? r.bottom + 14 : r.top - 14 - bh) + 'px';
-      var ax = Math.max(16, Math.min(r.left + r.width / 2 - left - 7, bw - 30));
-      arrow.style.cssText = 'position:absolute;width:12px;height:12px;background:var(--surface);transform:rotate(45deg);left:' + ax + 'px;' + (below ? 'top:-7px;border-left:1px solid var(--gold);border-top:1px solid var(--gold)' : 'bottom:-7px;border-right:1px solid var(--gold);border-bottom:1px solid var(--gold)');
-      document.addEventListener('pointerdown', _mpIntroOutside, true); document.addEventListener('keydown', _mpIntroKey, true);
-      window.addEventListener('resize', _mpIntroClose);
-      var vp = _mpVp(); if (vp) vp.addEventListener('scroll', _mpIntroClose, { once: true });
-      try { logActivity('mp_intro_shown', es && es.style.display === 'flex' ? 'empty' : 'own card', 'info', 'PEOPLE'); } catch (e) {}
+      var showStep = function(k) { _mpIntroClose(); _mpIntroShow(vis[k].t, vis[k].text, k === vis.length - 1, function() { showStep(k + 1); }); };
+      showStep(0);
+      try { logActivity('mp_intro_shown', (empty ? 'empty' : 'own card') + ', ' + vis.length + ' steps', 'info', 'PEOPLE'); } catch (e) {}
     } catch (e) { var w6 = 'intro pointer: ' + (e && e.message || e); try { dbgErr('PEOPLE', w6); notifyDev('error', 'PEOPLE', w6); logActivity('people_error', w6, 'error', 'PEOPLE'); } catch (e2) {} }
   }
 
@@ -28360,7 +28371,7 @@
   function _gedEnterReview(prev, prefix) {
     var s = _gedS;
     s.prev = prev; s.owner = prev.owner || null;
-    s.decisions = Object.assign({}, prev.defaults || {}); s.ownerRef = prev.owner_guess || null; s.mode = 'add'; s.typed = '';
+    s.decisions = {}; s.ownerRef = prev.owner_guess || null;   // 2026-11-05 (developer): nothing is matched until the person chooses it (Use suggested matches is still there) s.mode = 'add'; s.typed = '';
     s.key = _gedNewKey(prefix);
     s.hasTree = !!(prev.tree && prev.tree.has_tree);
     _gedApplyOwner();
@@ -28485,13 +28496,13 @@
     try {
       var pm = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
       if (_gedS !== s) return;
-      s.photoMatch = pm; s.matchDec = Object.assign({}, pm.defaults || {});
+      s.photoMatch = pm; s.matchDec = {};   // 2026-11-05 (developer): duplicates are pointed out, never joined automatically (families share names, people are named after ancestors). The server's pre-selected matches (pm.defaults) are not used.
       // 2026-11-05 (UAT: a photo of the same tree flagged nobody): record what came back, and refuse to go on if the answer is keyed in a form this
       // page cannot read (an out of date TREE_PROXY answers in GEDCOM ids, not the page's refs). Then no card could show a match and Import would add
       // everyone a second time, so Import waits instead.
       var onScreen = {}; s.draft.people.forEach(function(p) { onScreen[p.ref] = 1; });
       var mk = Object.keys(pm.matches || {}), fit = mk.filter(function(k) { return onScreen[k]; }).length;
-      try { logActivity('people_info', 'photo match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' pre-selected, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
+      try { logActivity('people_info', 'photo match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' suggested by the server but not used, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
       if (mk.length && !fit) {
         s.photoMatch = null; s.matchDec = {}; s.matchFail = true;
         var why4 = 'photo match: the answer is keyed by ' + mk.slice(0, 3).join(',') + ', not by the page refs, so TREE_PROXY is older than v1.5.3';
@@ -28640,7 +28651,7 @@
         if (born) { var tb = _mpSvg('text', { class: 'mpt-bd', x: 12, y: H - 8 }, n); tb.textContent = 'b. ' + (born.length > (big ? 14 : 26) ? born.slice(0, big ? 13 : 25) + '\u2026' : born); }
         var cl = _gedCands(p.ref), top0 = cl[0] || null;
         if (mid || cl.length) {
-          var lbl = mid ? 'In your tree' : 'Possible match', fs = big ? 11 : 9;
+          var lbl = mid ? 'In your tree' : 'Possible duplicate', fs = big ? 11 : 9;
           var pw = Math.min(W - 8, Math.ceil(lbl.length * fs * 0.62 + 12)), ph = fs + 6, py = H - Math.round(ph / 2);
           _mpSvg('rect', { x: W - pw - 4, y: py, width: pw, height: ph, rx: ph / 2, style: 'fill:' + (mid ? GED_BLUE : 'var(--bg)'), stroke: GED_BLUE, 'stroke-width': 1 }, n);
           var tg = _mpSvg('text', { x: W - 4 - pw / 2, y: py + Math.round(ph * 0.73), 'text-anchor': 'middle', fill: mid ? '#fff' : GED_BLUE, 'font-size': fs, 'font-weight': 700 }, n); tg.textContent = lbl;
@@ -28774,7 +28785,7 @@
         else if (s.photoMatch) {
           if (!merged && !poss) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
           if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry (tagged In your tree).');
-          if (poss) parts.push(_gedPlural(poss, 'person', 'people') + ' may already be in your tree (tagged Possible match). Tap to decide.');
+          if (poss) parts.push(_gedPlural(poss, 'person', 'people') + ' may already be in your tree (tagged Possible duplicate). Nothing is joined unless you choose it: tap a person and say whether they are the same one, otherwise they are added as new people.');
         }
         stat.textContent = parts.join(' ');
         stat.style.display = parts.length ? '' : 'none';
@@ -28966,7 +28977,7 @@
     }
     var wrap = _gedEl('div', 'margin:0 0 12px');
     wrap.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px', 'People who may already be in your tree'));
-    wrap.appendChild(_gedEl('p', GED_NOTE, 'Check these. Matched people are joined to the person you already have, so nobody is added twice, and only blank details are filled in; nothing you wrote is changed.'));
+    wrap.appendChild(_gedEl('p', GED_NOTE, 'Check these. Nothing is matched until you choose it. Matched people are joined to the person you already have, so nobody is added twice, and only blank details are filled in; nothing you wrote is changed.'));
     var tools = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px');
     tools.appendChild(_gedBtn('Use suggested matches', GED_BTN, function() { s.decisions = Object.assign({}, s.prev.defaults || {}); _gedApplyOwner(); _gedRender(); }));
     tools.appendChild(_gedBtn('Add everyone as new', GED_BTN, function() { s.decisions = {}; _gedApplyOwner(); _gedRender(); }));
