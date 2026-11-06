@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.335">
+  <meta name="lifetold-version" content="v7.336">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.335';
+  const APP_VERSION = 'v7.336';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28384,7 +28384,7 @@
   // FAM-28 G2 and G4 (2026-11-06): the CHECKING screen (_gedRenderCheck, _gedTreePreview, _gedCheckReady, _gedCheckDecisions, _gedCheckCounts,
   // _gedCheckMatches, and the Import step of _gedCommit) is shared by every way in, step 'check', ids gedCheckGo and gedCheckMsg, state checkMatch
   // and matchDec. What differs per source lives here, as small hooks (photo and file); everything else is one copy.
-  //   what     the source in the person's words, for "no relatives in ..." and "hard to read in ..."
+  //   what     the source in the person's words, for "hard to read in ..."
   //   another  "Choose ..." for the back button and the two messages that point back to it
   //   log      word used in the activity log lines of the screen
   //   aria     screen reader label of the drawn tree
@@ -28523,40 +28523,34 @@
       families: d.families.map(function(f) { return { partners: f.partners.slice(), children: f.children.slice() }; })
     };
   }
-  // People who are in at least one family are the ones the import keeps; anyone else would be left out (the server does the same).
-  function _gedConnected(d) {
-    var m = {};
-    d.families.forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { m[r] = 1; }); });
-    return m;
-  }
-  // What the Import button needs: the answer to who may already be in your tree, a name for everyone, and two connected people.
+  // 2026-11-06 (developer): everyone on the screen is imported, including people with no relatives (the person joins them to the tree afterwards).
+  // What the Import button needs: the answer to who may already be in your tree, a name for everyone, and at least one person.
   function _gedCheckReady() {
     var s = _gedS, d = s && s.draft, h = _gedHook(); if (!d || !h) return { ok: false, why: '' };
-    var conn = _gedConnected(d), kept = d.people.filter(function(p) { return conn[p.ref]; });
+    var kept = d.people;
     if (s.checking) return { ok: false, why: 'Checking ' + h.what + ' against your tree\u2026' };
     if (s.matchFail || !s.checkMatch) return { ok: false, why: 'Your tree could not be checked, so nothing can be imported yet. Use Check again.' };
     if (s.drawFailed) return { ok: false, why: 'The tree could not be drawn, so the people cannot be checked. Try again, or choose ' + h.another + '.' };
     if (kept.some(function(p) { return !String(p.name || '').trim(); })) return { ok: false, why: 'Someone has no name. Tap them in the tree and remove them.' };
-    if (kept.length < 2) return { ok: false, why: 'Nobody is left who is connected to someone else. Choose ' + h.another + ' to start again.' };
+    if (kept.length < 1) return { ok: false, why: 'Nobody is left to import. Choose ' + h.another + ' to start again.' };
     return { ok: true, why: '' };
   }
   // The same-person choices made on the tree, for the people who will be imported: { decisions, owner } keyed by the page's own refs.
   function _gedCheckDecisions() {
     var s = _gedS, out = { decisions: {}, owner: null }, pm = s && s.checkMatch;
     if (!pm || !s.draft) return out;
-    var conn = _gedConnected(s.draft);
     s.draft.people.forEach(function(p) {
       var id = s.matchDec && s.matchDec[p.ref];
-      if (!id || !conn[p.ref]) return;
+      if (!id) return;
       out.decisions[p.ref] = id;
       if (pm.owner && id === pm.owner.id) out.owner = p.ref;   // a match to your own entry is who you are
     });
     return out;
   }
   function _gedCheckCounts() {
-    var s = _gedS, d = s.draft, conn = _gedConnected(d), dec = _gedCheckDecisions().decisions;
-    var included = d.people.filter(function(p) { return conn[p.ref]; }).length, merged = Object.keys(dec).length;
-    return { included: included, merged: merged, added: included - merged, left: d.people.length - included };
+    var s = _gedS, d = s.draft, dec = _gedCheckDecisions().decisions;
+    var included = d.people.length, merged = Object.keys(dec).length;
+    return { included: included, merged: merged, added: included - merged };
   }
   // Asks the server which people in the photo may already be in your tree. Not fatal: Import waits until it has an answer (Check again).
   async function _gedCheckMatches() {
@@ -28595,13 +28589,6 @@
       if (f.status) o.status = f.status;
       return o;
     }).filter(_gedFamKeep);
-  }
-  // FAM-22 step 2: who would be left with no relatives at all if this person were removed (they would not be imported).
-  function _gedRemoveEffect(ref) {
-    var d = _gedS.draft, was = {}, now = {};
-    d.families.forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { was[r] = 1; }); });
-    _gedFamsWithout(d.families, ref).forEach(function(f) { f.partners.concat(f.children).forEach(function(r) { now[r] = 1; }); });
-    return d.people.filter(function(p) { return p.ref !== ref && was[p.ref] && !now[p.ref]; }).map(function(p) { return String(p.name || '').trim() || '(no name)'; });
   }
   // Removes one person from the draft. Their children stay joined to the other parent; with no other parent the brothers and sisters
   // stay joined to each other. One level of Undo is kept (s.undo).
@@ -28707,8 +28694,6 @@
       }
       if (!cands.length && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'Hard to read in ' + h.what + ', so check the name before you import.'));
       if (!cands.length && _gedS && _gedS.checkMatch) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 8px;line-height:1.4', 'Nobody in your tree looks like this person, so they will be added as new.'));
-      var lost = _gedRemoveEffect(p.ref);
-      if (lost.length) m.appendChild(_gedEl('div', 'font-size:0.78rem;color:' + GED_AMBER + ';line-height:1.4;margin:0 0 8px', lost.slice(0, 3).join(', ') + (lost.length > 3 ? ' and ' + (lost.length - 3) + ' more' : '') + ' would be left with no relatives and would not be imported.'));
       var rm = _gedBtn('Remove from import', GED_BTN_RED + ';width:100%;min-height:44px', function(ev) { ev.stopPropagation(); _gedDraftRemove(p.ref); });
       var cn = _gedBtn('Close', GED_BTN + ';width:100%;min-height:44px;margin-top:8px', function(ev) { ev.stopPropagation(); closeCardMenu(); });
       m.appendChild(rm); m.appendChild(cn);
@@ -28882,7 +28867,6 @@
           sumBox.style.display = '';
           sumBox.appendChild(_gedEl('div', 'font-weight:700;margin-bottom:2px', 'This will add:'));
           sumBox.appendChild(_gedEl('div', null, _gedPlural(c.added, 'new person', 'new people') + (c.merged ? ' and match ' + _gedPlural(c.merged, 'person', 'people') + ' to someone already in your tree' : '') + '.'));
-          if (c.left) sumBox.appendChild(_gedEl('div', 'color:var(--text-light)', _gedPlural(c.left, 'person has', 'people have') + ' no relatives in ' + h.what + ', so ' + (c.left === 1 ? 'is' : 'are') + ' left out.'));
           if (go) go.textContent = 'Import';   // 2026-11-06 (developer): the button just says Import; the box above says how many
         }
       }
