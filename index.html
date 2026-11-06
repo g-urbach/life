@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.334">
+  <meta name="lifetold-version" content="v7.335">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5409,7 +5409,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.334';
+  const APP_VERSION = 'v7.335';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -28247,7 +28247,7 @@
   // The file is read, checked and compared with your tree by TREE_PROXY (gedcom_preview / gedcom_commit), not here: this page only
   // draws the screens, remembers your choices and sends them back. Nothing about how matching works is in this file.
   var GED_MAX_BYTES = 10 * 1024 * 1024;
-  var _gedS = null;   // { b64, fileName, prev, decisions, ownerRef, mode, key, step, busy, result, error, undone, typed }
+  var _gedS = null;   // { step (choose, check, working, done, error), busy, key, source (file or photo), b64, fileName, prev, draft, removed, undo, checkMatch, matchDec, matchFail, checking, stale, result, error, photoUrl, photoNotes }
   var GED_BTN = 'padding:9px 16px;border-radius:999px;border:1px solid var(--gold);background:none;color:var(--gold);font-family:inherit;font-size:0.88rem;font-weight:700;cursor:pointer';
   var GED_BTN_MAIN = 'padding:10px 18px;border-radius:999px;border:1px solid var(--gold);background:var(--gold);color:#fff;font-family:inherit;font-size:0.9rem;font-weight:700;cursor:pointer';
   var GED_BTN_RED = 'padding:10px 18px;border-radius:999px;border:1px solid #b3261e;background:#b3261e;color:#fff;font-family:inherit;font-size:0.9rem;font-weight:700;cursor:pointer';
@@ -28261,7 +28261,7 @@
   function _gedOpen() {
     if (typeof _mpEditBlocked === 'function' && _mpEditBlocked()) return;
     var m = document.getElementById('gedModal'); if (!m) return;
-    _gedS = { model: null, step: 'choose', busy: false, mode: 'add', decisions: {}, ownerRef: null, key: null };
+    _gedS = { step: 'choose', busy: false, key: null };
     try { logActivity('gedcom_import_opened', isPremium() ? 'premium' : 'free', 'info', 'PEOPLE'); } catch (e) {}
     m.style.display = 'flex'; _gedRender();
   }
@@ -28276,11 +28276,10 @@
     body.textContent = '';
     var s = _gedS;
     if (s.step === 'choose') _gedRenderChoose(body);
-    else if (s.step === 'review') _gedRenderReview(body);
     else if (s.step === 'working') _gedRenderWorking(body);
     else if (s.step === 'done') _gedRenderDone(body);
     else if (s.step === 'error') _gedRenderError(body);
-    else if (s.step === 'photo') _gedRenderPhoto(body);
+    else if (s.step === 'check') _gedRenderCheck(body);
   }
 
   function _gedRenderChoose(body) {
@@ -28337,7 +28336,19 @@
     if (!res.ok) { var err = new Error(j.error || j.message || ('The server said no (' + res.status + ')')); err.status = res.status; err.code = j.code || ''; err.body = j; throw err; }
     return j;
   }
-  function _gedByRef() { var m = {}; (_gedS.prev.people || []).forEach(function(p) { m[p.ref] = p; }); return m; }
+  // FAM-28 G3: the links of a file preview (people with sex, families with child kinds and status) in the draft shape the checking screen draws.
+  // The GEDCOM ids are the refs; f.kinds and f.status are carried for the drawing and the removal rule only (the server reads the file itself).
+  var GED_DRAW_MAX_PEOPLE = 2000, GED_DRAW_MAX_FAMILIES = 2000, GED_DRAW_MAX_LINKS = 6000;
+  function _gedDraftFromFile(prev) {
+    return {
+      people: (prev.people || []).map(function(p) { return { ref: p.ref, name: String(p.name || ''), sex: p.sex || 'U', born: String(p.born || ''), died: '', deceased: !!p.dead, note: '' }; }),
+      families: (prev.families || []).map(function(f) {
+        var kinds = {};
+        var kids = (f.children || []).map(function(c) { kinds[c.ref] = c.kind || 'biological'; return c.ref; });
+        return { partners: (f.partners || []).slice(), children: kids, kinds: kinds, status: f.status || null };
+      })
+    };
+  }
 
   async function _gedOnFile(file) {
     if (!file || !_gedS) return;
@@ -28346,9 +28357,16 @@
       if (file.size > GED_MAX_BYTES) throw new Error('That file is larger than 10 MB, which is more than this importer handles. Please export a smaller branch from your family tree program.');
       var b64 = _gedBase64(await file.arrayBuffer());
       var prev = await _gedCall('gedcom_preview', { file_b64: b64 });
-      var s = _gedS;
-      s.source = 'file'; s.draft = null; s.b64 = b64; s.fileName = file.name;
-      _gedEnterReview(prev, 'gedcom');
+      var s = _gedS; if (!s) return;   // the window was closed while the file was read
+      var d = _gedDraftFromFile(prev);
+      // the tree is drawn by tree_layout, which takes up to 2000 people, 2000 families and 6000 child links
+      var links = 0; d.families.forEach(function(f) { links += f.children.length; });
+      if (d.people.length > GED_DRAW_MAX_PEOPLE || d.families.length > GED_DRAW_MAX_FAMILIES || links > GED_DRAW_MAX_LINKS) throw new Error('This file has more people than can be drawn and checked here (the limit is ' + GED_DRAW_MAX_PEOPLE + '). Please export a smaller branch from your family tree program.');
+      s.source = 'file'; s.draft = d; s.b64 = b64; s.fileName = file.name; s.prev = prev;
+      // the first preview already holds the same-person answer, keyed by GEDCOM ids, which are the refs of the drawn people
+      s.checkMatch = prev; s.matchDec = {}; s.matchFail = false; s.stale = false; s.checking = false; s.undo = null; s.removed = []; s.photoUrl = null; s.photoNotes = [];
+      s.key = _gedNewKey('gedcom');   // nothing is joined until the person says Yes, and an import only ever adds
+      s.step = 'check'; _gedRender();
     } catch (e) {
       if (e && (e.status === 403 || e.code === 'premium_required')) { _gedS.step = 'choose'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so the file was not read.' }); return; }
       try { logActivity('people_error', 'gedcom file read: ' + (e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
@@ -28359,27 +28377,77 @@
   // ── FAM-18: photo of a family tree (Premium) ──────────────────────────────────────────────────────────────────────
   // This page shrinks the photo, TREE_PROXY (tree_photo_read) reads it with AI and sends back a DRAFT list of people and links, you
   // check the draft drawn as a tree (FAM-22: remove people, say who is already in your tree) and press Import, which uses the same
-  // matching, import and Undo as a GEDCOM file (gedcom_preview and gedcom_commit accept { draft } in place of { file_b64 }). No reading or matching rules live in this page.
+  // matching and import as a GEDCOM file (gedcom_preview and gedcom_commit accept { draft } in place of { file_b64 }). There is no Undo: tree versions (FAM-24) cover it. No reading or matching rules live in this page.
   var GED_PHOTO_MAX_BYTES = 25 * 1024 * 1024, GED_PHOTO_EDGE = 2000, GED_PHOTO_READ_MS = 110000;
   var GED_AMBER = '#b26a00';
 
+  // FAM-28 G2 and G4 (2026-11-06): the CHECKING screen (_gedRenderCheck, _gedTreePreview, _gedCheckReady, _gedCheckDecisions, _gedCheckCounts,
+  // _gedCheckMatches, and the Import step of _gedCommit) is shared by every way in, step 'check', ids gedCheckGo and gedCheckMsg, state checkMatch
+  // and matchDec. What differs per source lives here, as small hooks (photo and file); everything else is one copy.
+  //   what     the source in the person's words, for "no relatives in ..." and "hard to read in ..."
+  //   another  "Choose ..." for the back button and the two messages that point back to it
+  //   log      word used in the activity log lines of the screen
+  //   aria     screen reader label of the drawn tree
+  //   intro(d) the opening paragraph; extras(body) what sits under it (Show my photo, the photo notes)
+  //   matchCall() how the same-person check is asked; src() what gedcom_commit gets for the people
+  var GED_CHECK = {
+    photo: {
+      what: 'the photo', another: 'a different photo', log: 'photo',
+      aria: 'The people read from your photo, drawn as a family tree. Tap a person for options.',
+      intro: function(d) { return 'We read ' + _gedPlural(d.people.length, 'person', 'people') + ' and their relationships from your photo. Photos are not always easy to read, so look the tree over before you import. Names and dates can be corrected in your tree afterwards. Nothing is added until you press Import.'; },
+      extras: function(body) {
+        var s = _gedS;
+        if (s.photoUrl) {
+          var det = _gedEl('details', 'margin:0 0 12px');
+          det.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Show my photo'));
+          var im = _gedEl('img', 'display:block;max-width:100%;max-height:60vh;margin-top:8px;border-radius:8px;border:1px solid var(--border)'); im.src = s.photoUrl; im.alt = 'The photo you chose';
+          det.appendChild(im); body.appendChild(det);
+        }
+        if ((s.photoNotes || []).length) {
+          // 2026-11-05: the notes are the least important part of this screen, so they sit closed under the photo, like the photo itself.
+          var ndet = _gedEl('details', 'margin:0 0 12px');
+          ndet.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Notes about reading the photo (' + s.photoNotes.length + ')'));
+          var nl = _gedEl('ul', GED_NOTE + ';padding-left:18px;margin-top:8px');
+          s.photoNotes.forEach(function(t) { nl.appendChild(_gedEl('li', 'margin-bottom:3px', t)); });
+          ndet.appendChild(nl); body.appendChild(ndet);
+        }
+      },
+      matchCall: function() { return _gedCall('gedcom_preview', { draft: _gedDraftOut() }); },
+      src: function() { return { draft: _gedDraftOut() }; }
+    },
+    // FAM-28 G3 (2026-11-06): a GEDCOM file. The file stays the source: the page draws the links the server sent, keeps the list of people taken out
+    // (s.removed, GEDCOM ids) and sends file_b64 and remove with the check and with Import. The server applies the removal, so notes, adopted
+    // children, divorces and birth text all still come across (TREE_PROXY v1.5.5 or later; deploy it BEFORE this page).
+    file: {
+      what: 'the file', another: 'a different file', log: 'file',
+      aria: 'The people read from your file, drawn as a family tree. Tap a person for options.',
+      intro: function(d) { return 'We read ' + _gedPlural(d.people.length, 'person', 'people') + ' and their relationships from ' + (_gedS.fileName || 'your file') + '. Look the tree over before you import. Names and dates can be corrected in your tree afterwards. Nothing is added until you press Import.'; },
+      extras: function(body) {
+        var m = _gedS.prev || {}, lines = [], st = m.stats || {}, enc = m.file && m.file.encoding;
+        if (st.unnamed) lines.push(_gedPlural(st.unnamed, 'person has', 'people have') + ' no name in the file and ' + (st.unnamed === 1 ? 'is' : 'are') + ' shown as Unnamed. Tap them in the tree if you would rather leave them out.');
+        if (enc === 'ansel' || enc === 'windows-1252') lines.push('This file was read as ' + (enc === 'ansel' ? 'ANSEL' : 'Windows-1252') + ', an older character set, so check accented letters in the names.');
+        if ((m.dropped || []).length) lines.push('Not brought across (your tree keeps names, dates and relationships): ' + m.dropped.slice(0, 5).map(function(x) { return x.label + ' (' + x.count + ')'; }).join(', ') + (m.dropped.length > 5 ? ', \u2026' : '') + '.');
+        var w = m.warnings || [];
+        w.slice(0, 30).forEach(function(x) { lines.push(x); });
+        if (w.length > 30) lines.push('\u2026and ' + (w.length - 30) + ' more.');
+        if (!lines.length) return;
+        var det = _gedEl('details', 'margin:0 0 12px;font-size:0.82rem;color:var(--text)');
+        det.appendChild(_gedEl('summary', 'cursor:pointer;color:var(--text-light)', _gedPlural(lines.length, 'thing', 'things') + ' to know about the file'));
+        var wl = _gedEl('ul', 'margin:6px 0 0;padding-left:18px;line-height:1.5');
+        lines.forEach(function(x) { wl.appendChild(_gedEl('li', null, x)); });
+        det.appendChild(wl); body.appendChild(det);
+      },
+      matchCall: function() { var s = _gedS; return _gedCall('gedcom_preview', { file_b64: s.b64, remove: (s.removed || []).slice() }); },
+      src: function() { var s = _gedS; return { file_b64: s.b64, remove: (s.removed || []).slice() }; }
+    }
+  };
+  // The hook of the source being checked, or null when the open import is not on the shared checking screen (a GEDCOM file, until G3).
+  function _gedHook() { var s = _gedS; return (s && GED_CHECK[s.source]) || null; }
+
   // What gedcom_commit is sent: the file, or the checked draft when the people came from a photo.
-  function _gedSrc() { var s = _gedS; return s.source === 'photo' ? { draft: _gedDraftOut() } : { file_b64: s.b64 }; }
+  function _gedSrc() { var s = _gedS, h = _gedHook(); return h ? h.src() : { file_b64: s.b64 }; }
   // Import key: one per import attempt, so a retry after a dropped connection is never added twice.
   function _gedNewKey(prefix) { return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
-  // GEDCOM file only (FAM-22 step 4: a photo no longer has a review screen, it imports from the tree screen): store the server's preview and show the review screen.
-  function _gedEnterReview(prev, prefix) {
-    var s = _gedS;
-    s.prev = prev; s.owner = prev.owner || null;
-    // 2026-11-05 (developer): nothing is matched until the person says Yes, and that includes their own entry: the server's guess is only shown as Likely you.
-    s.decisions = {}; s.ownerRef = null; s.ownerGuess = prev.owner_guess || null; s.ownerNo = false;
-    s.mode = 'add'; s.typed = '';
-    s.key = _gedNewKey(prefix);
-    s.hasTree = !!(prev.tree && prev.tree.has_tree);
-    _gedApplyOwner();
-    s.step = 'review'; _gedRender();
-  }
-
   function _gedPhotoStart() {
     if (!isPremium()) {   // a friendly early nudge, before anything is uploaded; the server checks Premium again and is the real gate
       try { logActivity('premium_gate_hit', 'feature=tree_photo', 'info', 'RL'); } catch (e) {}
@@ -28428,10 +28496,10 @@
       var j = await _gedCall('tree_photo_read', { image_b64: img.b64 }, GED_PHOTO_READ_MS);
       if (_gedS !== s) return;   // the window was closed (or reopened) while we waited
       s.source = 'photo'; s.b64 = null; s.fileName = 'Your photo'; s.photoUrl = img.dataUrl;
-      s.draft = j.draft; s.photoNotes = j.notes || []; s.undo = null; s.photoMatch = null; s.matchDec = {}; s.matchFail = false; s.stale = false; s.key = _gedNewKey('photo');
-      await _gedPhotoCheck();   // who in the photo may already be in your tree; the tree is drawn with the answer
+      s.draft = j.draft; s.photoNotes = j.notes || []; s.undo = null; s.checkMatch = null; s.matchDec = {}; s.matchFail = false; s.stale = false; s.key = _gedNewKey('photo');
+      await _gedCheckMatches();   // who in the photo may already be in your tree; the tree is drawn with the answer
       if (_gedS !== s) return;
-      s.step = 'photo'; _gedRender();
+      s.step = 'check'; _gedRender();
       try { logActivity('tree_photo_read', (j.draft.people.length) + ' people, ' + (j.draft.families.length) + ' families', 'info', 'PEOPLE'); } catch (e) {}
     } catch (e) {
       if (_gedS !== s) return;
@@ -28462,19 +28530,19 @@
     return m;
   }
   // What the Import button needs: the answer to who may already be in your tree, a name for everyone, and two connected people.
-  function _gedPhotoReady() {
-    var s = _gedS, d = s && s.draft; if (!d) return { ok: false, why: '' };
+  function _gedCheckReady() {
+    var s = _gedS, d = s && s.draft, h = _gedHook(); if (!d || !h) return { ok: false, why: '' };
     var conn = _gedConnected(d), kept = d.people.filter(function(p) { return conn[p.ref]; });
-    if (s.checking) return { ok: false, why: 'Checking the photo against your tree\u2026' };
-    if (s.matchFail || !s.photoMatch) return { ok: false, why: 'Your tree could not be checked, so nothing can be imported yet. Use Check again.' };
-    if (s.drawFailed) return { ok: false, why: 'The tree could not be drawn, so the people cannot be checked. Try again, or choose a different photo.' };
+    if (s.checking) return { ok: false, why: 'Checking ' + h.what + ' against your tree\u2026' };
+    if (s.matchFail || !s.checkMatch) return { ok: false, why: 'Your tree could not be checked, so nothing can be imported yet. Use Check again.' };
+    if (s.drawFailed) return { ok: false, why: 'The tree could not be drawn, so the people cannot be checked. Try again, or choose ' + h.another + '.' };
     if (kept.some(function(p) { return !String(p.name || '').trim(); })) return { ok: false, why: 'Someone has no name. Tap them in the tree and remove them.' };
-    if (kept.length < 2) return { ok: false, why: 'Nobody is left who is connected to someone else. Choose a different photo to start again.' };
+    if (kept.length < 2) return { ok: false, why: 'Nobody is left who is connected to someone else. Choose ' + h.another + ' to start again.' };
     return { ok: true, why: '' };
   }
   // The same-person choices made on the tree, for the people who will be imported: { decisions, owner } keyed by the page's own refs.
-  function _gedPhotoDecisions() {
-    var s = _gedS, out = { decisions: {}, owner: null }, pm = s && s.photoMatch;
+  function _gedCheckDecisions() {
+    var s = _gedS, out = { decisions: {}, owner: null }, pm = s && s.checkMatch;
     if (!pm || !s.draft) return out;
     var conn = _gedConnected(s.draft);
     s.draft.people.forEach(function(p) {
@@ -28485,43 +28553,48 @@
     });
     return out;
   }
-  function _gedPhotoCounts() {
-    var s = _gedS, d = s.draft, conn = _gedConnected(d), dec = _gedPhotoDecisions().decisions;
+  function _gedCheckCounts() {
+    var s = _gedS, d = s.draft, conn = _gedConnected(d), dec = _gedCheckDecisions().decisions;
     var included = d.people.filter(function(p) { return conn[p.ref]; }).length, merged = Object.keys(dec).length;
     return { included: included, merged: merged, added: included - merged, left: d.people.length - included };
   }
   // Asks the server which people in the photo may already be in your tree. Not fatal: Import waits until it has an answer (Check again).
-  async function _gedPhotoCheck() {
-    var s = _gedS; if (!s || !s.draft || s.checking) return;
+  async function _gedCheckMatches() {
+    var s = _gedS, h = _gedHook(); if (!s || !s.draft || !h || s.checking) return;
     s.checking = true; s.matchFail = false;
-    if (s.step === 'photo') _gedRender();
+    if (s.step === 'check') _gedRender();
     try {
-      var pm = await _gedCall('gedcom_preview', { draft: _gedDraftOut() });
+      var pm = await h.matchCall();
       if (_gedS !== s) return;
-      s.photoMatch = pm; s.matchDec = {};   // 2026-11-05 (developer): duplicates are pointed out, never joined automatically (families share names, people are named after ancestors). The server's pre-selected matches (pm.defaults) are not used.
+      s.checkMatch = pm; s.matchDec = {};   // 2026-11-05 (developer): duplicates are pointed out, never joined automatically (families share names, people are named after ancestors). The server's pre-selected matches (pm.defaults) are not used.
       // 2026-11-05 (UAT: a photo of the same tree flagged nobody): record what came back, and refuse to go on if the answer is keyed in a form this
       // page cannot read (an out of date TREE_PROXY answers in GEDCOM ids, not the page's refs). Then no card could show a match and Import would add
       // everyone a second time, so Import waits instead.
       var onScreen = {}; s.draft.people.forEach(function(p) { onScreen[p.ref] = 1; });
       var mk = Object.keys(pm.matches || {}), fit = mk.filter(function(k) { return onScreen[k]; }).length;
-      try { logActivity('people_info', 'photo match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' suggested by the server but not used, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
+      try { logActivity('people_info', h.log + ' match: ' + mk.length + ' people with candidates, ' + fit + ' on screen, ' + Object.keys(pm.defaults || {}).length + ' suggested by the server but not used, ' + s.draft.people.length + ' people read', 'info', 'PEOPLE'); } catch (e3) {}
       if (mk.length && !fit) {
-        s.photoMatch = null; s.matchDec = {}; s.matchFail = true;
-        var why4 = 'photo match: the answer is keyed by ' + mk.slice(0, 3).join(',') + ', not by the page refs, so TREE_PROXY is older than v1.5.3';
+        s.checkMatch = null; s.matchDec = {}; s.matchFail = true;
+        var why4 = h.log + ' match: the answer is keyed by ' + mk.slice(0, 3).join(',') + ', not by the page refs, so TREE_PROXY is older than v1.5.3';
         try { dbgErr('PEOPLE', why4); notifyDev('error', 'PEOPLE', why4); logActivity('people_error', why4, 'error', 'PEOPLE'); } catch (e4) {}
       }
     } catch (e) {
       if (_gedS !== s) return;
       s.matchFail = true;
-      try { logActivity('people_error', 'photo match check: ' + (e && e.code || e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
+      try { logActivity('people_error', h.log + ' match check: ' + (e && e.code || e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
     }
     s.checking = false;
-    if (s.step === 'photo') _gedRender();
+    if (s.step === 'check') _gedRender();
   }
   // A family is worth keeping when it still has two people: a parent and one more, or (parents not known) two or more brothers and sisters.
   function _gedFamKeep(f) { var n = f.partners.length + f.children.length; return f.partners.length ? n >= 2 : f.children.length >= 2; }
   function _gedFamsWithout(fams, ref) {
-    return fams.map(function(f) { return { partners: f.partners.filter(function(r) { return r !== ref; }), children: f.children.filter(function(r) { return r !== ref; }) }; }).filter(_gedFamKeep);
+    return fams.map(function(f) {
+      var o = { partners: f.partners.filter(function(r) { return r !== ref; }), children: f.children.filter(function(r) { return r !== ref; }) };
+      if (f.kinds) o.kinds = f.kinds;      // FAM-28 G3: a file's child kinds (adopted, foster ...) and union status travel with the family
+      if (f.status) o.status = f.status;
+      return o;
+    }).filter(_gedFamKeep);
   }
   // FAM-22 step 2: who would be left with no relatives at all if this person were removed (they would not be imported).
   function _gedRemoveEffect(ref) {
@@ -28538,6 +28611,7 @@
     d.people.forEach(function(p, n) { if (p.ref === ref) i = n; });
     if (i < 0) return;
     s.undo = { person: d.people[i], index: i, families: JSON.parse(JSON.stringify(d.families)) };
+    s.removed = (s.removed || []).filter(function(r) { return r !== ref; }).concat([ref]);   // FAM-28 G3: a file sends these ids as remove
     d.people.splice(i, 1);
     d.families = _gedFamsWithout(d.families, ref);
     _gedRender();
@@ -28547,6 +28621,7 @@
     if (!u) return;
     s.draft.people.splice(Math.min(u.index, s.draft.people.length), 0, u.person);
     s.draft.families = u.families;
+    s.removed = (s.removed || []).filter(function(r) { return r !== u.person.ref; });
     s.undo = null;
     _gedRender();
   }
@@ -28555,22 +28630,22 @@
   // ready made lines. The cards are drawn here (the main tree's card code is tied to saved people); the lines reuse _mpDrawLinks.
   function _gedDraftGraph(d) {
     var kids = [];
-    d.families.forEach(function(f, i) { (f.children || []).forEach(function(r) { kids.push({ family_id: 'pf' + i, child_id: String(r), kind: 'biological' }); }); });
+    d.families.forEach(function(f, i) { (f.children || []).forEach(function(r) { kids.push({ family_id: 'pf' + i, child_id: String(r), kind: (f.kinds && f.kinds[r]) || 'biological' }); }); });
     return {
       people: d.people.map(function(p) { return String(p.ref); }),
-      families: d.families.map(function(f, i) { return { id: 'pf' + i, partner1_id: f.partners[0] != null ? String(f.partners[0]) : null, partner2_id: f.partners[1] != null ? String(f.partners[1]) : null, union_status: null }; }),
+      families: d.families.map(function(f, i) { return { id: 'pf' + i, partner1_id: f.partners[0] != null ? String(f.partners[0]) : null, partner2_id: f.partners[1] != null ? String(f.partners[1]) : null, union_status: f.status || null }; }),
       children: kids
     };
   }
   // FAM-22 step 3: same-person choices on the tree. matchDec[ref] is the existing person's id when the photo person is the same person,
   // '' when you said Different person, and absent when nothing was suggested. Each existing person can be matched once.
   var GED_BLUE = '#2b6cb0';
-  function _gedMatchOf(ref) { var s = _gedS; return (s && s.photoMatch && s.matchDec && s.matchDec[ref]) || ''; }
-  function _gedCands(ref) { var pm = _gedS && _gedS.photoMatch; return (pm && pm.matches && pm.matches[ref]) || []; }
+  function _gedMatchOf(ref) { var s = _gedS; return (s && s.checkMatch && s.matchDec && s.matchDec[ref]) || ''; }
+  function _gedCands(ref) { var pm = _gedS && _gedS.checkMatch; return (pm && pm.matches && pm.matches[ref]) || []; }
   // 2026-11-05 (developer): two levels of "may already be in your tree". The RULE LIVES ON THE SERVER (TREE_PROXY v1.5.4 sends level: likely, possible or
   // weak, with every match); this page only shows it. A missing level (older proxy) is treated as possible. Neither level joins anyone: only the person's Yes does.
   function _gedLv(m) { return m && (m.level === 'likely' || m.level === 'weak') ? m.level : 'possible'; }
-  function _gedIsMe(id) { var pm = _gedS && _gedS.photoMatch; return !!(pm && ((pm.owner && pm.owner.id === id) || (pm.existing && pm.existing[id] && pm.existing[id].is_owner))); }   // the server marks the owner's entry
+  function _gedIsMe(id) { var pm = _gedS && _gedS.checkMatch; return !!(pm && ((pm.owner && pm.owner.id === id) || (pm.existing && pm.existing[id] && pm.existing[id].is_owner))); }   // the server marks the owner's entry
   // The photo person's candidates with their level (set by the server), likely ones first.
   function _gedBest(p) {
     return _gedCands(p.ref).map(function(c) { return { c: c, lv: _gedLv(c) === 'likely' ? 'likely' : 'possible' }; });   // the server sends them likely first
@@ -28584,16 +28659,17 @@
     return b[0].lv === 'likely' ? { label: me ? 'Likely you' : 'Likely duplicate', kind: 'likely', top: b[0] } : { label: me ? 'Possible you' : 'Possible duplicate', kind: 'possible', top: b[0] };
   }
   function _gedExLabel(id) {
-    var pm = _gedS && _gedS.photoMatch, e = pm && pm.existing && pm.existing[id];
+    var pm = _gedS && _gedS.checkMatch, e = pm && pm.existing && pm.existing[id];
     if (!e) return 'someone in your tree';
     return (e.is_owner ? 'you (' + e.name + ')' : e.name) + (e.born_year ? ' (b. ' + e.born_year + ')' : '');
   }
   function _gedSetMatch(ref, id) {
-    var s = _gedS; if (!s || !s.photoMatch) return;
+    var s = _gedS; if (!s || !s.checkMatch) return;
     if (id) Object.keys(s.matchDec).forEach(function(k) { if (k !== ref && s.matchDec[k] === id) s.matchDec[k] = ''; });
     s.matchDec[ref] = id;
   }
   function _gedTreePreview(host, d, onFail, onChange) {
+    var h = _gedHook();   // FAM-28 G2: the words that name the source
     // FAM-22 (2026-11-05): the checking tree behaves like the My People tree. A tall window you drag to pan, + / - / fit buttons with the
     // same steps and limits (MP_ZOOM_*), text drawn larger when zoomed out (MP_BIG_TEXT_BELOW), and an opening view that shows the whole
     // tree when it is readable and a readable size when it is not (same rule as _mpFitInitial). Zoom state is local to this window, so it
@@ -28627,10 +28703,10 @@
           m.appendChild(b);
         });
         m.appendChild(_gedBtn((!cur ? '\u2713 ' : '') + 'Different person', choice(!cur), function(ev) { ev.stopPropagation(); _gedSetMatch(p.ref, ''); openCardMenu(p); if (onChange) onChange(); }));
-        if (cur && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'This one was hard to read in the photo, so check the name before you match it.'));
+        if (cur && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'This one was hard to read in ' + h.what + ', so check the name before you match it.'));
       }
-      if (!cands.length && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'Hard to read in the photo, so check the name before you import.'));
-      if (!cands.length && _gedS && _gedS.photoMatch) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 8px;line-height:1.4', 'Nobody in your tree looks like this person, so they will be added as new.'));
+      if (!cands.length && p.unsure) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:' + GED_AMBER + ';margin:0 0 8px;line-height:1.4', 'Hard to read in ' + h.what + ', so check the name before you import.'));
+      if (!cands.length && _gedS && _gedS.checkMatch) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 8px;line-height:1.4', 'Nobody in your tree looks like this person, so they will be added as new.'));
       var lost = _gedRemoveEffect(p.ref);
       if (lost.length) m.appendChild(_gedEl('div', 'font-size:0.78rem;color:' + GED_AMBER + ';line-height:1.4;margin:0 0 8px', lost.slice(0, 3).join(', ') + (lost.length > 3 ? ' and ' + (lost.length - 3) + ' more' : '') + ' would be left with no relatives and would not be imported.'));
       var rm = _gedBtn('Remove from import', GED_BTN_RED + ';width:100%;min-height:44px', function(ev) { ev.stopPropagation(); _gedDraftRemove(p.ref); });
@@ -28678,7 +28754,7 @@
         _mpSvg('title', {}, n).textContent = shown
           + (mid ? (_gedIsMe(mid) ? '\nYou said this is you: same person as ' : '\nYou said this is the same person as ') + _gedExLabel(mid) + '.\nThey will be joined to that entry, so nobody is added twice. Tap to change.'
              : tag0 ? '\n' + tag0.label + ': ' + (tag0.top.lv === 'likely' ? 'spelled the same as ' : 'this may be ') + _gedExLabel(tag0.top.c.id) + (tag0.top.c.why ? ' (' + tag0.top.c.why + ')' : '') + '.\nNothing is joined unless you say so. Tap to answer.' : '')
-          + (p.unsure ? '\nHard to read in the photo. Check the name.' : '');
+          + (p.unsure ? '\nHard to read in ' + h.what + '. Check the name.' : '');
         function toggle(ev) { ev.stopPropagation(); if (st.suppress) return; if (st.sel === p.ref) closeCardMenu(); else openCardMenu(p); }
         n.addEventListener('click', toggle);
         n.addEventListener('keydown', function(ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(ev); } });
@@ -28750,7 +28826,7 @@
         var wrap = _gedEl('div', 'position:relative;flex:none;margin:auto');   // margin:auto centres a small tree and lets a big one scroll from its edge
         box.style.display = 'flex';
         box.appendChild(wrap);
-        var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + j.dims.w + ' ' + j.dims.h, width: j.dims.w, height: j.dims.h, role: 'group', 'aria-label': 'The people read from your photo, drawn as a family tree. Tap a person for options.' }, wrap);
+        var svg = _mpSvg('svg', { class: 'mpt', viewBox: '0 0 ' + j.dims.w + ' ' + j.dims.h, width: j.dims.w, height: j.dims.h, role: 'group', 'aria-label': h.aria }, wrap);
         svg.style.display = 'block'; svg.style.fontFamily = "'Lato', sans-serif";
         st.wrap = wrap; st.svg = svg;
         var root = _mpSvg('g', { transform: 'translate(' + j.dims.tx + ',' + j.dims.ty + ')' }, svg);
@@ -28762,7 +28838,7 @@
         box.textContent = '';
         box.appendChild(_gedEl('div', 'font-size:0.82rem;color:var(--text-light);padding:14px 8px;text-align:center', 'The tree picture could not be drawn, so the people cannot be checked here.'));
         if (onFail) onFail();
-        try { logActivity('people_error', 'photo preview draw: ' + String(e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
+        try { logActivity('people_error', h.log + ' preview draw: ' + String(e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {}
       }
     })();
     return { update: nodes };
@@ -28770,26 +28846,13 @@
 
   // FAM-22 step 4: the tree is the whole checking screen. Remove people, say who is already in your tree, press Import. Names and
   // dates are fixed afterwards in the main tree with the normal edit.
-  function _gedRenderPhoto(body) {
-    var s = _gedS, d = s.draft;
+  function _gedRenderCheck(body) {
+    var s = _gedS, d = s.draft, h = _gedHook();
     s.drawFailed = false;
     var lab = 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin:0 0 6px';
-    var hasMatches = !!(s.photoMatch && Object.keys(s.photoMatch.matches || {}).length);
-    body.appendChild(_gedEl('p', GED_NOTE, 'We read ' + _gedPlural(d.people.length, 'person', 'people') + ' and their relationships from your photo. Photos are not always easy to read, so look the tree over before you import. Names and dates can be corrected in your tree afterwards. Nothing is added until you press Import.'));
-    if (s.photoUrl) {
-      var det = _gedEl('details', 'margin:0 0 12px');
-      det.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Show my photo'));
-      var im = _gedEl('img', 'display:block;max-width:100%;max-height:60vh;margin-top:8px;border-radius:8px;border:1px solid var(--border)'); im.src = s.photoUrl; im.alt = 'The photo you chose';
-      det.appendChild(im); body.appendChild(det);
-    }
-    if ((s.photoNotes || []).length) {
-      // 2026-11-05: the notes are the least important part of this screen, so they sit closed under the photo, like the photo itself.
-      var ndet = _gedEl('details', 'margin:0 0 12px');
-      ndet.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', 'Notes about reading the photo (' + s.photoNotes.length + ')'));
-      var nl = _gedEl('ul', GED_NOTE + ';padding-left:18px;margin-top:8px');
-      s.photoNotes.forEach(function(t) { nl.appendChild(_gedEl('li', 'margin-bottom:3px', t)); });
-      ndet.appendChild(nl); body.appendChild(ndet);
-    }
+    var hasMatches = !!(s.checkMatch && Object.keys(s.checkMatch.matches || {}).length);
+    body.appendChild(_gedEl('p', GED_NOTE, h.intro(d)));
+    h.extras(body);
     body.appendChild(_gedEl('div', lab, 'How it looks as a tree'));
     body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
     var go, msg;
@@ -28797,11 +28860,11 @@
     function paintMatchStatus() {
       if (stat) {
         var merged = 0, poss = 0, likely = 0;
-        if (s.photoMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else { var tg1 = _gedTag(p); if (tg1) { if (tg1.kind === 'likely') likely++; else poss++; } } });
+        if (s.checkMatch) d.people.forEach(function(p) { if (_gedMatchOf(p.ref)) merged++; else { var tg1 = _gedTag(p); if (tg1) { if (tg1.kind === 'likely') likely++; else poss++; } } });
         var parts = [];
         if (s.checking) parts.push('Checking who is already in your tree\u2026');
         else if (s.matchFail) parts.push('We could not check who is already in your tree.');
-        else if (s.photoMatch) {
+        else if (s.checkMatch) {
           if (!merged && !poss && !likely) parts.push('We checked your tree: nobody here looks like someone who is already in it.');
           if (merged) parts.push(_gedPlural(merged, 'person is', 'people are') + ' already in your tree and will be joined to that entry, because you said so (tagged In your tree).');
           if (likely) parts.push(_gedPlural(likely, 'person is', 'people are') + ' likely to be in your tree already: the name is spelled the same (tagged Likely duplicate, or Likely you for your own entry).');
@@ -28813,18 +28876,18 @@
       }
       if (sumBox) {
         sumBox.textContent = '';
-        if (!s.photoMatch) sumBox.style.display = 'none';
+        if (!s.checkMatch) sumBox.style.display = 'none';
         else {
-          var c = _gedPhotoCounts();
+          var c = _gedCheckCounts();
           sumBox.style.display = '';
           sumBox.appendChild(_gedEl('div', 'font-weight:700;margin-bottom:2px', 'This will add:'));
           sumBox.appendChild(_gedEl('div', null, _gedPlural(c.added, 'new person', 'new people') + (c.merged ? ' and match ' + _gedPlural(c.merged, 'person', 'people') + ' to someone already in your tree' : '') + '.'));
-          if (c.left) sumBox.appendChild(_gedEl('div', 'color:var(--text-light)', _gedPlural(c.left, 'person has', 'people have') + ' no relatives in the photo, so ' + (c.left === 1 ? 'is' : 'are') + ' left out.'));
+          if (c.left) sumBox.appendChild(_gedEl('div', 'color:var(--text-light)', _gedPlural(c.left, 'person has', 'people have') + ' no relatives in ' + h.what + ', so ' + (c.left === 1 ? 'is' : 'are') + ' left out.'));
           if (go) go.textContent = 'Import';   // 2026-11-06 (developer): the button just says Import; the box above says how many
         }
       }
     }
-    function refresh() { var r = _gedPhotoReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; paintMatchStatus(); }
+    function refresh() { var r = _gedCheckReady(); if (go) { go.disabled = !r.ok; go.style.opacity = r.ok ? '1' : '0.5'; } if (msg) msg.textContent = r.why; paintMatchStatus(); }
     var pvHost = _gedEl('div', 'margin:0 0 12px'); body.appendChild(pvHost);
     _gedTreePreview(pvHost, d, function() { s.drawFailed = true; refresh(); }, refresh);
     var stat = _gedEl('div', GED_NOTE + ';margin:0 0 10px'); body.appendChild(stat);   // what the match check found (filled by paintMatchStatus)
@@ -28837,198 +28900,23 @@
     if (s.stale) body.appendChild(_gedEl('p', GED_NOTE + ';color:' + GED_AMBER, 'Your tree changed while you were looking, so the matches were checked again. Please look at them before you import.'));
     if (s.matchFail && !s.checking) {
       var cf = _gedEl('div', 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px');
-      cf.appendChild(_gedBtn('Check again', GED_BTN, _gedPhotoCheck));
+      cf.appendChild(_gedBtn('Check again', GED_BTN, _gedCheckMatches));
       body.appendChild(cf);
     }
     var sumBox = _gedEl('div', 'background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:0.86rem;color:var(--text);line-height:1.55'); body.appendChild(sumBox);
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap;align-items:center');
-    var n = s.photoMatch ? _gedPhotoCounts().included : 0;
-    go = _gedBtn('Import', GED_BTN_MAIN, _gedCommit); go.id = 'gedPhotoGo';
+    var n = s.checkMatch ? _gedCheckCounts().included : 0;
+    go = _gedBtn('Import', GED_BTN_MAIN, _gedCommit); go.id = 'gedCheckGo';
     bar.appendChild(go);
-    bar.appendChild(_gedBtn('Choose a different photo', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
+    bar.appendChild(_gedBtn('Choose ' + h.another, GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
     body.appendChild(bar);
-    msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedPhotoMsg'; body.appendChild(msg);
+    msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedCheckMsg'; body.appendChild(msg);
     body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:10px', 'Wrong connections are easy to fix in your tree afterwards.'));
     refresh();
   }
 
-  // The person who is "me" in the file is always the owner row, and nobody else may claim the owner row.
-  function _gedApplyOwner() {
-    var s = _gedS; if (!s.owner) return;
-    Object.keys(s.decisions).forEach(function(r) { if (s.decisions[r] === s.owner.id) delete s.decisions[r]; });
-    if (s.ownerRef) s.decisions[s.ownerRef] = s.owner.id;
-  }
-  // Who is joined to someone already in the tree. When the old tree is being deleted, only your own entry (which is kept) can be joined.
-  // (Display only: the server works out the real answer again when you press Import.)
-  function _gedEffective() {
-    var s = _gedS, d = {};
-    if (s.mode === 'replace') { if (s.owner && s.ownerRef) d[s.ownerRef] = s.owner.id; return d; }
-    Object.keys(s.decisions).forEach(function(r) { d[r] = s.decisions[r]; });
-    return d;
-  }
-  function _gedCounts() {
-    var s = _gedS;
-    if (s.source === 'photo') return _gedPhotoCounts();
-    var dec = _gedEffective();
-    var inc = s.prev.people.filter(function(p) { return !p.skip; });
-    var merged = inc.filter(function(p) { return dec[p.ref]; }).length;
-    var added = inc.filter(function(p) { return !dec[p.ref]; });
-    return { included: inc.length, merged: merged, added: added.length, left: s.prev.people.length - inc.length };
-  }
-  function _gedPersonLine(p) { return (p.dead ? '\u2020 ' : '') + p.name + (p.born ? ' (b. ' + p.born + ')' : ''); }
-
-  function _gedRenderReview(body) {
-    var s = _gedS, m = s.prev, c = _gedCounts();
-    body.appendChild(_gedEl('p', GED_NOTE, s.fileName + ': ' + _gedPlural(m.counts.people, 'person', 'people') + ' and their relationships that can be brought in.'));
-
-    if (s.hasTree) {
-      var box = _gedEl('div', 'margin:0 0 12px;display:flex;flex-direction:column;gap:6px');
-      [['add', 'Add to my tree', 'Keeps everyone already in your tree. People who are in both are matched up below.'],
-       ['replace', 'Delete my tree and start fresh with this file', 'Removes your current family tree first. Your friends and your own entry stay.']].forEach(function(o) {
-        var lab = _gedEl('label', 'display:flex;gap:8px;align-items:flex-start;font-size:0.9rem;color:var(--text);cursor:pointer;line-height:1.4');
-        var r = _gedEl('input'); r.type = 'radio'; r.name = 'gedMode'; r.value = o[0]; r.checked = s.mode === o[0]; r.style.marginTop = '3px';
-        r.addEventListener('change', function() { s.mode = o[0]; _gedRender(); });
-        var t = _gedEl('span'); t.appendChild(_gedEl('strong', null, o[1])); t.appendChild(_gedEl('div', 'font-size:0.78rem;color:var(--text-light)', o[2]));
-        lab.appendChild(r); lab.appendChild(t); box.appendChild(lab);
-      });
-      body.appendChild(box);
-    }
-
-    if (s.owner) {
-      var ow = _gedEl('div', 'margin:0 0 12px');
-      var gp = s.ownerGuess && !s.ownerRef && !s.ownerNo ? _gedByRef()[s.ownerGuess] : null;
-      if (gp && !gp.skip) {
-        var lk = _gedEl('div', 'border:2px solid ' + GED_BLUE + ';background:rgba(43,108,176,0.1);border-radius:10px;padding:10px 12px;margin:0 0 10px');
-        lk.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:' + GED_BLUE + ';font-weight:700;margin-bottom:4px', m.owner_level === 'likely' ? 'Likely you' : 'Possible you'));
-        lk.appendChild(_gedEl('div', 'font-size:0.9rem;color:var(--text);line-height:1.4', 'Is ' + _gedPersonLine(gp) + ' you? If so, they are joined to your own entry so your branch connects. Nothing is joined unless you say yes.'));
-        var lkb = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px');
-        lkb.appendChild(_gedBtn('Yes, this is me', GED_BTN_MAIN, function() { s.ownerRef = s.ownerGuess; _gedApplyOwner(); _gedRender(); }));
-        lkb.appendChild(_gedBtn('No, not me', GED_BTN, function() { s.ownerNo = true; _gedRender(); }));
-        lk.appendChild(lkb); ow.appendChild(lk);
-      }
-      ow.appendChild(_gedEl('label', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px', s.mode === 'replace' ? 'Which person in the file is you?' : 'Which person in the file is you? (if any)'));
-      var sel = _gedEl('select', 'width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:inherit;font-size:16px;box-sizing:border-box');
-      sel.setAttribute('aria-label', 'Which person in the file is you');
-      var o0 = _gedEl('option', null, s.mode === 'replace' ? 'Choose\u2026' : 'I am not in this file'); o0.value = ''; sel.appendChild(o0);
-      m.people.filter(function(p) { return !p.skip; }).slice().sort(function(a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; }).forEach(function(p) {
-        var o = _gedEl('option', null, _gedPersonLine(p)); o.value = p.ref; if (p.ref === s.ownerRef) o.selected = true; sel.appendChild(o);
-      });
-      sel.addEventListener('change', function() { s.ownerRef = sel.value || null; _gedApplyOwner(); _gedRender(); });
-      ow.appendChild(sel);
-      if (s.ownerRef) ow.appendChild(_gedEl('div', 'font-size:0.78rem;color:var(--text-light);margin-top:4px', 'This person will be joined to your own entry, so your branch connects.'));
-      body.appendChild(ow);
-    }
-
-    // matches (add mode only)
-    if (s.mode === 'add') _gedRenderMatches(body);
-
-    var sum = _gedEl('div', 'background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:0.86rem;color:var(--text);line-height:1.55');
-    sum.appendChild(_gedEl('div', 'font-weight:700;margin-bottom:2px', s.mode === 'replace' ? 'After deleting your tree this will add:' : 'This will add:'));
-    sum.appendChild(_gedEl('div', null, _gedPlural(c.added, 'new person', 'new people') + (c.merged ? ' and match ' + _gedPlural(c.merged, 'person', 'people') + ' to someone already in your tree' : '') + '.'));
-    if (c.left) {
-      var leftNames = m.people.filter(function(p) { return p.skip; }).slice(0, 4).map(function(p) { return p.name; });
-      sum.appendChild(_gedEl('div', 'color:var(--text-light)', _gedPlural(c.left, 'person has', 'people have') + ' no relatives in the file, so ' + (c.left === 1 ? 'is' : 'are') + ' left out (' + leftNames.join(', ') + (c.left > 4 ? ', \u2026' : '') + ').'));
-    }
-    if (m.dropped.length) sum.appendChild(_gedEl('div', 'color:var(--text-light)', 'Not brought across (your tree keeps names, dates and relationships): ' + m.dropped.slice(0, 5).map(function(d) { return d.label + ' (' + d.count + ')'; }).join(', ') + (m.dropped.length > 5 ? ', \u2026' : '') + '.'));
-    body.appendChild(sum);
-    if (m.warnings.length) {
-      var det = _gedEl('details', 'margin:0 0 12px;font-size:0.82rem;color:var(--text)');
-      det.appendChild(_gedEl('summary', 'cursor:pointer;color:var(--text-light)', _gedPlural(m.warnings.length, 'thing', 'things') + ' to know about the file'));
-      var wl = _gedEl('ul', 'margin:6px 0 0;padding-left:18px;line-height:1.5');
-      m.warnings.slice(0, 30).forEach(function(w) { wl.appendChild(_gedEl('li', null, w)); });
-      if (m.warnings.length > 30) wl.appendChild(_gedEl('li', null, '\u2026and ' + (m.warnings.length - 30) + ' more.'));
-      det.appendChild(wl); body.appendChild(det);
-    }
-
-    var ready = true, why = '';
-    if (s.mode === 'replace') {
-      var cnt = m.tree.people, fc = m.tree.families;
-      var red = _gedEl('div', 'border:1px solid #b3261e;border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:0.84rem;color:var(--text);line-height:1.5');
-      red.appendChild(_gedEl('div', 'font-weight:700;color:#b3261e', 'This cannot be undone'));
-      red.appendChild(_gedEl('div', null, 'Your ' + _gedPlural(cnt, 'person', 'people') + ' and their relationships in the family tree will be deleted before the file is imported. Names you have typed into your memories are not touched.'));
-      var ti = _gedEl('input', 'width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:inherit;font-size:16px;box-sizing:border-box');
-      ti.type = 'text'; ti.placeholder = 'Type REPLACE to confirm'; ti.value = s.typed || ''; ti.autocomplete = 'off'; ti.setAttribute('aria-label', 'Type REPLACE to confirm');
-      ti.addEventListener('input', function() { s.typed = ti.value; var b = document.getElementById('gedGo'); if (b) b.disabled = !_gedReady().ok; });
-      red.appendChild(ti); body.appendChild(red);
-    }
-
-    var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap;align-items:center');
-    var go = _gedBtn(s.mode === 'replace' ? 'Delete my tree and import' : 'Import', s.mode === 'replace' ? GED_BTN_RED : GED_BTN_MAIN, _gedCommit);
-    go.id = 'gedGo'; go.disabled = !_gedReady().ok; go.style.opacity = go.disabled ? '0.5' : '1';
-    go.addEventListener('click', function() {}); bar.appendChild(go);
-    bar.appendChild(_gedBtn('Choose a different file', GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
-    body.appendChild(bar);
-    var msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedReadyMsg'; msg.textContent = _gedReady().why; body.appendChild(msg);
-  }
-
-  function _gedReady() {
-    var s = _gedS;
-    if (s && s.source === 'photo') return _gedPhotoReady();
-    if (!s || !s.prev) return { ok: false, why: '' };
-    var c = _gedCounts();
-    if (c.included === 0) return { ok: false, why: 'There is nobody in this file with a relative, so there is nothing to import.' };
-    if (s.mode === 'replace') {
-      if (s.owner && !s.ownerRef) return { ok: false, why: 'Choose which person in the file is you, so your tree stays connected to your own entry.' };
-      if ((s.typed || '').trim() !== 'REPLACE') return { ok: false, why: 'Type REPLACE in the box above to turn on the button.' };
-    }
-    return { ok: true, why: '' };
-  }
-
-  function _gedRenderMatches(body) {
-    var s = _gedS, ex = s.prev.existing || {}, byRef = _gedByRef(), matches = s.prev.matches || {};
-    var refs = Object.keys(matches).filter(function(r) { return byRef[r] && !byRef[r].skip && r !== s.ownerRef; });
-    var likely = refs.filter(function(r) { return matches[r].some(function(m) { return _gedLv(m) === 'likely'; }); });
-    var strong = refs.filter(function(r) { return likely.indexOf(r) < 0 && matches[r].some(function(m) { return _gedLv(m) === 'possible'; }); });
-    var weak = refs.filter(function(r) { return likely.indexOf(r) < 0 && strong.indexOf(r) < 0; });
-    if (!refs.length) return;
-    function byName(a, b) { return byRef[a].name < byRef[b].name ? -1 : byRef[a].name > byRef[b].name ? 1 : 0; }
-    function row(ref, host) {
-      var p = byRef[ref], card = _gedEl('div', 'border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--surface)');
-      card.appendChild(_gedEl('div', 'font-size:0.9rem;font-weight:700;color:var(--text)', _gedPersonLine(p)));
-      var grp = 'gedm-' + ref.replace(/[^A-Za-z0-9]/g, '');
-      var opts = matches[ref].filter(function(m) { return m.id !== (s.owner && s.owner.id); }).map(function(m) { return { id: m.id, why: m.why, lv: _gedLv(m) }; });
-      opts.push({ id: '', why: '', lv: '' });
-      opts.forEach(function(o) {
-        var lab = _gedEl('label', 'display:flex;gap:8px;align-items:flex-start;font-size:0.84rem;color:var(--text);margin-top:5px;cursor:pointer;line-height:1.4');
-        var r = _gedEl('input'); r.type = 'radio'; r.name = grp; r.style.marginTop = '2px'; r.checked = (s.decisions[ref] || '') === o.id;
-        r.addEventListener('change', function() {
-          if (o.id) Object.keys(s.decisions).forEach(function(k) { if (s.decisions[k] === o.id) delete s.decisions[k]; });   // each existing person can be matched once
-          if (o.id) s.decisions[ref] = o.id; else delete s.decisions[ref];
-          _gedRender();
-        });
-        var t = _gedEl('span');
-        if (o.id) {
-          var e = ex[o.id];
-          t.appendChild(_gedEl('span', null, 'Same person as '));
-          t.appendChild(_gedEl('strong', null, (e ? e.name : 'someone in your tree') + (e && e.born_year ? ' (b. ' + e.born_year + ')' : '')));
-          t.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light)', (o.lv === 'likely' ? 'Likely duplicate: spelled the same. ' : 'Possible duplicate: ') + (o.why || '')));
-        } else t.appendChild(_gedEl('span', null, 'A different person: add as new'));
-        lab.appendChild(r); lab.appendChild(t); card.appendChild(lab);
-      });
-      host.appendChild(card);
-    }
-    var wrap = _gedEl('div', 'margin:0 0 12px');
-    wrap.appendChild(_gedEl('div', 'font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);margin-bottom:6px', 'People who may already be in your tree'));
-    wrap.appendChild(_gedEl('p', GED_NOTE, 'Check these. Nothing is matched until you say Yes. Matched people are joined to the person you already have, so nobody is added twice, and only blank details are filled in; nothing you wrote is changed.'));
-    var tools = _gedEl('div', 'display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px');
-    tools.appendChild(_gedBtn('Add everyone as new', GED_BTN, function() { s.decisions = {}; _gedApplyOwner(); _gedRender(); }));
-    wrap.appendChild(tools);
-    function matchHead(t) { wrap.appendChild(_gedEl('div', 'font-size:0.8rem;font-weight:700;color:var(--text);margin:8px 0 6px', t)); }
-    if (likely.length) { matchHead('Likely duplicates (spelled the same)'); likely.sort(byName).slice(0, 200).forEach(function(r) { row(r, wrap); }); }
-    if (strong.length) matchHead('Possible duplicates');
-    strong.sort(byName).slice(0, 200).forEach(function(r) { row(r, wrap); });
-    if (strong.length > 200) wrap.appendChild(_gedEl('p', GED_NOTE, '\u2026and ' + (strong.length - 200) + ' more suggestions, which will be added as new people.'));
-    if (weak.length) {
-      var det = _gedEl('details', 'margin:4px 0 0');
-      det.appendChild(_gedEl('summary', 'cursor:pointer;font-size:0.84rem;color:var(--text-light)', _gedPlural(weak.length, 'weaker suggestion', 'weaker suggestions') + ' (same name, nothing else to compare)'));
-      weak.sort(byName).slice(0, 100).forEach(function(r) { row(r, det); });
-      wrap.appendChild(det);
-    }
-    body.appendChild(wrap);
-  }
-
   function _gedRenderWorking(body) {
-    var c = _gedCounts();
+    var c = _gedCheckCounts();
     body.appendChild(_gedEl('p', 'font-size:0.95rem;color:var(--text);margin:12px 0 4px;font-weight:700', 'Importing ' + _gedPlural(c.included, 'person', 'people') + '\u2026'));
     body.appendChild(_gedEl('p', GED_NOTE, 'Please keep this screen open. It is saved all at once, so if anything goes wrong nothing is changed.'));
   }
@@ -29039,15 +28927,14 @@
     body.appendChild(_gedEl('p', GED_NOTE, 'If the connection dropped, it is safe to try again: the same file is never added twice.'));
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
     bar.appendChild(_gedBtn('Try again', GED_BTN_MAIN, _gedCommit));
-    bar.appendChild(_gedBtn('Back to the preview', GED_BTN, function() { s.step = s.source === 'photo' ? 'photo' : 'review'; _gedRender(); }));
+    bar.appendChild(_gedBtn('Back to the preview', GED_BTN, function() { s.step = 'check'; _gedRender(); }));
     bar.appendChild(_gedBtn('Close', GED_BTN, _gedClose));
     body.appendChild(bar);
   }
   function _gedRenderDone(body) {
-    var s = _gedS, r = s.result || {}, undone = !!s.undone;
-    body.appendChild(_gedEl('p', 'font-size:1rem;color:var(--text);margin:8px 0 6px;font-weight:700', undone ? 'Import undone' : 'Import finished'));
-    if (undone) body.appendChild(_gedEl('p', GED_NOTE, 'The people and relationships that import added have been removed, and anything it filled in has been put back.'));
-    else {
+    var s = _gedS, r = s.result || {};
+    body.appendChild(_gedEl('p', 'font-size:1rem;color:var(--text);margin:8px 0 6px;font-weight:700', 'Import finished'));
+    {
       var lines = [_gedPlural(r.people_added || 0, 'person', 'people') + ' added'];
       if (r.people_merged) lines.push(_gedPlural(r.people_merged, 'person', 'people') + ' matched to people you already had');
       lines.push((r.families_added || r.families_reused) ? 'Relationships added' + (r.families_reused ? ', and existing relationships extended' : '') : 'No new relationships');
@@ -29062,7 +28949,7 @@
       body.appendChild(_gedEl('p', GED_NOTE, 'Look through your tree and the Directory to check everyone came in as expected.'));
     }
     var isl = [];
-    if (!undone) { try { isl = _mpIslands().islands; } catch (e) {} }   // FAM-23: a branch the import left unconnected
+    try { isl = _mpIslands().islands; } catch (e) {}   // FAM-23: a branch the import left unconnected
     if (isl.length) {
       var ip = 0; isl.forEach(function(g) { ip += g.length; });
       body.appendChild(_gedEl('p', GED_NOTE + ';color:' + GED_AMBER, (isl.length === 1 ? 'This branch is not connected to your tree yet' : isl.length + ' branches are not connected to your tree yet') + ' (' + _gedPlural(ip, 'person', 'people') + '). Connect ' + (isl.length === 1 ? 'it' : 'them') + ' now? You can also do this later from the person.'));
@@ -29074,28 +28961,28 @@
   }
 
   async function _gedCommit() {
-    var s = _gedS; if (!s || s.busy || !_gedReady().ok) return;
+    var s = _gedS; if (!s || s.busy || !_gedCheckReady().ok) return;
     if (!isPremium()) {   // a friendly early nudge; the server checks Premium again and is the real gate
       try { logActivity('premium_gate_hit', 'feature=tree_import', 'info', 'RL'); } catch (e) {}
-      var c0 = _gedCounts();
+      var c0 = _gedCheckCounts();
       _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Upgrade to add these ' + c0.included + ' people to your tree. Nothing has been changed.' });
       return;
     }
     if (typeof _mpEditBlocked === 'function' && _mpEditBlocked()) return;
     s.busy = true; s.step = 'working'; _gedRender();
     try {
-      var photo = s.source === 'photo', pd = photo ? _gedPhotoDecisions() : null;
-      if (!s.key) s.key = _gedNewKey(photo ? 'photo' : 'gedcom');   // a photo always adds to the tree, with the choices made on the tree screen
-      s.result = await _gedCall('gedcom_commit', Object.assign(_gedSrc(), photo ? { mode: 'add', decisions: pd.decisions, owner_ref: pd.owner, import_key: s.key } : { mode: s.mode, decisions: s.mode === 'replace' ? {} : s.decisions, owner_ref: s.ownerRef, import_key: s.key }));
+      var h = _gedHook(), pd = _gedCheckDecisions();
+      if (!s.key) s.key = _gedNewKey(s.source === 'photo' ? 'photo' : 'gedcom');
+      // an import only ever adds to the tree (FAM-28: no replace, no undo; tree versions, FAM-24, cover both); the choices were made on the tree screen
+      s.result = await _gedCall('gedcom_commit', Object.assign(h.src(), { mode: 'add', decisions: pd.decisions, owner_ref: pd.owner, import_key: s.key }));
       s.busy = false; s.step = 'done';
       try { await _mpLoad(); if (typeof _mpActiveTab !== 'undefined' && _mpActiveTab === 'directory') mpDirRender(); } catch (e) { dbgErr('PEOPLE', 'reload after import: ' + (e && e.message)); try { logActivity('people_error', 'reload after import: ' + (e && e.message), 'warn', 'PEOPLE'); } catch (e2) {} }
-      try { logActivity('gedcom_import', (s.result.people_added || 0) + ' added, ' + (s.result.people_merged || 0) + ' matched, mode ' + s.mode, 'info', 'PEOPLE'); } catch (e) {}
+      try { logActivity('gedcom_import', (s.result.people_added || 0) + ' added, ' + (s.result.people_merged || 0) + ' matched, ' + s.source, 'info', 'PEOPLE'); } catch (e) {}
       _gedRender();
     } catch (e) {
       s.busy = false;
-      if (e && (e.status === 403 || e.code === 'premium_required')) { s.step = s.source === 'photo' ? 'photo' : 'review'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so nothing was imported.' }); return; }
-      if (e && e.code === 'tree_changed' && s.source === 'photo') { s.step = 'photo'; s.photoMatch = null; s.stale = true; _gedRender(); _gedPhotoCheck(); return; }   // no need to read the photo again: only the matches are checked again
-      if (e && e.code === 'tree_changed') { s.step = 'choose'; _gedRender(); _gedChooseError('Your tree changed since the preview, so please choose the file again.'); return; }
+      if (e && (e.status === 403 || e.code === 'premium_required')) { s.step = 'check'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so nothing was imported.' }); return; }
+      if (e && e.code === 'tree_changed') { s.step = 'check'; s.checkMatch = null; s.stale = true; _gedRender(); _gedCheckMatches(); return; }   // no need to read the photo or choose the file again: only the matches are checked again
       s.step = 'error'; s.error = (e && e.message) ? e.message : String(e);
       try { notifyDev('error', 'PEOPLE', 'GEDCOM import failed: ' + s.error); logActivity('people_error', 'gedcom import: ' + s.error, 'error', 'PEOPLE'); } catch (e2) {}
       _gedRender();
