@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.342">
+  <meta name="lifetold-version" content="v7.343">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5412,7 +5412,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.342';
+  const APP_VERSION = 'v7.343';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -29731,7 +29731,7 @@
     var box = document.getElementById('mpV2Matches'); if (!box) return;
     var kind = document.getElementById('mpV2Kind').value, a = _mpV2AnchorId;
     var q = (document.getElementById('mpV2Name').value || '').trim().toLowerCase();
-    if (_mpV2Mode !== 'add' || _mpV2LinkId || _MP_NON_TREE[kind] || !a || q.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    if (_mpV2Mode !== 'add' || _mpV2LinkId || !kind || _MP_NON_TREE[kind] || !a || q.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
     var anc = _mpV2Reach(a, true), desc = _mpV2Reach(a, false);
     var skip = {}; skip[a] = 1;
     if (kind === 'child') {
@@ -29856,6 +29856,8 @@
     _mpV2Adopt = (mode === 'add' && opts && opts.adopt) ? opts.adopt : null;                                            // DIR-IMPORT-01: reset on every open
     document.getElementById('mpV2AdoptNote').style.display = 'none'; document.getElementById('mpV2Skip').style.display = 'none';
     document.getElementById('mpV2Later').style.display = 'none'; document.getElementById('mpV2Cancel').style.display = '';
+    document.getElementById('mpV2Later').style.cssText = 'display:none;flex:1.4;padding:11px;background:var(--surface);border:1px solid var(--gold);border-radius:8px;cursor:pointer;color:var(--gold-dark)';   // DIR-IMPORT-02: styles reset on every open
+    document.getElementById('mpV2Save').style.cssText = 'flex:1;padding:11px;background:var(--gold);border:none;border-radius:8px;cursor:pointer;color:#fff;font-weight:700';
     var $ = function(id) { return document.getElementById(id); };
     $('mpV2Err').style.display = 'none';
     $('mpV2Save').disabled = false;
@@ -29914,10 +29916,16 @@
     if (_mpV2Adopt) {   // DIR-IMPORT-01: placing a person from the directory (or a name from a story) into the tree
       var _ad = _mpV2Adopt, _nm = _ad.name || 'this person';
       $('mpV2Title').textContent = 'Add ' + _nm + ' to your family tree';
-      $('mpV2KindLbl').textContent = 'How are they related?';
+      $('mpV2KindLbl').textContent = 'How are they related? (optional)';
       $('mpV2AnchorLbl').textContent = '\u2026 of which person in your tree?';
+      // DIR-IMPORT-02: guess nothing. A blank choice for both, and Connect later (a separate branch) is the main button.
+      var _kp = document.createElement('option'); _kp.value = ''; _kp.textContent = 'Choose\u2026'; $('mpV2Kind').insertBefore(_kp, $('mpV2Kind').firstChild); $('mpV2Kind').value = '';
+      var _ap = document.createElement('option'); _ap.value = ''; _ap.textContent = 'Choose\u2026'; $('mpV2Anchor').insertBefore(_ap, $('mpV2Anchor').firstChild); $('mpV2Anchor').value = ''; _mpV2AnchorId = null;
+      $('mpV2Later').style.background = 'var(--gold)'; $('mpV2Later').style.color = '#fff'; $('mpV2Later').style.fontWeight = '700'; $('mpV2Later').style.border = 'none';
+      $('mpV2Save').style.background = 'var(--surface)'; $('mpV2Save').style.color = 'var(--text)'; $('mpV2Save').style.fontWeight = '400'; $('mpV2Save').style.border = '1px solid var(--border)';
+      _mpV2KindChanged();
       var _note = $('mpV2AdoptNote');
-      _note.textContent = (_ad.total > 1 ? 'Person ' + _ad.n + ' of ' + _ad.total + '. ' : '') + (_ad.id ? 'Pick how they are related to someone already in your tree. Their stories, photos and notes stay with them.' : 'They are not in My People yet, so this adds them as a new person.');
+      _note.textContent = (_ad.total > 1 ? 'Person ' + _ad.n + ' of ' + _ad.total + '. ' : '') + (_ad.id ? 'Choose how they are related to someone in your tree, or press Connect later to add them as a separate branch you can join up afterwards. Nothing is guessed. Their stories, photos and notes stay with them.' : 'They are not in My People yet, so this adds them as a new person.');
       _note.style.display = '';
       $('mpV2Skip').style.display = _ad.total > 1 ? '' : 'none';
       $('mpV2Later').style.display = ''; $('mpV2Later').disabled = false; $('mpV2Cancel').style.display = 'none';   // the X closes it; Connect later puts them on the tree as a loose person
@@ -30153,6 +30161,7 @@
     err.style.display = 'none';
     if (_mpV2Mode === 'add' && _mpV2LinkOnly && !_mpV2LinkId) { err.textContent = 'Search for the person in your tree and tap them to choose them.'; err.style.display = 'block'; return; }   // FAM-23
     if (!name) { err.textContent = 'Please enter a name.'; err.style.display = 'block'; return; }
+    if (_mpV2Mode === 'add' && _mpV2Adopt && (!$('mpV2Kind').value || !_mpV2AnchorId)) { err.textContent = 'Choose how they are related and to whom, or press Connect later to add them as a separate branch.'; err.style.display = 'block'; return; }   // DIR-IMPORT-02
     var birthText = ($('mpV2Birth').value || '').trim();
     var ym = birthText.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
     var fields = {
