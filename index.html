@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.358">
+  <meta name="lifetold-version" content="v7.359">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -2807,6 +2807,7 @@
             <div id="spTreeTitle" style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🌳 Family Tree</div>
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            <button id="spImportBtn" type="button" title="Copy this family tree into your own free LifeTold account" style="height:28px;padding:0 12px;border:1px solid var(--gold);border-radius:14px;background:var(--gold);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;color:#1a1208;margin-right:4px;white-space:nowrap">Copy this tree</button>
             <button id="spNoteBtn" title="Message from the author" aria-label="Message from the author" style="display:none;width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);align-items:center;justify-content:center">&#9993;</button>
             <button id="spFindBtn" title="Find a person" aria-label="Find a person" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#128269;</button>
             <button id="spZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
@@ -2814,6 +2815,7 @@
             <button id="spRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
           </div>
         </div>
+        <div id="spImportNote" style="font-size:0.78rem;color:var(--text-light);line-height:1.45;margin:-6px 0 10px">Copy this tree into your own free LifeTold account to build on it for your family. You get the names, relationships and details shown here. You do not get stories or notes, and anyone hidden from this link is not included.</div>
         <div id="spFindRow" style="display:none;flex:none;position:relative;margin-bottom:10px;z-index:8">
           <input id="spFindInput" type="search" placeholder="Find a person&hellip;" aria-label="Find a person on the tree" autocomplete="off" autocapitalize="words" enterkeyhint="search" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;font-size:16px">
           <div id="spFindList" role="listbox" aria-label="People that match" style="display:none;position:absolute;left:0;right:0;top:100%;max-height:50vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.18)"></div>
@@ -5412,7 +5414,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.358';
+  const APP_VERSION = 'v7.359';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -6518,6 +6520,7 @@
     on('spZoomOutBtn',  'click', spZoomOut);
     on('spZoomInBtn',   'click', spZoomIn);
     on('spRecentreBtn', 'click', spRecentre);
+    on('spImportBtn',   'click', shareImportStart);   // FAM-29 step 4
     _mpFindInit('sp');   // FAM-12b
 
     var vp = document.getElementById('shareTreeViewport');
@@ -6869,6 +6872,23 @@
             _shareStopFlag = false;
             logActivity('share_tts_played', JSON.stringify({ token: token }), 'info', 'SHARE');
 
+            // v7.354: every listen failure says what happened and what to do (no generic message). Only the status code is shown, never raw server text.
+            function _spFailText(err) {
+              var st = err && err.status;
+              if (err && err.listenPaused) {
+                if (st === 503) return 'Listening is paused for a moment. Please try again shortly.';
+                var mins = err.retryAfterS ? Math.ceil(err.retryAfterS / 60) : 0;
+                return mins > 1 ? 'Listening is paused for now. Please try again in about ' + mins + ' minutes.' : 'Listening is paused for now. Please try again in a minute.';
+              }
+              if (st === 429) return 'Too many listens from this device just now. Please wait a few minutes and try again.';
+              if (st === 410 || st === 404) return 'This link is no longer available, so it cannot be read aloud.';
+              if (st === 502) return 'The reading voice did not respond. Please try again in a moment.';
+              if (err && err.name === 'AbortError') return 'The reading voice took too long. Please check your connection and try again.';
+              if (st) return 'Listening stopped because the server answered with code ' + st + '. Please try again, and let the person who shared this know if it keeps happening.';
+              return 'Could not reach the server. Please check your connection and try again.';
+            }
+            function _spIsFinal(err) { return !!(err && (err.listenPaused || err.status === 429 || err.status === 410 || err.status === 404 || err.status === 413 || err.status === 400)); }
+
             function _spFetchSegment(text, attempt) {
               attempt = attempt || 1;
               var spBody = { action: 'get_tts', token: token, text: text };
@@ -6887,7 +6907,13 @@
                 signal: controller ? controller.signal : undefined
               }).then(function(res) {
                 if (timeoutId) clearTimeout(timeoutId);
-                if (!res.ok) throw new Error('TTS error ' + res.status);
+                if (!res.ok) {
+                  return res.json().catch(function() { return {}; }).then(function(b) {
+                    var e = new Error('TTS error ' + res.status);
+                    e.status = res.status; e.listenPaused = !!(b && b.listen_paused); e.retryAfterS = b && b.retry_after_s;
+                    throw e;
+                  });
+                }
                 return res.arrayBuffer();
               }).then(function(buf) {
                 if (!buf || !buf.byteLength) throw new Error('Empty audio response');
@@ -6898,7 +6924,7 @@
                 if (timeoutId) clearTimeout(timeoutId);
                 // One retry on first failure (covers transient drops / timeouts);
                 // give up after that so we don't loop forever on a truly dead connection.
-                if (attempt < 2 && !_shareStopFlag) {
+                if (attempt < 2 && !_shareStopFlag && !_spIsFinal(err)) {   // v7.354: a refusal is not retried
                   return _spFetchSegment(text, attempt + 1);
                 }
                 throw err;
@@ -6937,7 +6963,7 @@
                     if (shareListenStatus) { shareListenStatus.textContent = 'Playing…'; shareListenStatus.style.display = 'inline'; }
                     await _spPlayBuffer(announceDecoded);
                   }
-                } catch(e) { /* non-fatal — skip announce, play content */ logActivity('share_announce_failed', String(e && e.message || e), 'warn', 'SHARE'); }
+                } catch(e) { /* non-fatal — skip announce, play content */ if (_spIsFinal(e)) throw e; logActivity('share_announce_failed', String(e && e.message || e), 'warn', 'SHARE'); }
               }
               if (_shareStopFlag) { _sharePlaying = false; _spStopMusic(); return; }
 
@@ -6968,6 +6994,10 @@
                       error_name: segErr && segErr.name,
                       error_message: segErr && segErr.message
                     }), 'error', 'SHARE');
+                  if (_spIsFinal(segErr)) {   // v7.354: paused, refused or gone: stop and say so, do not ask for the rest of the story
+                    if (shareListenStatus) { shareListenStatus.textContent = _spFailText(segErr); shareListenStatus.style.display = 'inline'; }
+                    break;
+                  }
                   continue;
                 }
                 if (_shareStopFlag) break;
@@ -6979,7 +7009,7 @@
               logActivity('share_listen_error',
                 JSON.stringify({ error_name: err && err.name, error_message: err && err.message }),
                 'error', 'SHARE');
-              if (shareListenStatus) { shareListenStatus.textContent = 'Could not load audio — try again'; shareListenStatus.style.display = 'inline'; }
+              if (shareListenStatus) { shareListenStatus.textContent = _spFailText(err); shareListenStatus.style.display = 'inline'; }
             }
 
             _sharePlaying  = false;
@@ -9077,6 +9107,7 @@
       // No toast — user chose to cancel, don't make them feel bad
     }
 
+    try { _shareImportBoot(); } catch (e) { try { logActivity('share_import_error', 'boot: ' + String(e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {} }   // FAM-29 step 4: a kept tree link
     // ── Share mode: detect ?share=<token> ───────────────────────────
     // If present, hide everything and show the public share page.
     // No auth required — SHARE_PROXY validates the token server-side.
@@ -9302,6 +9333,7 @@
         renderDashboard();
         draftRestore();
         _appInitInProgress = false;
+        _shareImportSoon();   // FAM-29 step 4: a kept tree link is copied now (after onboarding for a new person)
         _appFullyLoaded = true; // mark app as fully initialised — future SIGNED_IN events skipped
       }
     });
@@ -10780,6 +10812,9 @@
     document.getElementById('onboardingOverlay').style.display = 'none';
     toast('Welcome, ' + (userProfile.firstName || '') + '! \uD83C\uDF89');
     await new Promise(function(r) { setTimeout(r, 300); });
+    if (window._pendingShareImport) {   // FAM-29 step 4: their own entry exists now, so the kept tree link is copied before anything else
+      try { if (await _shareImportRun('onboarding') === 'opened') return; } catch (e) { try { logActivity('share_import_error', 'onboarding: ' + String(e && e.message || e), 'error', 'PEOPLE'); } catch (e2) {} }
+    }
     if (_obSelectedGoal === OB_GOAL_TREE && MP_EDIT_ENABLED) {   // ONB-TREE-01: they came to build a tree, so start there (the pointer shows by itself on their card)
       try { logActivity('onboard_tree_goal', 'open My People', 'info', 'ONBOARD'); await openMyPeople(); return; }
       catch (e) { var w5 = 'tree goal open: ' + (e && e.message || e); try { dbgErr('ONBOARD', w5); notifyDev('error', 'ONBOARD', w5); logActivity('onboard_error', w5, 'error', 'ONBOARD'); } catch (e2) {} }
@@ -28270,6 +28305,7 @@
   }
   function _gedClose() {
     if (_gedS && _gedS.busy) return;
+    if (_gedS && _gedS.source === 'share' && _gedS.step === 'check') _shareImportClear();   // FAM-29 step 4: closing the checking screen means not now
     var m = document.getElementById('gedModal'); if (m) m.style.display = 'none';
     _gedS = null;
   }
@@ -28283,6 +28319,8 @@
     else if (s.step === 'done') _gedRenderDone(body);
     else if (s.step === 'error') _gedRenderError(body);
     else if (s.step === 'check') _gedRenderCheck(body);
+    else if (s.step === 'sharework') _gedRenderShareWork(body);
+    else if (s.step === 'sharemsg') _gedRenderShareMsg(body);
     else if (s.step === 'dir') _gedRenderDir(body);   // DIR-IMPORT-01
   }
 
@@ -28829,7 +28867,8 @@
       if (!cands.length && _gedS && _gedS.checkMatch) m.appendChild(_gedEl('div', 'font-size:0.76rem;color:var(--text-light);margin:0 0 8px;line-height:1.4', 'Nobody in your tree looks like this person, so they will be added as new.'));
       var rm = _gedBtn('Remove from import', GED_BTN_RED + ';width:100%;min-height:44px', function(ev) { ev.stopPropagation(); _gedDraftRemove(p.ref); });
       var cn = _gedBtn('Close', GED_BTN + ';width:100%;min-height:44px;margin-top:8px', function(ev) { ev.stopPropagation(); closeCardMenu(); });
-      m.appendChild(rm); m.appendChild(cn);
+      if (!_gedS || _gedS.source !== 'share') m.appendChild(rm);   // a shared tree is copied as it is shown: no removing people from it
+      m.appendChild(cn);
       m.addEventListener('keydown', function(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeCardMenu(); } });
       st.wrap.appendChild(m); st.menu = m;
       var cx = (pos[0] - j.W / 2 + j.dims.tx) * st.k, cy = (pos[1] - j.H / 2 + j.dims.ty) * st.k, ch = j.H * st.k;
@@ -28972,7 +29011,7 @@
     body.appendChild(_gedEl('p', GED_NOTE, h.intro(d)));
     h.extras(body);
     body.appendChild(_gedEl('div', lab, 'How it looks as a tree'));
-    body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
+    body.appendChild(_gedEl('div', GED_NOTE + ';margin:0 0 6px', s.source === 'share' ? (hasMatches ? 'Tap a person to say whether they are already in your tree. Everyone else is added as a new person.' : 'Nobody here looks like someone already in your tree, so everyone is added as a new person.') : 'Tap a person to remove them' + (hasMatches ? ' or to say whether they are already in your tree' : '') + '. Their children stay connected through the other parent.'));
     var go, msg;
     // paintMatchStatus: the match status line, the "This will add" box and the Import button label, all from the current choices (so a choice on a card shows at once).
     function paintMatchStatus() {
@@ -29025,7 +29064,8 @@
     var n = s.checkMatch ? _gedCheckCounts().included : 0;
     go = _gedBtn('Import', GED_BTN_MAIN, _gedCommit); go.id = 'gedCheckGo';
     bar.appendChild(go);
-    bar.appendChild(_gedBtn('Choose ' + h.another, GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
+    if (s.source === 'share') bar.appendChild(_gedBtn('Not now', GED_BTN, _shareImportNotNow));
+    else bar.appendChild(_gedBtn('Choose ' + h.another, GED_BTN, function() { s.step = 'choose'; _gedRender(); }));
     body.appendChild(bar);
     msg = _gedEl('div', 'font-size:0.8rem;color:var(--text-light);margin-top:8px'); msg.id = 'gedCheckMsg'; body.appendChild(msg);
     body.appendChild(_gedEl('p', GED_NOTE + ';margin-top:10px', 'Wrong connections are easy to fix in your tree afterwards.'));
@@ -29056,7 +29096,8 @@
       if (r.people_merged) lines.push(_gedPlural(r.people_merged, 'person', 'people') + ' matched to people you already had');
       lines.push((r.families_added || r.families_reused) ? 'Relationships added' + (r.families_reused ? ', and existing relationships extended' : '') : 'No new relationships');
       var ul = _gedEl('ul', 'margin:0 0 10px;padding-left:18px;font-size:0.9rem;color:var(--text);line-height:1.6'); lines.forEach(function(l) { ul.appendChild(_gedEl('li', null, l)); }); body.appendChild(ul);
-      if (r.already_done) body.appendChild(_gedEl('p', GED_NOTE, 'This file had already been imported, so nothing more was added.'));
+      if (r.already_done && s.source === 'share') body.appendChild(_gedEl('p', GED_NOTE, 'This tree had already been copied, so nothing more was added.'));
+      if (r.already_done && s.source !== 'share') body.appendChild(_gedEl('p', GED_NOTE, 'This file had already been imported, so nothing more was added.'));
       if (r.warning_count) {
         var det = _gedEl('details', 'margin:0 0 10px;font-size:0.82rem;color:var(--text)'); det.open = true;
         det.appendChild(_gedEl('summary', 'cursor:pointer;color:var(--text-light)', _gedPlural(r.warning_count, 'thing', 'things') + ' did not go in'));
@@ -29077,9 +29118,225 @@
     body.appendChild(bar);
   }
 
+  // ── FAM-29 step 4: copy a shared family tree into your own account ──────────────────────────────────────────────
+  // The visitor presses Copy this tree on the anonymous share page (shareImportStart). The page keeps the link (the token) in this browser,
+  // sends them to the app, and after sign in (and after onboarding, so their own entry exists) the APP runs the copy itself (_shareImportRun).
+  // They never go back to the share page. A person with no tree gets no checking screen: the server preview is read for who the link was
+  // made for, then the commit runs. A person who already has a tree gets the shared checking screen (hook GED_CHECK.share). The server
+  // (TREE_PROXY share_import_preview / share_import_commit) builds the people from the link itself; this page never sends people.
+  var SHARE_IMPORT_KEY = 'lt_pending_share_import';
+  var SHARE_IMPORT_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var SHARE_IMPORT_KEEP_MS = 7 * 24 * 3600 * 1000;   // a kept link older than a week is dropped
+  var SHARE_IMPORT_FINAL = { bad_link: 1, link_not_found: 1, not_tree_link: 1, link_expired: 1, own_tree: 1, link_cap: 1, too_many: 1, nothing_to_import: 1 };
+
+  // Browser storage, always inside try and catch (it can be blocked, full or empty). Session storage first, then local storage.
+  function _shareImportLoad() {
+    var raw = null, o = null;
+    try { raw = sessionStorage.getItem(SHARE_IMPORT_KEY); } catch (e) { raw = null; }
+    if (!raw) { try { raw = localStorage.getItem(SHARE_IMPORT_KEY); } catch (e2) { raw = null; } }
+    if (!raw) return null;
+    try { o = JSON.parse(raw); } catch (e3) { o = null; }
+    if (!o || typeof o.t !== 'string' || !SHARE_IMPORT_TOKEN_RE.test(o.t) || typeof o.k !== 'string' || o.k.length < 8 || o.k.length > 100) return null;
+    if (!(+o.at) || Date.now() - (+o.at) > SHARE_IMPORT_KEEP_MS) { _shareImportClear(); return null; }
+    return o;
+  }
+  // true when at least one store kept it
+  function _shareImportSave(o) {
+    var ok = false, s = JSON.stringify(o);
+    try { sessionStorage.setItem(SHARE_IMPORT_KEY, s); ok = true; } catch (e) { /* blocked */ }
+    try { localStorage.setItem(SHARE_IMPORT_KEY, s); ok = true; } catch (e2) { /* blocked */ }
+    return ok;
+  }
+  function _shareImportClear() {
+    window._pendingShareImport = null;
+    try { sessionStorage.removeItem(SHARE_IMPORT_KEY); } catch (e) { /* none */ }
+    try { localStorage.removeItem(SHARE_IMPORT_KEY); } catch (e2) { /* none */ }
+  }
+
+  // Share page: Copy this tree. Keeps the link, then goes to the app (the sign in screen, or straight into the copy when already signed in).
+  function shareImportStart() {
+    var tok = new URLSearchParams(window.location.search).get('share') || '';
+    if (!SHARE_IMPORT_TOKEN_RE.test(tok)) { alert('This link is not complete, so it cannot be copied. Please open the link you were sent again, or ask for a new one.'); return; }
+    tok = tok.toLowerCase();
+    var kept = _shareImportLoad();
+    var key = (kept && kept.t === tok) ? kept.k : _gedNewKey('shareimp');   // one key per attempt, the same key on a retry
+    var stored = _shareImportSave({ t: tok, k: key, at: Date.now() });
+    // when the browser will not keep it, the link travels in the address instead; that only works without a sign in round trip (already signed in)
+    window.location.href = window.location.origin + window.location.pathname + (stored ? '' : '?share_import=' + encodeURIComponent(tok));
+  }
+
+  // App start: pick up a kept link (or the address fallback) and, when nobody is signed in yet, say on the sign in page what is waiting.
+  function _shareImportBoot() {
+    var q = new URLSearchParams(window.location.search).get('share_import');
+    if (q) {
+      history.replaceState(null, '', window.location.pathname);
+      if (SHARE_IMPORT_TOKEN_RE.test(q)) {
+        q = q.toLowerCase();
+        var kept0 = _shareImportLoad();
+        var key = (kept0 && kept0.t === q) ? kept0.k : _gedNewKey('shareimp');
+        if (!_shareImportSave({ t: q, k: key, at: Date.now() })) window._shareImportMemOnly = true;
+        window._pendingShareImport = { token: q, key: key };
+      }
+    } else {
+      var kept = _shareImportLoad();
+      if (kept) window._pendingShareImport = { token: kept.t, key: kept.k };
+    }
+    if (!window._pendingShareImport) return;
+    var land = document.getElementById('landingScreen');
+    if (land && !document.getElementById('landingShareImportBar')) {
+      var bar = document.createElement('div'); bar.id = 'landingShareImportBar';
+      bar.style.cssText = 'margin:0;padding:12px 16px;background:var(--gold);color:#1a1208;font-family:Lato,sans-serif;font-size:0.92rem;font-weight:700;text-align:center;line-height:1.4';
+      bar.textContent = 'Sign in or create a free account and we will copy the family tree you were looking at into your account.';
+      land.insertBefore(bar, land.firstChild);
+    }
+  }
+
+  // After sign in: run it once the person has a name (onboarding finished). A brand new person is still in onboarding here, so obEnterApp runs it later.
+  function _shareImportSoon() {
+    if (!window._pendingShareImport || window._shareImportBusy) return;
+    if (!(userProfile && userProfile.name)) return;
+    setTimeout(function() { _shareImportRun('login').catch(function(e) { try { logActivity('share_import_error', 'run: ' + String(e && e.message || e), 'error', 'PEOPLE'); } catch (e2) {} }); }, 0);
+  }
+
+  function _shareEnsureOwner() {
+    return (async function() {
+      var h = getAuthHeaders(), base = DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id + '&select=id&limit=1';
+      var r1 = await _mpTimedFetch(base + '&is_owner=eq.true', { headers: h });
+      if (!r1.ok) { var e1 = new Error('own entry check'); e1.status = r1.status; e1.code = 'prep_failed'; throw e1; }
+      var owners = await r1.json();
+      var r2 = await _mpTimedFetch(base + '&is_owner=eq.false', { headers: h });
+      if (!r2.ok) { var e2 = new Error('tree check'); e2.status = r2.status; e2.code = 'prep_failed'; throw e2; }
+      var others = await r2.json();
+      if (!owners.length) {
+        // the same row My People would create on first open, made now so the copy can join the right person to it and nobody ends up twice
+        var rc = await _mpTimedFetch(DB_PEOPLE_URL, { method: 'POST', headers: Object.assign({}, h, { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ user_id: currentUser.id, name: (userProfile && (userProfile.name || userProfile.firstName)) || 'You', is_owner: true, bucket: 'family' }) });
+        if (!rc.ok) { var e3 = new Error('own entry create'); e3.status = rc.status; e3.code = 'prep_failed'; throw e3; }
+      }
+      return { hasTree: others.length > 0 };
+    })();
+  }
+
+  function _shareModalOpen() {
+    var m = document.getElementById('gedModal'); if (!m) return false;
+    m.style.display = 'flex'; return true;
+  }
+  function _shareModalClose() {
+    var m = document.getElementById('gedModal'); if (m) m.style.display = 'none';
+    _gedS = null;
+  }
+  function _shareWorking(text) {
+    if (!_shareModalOpen()) return;
+    _gedS = { step: 'sharework', source: 'share', busy: true, key: null, msg: text };
+    _gedRender();
+  }
+
+  // The reply of each refusal, in the importer's own words: what happened and what to do next. Never the server's raw text.
+  function _shareErrInfo(e) {
+    var code = (e && e.code) || '', st = e && e.status, b = (e && e.body) || {}, sfx = st ? ' (status ' + st + ')' : '';
+    var t;
+    if (code === 'login_required' || st === 401) t = 'Your sign in has run out, so nothing was copied. Sign in again and we will carry on with this family tree.' + sfx;
+    else if (code === 'bad_link') t = 'That does not look like a complete LifeTold tree link, so nothing was copied. Open the link you were sent again, or ask the person who sent it for a new one.';
+    else if (code === 'link_not_found') t = 'We could not find this link. It may have been deleted. Ask the person who sent it to share a new link with you.';
+    else if (code === 'not_tree_link') t = 'This link is not for a family tree, so there is no tree to copy. Ask the person who sent it for a family tree link.';
+    else if (code === 'link_expired') t = 'This link has expired, so nothing was copied. Ask the person who sent it to share a new link with you.';
+    else if (code === 'own_tree') t = 'This is a link to your own family tree, so there is nothing to copy. Share it with a relative instead.';
+    else if (code === 'link_cap') t = 'This link has already been copied as many times as it allows, so nothing was copied. Ask the person who sent it to share a new link with you.';
+    else if (code === 'person_cap') t = 'You have copied several trees in the last hour, which is the most we allow, so nothing was copied this time. Wait about an hour, then try again. Your link is saved.';
+    else if (code === 'too_many') t = 'This tree is bigger than one copy can take' + (b.people ? ' (it has ' + b.people + ' people and ' + b.families + ' families; the limit is 2000 of each)' : ' (the limit is 2000 people and 2000 families)') + ', so nothing was copied. Ask the person who sent it to share a smaller tree.';
+    else if (code === 'nothing_to_import') t = 'There is nobody in this tree to copy. Ask the person who sent it to check what they shared.';
+    else if (code === 'tree_changed') t = 'The tree changed while it was being copied, so nothing was added. Please try again.';
+    else if (code === 'prep_failed') t = 'We could not get your own tree ready for the copy, so nothing was added. Check your connection and try again in a minute.' + sfx;
+    else if (!st) t = 'We could not reach LifeTold, so nothing was copied. Check your internet connection and try again.';
+    else t = 'The copy could not be finished and nothing was added. Wait a minute and try again. If it keeps happening, contact support and mention the status below.' + sfx;
+    return { text: t, final: !!SHARE_IMPORT_FINAL[code], code: code };
+  }
+  function _shareShowError(e, where) {
+    var info = _shareErrInfo(e);
+    if (info.final) _shareImportClear();   // a refusal that can never pass: stop keeping the link
+    if (!_shareModalOpen()) return;
+    _gedS = { step: 'sharemsg', source: 'share', busy: false, msg: info.text, final: info.final, key: null };
+    _gedRender();
+  }
+  function _gedRenderShareWork(body) {
+    body.appendChild(_gedEl('p', 'font-size:0.95rem;color:var(--text);margin:12px 0 4px;font-weight:700', _gedS.msg || 'Copying the family tree\u2026'));
+    body.appendChild(_gedEl('p', GED_NOTE, 'Please keep this screen open. It is saved all at once, so if anything goes wrong nothing is changed.'));
+  }
+  function _gedRenderShareMsg(body) {
+    var s = _gedS;
+    body.appendChild(_gedEl('p', 'font-size:0.95rem;color:#b3261e;margin:8px 0 6px;font-weight:700', 'The family tree was not copied'));
+    body.appendChild(_gedEl('p', GED_NOTE, s.msg || ''));
+    var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
+    if (!s.final) bar.appendChild(_gedBtn('Try again', GED_BTN_MAIN, function() { _shareModalClose(); _shareImportRun('retry'); }));
+    bar.appendChild(_gedBtn(s.final ? 'Close' : 'Not now', s.final ? GED_BTN_MAIN : GED_BTN, function() { _shareImportClear(); _shareModalClose(); }));
+    body.appendChild(bar);
+  }
+  function _shareImportNotNow() {
+    try { logActivity('share_import_declined', 'checking screen', 'info', 'PEOPLE'); } catch (e) {}
+    _shareImportClear(); _shareModalClose();
+  }
+
+  // The checking screen hook for a shared tree: the same screen as a photo or a file, no AI, the people come from the server.
+  GED_CHECK.share = {
+    what: 'the shared tree', another: 'another tree', log: 'share',
+    aria: 'The shared family tree, drawn as a family tree. Tap a person for options.',
+    intro: function(d) {
+      var from = (_gedS && _gedS.fromName) || 'Someone';
+      return from + ' shared a family tree of ' + _gedPlural(d.people.length, 'person', 'people') + ' with you. Look it over before you copy it into your own tree. You get names, relationships and the details the link shows, but not stories or notes. Nobody is joined to people already in your tree unless you say so.';
+    },
+    extras: function(body) {
+      var w = (_gedS && _gedS.prev && _gedS.prev.warnings) || [];
+      if (!w.length) return;
+      var det = _gedEl('details', 'margin:0 0 12px;font-size:0.82rem;color:var(--text)');
+      det.appendChild(_gedEl('summary', 'cursor:pointer;color:var(--text-light)', _gedPlural(w.length, 'thing', 'things') + ' to know about this tree'));
+      var wl = _gedEl('ul', 'margin:6px 0 0;padding-left:18px;line-height:1.5');
+      w.slice(0, 30).forEach(function(x) { wl.appendChild(_gedEl('li', null, String(x))); });
+      det.appendChild(wl); body.appendChild(det);
+    },
+    matchCall: function() { return _gedCall('share_import_preview', { share_token: _gedS.shareToken }); },
+    src: function() { return { share_token: _gedS.shareToken }; }
+  };
+
+  // Runs the copy. Returns 'opened' when the person was taken to My People, otherwise 'check' (checking screen open), 'refused' or 'busy'.
+  async function _shareImportRun(via) {
+    var p = window._pendingShareImport;
+    if (!p || window._shareImportBusy || !currentUser) return 'busy';
+    window._shareImportBusy = true;
+    try {
+      try { logActivity('share_import_started', 'via ' + via, 'info', 'PEOPLE'); } catch (e0) {}
+      _shareWorking('Getting your family tree ready\u2026');
+      var prep;
+      try { prep = await _shareEnsureOwner(); } catch (ep) { logActivity('share_import_refused', 'prepare: ' + ((ep && ep.code) || (ep && ep.status) || 'error'), 'warn', 'PEOPLE'); _shareShowError(ep, 'prepare'); return 'refused'; }
+      var prev;
+      try { prev = await _gedCall('share_import_preview', { share_token: p.token }); } catch (ev) { logActivity('share_import_refused', 'preview: ' + ((ev && ev.code) || (ev && ev.status) || 'error'), 'info', 'PEOPLE'); _shareShowError(ev, 'preview'); return 'refused'; }
+      var from = (prev.share && prev.share.from) || 'Someone';
+      if (prep.hasTree) {
+        // already has people: the shared checking screen, inside the app. Nothing is joined until the person says Yes.
+        _shareModalOpen();
+        _gedS = { step: 'check', source: 'share', busy: false, key: p.key, shareToken: p.token, fromName: from, prev: prev };
+        var d = _gedDraftFromFile(prev);
+        d.people.forEach(function(x) { if (!String(x.name || '').trim()) x.name = 'Unnamed'; });
+        _gedS.draft = d; _gedS.checkMatch = prev; _gedS.matchDec = {}; _gedS.matchFail = false; _gedS.stale = false; _gedS.checking = false;
+        _gedS.undo = null; _gedS.removed = []; _gedS.photoUrl = null; _gedS.photoNotes = [];
+        _gedRender();
+        return 'check';
+      }
+      // a new tree: nothing to match and nothing to check. The person the link was made for (the owner's choice) becomes them, when there is one.
+      _shareWorking('Copying ' + from + '\u2019s family tree\u2026');
+      var ownerRef = (prev.share && prev.share.viewer_ref) || null, res;
+      try { res = await _gedCall('share_import_commit', { share_token: p.token, mode: 'add', decisions: {}, owner_ref: ownerRef, import_key: p.key }); }
+      catch (ec) { logActivity('share_import_refused', 'commit: ' + ((ec && ec.code) || (ec && ec.status) || 'error'), 'info', 'PEOPLE'); _shareShowError(ec, 'commit'); return 'refused'; }
+      _shareImportClear(); _shareModalClose();
+      try { logActivity('share_import', (res.people_added || 0) + ' added, no checking screen', 'info', 'PEOPLE'); } catch (e1) {}
+      try { await openMyPeople(); } catch (eo) { try { logActivity('people_error', 'open after share import: ' + (eo && eo.message || eo), 'warn', 'PEOPLE'); } catch (e2) {} }
+      toast(from + '\u2019s family tree has been copied into My People.', 6000);
+      return 'opened';
+    } finally { window._shareImportBusy = false; }
+  }
+
   async function _gedCommit() {
     var s = _gedS; if (!s || s.busy || !_gedCheckReady().ok) return;
-    if (!isPremium()) {   // a friendly early nudge; the server checks Premium again and is the real gate
+    if (s.source !== 'share' && !isPremium()) {   // a friendly early nudge; the server checks Premium again and is the real gate (a shared tree is free to copy, D2)
       try { logActivity('premium_gate_hit', 'feature=tree_import', 'info', 'RL'); } catch (e) {}
       var c0 = _gedCheckCounts();
       _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Upgrade to add these ' + c0.included + ' people to your tree. Nothing has been changed.' });
@@ -29091,8 +29348,9 @@
       var h = _gedHook(), pd = _gedCheckDecisions();
       if (!s.key) s.key = _gedNewKey(s.source === 'photo' ? 'photo' : 'gedcom');
       // an import only ever adds to the tree (FAM-28: no replace, no undo; tree versions, FAM-24, cover both); the choices were made on the tree screen
-      s.result = await _gedCall('gedcom_commit', Object.assign(h.src(), { mode: 'add', decisions: pd.decisions, owner_ref: pd.owner, import_key: s.key }));
+      s.result = await _gedCall(s.source === 'share' ? 'share_import_commit' : 'gedcom_commit', Object.assign(h.src(), { mode: 'add', decisions: pd.decisions, owner_ref: pd.owner, import_key: s.key }));
       s.busy = false; s.step = 'done';
+      if (s.source === 'share') { _shareImportClear(); try { logActivity('share_import', (s.result.people_added || 0) + ' added, ' + (s.result.people_merged || 0) + ' matched, checking screen', 'info', 'PEOPLE'); } catch (e9) {} }
       try { await _mpLoad(); if (typeof _mpActiveTab !== 'undefined' && _mpActiveTab === 'directory') mpDirRender(); } catch (e) { dbgErr('PEOPLE', 'reload after import: ' + (e && e.message)); try { logActivity('people_error', 'reload after import: ' + (e && e.message), 'warn', 'PEOPLE'); } catch (e2) {} }
       try { logActivity('gedcom_import', (s.result.people_added || 0) + ' added, ' + (s.result.people_merged || 0) + ' matched, ' + s.source, 'info', 'PEOPLE'); } catch (e) {}
       _gedRender();
@@ -29100,6 +29358,7 @@
       s.busy = false;
       if (e && (e.status === 403 || e.code === 'premium_required')) { s.step = 'check'; _gedRender(); _showRateLimitModal({ msg: 'Importing a family tree is a Premium feature', sub: 'Your account is not on Premium, so nothing was imported.' }); return; }
       if (e && e.code === 'tree_changed') { s.step = 'check'; s.checkMatch = null; s.stale = true; _gedRender(); _gedCheckMatches(); return; }   // no need to read the photo or choose the file again: only the matches are checked again
+      if (s.source === 'share') { logActivity('share_import_refused', 'commit: ' + ((e && e.code) || (e && e.status) || 'error'), 'info', 'PEOPLE'); _shareShowError(e, 'commit'); return; }   // FAM-29 step 4: each refusal in the importer's own words
       s.step = 'error'; s.error = (e && e.message) ? e.message : String(e);
       try { notifyDev('error', 'PEOPLE', 'GEDCOM import failed: ' + s.error); logActivity('people_error', 'gedcom import: ' + s.error, 'error', 'PEOPLE'); } catch (e2) {}
       _gedRender();
