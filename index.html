@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.366">
+  <meta name="lifetold-version" content="v7.367">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5414,7 +5414,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.366';
+  const APP_VERSION = 'v7.367';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5425,7 +5425,7 @@
   // file for the full explanation. Short version: single flat offset broke
   // once DEVX-01 added scattered DEVONLY spans; this table + resolver
   // replaces it. AUTO-PATCHED by the deployer every deploy — do not hand-edit.
-  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":14387},{"maxLine":2092,"offset":14388},{"maxLine":2886,"offset":14389},{"maxLine":2941,"offset":14392},{"maxLine":3364,"offset":14393},{"maxLine":3544,"offset":14394},{"maxLine":5420,"offset":14395},{"maxLine":5887,"offset":14403},{"maxLine":6347,"offset":14413},{"maxLine":6359,"offset":14415},{"maxLine":7210,"offset":14416},{"maxLine":7489,"offset":14417},{"maxLine":8004,"offset":14418},{"maxLine":8419,"offset":14419},{"maxLine":8830,"offset":14420},{"maxLine":9601,"offset":14421},{"maxLine":11113,"offset":14423},{"maxLine":12366,"offset":14424},{"maxLine":12548,"offset":14425},{"maxLine":13264,"offset":14426},{"maxLine":13282,"offset":14428},{"maxLine":15113,"offset":14430},{"maxLine":16236,"offset":14431},{"maxLine":16238,"offset":14432},{"maxLine":16950,"offset":14433},{"maxLine":17827,"offset":14434},{"maxLine":19935,"offset":14437},{"maxLine":20252,"offset":14438},{"maxLine":20513,"offset":14439},{"maxLine":21108,"offset":14440},{"maxLine":21298,"offset":14441},{"maxLine":21501,"offset":14442},{"maxLine":21898,"offset":14443},{"maxLine":22140,"offset":14444},{"maxLine":22895,"offset":14445},{"maxLine":22935,"offset":14446},{"maxLine":23089,"offset":14447},{"maxLine":24943,"offset":14448},{"maxLine":25401,"offset":14449},{"maxLine":28248,"offset":14898},{"maxLine":29956,"offset":14899},{"maxLine":31061,"offset":14900},{"maxLine":33186,"offset":14902},{"maxLine":null,"offset":14903}];
+  const _LOG_LINE_OFFSET_TABLE = [{"maxLine":777,"offset":14421},{"maxLine":2092,"offset":14422},{"maxLine":2888,"offset":14423},{"maxLine":2943,"offset":14426},{"maxLine":3366,"offset":14427},{"maxLine":3546,"offset":14428},{"maxLine":5422,"offset":14429},{"maxLine":5889,"offset":14437},{"maxLine":6349,"offset":14447},{"maxLine":6361,"offset":14449},{"maxLine":7240,"offset":14450},{"maxLine":7519,"offset":14451},{"maxLine":8034,"offset":14452},{"maxLine":8449,"offset":14453},{"maxLine":8860,"offset":14454},{"maxLine":9633,"offset":14455},{"maxLine":11148,"offset":14457},{"maxLine":12401,"offset":14458},{"maxLine":12583,"offset":14459},{"maxLine":13299,"offset":14460},{"maxLine":13317,"offset":14462},{"maxLine":15148,"offset":14464},{"maxLine":16271,"offset":14465},{"maxLine":16273,"offset":14466},{"maxLine":16985,"offset":14467},{"maxLine":17862,"offset":14468},{"maxLine":19970,"offset":14471},{"maxLine":20287,"offset":14472},{"maxLine":20548,"offset":14473},{"maxLine":21143,"offset":14474},{"maxLine":21333,"offset":14475},{"maxLine":21536,"offset":14476},{"maxLine":21933,"offset":14477},{"maxLine":22175,"offset":14478},{"maxLine":22930,"offset":14479},{"maxLine":22970,"offset":14480},{"maxLine":23124,"offset":14481},{"maxLine":24978,"offset":14482},{"maxLine":25436,"offset":14483},{"maxLine":28283,"offset":14932},{"maxLine":30218,"offset":14933},{"maxLine":31323,"offset":14934},{"maxLine":33448,"offset":14936},{"maxLine":null,"offset":14937}];
   // Static — never needs to change; the deployer only ever rewrites the table above.
   function _resolveLogLineOffset(rawLine) {
     if (typeof _LOG_LINE_OFFSET_TABLE === 'undefined' || !_LOG_LINE_OFFSET_TABLE.length) return 7488; // last-resort fallback
@@ -6883,18 +6883,19 @@
               if (st === 429) return 'Too many listens from this device just now. Please wait a few minutes and try again.';
               if (st === 410 || st === 404) return 'This link is no longer available, so it cannot be read aloud.';
               if (st === 502) return 'The reading voice did not respond. Please try again in a moment.';
+              if (st === 400) return 'This story may have been changed while you were listening. Please reload this page and press Listen again.';   // v7.367: the server reads its own copy, so a changed story no longer matches this page
+              if (st === 413) return 'One part of this story is too long to read aloud.';
               if (err && err.name === 'AbortError') return 'The reading voice took too long. Please check your connection and try again.';
               if (st) return 'Listening stopped because the server answered with code ' + st + '. Please try again, and let the person who shared this know if it keeps happening.';
               return 'Could not reach the server. Please check your connection and try again.';
             }
             function _spIsFinal(err) { return !!(err && (err.listenPaused || err.status === 429 || err.status === 410 || err.status === 404 || err.status === 413 || err.status === 400)); }
 
-            function _spFetchSegment(text, attempt) {
+            // v7.367 (SEC-SHARE-01a): the page asks for a LINE of the story by number and the server speaks its own copy of that line. 0 is the title (or the
+            // A song called line), 1 onwards are the segments, in the order _getSegments gives them. No text and no voice are sent: the voice is the one saved on the link.
+            function _spFetchSegment(segIdx, attempt) {
               attempt = attempt || 1;
-              var spBody = { action: 'get_tts', token: token, text: text };
-              if (typeof _cachedStoryReaderVoiceId !== 'undefined' && _cachedStoryReaderVoiceId) {
-                spBody.voice_id = _cachedStoryReaderVoiceId; // APP-53 Phase 3
-              }
+              var spBody = { action: 'get_tts', token: token, segment: segIdx };
               // 15s timeout — without this, a stalled request (common on flaky mobile
               // networks) hangs the await forever; background music keeps playing with
               // no narration and no error, looking like the player silently broke.
@@ -6925,7 +6926,7 @@
                 // One retry on first failure (covers transient drops / timeouts);
                 // give up after that so we don't loop forever on a truly dead connection.
                 if (attempt < 2 && !_shareStopFlag && !_spIsFinal(err)) {   // v7.354: a refusal is not retried
-                  return _spFetchSegment(text, attempt + 1);
+                  return _spFetchSegment(segIdx, attempt + 1);
                 }
                 throw err;
               });
@@ -6954,7 +6955,7 @@
                 : data.piece.title || '';
               if (_spAnnounce) {
                 try {
-                  var announceDecoded = await _spFetchSegment(_spAnnounce);
+                  var announceDecoded = await _spFetchSegment(0);
                   if (!_shareStopFlag) {
                     if (isSong && bgMusicUrl) await _spStartBgMusic();
                     _spDuck();
@@ -6968,7 +6969,7 @@
               if (_shareStopFlag) { _sharePlaying = false; _spStopMusic(); return; }
 
               // Decode first TTS segment; then start music if no announce (song without title)
-              var firstDecoded = await _spFetchSegment(segments[0].text);
+              var firstDecoded = await _spFetchSegment(1);
               if (_shareStopFlag) { _sharePlaying = false; _spStopMusic(); return; }
 
               // Only start music/update UI here if announce didn't already do it
@@ -6984,7 +6985,7 @@
                 if (_shareStopFlag) break;
                 var decoded;
                 try {
-                  decoded = si === 0 ? firstDecoded : await _spFetchSegment(segments[si].text);
+                  decoded = si === 0 ? firstDecoded : await _spFetchSegment(si + 1);
                 } catch (segErr) {
                   logActivity('share_listen_segment_error',
                     JSON.stringify({
