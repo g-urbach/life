@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.373">
+  <meta name="lifetold-version" content="v7.374">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -2925,7 +2925,7 @@
                upload action exists on SHARE_PROXY_URL. -->
 
           <!-- Privacy notice (PRV-03; SHARE-ID-5c: one line, no tickbox - the notice is what matters, pressing Send is the action) -->
-          <p id="shareFbPrivacyNote" style="margin:0 0 14px;font-size:0.8rem;color:var(--text-light);line-height:1.5">Your name and message are stored securely and shared only with the person who invited you.</p>
+          <p id="shareFbPrivacyNote" style="margin:0 0 14px;font-size:0.8rem;color:var(--text-light);line-height:1.5">Your name and message are shared only with the person who invited you.</p>
 
           <!-- aria-hidden so screen readers ignore it; autocomplete=off so browsers don't prefill -->
           <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
@@ -5455,7 +5455,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.373';
+  const APP_VERSION = 'v7.374';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -6643,7 +6643,7 @@
     var fab = document.getElementById('spFbFab');
     if (fab) fab.textContent = '\uD83D\uDCAC ' + (hasNote ? (_spAuthorName ? 'Reply to ' + _spAuthorName : 'Reply') : (_spAuthorName ? 'Share your thoughts with ' + _spAuthorName : 'Share your thoughts'));
     var pn = document.getElementById('shareFbPrivacyNote');   // the notice names who sees the message
-    if (pn) pn.textContent = 'Your name and message are stored securely and shared only with ' + (_spAuthorName || 'the person who invited you') + '.';
+    if (pn) pn.textContent = 'Your name and message are shared only with ' + (_spAuthorName || 'the person who invited you') + '.';
   }
   // A visitor's name is remembered on their own device so a second reply does not ask again.
   var _shareNameWired = false;
@@ -10082,11 +10082,18 @@
       userProfile.relationship = relationshipEntry?.answer ?? null;
       // Only name is required — DOB and sex are optional (privacy: user can skip)
       userProfile.shareOnly = !!entries.find(e => e.category === '_profile_share_only' && String(e.answer) === '1');   // SHARE-ID-3: set when a person arrived through a shared tree; SHARE-ID-4 reads it
+      // SHARE-ID-5c: (1) belt and braces: a kept tree link is looked for again here, in case the pickup at page start missed it
+      if (!userProfile.name && !window._pendingShareImport) { try { var _kp = _shareImportLoad(); if (_kp) window._pendingShareImport = { token: _kp.t, key: _kp.k }; } catch (e) {} }
+      // (2) one line of evidence for every decision between the name sheet and the full onboarding (it was silent before)
+      if (!userProfile.name || window._pendingShareImport) { try { logActivity('share_import_route', JSON.stringify({ pending: !!window._pendingShareImport, hasName: !!userProfile.name, shareOnly: !!userProfile.shareOnly }), 'info', 'SHARE'); } catch (e) {} }
       if (!userProfile.name && window._pendingShareImport && _shareNameOpen()) {
         // SHARE-ID-3: a person who pressed Import on a share page confirms their name first (small sheet); the copy runs after it, not the full onboarding
       } else if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
         _obStartStep1(); // UX-C02: kick off Gethro intro speech on step 1
+      } else if (userProfile.shareOnly && window._pendingShareImport) {
+        // SHARE-ID-5c: a share only account (name already confirmed) pressing Import again goes straight to the copy, not the dashboard:
+        // showPanel('dashboard') would send a share only account to onboarding before the copy ran. The copy starts below (_shareImportSoon), then My People opens.
       } else {
         // UX-H02: returning users land on Dashboard — but restore last tab if available
         // (covers mobile focus-return / page reload after OS kills the tab)
