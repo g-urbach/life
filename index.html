@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.368">
+  <meta name="lifetold-version" content="v7.369">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -1408,6 +1408,22 @@
     .sp-fb-close, .sp-fab, .sp-fb-backdrop { display: none; }
     #shareScreen.sp-tree { position: fixed; inset: 0; z-index: 900; overflow: hidden; min-height: 0 !important; display: flex !important; flex-direction: column; padding-top: var(--uat-banner-offset, 0px); box-sizing: border-box; background: var(--bg); }
     #shareScreen.sp-tree #shareWrap { max-width: none !important; width: 100%; padding: 0 !important; margin: 0 !important; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    /* SHARE-ID-1: the sign in bar. Normal share page: a rounded strip above the header. Tree page: a slim full width strip above the tree bar. */
+    .share-auth-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin: 0 0 18px 0; font-family: Lato, sans-serif; }
+    .share-auth-msg { flex: 1 1 200px; min-width: 0; font-size: 0.8rem; line-height: 1.45; color: var(--text-light); }
+    .share-auth-msg a { color: var(--gold-dark); }
+    .share-auth-msg strong { color: var(--text); }
+    .share-auth-btn { flex: 0 0 auto; padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-family: Lato, sans-serif; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+    .share-auth-btn-primary { background: var(--gold-dark); border-color: var(--gold-dark); color: #fff; }
+    .share-auth-btn[disabled] { opacity: 0.6; cursor: default; }
+    .share-need-signin { position: fixed; inset: 0; z-index: 2300; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,0.45); }
+    .share-need-card { width: min(380px, 100%); box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 14px; padding: 22px 20px 18px; text-align: center; font-family: Lato, sans-serif; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+    .share-need-title { margin: 0 0 8px; font-size: 1.02rem; font-weight: 700; line-height: 1.4; }
+    .share-need-sub { margin: 0 0 16px; font-size: 0.86rem; line-height: 1.5; color: var(--text-light); }
+    .share-need-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .share-auth-err { margin: -10px 0 16px 0; font-size: 0.82rem; line-height: 1.5; color: var(--rose); text-align: center; }
+    #shareScreen.sp-tree #shareAuthBar { flex-shrink: 0; margin: 0; border-radius: 0; border-width: 0 0 1px 0; padding: 6px 12px; }
+    #shareScreen.sp-tree #shareAuthErr { flex-shrink: 0; margin: 0; padding: 6px 12px; background: var(--surface); }
     #shareScreen.sp-tree #shareHeader, #shareScreen.sp-tree #shareFooterCta, #shareScreen.sp-tree #shareOwnerNote, #shareScreen.sp-tree #shareLoading { display: none !important; }
     #shareScreen.sp-tree #shareContent { flex: 1; min-height: 0; display: flex !important; flex-direction: column; }
     #shareScreen.sp-tree #shareExpiryWarning { margin: 0 !important; border-radius: 0 !important; border-width: 0 0 1px 0 !important; flex-shrink: 0; }
@@ -1415,6 +1431,8 @@
     #shareScreen.sp-tree #spBar { flex-shrink: 0; flex-wrap: nowrap !important; margin: 0 !important; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
     #shareScreen.sp-tree .sp-brand { display: inline-block; }
     #shareScreen.sp-tree #spBar button { width: 34px !important; height: 34px !important; }
+    /* v7.368: the line above made the Copy this tree button a 34px circle with its words spilling out; it is a pill that fits its words */
+    #shareScreen.sp-tree #spBar #spImportBtn { width: auto !important; min-width: 0; padding: 0 14px !important; border-radius: 17px !important; flex-shrink: 0; }
     #shareScreen.sp-tree #shareTreeViewport { flex: 1; min-height: 0 !important; height: auto !important; border: none !important; border-radius: 0 !important; }
     #shareScreen.sp-tree #shareFeedbackSection { position: fixed; z-index: 2100; top: var(--uat-banner-offset, 0px); right: 0; bottom: 0; width: min(400px, 100vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,0.12); overflow-y: auto; -webkit-overflow-scrolling: touch; transform: translateX(105%); visibility: hidden; transition: transform .22s ease, visibility 0s linear .22s; }
     #shareScreen.sp-tree.sp-fb-open #shareFeedbackSection { transform: none; visibility: visible; transition: transform .22s ease; }
@@ -2716,6 +2734,32 @@
 <div id="shareScreen" style="display:none;min-height:100vh;background:var(--bg);font-family:'Lato',sans-serif">
   <div id="shareWrap" style="max-width:640px;margin:0 auto;padding:32px 20px 60px">
 
+    <!-- SHARE-ID-1: sign in on every share page (memory, story, tree). Hidden until the share page has made its own
+         sign in client (_shareAuthBoot). Signing in is offered, never required. The sign in comes back to THIS share
+         address and the app does not open. Buttons are bound with direct listeners in _shareAuthBoot (SHARE-WIRE-01:
+         the delegated handler does not cover #shareScreen). -->
+    <div id="shareAuthBar" class="share-auth-bar" style="display:none">
+      <div id="shareAuthMsg" class="share-auth-msg">
+        <span id="shareAuthOut">Sign in with Google. This creates a LifeTold account. Your name is shown to the owner. <a href="/terms" target="_blank" rel="noopener">Terms</a> &middot; <a href="/privacy" target="_blank" rel="noopener">Privacy</a></span>
+        <span id="shareAuthIn" style="display:none">Signed in as <strong id="shareAuthName"></strong></span>
+      </div>
+      <button type="button" id="shareSignInBtn" class="share-auth-btn share-auth-btn-primary">Sign in with Google</button>
+      <button type="button" id="shareSignOutBtn" class="share-auth-btn" style="display:none">Sign out</button>
+    </div>
+    <p id="shareAuthErr" class="share-auth-err" role="alert" style="display:none"></p>
+
+    <!-- SHARE-ID-2: Import pressed while NOT signed in. The sign in comes back to this share page; the visitor presses Import again. -->
+    <div id="shareNeedSignIn" class="share-need-signin" style="display:none">
+      <div class="share-need-card" role="dialog" aria-modal="true" aria-labelledby="shareNeedTitle">
+        <p id="shareNeedTitle" class="share-need-title">You need to be signed in to use this feature</p>
+        <p class="share-need-sub">Sign in with Google, then press Import again on this page.</p>
+        <div class="share-need-btns">
+          <button type="button" id="shareNeedSignInBtn" class="share-auth-btn share-auth-btn-primary">Sign in</button>
+          <button type="button" id="shareNeedCloseBtn" class="share-auth-btn">Not now</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Header -->
     <div id="shareHeader" style="text-align:center;margin-bottom:28px">
       <!-- FAM-06-FOLLOWUP (2026-09-27): header brand now links to prod so a
@@ -2807,7 +2851,7 @@
             <div id="spTreeTitle" style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🌳 Family Tree</div>
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-            <button id="spImportBtn" type="button" title="Copy this family tree into your own free LifeTold account" style="height:28px;padding:0 12px;border:1px solid var(--gold);border-radius:14px;background:var(--gold);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;color:#1a1208;margin-right:4px;white-space:nowrap">Copy this tree</button>
+            <button id="spImportBtn" type="button" title="Use this tree as a foundation for my own family tree." aria-label="Import this tree: use it as a foundation for my own family tree" style="height:28px;padding:0 12px;border:1px solid var(--gold);border-radius:14px;background:var(--gold);font-family:'Lato',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;color:#1a1208;margin-right:4px;white-space:nowrap">Import</button>
             <button id="spNoteBtn" title="Message from the author" aria-label="Message from the author" style="display:none;width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text);align-items:center;justify-content:center">&#9993;</button>
             <button id="spFindBtn" title="Find a person" aria-label="Find a person" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#128269;</button>
             <button id="spZoomOutBtn" title="Zoom out" aria-label="Zoom out" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8722;</button>
@@ -2815,7 +2859,6 @@
             <button id="spRecentreBtn" title="Fit tree to screen" aria-label="Fit tree to screen" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font-size:0.88rem;cursor:pointer;color:var(--text)">&#8853;</button>
           </div>
         </div>
-        <div id="spImportNote" style="font-size:0.78rem;color:var(--text-light);line-height:1.45;margin:-6px 0 10px">Copy this tree into your own free LifeTold account to build on it for your family. You get the names, relationships and details shown here, and the photos if the owner chose to show them. You do not get stories or notes, and anyone hidden from this link is not included.</div>
         <div id="spFindRow" style="display:none;flex:none;position:relative;margin-bottom:10px;z-index:8">
           <input id="spFindInput" type="search" placeholder="Find a person&hellip;" aria-label="Find a person on the tree" autocomplete="off" autocapitalize="words" enterkeyhint="search" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;font-size:16px">
           <div id="spFindList" role="listbox" aria-label="People that match" style="display:none;position:absolute;left:0;right:0;top:100%;max-height:50vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.18)"></div>
@@ -2849,8 +2892,14 @@
         </div>
 
         <div id="shareFeedbackForm">
-          <!-- Name -->
-          <div style="margin-bottom:14px">
+          <!-- Name. SHARE-ID-1: for a signed in visitor with a usable name the box is replaced by a locked line; the server
+               takes the name from the verified account and ignores anything the page sends. -->
+          <div id="shareNameSigned" style="display:none;margin-bottom:14px">
+            <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Commenting as</label>
+            <div id="shareNameSignedText" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:0.95rem;color:var(--text);background:var(--surface2)"></div>
+            <div style="font-size:0.74rem;color:var(--text-light);margin-top:5px;line-height:1.5">This is your LifeTold name. You can change it in Settings in the app.</div>
+          </div>
+          <div id="shareNameWrap" style="margin-bottom:14px">
             <label style="font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-light);display:block;margin-bottom:5px">Your name <span style="color:var(--rose)">*</span></label>
             <input id="shareName" type="text" placeholder=""
               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:Lato,sans-serif;font-size:0.95rem;color:var(--text);background:var(--bg);box-sizing:border-box">
@@ -2879,7 +2928,7 @@
           <!-- Privacy notice + consent (PRV-03) -->
           <div style="background:rgba(201,169,110,0.07);border:1px solid rgba(201,169,110,0.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.78rem;color:var(--text-light);line-height:1.6">
             <strong style="color:var(--text);display:block;margin-bottom:4px">Your privacy</strong>
-            By sending this response, your name and message will be stored securely and shared only with the person who invited you. You can ask them to remove your response at any time by asking the person who shared this link with you.
+            By sending this response, your name and message will be stored securely and shared only with the person who invited you.
           </div>
           <label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;cursor:pointer;font-size:0.82rem;color:var(--text);line-height:1.5">
             <input type="checkbox" id="sharePrivacyConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
@@ -5414,7 +5463,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.368';
+  const APP_VERSION = 'v7.369';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -5612,6 +5661,139 @@
   }
   function _shareWithToken(init, token) {
     return Object.assign({}, init, { headers: Object.assign({}, init.headers, { 'Authorization': 'Bearer ' + token }) });
+  }
+
+  // ── SHARE-ID-1 (2026-11-19): sign in on every share page ─────────────────────────────────────────────────────────
+  // The share page used to return from init before any Supabase client existed, so it could not hold a session. Now it
+  // builds the same client as the app (pkce, _ltAuthLock) and calls getSession, which also swaps a returning ?code=.
+  // Signing in is OFFERED, never required. The sign in returns to THIS share address and the app does not open.
+  // The name on a comment is NOT taken from the page: SHARE_PROXY reads it from the verified account (action whoami
+  // tells the page what to show, submit_feedback does the same lookup again). ONE NAME PER USER: the current name.
+  var _shareViewer = null;       // { name, usable } from SHARE_PROXY whoami, or null (not signed in, or the answer failed)
+  var _shareAuthWired = false;
+  var _shareAuthBootP = null;    // the boot promise, so a quick press of Import waits for the session check
+  function _shareEl(id) { return document.getElementById(id); }
+  function _shareShowAuthErr(msg) {
+    var e = _shareEl('shareAuthErr'); if (!e) return;
+    e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none';
+  }
+  // Remove the leftovers of the Google round trip from the address, keeping ?share=TOKEN. Returns true when Google reported a failure.
+  function _shareCleanAuthUrl() {
+    var failed = false;
+    try {
+      var u = new URL(window.location.href), p = u.searchParams;
+      var h = new URLSearchParams((u.hash || '').replace(/^#/, ''));
+      failed = !!(p.get('error') || p.get('error_code') || p.get('error_description') || h.get('error') || h.get('error_code'));
+      var had = false;
+      ['code', 'error', 'error_code', 'error_description'].forEach(function(k) { if (p.has(k)) { p.delete(k); had = true; } });
+      var hash = u.hash || '';
+      if (h.get('error') || h.get('error_code') || h.get('access_token')) { hash = ''; had = true; }
+      if (had) history.replaceState(null, '', u.pathname + (p.toString() ? '?' + p.toString() : '') + hash);
+    } catch (e) {}
+    return failed;
+  }
+  function _shareRenderAuth() {
+    var bar = _shareEl('shareAuthBar'); if (!bar) return;
+    var signedIn = !!_shareViewer;
+    bar.style.display = 'flex';
+    _shareEl('shareAuthOut').style.display = signedIn ? 'none' : '';
+    _shareEl('shareAuthIn').style.display = signedIn ? '' : 'none';
+    var nm = _shareEl('shareAuthName'); if (nm) nm.textContent = (_shareViewer && _shareViewer.name) || 'your LifeTold account';   // textContent: a name is never HTML
+    _shareEl('shareSignInBtn').style.display = signedIn ? 'none' : '';
+    _shareEl('shareSignOutBtn').style.display = signedIn ? '' : 'none';
+    _shareApplyCommenter();
+  }
+  // The comment form: a locked "Commenting as NAME" line when the visitor is signed in with a usable name, else the free text box.
+  function _shareApplyCommenter() {
+    var locked = !!(_shareViewer && _shareViewer.usable && _shareViewer.name);
+    var box = _shareEl('shareNameSigned'), wrap = _shareEl('shareNameWrap'), txt = _shareEl('shareNameSignedText');
+    if (box) box.style.display = locked ? 'block' : 'none';
+    if (wrap) wrap.style.display = locked ? 'none' : 'block';
+    if (txt) txt.textContent = locked ? _shareViewer.name : '';
+  }
+  async function _shareLoadViewer() {
+    _shareViewer = null;
+    if (sb && sessionToken) {
+      try {
+        var res = await shareFetch(SHARE_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + sessionToken },
+          body: JSON.stringify({ action: 'whoami' })
+        });
+        var d = await res.json().catch(function() { return null; });
+        if (res.ok && d && d.signedIn) _shareViewer = { name: String(d.name || ''), usable: !!d.usable };
+        else if (res.status === 429) _shareShowAuthErr('Too many requests from this connection just now. Wait a few minutes and reload the page to see your name.');
+      } catch (e) { try { logActivity('share_auth_error', 'whoami: ' + String(e && e.message || e), 'warn', 'SHARE'); } catch (e2) {} }
+    }
+    _shareRenderAuth();
+  }
+  async function shareSignIn() {
+    var token = new URLSearchParams(window.location.search).get('share') || '';
+    var btn = _shareEl('shareSignInBtn');
+    _shareShowAuthErr('');
+    if (!sb) { _shareShowAuthErr('Sign in is not available on this page right now. Reload the page and try again.'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Opening Google…'; }
+    var back = window.location.origin + window.location.pathname + '?share=' + encodeURIComponent(token);   // back to THIS link, not the app
+    var r = null;
+    try { r = await _ltOAuth('google', back); } catch (e) { r = { error: e }; }
+    if (r && r.error) {
+      try { logActivity('share_signin_failed', String((r.error && r.error.message) || r.error), 'warn', 'SHARE'); } catch (e2) {}
+      _shareShowAuthErr('We could not open the Google sign in. Check your connection and try again. If it keeps happening, reload the page.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Google'; }
+    }
+    // success: the browser is already on its way to Google
+  }
+  async function shareSignOut() {
+    var btn = _shareEl('shareSignOutBtn');
+    if (btn) btn.disabled = true;
+    try { if (sb) await _shareAuthTimeout(sb.auth.signOut(), 5000); } catch (e) {}
+    try { Object.keys(localStorage).forEach(function(k) { if (/^sb-.+-auth-token/.test(k)) localStorage.removeItem(k); }); } catch (e) {}   // same belt and braces as the app sign out
+    sessionToken = null; _shareViewer = null;
+    if (btn) btn.disabled = false;
+    _shareShowAuthErr('');
+    _shareRenderAuth();
+  }
+  // SHARE-ID-2: Import on the share page. Signed in: the existing import start (SHARE-ID-3 replaces what it does next).
+  // Not signed in: a plain dialog with a Sign in button; the sign in returns here and the visitor presses Import again.
+  function _shareNeedSignInOpen() {
+    var d = _shareEl('shareNeedSignIn'); if (!d) return;
+    d.style.display = 'flex';
+    var b = _shareEl('shareNeedSignInBtn'); if (b && b.focus) b.focus();
+  }
+  function _shareNeedSignInClose() { var d = _shareEl('shareNeedSignIn'); if (d) d.style.display = 'none'; }
+  async function shareImportPress() {
+    if (_shareAuthBootP) { try { await Promise.race([_shareAuthBootP, new Promise(function(r) { setTimeout(r, 3000); })]); } catch (e) {} }   // do not call a signed in person signed out because the check was still running
+    if (sessionToken || _shareViewer) { shareImportStart(); return; }
+    _shareNeedSignInOpen();
+  }
+  async function _shareAuthBoot(token) {
+    function on(id, fn) { var el = _shareEl(id); if (el) el.addEventListener('click', fn); }
+    if (!_shareAuthWired) {
+      _shareAuthWired = true; on('shareSignInBtn', shareSignIn); on('shareSignOutBtn', shareSignOut);
+      on('shareNeedSignInBtn', function() { _shareNeedSignInClose(); shareSignIn(); });
+      on('shareNeedCloseBtn', _shareNeedSignInClose);
+      var nd = _shareEl('shareNeedSignIn'); if (nd) nd.addEventListener('click', function(e) { if (e.target === nd) _shareNeedSignInClose(); });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape') _shareNeedSignInClose(); });
+    }
+    try {
+      sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+        auth: { persistSession: true, autoRefreshToken: true, flowType: 'pkce', lock: _ltAuthLock }   // same options as the app
+      });
+    } catch (e) { sb = null; try { logActivity('share_auth_error', 'client: ' + String(e && e.message || e), 'warn', 'SHARE'); } catch (e2) {} return; }
+    var gs = await _shareAuthTimeout(sb.auth.getSession(), 6000);   // also exchanges a returning ?code=
+    var sess = gs && gs.data && gs.data.session;
+    sessionToken = (sess && sess.access_token) || null;
+    var failed = _shareCleanAuthUrl();
+    if (failed && !sess) _shareShowAuthErr('The Google sign in did not finish. Tap Sign in with Google to try again.');
+    try {
+      sb.auth.onAuthStateChange(function(ev, s2) {
+        // no awaits and no library calls in here (they can deadlock the auth lock): note the token, then act later
+        sessionToken = (s2 && s2.access_token) || null;
+        if (ev === 'SIGNED_OUT') { _shareViewer = null; setTimeout(_shareRenderAuth, 0); }
+        else if (ev === 'SIGNED_IN' && !_shareViewer) setTimeout(_shareLoadViewer, 0);
+      });
+    } catch (e) {}
+    await _shareLoadViewer();
   }
   async function shareFetch(url, init) {
     var signedIn = false;
@@ -6520,7 +6702,7 @@
     on('spZoomOutBtn',  'click', spZoomOut);
     on('spZoomInBtn',   'click', spZoomIn);
     on('spRecentreBtn', 'click', spRecentre);
-    on('spImportBtn',   'click', shareImportStart);   // FAM-29 step 4
+    on('spImportBtn',   'click', shareImportPress);   // FAM-29 step 4; SHARE-ID-2: asks for a sign in first
     _mpFindInit('sp');   // FAM-12b
 
     var vp = document.getElementById('shareTreeViewport');
@@ -7426,6 +7608,9 @@
   async function submitShareFeedback() {
     var token = new URLSearchParams(window.location.search).get('share');
     var name  = (document.getElementById('shareName').value || '').trim();
+    // SHARE-ID-1: a signed in visitor with a usable name comments under it (the server checks it again from the verified account).
+    var _locked = !!(_shareViewer && _shareViewer.usable && _shareViewer.name);
+    if (_locked) name = _shareViewer.name;
     var text  = (document.getElementById('shareMessage').value || '').trim();
     var errEl = document.getElementById('shareFeedbackError');
     errEl.style.display = 'none';
@@ -7491,14 +7676,23 @@
         _hp:           document.getElementById('shareHoneypot')?.value || '', // Spam prevention
       };
 
+      var _fbHeaders = { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON };
+      if (_shareViewer && sessionToken) _fbHeaders['Authorization'] = 'Bearer ' + sessionToken;   // SHARE-ID-1: proves who is commenting; SHARE_PROXY reads the name from the account
       var res = await shareFetch(SHARE_PROXY_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+        headers: _fbHeaders,
         body: JSON.stringify(payload)
       });
       var data = await res.json();
 
       if (!res.ok || !data.ok) {
+        if (res.status === 401 && _shareViewer) {   // SHARE-ID-1: the sign in ran out and could not be refreshed
+          _shareViewer = null; _shareRenderAuth();
+          errEl.textContent = 'Your sign in has run out, so nothing was sent. Sign in again, or type a name and send it as a guest.';
+          errEl.style.display = 'block';
+          if (btn) { btn.disabled = false; btn.textContent = 'Send response'; }
+          return;
+        }
         throw new Error(data.error || 'Submission failed');
       }
 
@@ -9118,8 +9312,11 @@
       document.getElementById('appShell').style.display      = 'none';
       document.getElementById('shareScreen').style.display   = 'block';
       initTheme(); // ensure CSS vars are applied for the share page too
+      // SHARE-ID-1: the share page now has its own sign in client (offered, never required). It starts beside the page
+      // load, never in front of it, and never throws: a failure leaves the page exactly as it was (anonymous).
+      try { _shareAuthBootP = _shareAuthBoot(shareToken).catch(function(e) { try { logActivity('share_auth_error', 'boot: ' + String(e && e.message || e), 'warn', 'SHARE'); } catch (e2) {} }); } catch (e) { try { logActivity('share_auth_error', 'boot: ' + String(e && e.message || e), 'warn', 'SHARE'); } catch (e2) {} }
       loadSharePage(shareToken);
-      return; // stop init — no auth, no entry loading, no app shell
+      return; // stop init — no app shell, no entry loading. (Sign in, if any, is only for the bar and the comment name.)
     }
 
     // ── UX-M09: Unsubscribe mode: detect ?unsubscribe=<token> ────────
@@ -9419,8 +9616,10 @@
       try { Object.keys(st).forEach(function(k) { if (/^sb-.+-auth-token/.test(k)) st.removeItem(k); }); } catch (e) {}
     });
   }
-  async function _ltOAuth(provider) {
-    var opts = { provider: provider, options: { redirectTo: window.location.origin + window.location.pathname } };
+  async function _ltOAuth(provider, redirectTo) {
+    // SHARE-ID-1: redirectTo is optional. The app passes nothing (back to the bare app, as before); a share page passes
+    // its own address with ?share=TOKEN so the person comes back to the same link and the app does not open.
+    var opts = { provider: provider, options: { redirectTo: redirectTo || (window.location.origin + window.location.pathname) } };
     function limit(p, ms) {
       return Promise.race([p, new Promise(function(res) { setTimeout(function() { res({ error: { message: 'no answer after ' + ms + 'ms', _timeout: true } }); }, ms); })]);
     }
@@ -9854,7 +10053,10 @@
       userProfile.subjectName  = subjectNameEntry?.answer  ?? null;
       userProfile.relationship = relationshipEntry?.answer ?? null;
       // Only name is required — DOB and sex are optional (privacy: user can skip)
-      if (!userProfile.name) {
+      userProfile.shareOnly = !!entries.find(e => e.category === '_profile_share_only' && String(e.answer) === '1');   // SHARE-ID-3: set when a person arrived through a shared tree; SHARE-ID-4 reads it
+      if (!userProfile.name && window._pendingShareImport && _shareNameOpen()) {
+        // SHARE-ID-3: a person who pressed Import on a share page confirms their name first (small sheet); the copy runs after it, not the full onboarding
+      } else if (!userProfile.name) {
         document.getElementById('onboardingOverlay').style.display = 'flex';
         _obStartStep1(); // UX-C02: kick off Gethro intro speech on step 1
       } else {
@@ -10677,11 +10879,12 @@
     }
     var btn = document.getElementById('obStep2Btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-    var fullName = firstName;
+    var _so = !!(userProfile && userProfile.shareOnly), _soLast = _so ? (userProfile.lastName || null) : null;   // SHARE-ID-4: the name rows exist already (confirmed at the share import), so they are updated, never added twice
+    var fullName = _soLast ? firstName + ' ' + _soLast : firstName;
     try {
       var saves = [
-        fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() }) }),
-        fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_name', answer: fullName, question: 'What is your name?', timestamp: new Date().toISOString() }) }),
+        _so ? _shareProfileSet('_profile_first_name', firstName) : fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() }) }),
+        _so ? _shareProfileSet('_profile_name', fullName) : fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_name', answer: fullName, question: 'What is your name?', timestamp: new Date().toISOString() }) }),
         fetch(DB_URL, { method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ user_id: currentUser.id, category: '_profile_subject_mode', answer: _obSubjectMode, question: 'Whose story is this?', timestamp: new Date().toISOString() }) }),
       ];
       if (isOther) {
@@ -10691,7 +10894,7 @@
         }
       }
       await Promise.all(saves);
-      userProfile = { name: fullName, firstName: firstName, lastName: null, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null,
+      userProfile = { shareOnly: _so, name: fullName, firstName: firstName, lastName: _soLast, dob: null, sex: null, memoirGoal: null, goalEra: null, goalAudience: null, goalTone: null,
         subjectMode: _obSubjectMode, subjectName: isOther ? subjectName : null, relationship: isOther ? (relationship || null) : null };
       notifyDev('warn', 'AUTH', 'Onboarding complete: uid=' + currentUser.id.substring(0, 8) + (isOther ? ' (telling a loved one\u2019s story: ' + subjectName + ')' : ''));
       logActivity('onboarding_complete', fullName, 'info', 'AUTH');
@@ -10810,6 +11013,7 @@
   // Step 6 CTA / skip-to-app: dismiss overlay, pre-fill fixed ice-breaker, start mic
   async function obEnterApp() {
     gethroCancel();
+    _shareOnlyDone();   // SHARE-ID-4: onboarding is finished, so the share only marker is cleared
     document.getElementById('onboardingOverlay').style.display = 'none';
     toast('Welcome, ' + (userProfile.firstName || '') + '! \uD83C\uDF89');
     await new Promise(function(r) { setTimeout(r, 300); });
@@ -10840,6 +11044,8 @@
 
     // ── Panels ───────────────────────────────────────────────────────
   function showPanel(name, btn, tabIndex) {
+    // SHARE-ID-4: an account that arrived through a shared tree and has not done onboarding sees only My People; any other tab starts onboarding
+    if (userProfile && userProfile.shareOnly && name !== 'people' && currentUser && _shareOnlyStartOnboarding()) return;
     var overlayVisible = document.getElementById('printPreviewOverlay') && document.getElementById('printPreviewOverlay').classList.contains('visible');
     var scrollBefore   = window.scrollY;
     var activePanels   = Array.from(document.querySelectorAll('.panel.active')).map(function(p){ return p.id; });
@@ -16174,7 +16380,7 @@
     if (withBd) seen = withPh ? 'names, photos and dates of birth (where I\u2019ve entered them)' : 'names and dates of birth (where I\u2019ve entered them), but not photos';
     if (!withBd && !withPh) seen = 'names only (no photos or dates of birth)';
     textEl.textContent = 'I confirm anyone with this link can see the ' + seen + ' of ' + who +
-      (withBd || !withPh ? '' : ', but not their dates of birth') + ', including anyone who may still be living, and that I am happy for them to be shown. I can hide a person in their details first. Visitors\u2019 names and feedback will be stored.';
+      (withBd || !withPh ? '' : ', but not their dates of birth') + ', including anyone who may still be living, and that I am happy for them to be shown.';
   }
   function _treeSharePhotosChanged() {
     var ph = document.getElementById('treeSharePhotos');
@@ -29201,6 +29407,157 @@
     setTimeout(function() { _shareImportRun('login').catch(function(e) { try { logActivity('share_import_error', 'run: ' + String(e && e.message || e), 'error', 'PEOPLE'); } catch (e2) {} }); }, 0);
   }
 
+  // ── SHARE-ID-3: Confirm your name, then Which one is you, then the copy ──────────────────────────────────────────────
+  // Page only. A person who signed in on a share page and pressed Import arrives here with a kept link and (if new) no name.
+  // 1. no name yet: a small Confirm your name sheet (Google name prefilled, first and last editable) replaces the full onboarding.
+  //    Terms and privacy are already accepted by the app's own gate (_checkDisclaimerVersion runs before loadEntries), so no second tick box.
+  //    It saves the name and the pending marker _profile_share_only (SHARE-ID-4 reads it), then runs the copy.
+  // 2. no tree yet: a confirm sheet says what is copied and asks Which one is you (the person the link was made for is preselected).
+  // 3. already has a tree: the FAM-28 checking screen as before. Nothing is joined that the person did not confirm.
+  var SHARE_ID_CARD = 'background:var(--surface);border-radius:16px;padding:16px 18px;max-width:480px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.25);box-sizing:border-box;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);overflow-y:auto';
+  var SHARE_ID_INPUT = 'width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-family:inherit;font-size:1rem;background:var(--surface);color:var(--text);margin:0 0 12px';
+  var SHARE_ID_LABEL = 'display:block;font-size:0.82rem;font-weight:700;color:var(--text);margin:0 0 4px';
+  function _shareIdSheet(title, onEsc) {
+    var old = document.getElementById('shareIdSheet'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var ov = _gedEl('div', 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9600;display:flex;align-items:center;justify-content:center;padding:12px');
+    ov.id = 'shareIdSheet'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-label', title);
+    var card = _gedEl('div', SHARE_ID_CARD);
+    card.appendChild(_gedEl('h3', "font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--text);margin:0 0 8px", title));
+    ov.appendChild(card); document.body.appendChild(ov);
+    function onKey(e) { if (e.key === 'Escape' && onEsc) onEsc(); }
+    document.addEventListener('keydown', onKey);
+    return { card: card, close: function() { document.removeEventListener('keydown', onKey); if (ov.parentNode) ov.parentNode.removeChild(ov); } };
+  }
+  // ── SHARE-ID-4: limited app until onboarding ────────────────────────────────────────────────────────────────────────
+  // userProfile.shareOnly is true while the row _profile_share_only has answer 1 (saved at the Confirm your name step). Existing accounts never have it.
+  // showPanel sends every panel except people to the existing onboarding (name prefilled). obEnterApp ends it: the row is set to 0 (kept, never deleted).
+  function _shareOnlyStartOnboarding() {
+    var ov = document.getElementById('onboardingOverlay'); if (!ov) return false;   // no onboarding on this page: do not block navigation
+    if (ov.style.display === 'flex') return true;   // already showing
+    var inp = document.getElementById('onboardFirstName'); if (inp && !inp.value) inp.value = (userProfile && userProfile.firstName) || '';
+    try { logActivity('share_only_onboarding', 'started', 'info', 'AUTH'); } catch (e) {}
+    ov.style.display = 'flex';
+    try { _obStartStep1(); } catch (e2) {}
+    return true;
+  }
+  async function _shareProfileSet(category, answer) {
+    var lr = await fetch(DB_URL + '?user_id=eq.' + currentUser.id + '&category=eq.' + encodeURIComponent(category) + '&select=id&order=timestamp.asc&limit=1', { headers: getAuthHeaders() });
+    var rows = lr.ok ? await lr.json() : [];
+    if (rows[0]) return fetch(DB_URL + '?id=eq.' + rows[0].id + '&user_id=eq.' + currentUser.id, { method: 'PATCH', headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=minimal' }), body: JSON.stringify({ answer: answer }) });
+    return fetch(DB_URL, { method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=minimal' }), body: JSON.stringify({ user_id: currentUser.id, category: category, answer: answer, question: category, timestamp: new Date().toISOString() }) });
+  }
+  function _shareOnlyDone() {
+    if (!(userProfile && userProfile.shareOnly)) return;
+    userProfile.shareOnly = false;
+    _shareProfileSet('_profile_share_only', '0').then(function(r) { if (!r.ok) throw new Error('status ' + r.status); try { logActivity('share_only_onboarding', 'done', 'info', 'AUTH'); } catch (e) {} })
+      .catch(function(e) { try { logActivity('share_only_clear_failed', String(e && e.message || e), 'warn', 'AUTH'); } catch (e2) {} });
+  }
+  // After a declined or refused copy there may be no panel on screen yet: show My People, the one tab a share only account has.
+  function _shareLandIfBlank() {
+    if (document.querySelector('.panel.active')) return;
+    try { openMyPeople(); } catch (e) {}
+  }
+
+  // The Google name is only a default. The e-mail address is never used as a name.
+  function _shareGoogleName() {
+    var m = (currentUser && currentUser.user_metadata) || {};
+    var full = String(m.full_name || m.name || '').replace(/\s+/g, ' ').trim();
+    var first = String(m.given_name || '').trim(), last = String(m.family_name || '').trim();
+    if (!first && full) { var parts = full.split(' '); first = parts.shift() || ''; if (!last) last = parts.join(' '); }
+    if (first.indexOf('@') >= 0) first = '';
+    if (last.indexOf('@') >= 0) last = '';
+    return { first: first.slice(0, 60), last: last.slice(0, 60) };
+  }
+  function _shareCleanName(v) { return String(v || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60); }
+
+  // Returns true when the sheet is open (the caller then skips the full onboarding), false when it could not be built.
+  function _shareNameOpen() {
+    try {
+      if (!window._pendingShareImport || !currentUser) return false;
+      var g = _shareGoogleName(), busy = false, sh;
+      sh = _shareIdSheet('Confirm your name', function() { if (!busy) _shareNameDecline(sh); });
+      var c = sh.card;
+      c.appendChild(_gedEl('p', GED_NOTE, 'This is the name on your Google account. Change it if it is not how you want to be known. It is the name you will comment under and the name on your own entry in My People.'));
+      var l1 = _gedEl('label', SHARE_ID_LABEL, 'First name'); l1.setAttribute('for', 'shareIdFirst');
+      var i1 = _gedEl('input', SHARE_ID_INPUT); i1.id = 'shareIdFirst'; i1.type = 'text'; i1.maxLength = 60; i1.autocomplete = 'given-name'; i1.value = g.first;
+      var l2 = _gedEl('label', SHARE_ID_LABEL, 'Last name (optional)'); l2.setAttribute('for', 'shareIdLast');
+      var i2 = _gedEl('input', SHARE_ID_INPUT); i2.id = 'shareIdLast'; i2.type = 'text'; i2.maxLength = 60; i2.autocomplete = 'family-name'; i2.value = g.last;
+      var msg = _gedEl('p', 'font-size:0.85rem;color:#b3261e;margin:0 0 10px;min-height:1.2em', ''); msg.setAttribute('role', 'alert');
+      c.appendChild(l1); c.appendChild(i1); c.appendChild(l2); c.appendChild(i2);
+      c.appendChild(_gedEl('p', GED_NOTE, 'You accepted the Terms and Privacy Notice when you signed in. The family tree you were looking at is copied next.'));
+      c.appendChild(msg);
+      var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
+      var ok = _gedBtn('Confirm and continue', GED_BTN_MAIN, async function() {
+        if (busy) return;
+        var first = _shareCleanName(i1.value), last = _shareCleanName(i2.value);
+        if (!first || first.indexOf('@') >= 0) { msg.textContent = 'Please type your first name.'; i1.focus(); return; }
+        if (last.indexOf('@') >= 0) { msg.textContent = 'Please type a last name, not an e-mail address, or leave it empty.'; i2.focus(); return; }
+        busy = true; ok.disabled = true; ok.textContent = 'Saving\u2026'; msg.textContent = '';
+        try { await _shareNameSave(first, last); }
+        catch (e) {
+          busy = false; ok.disabled = false; ok.textContent = 'Confirm and continue';
+          msg.textContent = 'We could not save your name' + (e && e.status ? ' (status ' + e.status + ')' : '') + '. Check your connection and try again in a minute.';
+          try { logActivity('share_name_error', String(e && e.message || e), 'warn', 'SHARE'); } catch (e2) {}
+          return;
+        }
+        sh.close();
+        try { logActivity('share_name_confirmed', 'google default ' + (g.first === first && g.last === last ? 'kept' : 'edited'), 'info', 'SHARE'); } catch (e3) {}
+        _shareImportSoon();
+      });
+      bar.appendChild(ok);
+      bar.appendChild(_gedBtn('Not now', GED_BTN, function() { if (!busy) _shareNameDecline(sh); }));
+      c.appendChild(bar);
+      setTimeout(function() { try { (i1.value ? ok : i1).focus(); } catch (e) {} }, 0);
+      return true;
+    } catch (e) { try { logActivity('share_import_error', 'name sheet: ' + String(e && e.message || e), 'warn', 'PEOPLE'); } catch (e2) {} return false; }
+  }
+  // Not now: nothing is copied, the kept link is dropped, and the normal onboarding starts as it would have.
+  function _shareNameDecline(sh) {
+    try { logActivity('share_import_declined', 'name step', 'info', 'PEOPLE'); } catch (e) {}
+    _shareImportClear();
+    if (sh) sh.close();
+    var ov = document.getElementById('onboardingOverlay'); if (ov) { ov.style.display = 'flex'; try { _obStartStep1(); } catch (e2) {} }
+  }
+  // The name and the pending marker (SHARE-ID-4 reads _profile_share_only), saved the way onboarding saves them.
+  async function _shareNameSave(first, last) {
+    var full = last ? first + ' ' + last : first, ts = new Date().toISOString();
+    function post(cat, ans, q) {
+      return fetch(DB_URL, { method: 'POST', headers: Object.assign({}, getAuthHeaders(), { 'Prefer': 'return=minimal' }),
+        body: JSON.stringify({ user_id: currentUser.id, category: cat, answer: ans, question: q, timestamp: ts }) });
+    }
+    var reqs = [post('_profile_first_name', first, 'What is your first name?'), post('_profile_name', full, 'What is your name?'),
+      post('_profile_share_only', '1', 'Arrived through a shared tree, onboarding not done')];
+    if (last) reqs.push(post('_profile_last_name', last, 'What is your last name?'));
+    var rs = await Promise.all(reqs);
+    for (var i = 0; i < rs.length; i++) if (!rs[i].ok) { var er = new Error('name save'); er.status = rs[i].status; throw er; }
+    userProfile = Object.assign({}, userProfile || {}, { name: full, firstName: first, lastName: last || null, subjectMode: 'self', shareOnly: true });
+  }
+
+  // No tree yet: what is copied, and Which one is you. Resolves { ownerRef } or null (Not now).
+  function _shareConfirmSheet(prev, from, viewerRef) {
+    return new Promise(function(resolve) {
+      var done = false, sh;
+      function end(v) { if (done) return; done = true; sh.close(); resolve(v); }
+      sh = _shareIdSheet('Copy ' + from + '\u2019s family tree', function() { end(null); });
+      var c = sh.card, people = (prev && prev.people) || [];
+      c.appendChild(_gedEl('p', GED_NOTE, 'You get ' + _gedPlural(people.length, 'person', 'people') + ': the names, the relationships and the details this link shows, and the photos if ' + from + ' chose to show them. You do not get stories or notes. It is saved all at once, so if anything goes wrong nothing is changed.'));
+      var lb = _gedEl('label', SHARE_ID_LABEL, 'Which one is you?'); lb.setAttribute('for', 'shareIdWho');
+      var sel = _gedEl('select', SHARE_ID_INPUT); sel.id = 'shareIdWho';
+      var none = document.createElement('option'); none.value = ''; none.textContent = 'I am not in this tree'; sel.appendChild(none);
+      people.slice().sort(function(a, b) { return String(a.name || '').localeCompare(String(b.name || '')); }).forEach(function(x) {
+        var o = document.createElement('option'); o.value = String(x.ref);
+        o.textContent = (String(x.name || '').trim() || 'Unnamed') + (x.born ? ' (born ' + x.born + ')' : ''); sel.appendChild(o);
+      });
+      if (viewerRef && people.some(function(x) { return String(x.ref) === String(viewerRef); })) sel.value = String(viewerRef);
+      c.appendChild(lb); c.appendChild(sel);
+      c.appendChild(_gedEl('p', GED_NOTE, viewerRef ? from + ' made this link for the person already chosen. Change it if that is not you. The person you choose is joined to your own entry, so you are not in your tree twice.' : 'If you are one of these people, choose yourself. That person is joined to your own entry, so you are not in your tree twice. If you are not in this tree, leave it as it is.'));
+      var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
+      bar.appendChild(_gedBtn('Copy this tree', GED_BTN_MAIN, function() { end({ ownerRef: sel.value || null }); }));
+      bar.appendChild(_gedBtn('Not now', GED_BTN, function() { end(null); }));
+      c.appendChild(bar);
+    });
+  }
+
   function _shareEnsureOwner() {
     return (async function() {
       var h = getAuthHeaders(), base = DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id + '&select=id&limit=1';
@@ -29271,12 +29628,12 @@
     body.appendChild(_gedEl('p', GED_NOTE, s.msg || ''));
     var bar = _gedEl('div', 'display:flex;gap:10px;flex-wrap:wrap');
     if (!s.final) bar.appendChild(_gedBtn('Try again', GED_BTN_MAIN, function() { _shareModalClose(); _shareImportRun('retry'); }));
-    bar.appendChild(_gedBtn(s.final ? 'Close' : 'Not now', s.final ? GED_BTN_MAIN : GED_BTN, function() { _shareImportClear(); _shareModalClose(); }));
+    bar.appendChild(_gedBtn(s.final ? 'Close' : 'Not now', s.final ? GED_BTN_MAIN : GED_BTN, function() { _shareImportClear(); _shareModalClose(); _shareLandIfBlank(); }));
     body.appendChild(bar);
   }
   function _shareImportNotNow() {
     try { logActivity('share_import_declined', 'checking screen', 'info', 'PEOPLE'); } catch (e) {}
-    _shareImportClear(); _shareModalClose();
+    _shareImportClear(); _shareModalClose(); _shareLandIfBlank();
   }
 
   // The checking screen hook for a shared tree: the same screen as a photo or a file, no AI, the people come from the server.
@@ -29324,9 +29681,13 @@
         _gedRender();
         return 'check';
       }
-      // a new tree: nothing to match and nothing to check. The person the link was made for (the owner's choice) becomes them, when there is one.
-      _shareWorking('Copying ' + from + '\u2019s family tree\u2026');
+      // a new tree: nothing to match and nothing to check. SHARE-ID-3: a short sheet says what is copied and asks Which one is you (the person the link was made for is preselected).
       var ownerRef = (prev.share && prev.share.viewer_ref) || null, res;
+      _shareModalClose();
+      var pick = await _shareConfirmSheet(prev, from, ownerRef);
+      if (!pick) { try { logActivity('share_import_declined', 'confirm sheet', 'info', 'PEOPLE'); } catch (ed) {} _shareImportClear(); _shareLandIfBlank(); return 'declined'; }
+      ownerRef = pick.ownerRef;
+      _shareWorking('Copying ' + from + '\u2019s family tree\u2026');
       try { res = await _gedCall('share_import_commit', { share_token: p.token, mode: 'add', decisions: {}, owner_ref: ownerRef, import_key: p.key }); }
       catch (ec) { logActivity('share_import_refused', 'commit: ' + ((ec && ec.code) || (ec && ec.status) || 'error'), 'info', 'PEOPLE'); _shareShowError(ec, 'commit'); return 'refused'; }
       _shareImportClear(); _shareModalClose();
@@ -31469,20 +31830,38 @@
     if (!firstName) { if (msgEl) msgEl.textContent = 'Please enter your first name.'; return; }
     if (!currentUser) return;
     try {
+      var oldFirst = userProfile.firstName || '', oldFull = userProfile.name || '';   // SHARE-ID-5: kept to follow the change below
       var existing = entries.find(function(e) { return e.category === '_profile_first_name'; });
+      var rf;
       if (existing) {
-        await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
+        rf = await fetch(DB_URL + '?id=eq.' + existing.id + '&user_id=eq.' + currentUser.id, {
           method: 'PATCH', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
           body: JSON.stringify({ answer: firstName, updated_at: new Date().toISOString() })
         });
       } else {
-        await fetch(DB_URL, {
+        rf = await fetch(DB_URL, {
           method: 'POST', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' },
           body: JSON.stringify({ user_id: currentUser.id, category: '_profile_first_name', answer: firstName, question: 'What is your first name?', timestamp: new Date().toISOString() })
         });
       }
+      if (!rf.ok) throw new Error('first name save status ' + rf.status);   // SHARE-ID-5: a refused save used to show Saved
+      // SHARE-ID-5: the stored full name follows the first name (it went stale before: other screens and the weekly e-mail read it)
+      var newFull = userProfile.lastName ? firstName + ' ' + userProfile.lastName : firstName;
+      var rn = await _shareProfileSet('_profile_name', newFull);
+      if (!rn.ok) throw new Error('full name save status ' + rn.status);
+      // ... and so does the you person in My People, but only when it still carries the old name: a name the person typed there themselves is never overwritten
+      if (newFull !== oldFull || firstName !== oldFirst) {
+        try {
+          var olds = []; [oldFull, oldFirst].forEach(function(n) { if (n && n !== newFull && olds.indexOf(n) < 0) olds.push(n); });
+          for (var oi = 0; oi < olds.length; oi++) {
+            var rp = await fetch(DB_PEOPLE_URL + '?user_id=eq.' + currentUser.id + '&is_owner=eq.true&name=eq.' + encodeURIComponent(olds[oi]), {
+              method: 'PATCH', headers: { ...getAuthHeaders(), 'Prefer': 'return=minimal' }, body: JSON.stringify({ name: newFull }) });
+            if (!rp.ok) { try { logActivity('settings_save_failed', 'you person name status ' + rp.status, 'warn', 'SETTINGS'); } catch (e3) {} break; }
+          }
+        } catch (e4) { try { logActivity('settings_save_failed', 'you person name: ' + String(e4 && e4.message || e4), 'warn', 'SETTINGS'); } catch (e5) {} }   // the name itself is saved; My People catches up the next time it is edited there
+      }
       userProfile.firstName = firstName;
-      if (!userProfile.name) userProfile.name = firstName;
+      userProfile.name = newFull;
       // Also save to life_settings so email sender can read it
       await saveEmailPrefKey('user_name', firstName);
       if (msgEl) { msgEl.textContent = 'Saved ✓'; msgEl.style.color = 'var(--sage)'; }
@@ -35866,7 +36245,7 @@
         </div>
         <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">
           <input type="checkbox" id="treeShareConsent" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:var(--gold);cursor:pointer">
-          <label for="treeShareConsent" id="treeShareConsentText" style="font-size:0.74rem;color:var(--text-light);line-height:1.4;cursor:pointer">I confirm anyone with this link can see the names and photos of the people in my family tree, but not their dates of birth, including anyone who may still be living, and that I am happy for them to be shown. I can hide a person in their details first. Visitors' names and feedback will be stored.</label>
+          <label for="treeShareConsent" id="treeShareConsentText" style="font-size:0.74rem;color:var(--text-light);line-height:1.4;cursor:pointer">I confirm anyone with this link can see the names and photos of the people in my family tree, but not their dates of birth, including anyone who may still be living, and that I am happy for them to be shown.</label>
         </div>
         <p id="treeShareError" style="display:none;font-size:0.8rem;color:var(--rose);margin:-4px 0 8px;line-height:1.5"></p>
         <div id="treeShareBtns">
