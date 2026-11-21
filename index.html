@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.376">
+  <meta name="lifetold-version" content="v7.377">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5455,7 +5455,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.376';
+  const APP_VERSION = 'v7.377';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -11235,12 +11235,28 @@
       // _vaDefaultName below).
       form.append('recordedAt', turn.recordedAt || '');
       form.append('audio', turn.blob, 'turn.' + ext);
-      var res = await fetch(GETHRO_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON },
-        body: form,
-      });
-      var data = await res.json();
+      // BURST-FIX 2026-11-21: a refusal for being too busy (too_many_in_flight / burst) is a "wait a moment",
+      // not a failure. The server returns 429 + retry_after_s. Wait and try again (up to 5 tries) before giving up,
+      // because a turn that fails here is gone for good (memResetForm wipes the staged copy after Save).
+      // Quota refusals (points_limit, spend_*) are NOT retried: they will not clear in seconds.
+      var res, data, _attempt = 0;
+      while (true) {
+        _attempt++;
+        var _tok = (_attempt === 1) ? session.access_token
+                 : (((await sb.auth.getSession()).data.session || {}).access_token || session.access_token);
+        res = await fetch(GETHRO_PROXY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + _tok, 'apikey': SUPABASE_ANON },
+          body: form,
+        });
+        data = await res.json();
+        var _busy = (res.status === 429 || data.rate_limited) && (data.reason === 'too_many_in_flight' || data.reason === 'burst' || data.reason === 'action_burst');
+        if (!_busy || _attempt >= 5) break;
+        var _waitS = Math.min(Math.max(Number(data.retry_after_s) || 2, 1), 15);
+        dbg('VA', 'commit_voice_turn busy (' + data.reason + ') — retry ' + _attempt + ' in ' + _waitS + 's');
+        await new Promise(function(r) { setTimeout(r, _waitS * 1000 + Math.floor(Math.random() * 400)); });
+      }
+      if (_attempt > 1) logActivity('voice_commit_retried', 'entry=' + entryId + ' attempts=' + _attempt + ' ok=' + (res.ok && data.ok), 'info', 'VA');
       if (!res.ok || !data.ok) throw new Error(data.error || 'Commit failed ' + res.status);
       committed = data;
     } catch(e) {
@@ -11344,11 +11360,19 @@
     // or breaks the others, and none of this blocks the save UX.
     if (_stagedVoiceArchives.length && savedId && savedId !== 'offline') {
       var _turnsToCommit = _stagedVoiceArchives.slice();
-      _turnsToCommit.forEach(function(turn) {
-        _commitAndApplyVoiceTurn(savedId, turn).catch(function(e) {
-          dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
-        });
-      });
+      // BURST-FIX 2026-11-21: commit ONE turn at a time, in recorded order. They used to all fire at once
+      // (forEach), which with 8 staged turns tripped the server's 3-calls-at-once limit (5 refused, audio lost)
+      // and also made every turn read the same turn_index (the "counting race" noted in the commit code).
+      // Still fire-and-forget: Save does not wait for this chain, and one failed turn does not stop the next.
+      (async function _commitStagedTurnsInOrder() {
+        for (var _ti = 0; _ti < _turnsToCommit.length; _ti++) {
+          try {
+            await _commitAndApplyVoiceTurn(savedId, _turnsToCommit[_ti]);
+          } catch (e) {
+            dbgErr('VA', 'Voice turn commit/apply threw:', e.message);
+          }
+        }
+      })();
     }
     // ── APP-6x: link the Gethro conversation archive (if any) to this entry ──
     // Same fire-and-forget shape as the staged-voice-turn block above — the
@@ -11742,6 +11766,32 @@
       _silenceRAF = requestAnimationFrame(_silenceLoop);
     }
 
+    // WAKELOCK-01: keep the screen on while the mic is open. Dictating means not touching the screen, and many
+    // Android phones turn it off after 15s. A hidden page stops recording (focus-loss handlers), which cut every
+    // recording at ~18s for one user. A wake lock is dropped by the browser whenever the page is hidden, so it is
+    // re-requested when the page becomes visible again while the mic is still open. Every failure is non-fatal.
+    var _wakeLock = null, _wakeLockLogged = false;
+    async function _acquireWakeLock() {
+      if (_wakeLock || !_active) return;
+      if (!navigator.wakeLock || document.visibilityState !== 'visible') return;
+      try {
+        var wl = await navigator.wakeLock.request('screen');
+        if (!_active) { try { wl.release(); } catch(e) {} return; }   // mic closed while we awaited
+        _wakeLock = wl;
+        wl.addEventListener('release', function() { if (_wakeLock === wl) _wakeLock = null; });
+        dbg('MIC_MGR', 'Screen wake lock held while recording');
+      } catch(e) {
+        if (!_wakeLockLogged) { _wakeLockLogged = true; logActivity('wake_lock_failed', String(e && e.name || e) + ': ' + String(e && e.message || ''), 'warn', 'MIC_MGR'); }
+      }
+    }
+    function _releaseWakeLock() {
+      var wl = _wakeLock; _wakeLock = null;
+      if (wl) { try { wl.release(); } catch(e) {} dbg('MIC_MGR', 'Screen wake lock released'); }
+    }
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible' && _active) _acquireWakeLock();
+    });
+
     // prewarm() — open the mic stream silently, without a recorder. Fire-and-forget:
     // any failure (no permission, unsupported) is a no-op and start() cold-opens.
     // Uses the SAME constraints as start()'s cold open so an adopted stream behaves
@@ -11826,6 +11876,7 @@
       }
       _silenceRAF = requestAnimationFrame(_silenceLoop);
       dbg('MIC_MGR', 'Started — mime=' + (_mime || 'default'));
+      _acquireWakeLock();   // WAKELOCK-01 (fire and forget)
       return null; // null = success
     }
 
@@ -11838,6 +11889,7 @@
     }
 
     function release() {
+      _releaseWakeLock();   // WAKELOCK-01
       if (_silenceRAF) { cancelAnimationFrame(_silenceRAF); _silenceRAF = null; }
       if (_analyserCtx) { try { _analyserCtx.close(); } catch(e) {} _analyserCtx = null; }
       _analyser = null;
@@ -27531,11 +27583,17 @@
     MicManager.cancelPrewarm();
     if (_micState === 'recording') {
       dbg('MIC', 'Focus lost — stopping recording');
+      _memStoppedByHide = !!document.hidden;   // WAKELOCK-01: explain it on return (screen off / app switched)
       stopMemMic();
     }
   }
+  var _memStoppedByHide = false;
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) _memHandleFocusLoss();
+    else if (_memStoppedByHide) {
+      _memStoppedByHide = false;
+      toast('Recording paused while the screen was off \u2014 your words so far are saved. Tap the mic to carry on.', 6000);
+    }
   });
   window.addEventListener('blur', _memHandleFocusLoss);
 
