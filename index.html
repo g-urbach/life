@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.408">
+  <meta name="lifetold-version" content="v7.409">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -519,6 +519,10 @@
     .landing-topbar-signin:hover { background: rgba(201,169,110,0.12); border-color: var(--gold); }
     .landing-topbar-signin:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     .landing-topbar-signin:disabled { opacity: 0.6; cursor: not-allowed; }
+    /* LANDING-UI-03: Google icon (on a white disc so it reads on the dark page) and the longer label */
+    .landing-topbar-signin { display: inline-flex; align-items: center; gap: 10px; }
+    .landing-topbar-signin .g-ico { width: 22px; height: 22px; flex: 0 0 22px; background: #fff; border-radius: 50%; padding: 3px; box-sizing: border-box; }
+    @media (max-width: 420px) { .landing-topbar-signin { padding: 8px 14px; font-size: 0.85rem; gap: 8px; } .landing-topbar-signin .g-ico { width: 20px; height: 20px; flex-basis: 20px; } }
     .landing-left .landing-auth { margin-bottom: 32px; }
 
     /* Gethro mini-intro */
@@ -2999,7 +3003,7 @@
   </div>
   <div class="landing-topbar land-anim land-anim-1">
     <span class="landing-wordmark">LifeTold</span>
-    <button type="button" class="landing-topbar-signin" id="landingTopSignIn">Sign in</button>
+    <button type="button" class="landing-topbar-signin" id="landingTopSignIn"><svg class="g-ico" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span>Sign in with Google</span></button>
   </div>
   <div class="landing-inner">
     <div class="landing-left">
@@ -5436,7 +5440,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.408';
+  const APP_VERSION = 'v7.409';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -9407,7 +9411,10 @@
       var _oh = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
       var _oErr = _oq.get('error_description') || _oq.get('error') || _oh.get('error_description') || _oh.get('error');
       var _oCode = _oq.get('code');
-      if (_oErr || (_oCode && !initSession)) {
+      // AUTH-TIMEOUT-02 (2026-11-28): getSession timing out is NOT a failed Google return. The library is only still waiting for the
+      // auth lock, and the login may be stored already (prod 13:58:31: email known = login saved, timed out, counted as a second
+      // trouble, auto-repair wiped the good login). On a timeout we leave storage alone; the listener below gets the session when it arrives.
+      if (_oErr || (_oCode && !initSession && !(_gsRes && _gsRes._timeout))) {
         var _rfN = _ltAuthTrouble('google_return_failed', _oErr ? String(_oErr).slice(0, 160) : 'code present but no session (exchange failed)');
         try { await _ltAuthDiag('google_return_failed', _gsRes, _diagPre); } catch (e) {}
         _ltClearAuthStorage();
@@ -9558,7 +9565,13 @@
 
       updateAuthUI();
       if (currentUser) {
-        _appInitInProgress = true; // block re-entrant SIGNED_IN during async init
+        _appInitInProgress = true; // block re-entrant SIGNED_IN during async init (set NOW, before the deferred work below)
+        // AUTH-LOCK-02 (2026-11-28): the library calls this listener while HOLDING the auth lock and waits for it to finish.
+        // The work below (T&Cs click, loadEntries, ...) used to run inside that wait, so the lock stayed held for the whole app
+        // start (and for as long as the person took to tap I Agree). Every data call made meanwhile asked for the same lock and
+        // waited 5 s (auth_lock_stolen), and a reload or second tab queued behind it (startup_timeout). Now the listener returns
+        // at once and the start-up runs a moment later, outside the lock. Same rule as the share page listener.
+        setTimeout(async function() { try {
         // T&Cs FIRST — must be accepted before we collect any personal data.
         // _checkDisclaimerVersion() now returns a promise that resolves only after
         // the user clicks "I Agree". loadEntries (which triggers onboarding) runs after.
@@ -9589,6 +9602,11 @@
         _appInitInProgress = false;
         _shareImportSoon();   // FAM-29 step 4: a kept tree link is copied now (after onboarding for a new person)
         _appFullyLoaded = true; // mark app as fully initialised — future SIGNED_IN events skipped
+        } catch (_initErr) {   // AUTH-LOCK-02: nobody is waiting on this any more, so an error here must be logged, not lost
+          try { logActivity('app_init_failed', String((_initErr && _initErr.message) || _initErr).slice(0, 300), 'error', 'AUTH'); } catch (_) {}
+          try { console.error(_initErr); } catch (_) {}
+        }
+        }, 0);
       }
     });
   }
@@ -9798,8 +9816,8 @@
   async function landingSignInWithGoogle() {
     // LANDING-UI-02: the top-bar Sign in button is the only sign-in button; it shows the progress and is restored on error.
     const btn = document.getElementById('landingTopSignIn');
-    const _label = btn ? btn.textContent : 'Sign in';
-    function _restoreBtn() { if (btn) { btn.disabled = false; btn.textContent = _label; } }
+    const _label = btn ? btn.innerHTML : 'Sign in with Google';   // LANDING-UI-03: innerHTML so the Google icon comes back
+    function _restoreBtn() { if (btn) { btn.disabled = false; btn.innerHTML = _label; } }
     if (btn) { btn.disabled = true; btn.textContent = 'Redirecting\u2026'; }
     const _errEl = document.getElementById('landingAuthError');
     if (_errEl) _errEl.style.display = 'none';
