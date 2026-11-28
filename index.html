@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.410">
+  <meta name="lifetold-version" content="v7.411">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -5450,7 +5450,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.410';
+  const APP_VERSION = 'v7.411';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -9210,6 +9210,7 @@
 
   // ── Init ─────────────────────────────────────────────────────────
   async function init() {
+    try { window._ltInitT0 = performance.now(); } catch (e) {}   // AUTH-TIMELINE-01
     dbg('INIT', APP_VERSION + ' starting...');
     document.title = 'LifeTold ' + APP_VERSION;
     var lbl = document.getElementById('appVersionLabel');
@@ -9719,7 +9720,7 @@
       var box = document.getElementById('landingAuthWait'); if (box) box.style.display = 'none';
     } catch (e) {}
     // the log row also records how long the return really took on each phone
-    try { logActivity('signin_wait_ended', String(outcome || '') + ' after ' + Math.round((Date.now() - w.t0) / 1000) + 's', outcome === 'signed_in' ? 'info' : 'warn', 'AUTH'); } catch (e) {}
+    try { logActivity('signin_wait_ended', String(outcome || '') + ' after ' + Math.round((Date.now() - w.t0) / 1000) + 's ' + JSON.stringify(_ltTimeline()), outcome === 'signed_in' ? 'info' : 'warn', 'AUTH'); } catch (e) {}
   }
   // Back button from the Google page: the browser can restore this page as it was (button stuck on Redirecting...). Put it right.
   function _ltHookSignInPageShow() {
@@ -9773,7 +9774,7 @@
         } else { d.locks = 'query timed out'; }
       } else { d.locks = 'not supported'; }
     } catch (e) { d.locks = 'query failed'; try { logActivity('auth_diag_locks_failed', String(e && e.message || e).slice(0, 120), 'warn', 'AUTH'); } catch (_) {} }
-    try { var _lo = _ltLockOwn; d.own = (_lo && _lo.n > 0) ? (_lo.n + 'x/' + Math.round((Date.now() - _lo.since) / 1000) + 's') : 'none'; d.pageAge = Math.round(performance.now() / 1000); } catch (e) {}
+    try { var _lo = _ltLockOwn; d.own = (_lo && _lo.n > 0) ? (_lo.n + 'x/' + Math.round((Date.now() - _lo.since) / 1000) + 's') : 'none'; d.pageAge = Math.round(performance.now() / 1000); d.tl = _ltTimeline(); } catch (e) {}
     var txt = JSON.stringify(d);
     try { logActivity('auth_diag', txt, 'warn', 'AUTH'); } catch (e) {}
     try { notifyDev('warn', 'AUTH', 'auth_diag ' + txt); } catch (e) {}
@@ -9781,14 +9782,26 @@
 
   // AUTH-LOCK-03 (2026-11-28): does THIS page hold the auth lock, and for how long? auth_diag shows it as own (none = the holder is another tab or
   // window, which we cannot identify, otherwise count and seconds). Without this we cannot tell the page's own stall from another tab's.
+  // AUTH-TIMELINE-01: where do the seconds go? All times are ms since the page started loading (performance.now()).
+  // initAt = when init() began (a big page on a slow phone can spend seconds before any auth code runs); dcl and load = page ready;
+  // auth = every call to /auth/v1/ as name@start+duration (a slow token exchange shows here, a lock wait does not).
+  function _ltTimeline() {
+    var t = {};
+    try { t.initAt = Math.round(window._ltInitT0 || 0); } catch (e) {}
+    try { var nav = performance.getEntriesByType('navigation')[0]; if (nav) { t.dcl = Math.round(nav.domContentLoadedEventEnd); t.load = Math.round(nav.loadEventEnd); } } catch (e) {}
+    try {
+      var a = performance.getEntriesByType('resource').filter(function(r) { return /\/auth\/v1\//.test(r.name); }).slice(0, 4)
+        .map(function(r) { return String(r.name).replace(/^.*\/auth\/v1\//, '').split('?')[0] + '@' + Math.round(r.startTime) + '+' + Math.round(r.duration); });
+      if (a.length) t.auth = a;
+    } catch (e) {}
+    return t;
+  }
   var _ltLockOwn;
   function _ltOwnLock(fn) {
     var o = _ltLockOwn || (_ltLockOwn = { n: 0, since: 0 });
-    return function() {
+    return async function() {   // try/finally only: errors still reach the library exactly as before, nothing is swallowed
       if (o.n++ === 0) o.since = Date.now();
-      var r;
-      try { r = fn(); } catch (e) { o.n--; throw e; }
-      return Promise.resolve(r).finally(function() { o.n--; });
+      try { return await fn(); } finally { o.n--; }
     };
   }
   function _ltAuthLock(name, acquireTimeout, fn) {
