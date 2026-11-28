@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="lifetold-version" content="v7.409">
+  <meta name="lifetold-version" content="v7.410">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -2995,6 +2995,12 @@
   </div>
 </div>
 
+<style>
+  /* AUTH-WAIT-01: spinner for the Signing you in message */
+  @keyframes ltspin { to { transform: rotate(360deg); } }
+  .lt-spin { flex: 0 0 auto; width: 22px; height: 22px; border: 3px solid var(--gold); border-top-color: transparent; border-radius: 50%; animation: ltspin 0.9s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .lt-spin { animation: none; border-top-color: var(--gold); } }
+</style>
 <div id="landingScreen">
   <div id="landingGiftTopBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:60;background:linear-gradient(90deg,#c9a45c,#e2c27d);color:#1a1409;padding:12px 16px;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;box-shadow:0 2px 12px rgba(0,0,0,0.35);font-family:'Lato',sans-serif">
     <span style="font-size:1.4rem;line-height:1">🎁</span>
@@ -3038,6 +3044,10 @@
         <div id="landingGiftBanner" style="display:none;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--gold);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:0.85rem;color:var(--text);line-height:1.5">
           <span style="font-size:1.2rem;flex-shrink:0">🎁</span>
           <span><b>A year of Premium is waiting for you.</b> Sign in or create a free account to claim it.</span>
+        </div>
+        <div id="landingAuthWait" role="status" aria-live="polite" style="display:none;align-items:center;gap:14px;background:var(--bg);border:2px solid var(--gold);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:0.95rem;color:var(--text);line-height:1.5">
+          <span class="lt-spin" aria-hidden="true"></span>
+          <span><b>Signing you in&#8230;</b><br>On some phones this takes up to 30 seconds. Please wait and do not tap anything. If it does not work we will tell you, and you can try again.</span>
         </div>
         <div id="landingAuthError" style="display:none;font-size:0.82rem;color:#e07060;margin-bottom:12px;line-height:1.5"></div>
       </div>
@@ -5440,7 +5450,7 @@
   // ⚠️  DEPLOY_NOTES must reference APP_VERSION constant — never a hardcoded string
   // ⚠️  LAST STEP before presenting file: grep old version, confirm zero stale refs
   // ═══════════════════════════════════════════════════════════════════════════════
-  const APP_VERSION = 'v7.409';
+  const APP_VERSION = 'v7.410';
   (function() {
     var y = document.getElementById('landingYear'); if (y) y.textContent = String(new Date().getFullYear());
     var c = document.getElementById('landingContact');
@@ -9367,6 +9377,10 @@
     document.getElementById('landingScreen').style.display = 'block';
     document.getElementById('appShell').style.display = 'none';
 
+    // AUTH-WAIT-01: back from Google with a code? Say Signing you in straight away (before getSession, which can take 15 s on a phone)
+    // and block a second sign-in until this one has finished or failed.
+    try { _ltHookSignInPageShow(); if (new URLSearchParams(window.location.search).get('code')) _ltStartSignInWait('google_return'); } catch (e) {}
+
     // AUTH-DIAG-01: what the page looked like BEFORE the auth library ran (the library removes the sign-in verifier as it works).
     var _diagPre = {};
     try {
@@ -9402,7 +9416,7 @@
     // Just auto-repaired on this device? Say so (the page was reloaded clean).
     try {
       var _ra = +localStorage.getItem('lt_auth_repair_at') || 0;
-      if (_ra && Date.now() - _ra < 120000 && !initSession) showAuthError('We reset sign-in on this device. Please tap Continue with Google to continue.');
+      if (_ra && Date.now() - _ra < 120000 && !initSession) showAuthError('We reset sign-in on this device. Please tap Sign in with Google to continue.');
     } catch (e) {}
     // Coming back from Google: if it failed, say so (and clear the one-time leftovers) instead of
     // silently showing the sign-in page again.
@@ -9419,8 +9433,9 @@
         try { await _ltAuthDiag('google_return_failed', _gsRes, _diagPre); } catch (e) {}
         _ltClearAuthStorage();
         history.replaceState(null, '', window.location.pathname);
+        _ltEndSignInWait('failed');   // AUTH-WAIT-01: sign-in is offered again now that this one has failed
         if (_rfN >= 2) _ltAutoRepairAuth('Google return failed twice');
-        else showAuthError('Sign-in did not complete. Please tap Continue with Google to try again.');
+        else showAuthError('Sign-in did not complete. Please tap Sign in with Google to try again.');
       }
     } catch (e) {}
     if (initSession) {
@@ -9563,6 +9578,14 @@
         logActivity('user_updated', session.user.email, 'warn', 'AUTH');
       }
 
+      // AUTH-WAIT-01: the library has finished and there is no session although we were waiting for a sign-in to come back = it failed
+      // (the startup check skips this case when getSession timed out, because a slow answer is not a failure).
+      if (event === 'INITIAL_SESSION' && !session && _ltSignInWaiting()) {
+        _ltEndSignInWait('no_session');
+        try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+        try { showAuthError('Sign-in did not complete. Please tap Sign in with Google to try again.'); } catch (e) {}
+        try { logActivity('signin_return_empty', 'library finished the return with no session', 'warn', 'AUTH'); } catch (e) {}
+      }
       updateAuthUI();
       if (currentUser) {
         _appInitInProgress = true; // block re-entrant SIGNED_IN during async init (set NOW, before the deferred work below)
@@ -9634,6 +9657,7 @@
   function updateAuthUI() {
     const on = !!currentUser;
     if (on) {
+      _ltEndSignInWait('signed_in');   // AUTH-WAIT-01
       document.getElementById('landingScreen').style.display = 'none';
       document.getElementById('appShell').style.display = 'block';
       document.getElementById('userStatus').textContent = '✓ ' + currentUser.email;
@@ -9655,6 +9679,63 @@
       _mpReviewDone = false; // re-check review flag on next sign-in
     }
     memCheckButtons();
+  }
+
+  // AUTH-WAIT-01 (2026-11-28): ONE 'signing in' state, so nobody can start a second sign-in while the first one is finishing.
+  // Prod 2026-11-28: the return from Google took about 15 s on the phone (the auth lock was held, see AUTH-LOCK-02 and AUTH-FIRSTTRY-01). Meanwhile the
+  // landing page showed again with a working sign-in button, the person tapped it, and the second sign-in replaced the first one's verifier, so the first
+  // exchange failed. Now: the button is disabled and says Signing you in, a message explains the wait, and sign-in is only offered again once this one has
+  // failed (or after 40 s). Success ends the state in updateAuthUI(); failure in the startup check or the listener below.
+  var _ltWaitState;   // created on first use, because init() runs before this line is reached
+  function _ltW() { return _ltWaitState || (_ltWaitState = { on: false, t0: 0, label: null, origLabel: null, timer: null, clicking: false, hooked: false }); }
+  function _ltSignInWaiting() { return _ltW().on; }
+  function _ltStartSignInWait(why) {
+    var w = _ltW();
+    if (w.on) return;
+    w.on = true; w.t0 = Date.now();
+    try {
+      var btn = document.getElementById('landingTopSignIn');
+      if (btn) { w.label = btn.innerHTML; btn.disabled = true; btn.textContent = 'Signing you in\u2026'; }
+      var er = document.getElementById('landingAuthError'); if (er) er.style.display = 'none';
+      var box = document.getElementById('landingAuthWait');
+      if (box) { box.style.display = 'flex'; try { box.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+    } catch (e) {}
+    try { logActivity('signin_wait_started', String(why || ''), 'info', 'AUTH'); } catch (e) {}
+    w.timer = setTimeout(function() {
+      if (!_ltW().on) return;
+      _ltEndSignInWait('expired');
+      try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+      try { showAuthError('Sign-in is taking longer than it should. Please tap Sign in with Google to try again.'); } catch (e) {}
+    }, 40000);
+  }
+  function _ltEndSignInWait(outcome) {
+    var w = _ltW();
+    if (!w.on) return;
+    w.on = false;
+    try { clearTimeout(w.timer); } catch (e) {}
+    try {
+      var btn = document.getElementById('landingTopSignIn');
+      if (btn) { btn.disabled = false; if (w.label) btn.innerHTML = w.label; }
+      var box = document.getElementById('landingAuthWait'); if (box) box.style.display = 'none';
+    } catch (e) {}
+    // the log row also records how long the return really took on each phone
+    try { logActivity('signin_wait_ended', String(outcome || '') + ' after ' + Math.round((Date.now() - w.t0) / 1000) + 's', outcome === 'signed_in' ? 'info' : 'warn', 'AUTH'); } catch (e) {}
+  }
+  // Back button from the Google page: the browser can restore this page as it was (button stuck on Redirecting...). Put it right.
+  function _ltHookSignInPageShow() {
+    var w = _ltW();
+    if (w.hooked) return;
+    w.hooked = true;
+    window.addEventListener('pageshow', function(e) {
+      try {
+        var s = _ltW();
+        if (e && e.persisted && s.clicking && !s.on) {
+          s.clicking = false;
+          var btn = document.getElementById('landingTopSignIn');
+          if (btn) { btn.disabled = false; if (s.origLabel) btn.innerHTML = s.origLabel; }
+        }
+      } catch (_) {}
+    });
   }
 
   function showAuthError(msg) {
@@ -9692,12 +9773,26 @@
         } else { d.locks = 'query timed out'; }
       } else { d.locks = 'not supported'; }
     } catch (e) { d.locks = 'query failed'; try { logActivity('auth_diag_locks_failed', String(e && e.message || e).slice(0, 120), 'warn', 'AUTH'); } catch (_) {} }
+    try { var _lo = _ltLockOwn; d.own = (_lo && _lo.n > 0) ? (_lo.n + 'x/' + Math.round((Date.now() - _lo.since) / 1000) + 's') : 'none'; d.pageAge = Math.round(performance.now() / 1000); } catch (e) {}
     var txt = JSON.stringify(d);
     try { logActivity('auth_diag', txt, 'warn', 'AUTH'); } catch (e) {}
     try { notifyDev('warn', 'AUTH', 'auth_diag ' + txt); } catch (e) {}
   }
 
+  // AUTH-LOCK-03 (2026-11-28): does THIS page hold the auth lock, and for how long? auth_diag shows it as own (none = the holder is another tab or
+  // window, which we cannot identify, otherwise count and seconds). Without this we cannot tell the page's own stall from another tab's.
+  var _ltLockOwn;
+  function _ltOwnLock(fn) {
+    var o = _ltLockOwn || (_ltLockOwn = { n: 0, since: 0 });
+    return function() {
+      if (o.n++ === 0) o.since = Date.now();
+      var r;
+      try { r = fn(); } catch (e) { o.n--; throw e; }
+      return Promise.resolve(r).finally(function() { o.n--; });
+    };
+  }
   function _ltAuthLock(name, acquireTimeout, fn) {
+    fn = _ltOwnLock(fn);
     if (!(typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request)) return fn();
     if (acquireTimeout === 0) {   // "try once, skip if busy" (background refresh tick) - same as the default
       return navigator.locks.request(name, { mode: 'exclusive', ifAvailable: true }, async function(lock) {
@@ -9817,7 +9912,10 @@
     // LANDING-UI-02: the top-bar Sign in button is the only sign-in button; it shows the progress and is restored on error.
     const btn = document.getElementById('landingTopSignIn');
     const _label = btn ? btn.innerHTML : 'Sign in with Google';   // LANDING-UI-03: innerHTML so the Google icon comes back
-    function _restoreBtn() { if (btn) { btn.disabled = false; btn.innerHTML = _label; } }
+    var _w = _ltW();
+    if (_w.on || _w.clicking) return;   // AUTH-WAIT-01: a sign-in is already running; a second one would replace the first one's verifier
+    _w.clicking = true; _w.origLabel = _label;
+    function _restoreBtn() { _ltW().clicking = false; if (btn) { btn.disabled = false; btn.innerHTML = _label; } }
     if (btn) { btn.disabled = true; btn.textContent = 'Redirecting\u2026'; }
     const _errEl = document.getElementById('landingAuthError');
     if (_errEl) _errEl.style.display = 'none';
